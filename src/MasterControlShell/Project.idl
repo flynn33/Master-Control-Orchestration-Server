@@ -5,4 +5,52 @@ namespace MasterControlShell
     {
         MainWindow();
     }
+
+    [default_interface]
+    runtimeclass OverviewSectionControl : Microsoft.UI.Xaml.Controls.UserControl
+    {
+        OverviewSectionControl();
+    }
+
+    [default_interface]
+    runtimeclass TelemetrySectionControl : Microsoft.UI.Xaml.Controls.UserControl
+    {
+        TelemetrySectionControl();
+    }
+
+    [default_interface]
+    runtimeclass RuntimeSectionControl : Microsoft.UI.Xaml.Controls.UserControl
+    {
+        RuntimeSectionControl();
+    }
+
+    [default_interface]
+    runtimeclass ProvidersSectionControl : Microsoft.UI.Xaml.Controls.UserControl
+    {
+        ProvidersSectionControl();
+    }
+
+    [default_interface]
+    runtimeclass ImportsSectionControl : Microsoft.UI.Xaml.Controls.UserControl
+    {
+        ImportsSectionControl();
+    }
+
+    [default_interface]
+    runtimeclass ExportsSectionControl : Microsoft.UI.Xaml.Controls.UserControl
+    {
+        ExportsSectionControl();
+    }
+
+    [default_interface]
+    runtimeclass SecuritySectionControl : Microsoft.UI.Xaml.Controls.UserControl
+    {
+        SecuritySectionControl();
+    }
+
+    [default_interface]
+    runtimeclass SettingsSectionControl : Microsoft.UI.Xaml.Controls.UserControl
+    {
+        SettingsSectionControl();
+    }
 }

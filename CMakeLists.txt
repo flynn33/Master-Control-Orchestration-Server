@@ -38,6 +38,7 @@ include_directories(
 )
 
 add_subdirectory("${FORSETTI_VENDOR_DIR}" "${CMAKE_BINARY_DIR}/vendor/forsetti")
+add_subdirectory(src/MasterControlModules)
 add_subdirectory(src/MasterControlApp)
 add_subdirectory(src/MasterControlServiceHost)
 add_subdirectory(src/MasterControlShell)
@@ -53,7 +54,7 @@ if(BUILD_TESTING)
 endif()
 
 install(
-    DIRECTORY "${CMAKE_SOURCE_DIR}/resources/manifests"
+    DIRECTORY "${CMAKE_SOURCE_DIR}/src/MasterControlModules/Resources/ForsettiManifests"
     DESTINATION "share/MasterControlProgram"
 )
 

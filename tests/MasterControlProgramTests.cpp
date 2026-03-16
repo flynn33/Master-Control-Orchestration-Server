@@ -115,6 +115,19 @@ bool hasProvider(const std::vector<MasterControl::ProviderConnection>& providers
         [&id](const MasterControl::ProviderConnection& provider) { return provider.id == id; });
 }
 
+std::optional<MasterControl::ProviderConnection> findProvider(
+    const std::vector<MasterControl::ProviderConnection>& providers,
+    const std::string& id) {
+    const auto iterator = std::find_if(
+        providers.begin(),
+        providers.end(),
+        [&id](const MasterControl::ProviderConnection& provider) { return provider.id == id; });
+    if (iterator == providers.end()) {
+        return std::nullopt;
+    }
+    return *iterator;
+}
+
 bool hasExport(const std::vector<MasterControl::ExportArtifact>& artifacts, const std::string& fileName) {
     return std::any_of(
         artifacts.begin(),
@@ -256,6 +269,12 @@ int main() {
         success &= expect(!snapshot.endpoints.empty(), "Snapshot should include endpoints");
         success &= expect(hasExport(snapshot.exports, "Install-ClaudeGateway.ps1"), "Exports should include a Claude installer helper");
         success &= expect(hasExport(snapshot.exports, "Install-CodexGateway.ps1"), "Exports should include a Codex installer helper");
+        success &= expect(snapshot.surface.overlaySchema.has_value(), "Snapshot should expose Forsetti overlay metadata");
+        success &= expect(
+            snapshot.surface.overlaySchema.has_value() &&
+                snapshot.surface.overlaySchema->navigationPointers.size() >= 8,
+            "Forsetti overlay metadata should describe the shell navigation lanes");
+        success &= expect(snapshot.surface.toolbarItems.size() >= 6, "Forsetti surface snapshot should expose toolbar items");
 
         auto unsafeConfiguration = configuration;
         unsafeConfiguration.security.securityProtocolsEnabled = false;
@@ -263,6 +282,86 @@ int main() {
         success &= expect(!unsafeResult.succeeded && unsafeResult.requiresConfirmation, "Unsafe configuration should require confirmation");
         const auto confirmedResult = application.applyConfigurationJson(nlohmann::json(unsafeConfiguration).dump(), true);
         success &= expect(confirmedResult.succeeded, "Unsafe configuration should succeed after confirmation");
+
+        auto managedConfiguration = configuration;
+        managedConfiguration.aiAutonomyEnabled = true;
+        managedConfiguration.security.securityProtocolsEnabled = true;
+        managedConfiguration.security.enableTls = true;
+        managedConfiguration.security.enableAuthentication = true;
+        managedConfiguration.security.allowTroubleshootingBypass = true;
+        managedConfiguration.security.allowOpenLanAccess = false;
+        managedConfiguration.security.trustedRemoteHosts = {
+            "192.168.1.20",
+            "builder-node.local"
+        };
+        const auto managedResult = application.applyConfigurationJson(nlohmann::json(managedConfiguration).dump(), false);
+        success &= expect(managedResult.succeeded, "Managed security configuration should apply successfully");
+
+        snapshot = application.snapshot();
+        success &= expect(snapshot.security.securityProtocolsEnabled, "Security protocols should remain enabled after managed update");
+        success &= expect(snapshot.security.enableTls, "Managed security update should enable TLS");
+        success &= expect(snapshot.security.enableAuthentication, "Managed security update should enable authentication");
+        success &= expect(snapshot.security.allowTroubleshootingBypass, "Managed security update should allow troubleshooting bypass");
+        success &= expect(!snapshot.security.allowOpenLanAccess, "Managed security update should disable open LAN access");
+        success &= expect(snapshot.security.trustedRemoteHosts.size() == 2, "Managed security update should persist trusted hosts");
+        success &= expect(
+            snapshot.security.trustedRemoteHosts.size() == 2 &&
+                snapshot.security.trustedRemoteHosts[0] == "192.168.1.20" &&
+                snapshot.security.trustedRemoteHosts[1] == "builder-node.local",
+            "Managed security update should preserve trusted host ordering");
+
+        const auto invalidProviderResult = application.upsertProviderJson(nlohmann::json{
+            { "id", "invalid-provider" },
+            { "kind", "generic" },
+            { "displayName", "Invalid Provider" }
+        }.dump());
+        success &= expect(!invalidProviderResult.succeeded, "Provider updates without a base URL should be rejected");
+
+        const auto providerUpsertResult = application.upsertProviderJson(nlohmann::json{
+            { "id", "ops-provider" },
+            { "kind", "openai" },
+            { "displayName", "Operations Provider" },
+            { "baseUrl", "https://ops.example.test/v1" },
+            { "enabled", true },
+            { "allowAutonomousControl", true }
+        }.dump());
+        success &= expect(providerUpsertResult.succeeded, "Provider upsert should succeed");
+
+        snapshot = application.snapshot();
+        const auto upsertedProvider = findProvider(snapshot.providers, "ops-provider");
+        success &= expect(upsertedProvider.has_value(), "Provider upsert should be reflected in the runtime snapshot");
+        success &= expect(
+            upsertedProvider.has_value() && upsertedProvider->allowAutonomousControl,
+            "Provider upsert should preserve autonomous control settings");
+        success &= expect(
+            upsertedProvider.has_value() && upsertedProvider->baseUrl == "https://ops.example.test/v1",
+            "Provider upsert should persist the provider base URL");
+        success &= expect(snapshot.providers.size() >= 5, "Provider upsert should extend the provider registry");
+        success &= expect(hasExport(snapshot.exports, "master-control-gateway-profile.json"), "Exports should include the gateway profile");
+
+        if (toolExists(L"pwsh.exe")) {
+            const auto packageScript = tempRoot / "package-install.ps1";
+            const auto markerFile = tempRoot / "package-install.ok";
+            writeTextFile(
+                packageScript,
+                "New-Item -Path (Join-Path $PSScriptRoot 'package-install.ok') -ItemType File -Force | Out-Null\nexit 0\n");
+
+            const auto packageSource = packageScript.string();
+            const auto packageResult = application.installPackageJson(nlohmann::json{
+                { "kind", "powershell" },
+                { "localPath", packageSource },
+                { "arguments", "" }
+            }.dump());
+            success &= expect(packageResult.succeeded, "Local PowerShell package install should succeed");
+            success &= expect(std::filesystem::exists(markerFile), "Local PowerShell package install should execute the payload");
+
+            snapshot = application.snapshot();
+            success &= expect(
+                hasHistoryEntry(snapshot.installHistory, MasterControl::InstallerKind::PowerShell, packageSource),
+                "Local PowerShell package install should be recorded in history");
+        } else {
+            std::cout << "Skipping package import test because pwsh.exe was not found.\n";
+        }
 
         if (toolExists(L"git.exe")) {
             const auto repoRoot = tempRoot / "repo-fixture";

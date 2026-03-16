@@ -78,6 +78,12 @@ public:
     virtual ~IExportService() = default;
 };
 
+class IForsettiSurfaceService {
+public:
+    virtual ForsettiSurfaceSnapshot currentSurface() const = 0;
+    virtual ~IForsettiSurfaceService() = default;
+};
+
 class IBeaconService {
 public:
     virtual BeaconAdvertisement currentAdvertisement() const = 0;

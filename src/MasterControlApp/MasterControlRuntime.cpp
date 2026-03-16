@@ -139,6 +139,13 @@ std::string lowercase(std::string value) {
     return value;
 }
 
+bool isBlank(const std::string& value) {
+    return std::all_of(
+        value.begin(),
+        value.end(),
+        [](const unsigned char character) { return std::isspace(character) != 0; });
+}
+
 bool pathIsWithinRoot(const std::filesystem::path& candidate, const std::filesystem::path& root) {
     const auto normalizedCandidate = lowercase(std::filesystem::weakly_canonical(candidate).generic_string());
     auto normalizedRoot = lowercase(std::filesystem::weakly_canonical(root).generic_string());
@@ -597,6 +604,16 @@ public:
     }
 
     OperationResult upsertProvider(const ProviderConnection& provider) override {
+        if (provider.id.empty() || isBlank(provider.id)) {
+            return OperationResult{ false, false, "Provider ID is required." };
+        }
+        if (provider.displayName.empty() || isBlank(provider.displayName)) {
+            return OperationResult{ false, false, "Provider display name is required." };
+        }
+        if (provider.baseUrl.empty() || isBlank(provider.baseUrl)) {
+            return OperationResult{ false, false, "Provider base URL is required." };
+        }
+
         std::lock_guard<std::mutex> lock(state_->mutex);
         auto& providers = state_->configuration.providers;
         const auto iterator = std::find_if(
@@ -1139,6 +1156,28 @@ private:
     std::shared_ptr<IConfigurationService> configurationService_;
 };
 
+class ForsettiSurfaceService final : public IForsettiSurfaceService {
+public:
+    explicit ForsettiSurfaceService(std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager)
+        : surfaceManager_(std::move(surfaceManager)) {}
+
+    ForsettiSurfaceSnapshot currentSurface() const override {
+        if (!surfaceManager_) {
+            return {};
+        }
+
+        return ForsettiSurfaceSnapshot{
+            surfaceManager_->currentThemeMask(),
+            surfaceManager_->currentToolbarItems(),
+            surfaceManager_->currentViewInjectionsBySlot(),
+            surfaceManager_->currentOverlaySchema()
+        };
+    }
+
+private:
+    std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager_;
+};
+
 class BeaconService final : public IBeaconService {
 public:
     BeaconService(std::shared_ptr<IConfigurationService> configurationService,
@@ -1224,7 +1263,8 @@ public:
                     std::shared_ptr<IInstallerOrchestrator> installerOrchestrator,
                     std::shared_ptr<IBootstrapRepoService> bootstrapRepoService,
                     std::shared_ptr<IZipBundleService> zipBundleService,
-                    std::shared_ptr<IExportService> exportService)
+                    std::shared_ptr<IExportService> exportService,
+                    std::shared_ptr<IForsettiSurfaceService> surfaceService)
         : telemetryService_(std::move(telemetryService))
         , inventoryService_(std::move(inventoryService))
         , configurationService_(std::move(configurationService))
@@ -1232,7 +1272,8 @@ public:
         , installerOrchestrator_(std::move(installerOrchestrator))
         , bootstrapRepoService_(std::move(bootstrapRepoService))
         , zipBundleService_(std::move(zipBundleService))
-        , exportService_(std::move(exportService)) {}
+        , exportService_(std::move(exportService))
+        , surfaceService_(std::move(surfaceService)) {}
 
     DashboardSnapshot snapshot() override {
         inventoryService_->refresh();
@@ -1246,6 +1287,7 @@ public:
         const auto configuration = configurationService_->current();
         snapshot.resourceAllocation = configuration.resourceAllocation;
         snapshot.security = configuration.security;
+        snapshot.surface = surfaceService_->currentSurface();
         return snapshot;
     }
 
@@ -1279,6 +1321,7 @@ private:
     std::shared_ptr<IBootstrapRepoService> bootstrapRepoService_;
     std::shared_ptr<IZipBundleService> zipBundleService_;
     std::shared_ptr<IExportService> exportService_;
+    std::shared_ptr<IForsettiSurfaceService> surfaceService_;
 };
 
 struct HttpRequest final {
@@ -1536,8 +1579,10 @@ private:
     std::shared_ptr<InstallerOrchestrator> installerOrchestrator_;
     std::shared_ptr<IProviderRegistry> providerRegistry_;
     std::shared_ptr<IExportService> exportService_;
+    std::shared_ptr<IForsettiSurfaceService> surfaceService_;
     std::shared_ptr<IBeaconService> beaconService_;
     std::shared_ptr<IAdminApiService> adminApiService_;
+    std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager_;
     std::unique_ptr<Forsetti::ForsettiRuntime> runtime_;
     std::unique_ptr<SimpleHttpServer> httpServer_;
     std::atomic<bool> stopRequested_{ false };
@@ -1554,6 +1599,9 @@ bool MasterControlApplication::Impl::initialize() {
     providerRegistry_ = std::make_shared<ProviderRegistryService>(state_, paths_.configurationFile);
     exportService_ = std::make_shared<ExportService>(inventoryService_, configurationService_);
     beaconService_ = std::make_shared<BeaconService>(configurationService_, telemetryService_);
+    registerConfigurationDefaults();
+    createForsettiRuntime();
+
     adminApiService_ = std::make_shared<AdminApiService>(
         telemetryService_,
         inventoryService_,
@@ -1562,10 +1610,8 @@ bool MasterControlApplication::Impl::initialize() {
         installerOrchestrator_,
         installerOrchestrator_,
         installerOrchestrator_,
-        exportService_);
-
-    registerConfigurationDefaults();
-    createForsettiRuntime();
+        exportService_,
+        surfaceService_);
 
     runtime_->boot();
     activateDefaultModules();
@@ -1637,14 +1683,15 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
     services->registerService<IProviderRegistry>(providerRegistry_);
     services->registerService<IExportService>(exportService_);
     services->registerService<IBeaconService>(beaconService_);
-    services->registerService<IAdminApiService>(adminApiService_);
 
     auto eventBus = std::make_shared<Forsetti::InMemoryEventBus>();
     auto logger = std::make_shared<Forsetti::ConsoleLogger>();
     auto router = std::make_shared<Forsetti::NoopOverlayRouter>();
     auto guard = std::make_shared<Forsetti::DefaultModuleCommunicationGuard>();
     auto context = std::make_shared<Forsetti::ForsettiContext>(services, eventBus, logger, router, guard);
-    auto surfaceManager = std::make_shared<Forsetti::UISurfaceManager>();
+    surfaceManager_ = std::make_shared<Forsetti::UISurfaceManager>();
+    surfaceService_ = std::make_shared<ForsettiSurfaceService>(surfaceManager_);
+    services->registerService<IForsettiSurfaceService>(surfaceService_);
     auto compatibilityPolicy = std::make_shared<Forsetti::AllowAllCapabilityPolicy>();
     auto checker = std::make_shared<Forsetti::CompatibilityChecker>(Forsetti::SemVer{ 0, 1, 0 }, compatibilityPolicy);
     auto entitlementProvider = std::make_shared<Forsetti::AllowAllEntitlementProvider>();
@@ -1659,7 +1706,7 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
         checker,
         entitlementProvider,
         activationStore,
-        surfaceManager,
+        surfaceManager_,
         context);
 
     runtime_ = std::make_unique<Forsetti::ForsettiRuntime>(
@@ -1705,6 +1752,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "GET" && request.path == "/api/exports") {
             return jsonResponse(exportService_->generateExports());
+        }
+        if (request.method == "GET" && request.path == "/api/forsetti/surface") {
+            return jsonResponse(surfaceService_->currentSurface());
         }
         if (request.method == "GET" && request.path == "/api/install/history") {
             return jsonResponse(installerOrchestrator_->history());

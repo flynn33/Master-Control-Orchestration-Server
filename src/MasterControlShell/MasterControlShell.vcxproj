@@ -119,27 +119,84 @@
     <ClInclude Include="App.xaml.h">
       <DependentUpon>App.xaml</DependentUpon>
     </ClInclude>
+    <ClInclude Include="ExportsSectionControl.xaml.h">
+      <DependentUpon>ExportsSectionControl.xaml</DependentUpon>
+    </ClInclude>
+    <ClInclude Include="ImportsSectionControl.xaml.h">
+      <DependentUpon>ImportsSectionControl.xaml</DependentUpon>
+    </ClInclude>
     <ClInclude Include="MainWindow.xaml.h">
       <DependentUpon>MainWindow.xaml</DependentUpon>
     </ClInclude>
+    <ClInclude Include="OverviewSectionControl.xaml.h">
+      <DependentUpon>OverviewSectionControl.xaml</DependentUpon>
+    </ClInclude>
     <ClInclude Include="pch.h" />
+    <ClInclude Include="ProvidersSectionControl.xaml.h">
+      <DependentUpon>ProvidersSectionControl.xaml</DependentUpon>
+    </ClInclude>
+    <ClInclude Include="RuntimeSectionControl.xaml.h">
+      <DependentUpon>RuntimeSectionControl.xaml</DependentUpon>
+    </ClInclude>
+    <ClInclude Include="SecuritySectionControl.xaml.h">
+      <DependentUpon>SecuritySectionControl.xaml</DependentUpon>
+    </ClInclude>
+    <ClInclude Include="SettingsSectionControl.xaml.h">
+      <DependentUpon>SettingsSectionControl.xaml</DependentUpon>
+    </ClInclude>
+    <ClInclude Include="ShellFormatting.h" />
     <ClInclude Include="ShellRuntime.h" />
+    <ClInclude Include="TelemetrySectionControl.xaml.h">
+      <DependentUpon>TelemetrySectionControl.xaml</DependentUpon>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml" />
+    <Page Include="ExportsSectionControl.xaml" />
+    <Page Include="ImportsSectionControl.xaml" />
     <Page Include="MainWindow.xaml" />
+    <Page Include="OverviewSectionControl.xaml" />
+    <Page Include="ProvidersSectionControl.xaml" />
+    <Page Include="RuntimeSectionControl.xaml" />
+    <Page Include="SecuritySectionControl.xaml" />
+    <Page Include="SettingsSectionControl.xaml" />
+    <Page Include="TelemetrySectionControl.xaml" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="App.xaml.cpp">
       <DependentUpon>App.xaml</DependentUpon>
     </ClCompile>
+    <ClCompile Include="ExportsSectionControl.xaml.cpp">
+      <DependentUpon>ExportsSectionControl.xaml</DependentUpon>
+    </ClCompile>
+    <ClCompile Include="ImportsSectionControl.xaml.cpp">
+      <DependentUpon>ImportsSectionControl.xaml</DependentUpon>
+    </ClCompile>
     <ClCompile Include="MainWindow.xaml.cpp">
       <DependentUpon>MainWindow.xaml</DependentUpon>
+    </ClCompile>
+    <ClCompile Include="OverviewSectionControl.xaml.cpp">
+      <DependentUpon>OverviewSectionControl.xaml</DependentUpon>
     </ClCompile>
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="ProvidersSectionControl.xaml.cpp">
+      <DependentUpon>ProvidersSectionControl.xaml</DependentUpon>
+    </ClCompile>
+    <ClCompile Include="RuntimeSectionControl.xaml.cpp">
+      <DependentUpon>RuntimeSectionControl.xaml</DependentUpon>
+    </ClCompile>
+    <ClCompile Include="SecuritySectionControl.xaml.cpp">
+      <DependentUpon>SecuritySectionControl.xaml</DependentUpon>
+    </ClCompile>
+    <ClCompile Include="SettingsSectionControl.xaml.cpp">
+      <DependentUpon>SettingsSectionControl.xaml</DependentUpon>
+    </ClCompile>
     <ClCompile Include="ShellRuntime.cpp" />
+    <ClCompile Include="TelemetrySectionControl.xaml.cpp">
+      <DependentUpon>TelemetrySectionControl.xaml</DependentUpon>
+    </ClCompile>
     <ClCompile Include="$(GeneratedFilesDir)module.g.cpp" />
   </ItemGroup>
   <ItemGroup>

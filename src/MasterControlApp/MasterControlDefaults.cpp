@@ -307,18 +307,18 @@ AppPaths resolveAppPaths() {
     std::filesystem::path webRootDirectory;
 
     if (const auto resourceDirectory = wideEnvironmentVariable(kResourceDirectoryOverrideVariable); resourceDirectory.has_value()) {
-        manifestsDirectory = std::filesystem::path(*resourceDirectory) / "manifests";
+        manifestsDirectory = std::filesystem::path(*resourceDirectory) / "ForsettiManifests";
         webRootDirectory = std::filesystem::path(*resourceDirectory) / "web";
     } else {
-        manifestsDirectory = executableDirectory / "share" / "MasterControlProgram" / "manifests";
+        manifestsDirectory = executableDirectory / "share" / "MasterControlProgram" / "ForsettiManifests";
         webRootDirectory = executableDirectory / "share" / "MasterControlProgram" / "web";
     }
 
     if (!std::filesystem::exists(manifestsDirectory)) {
-        manifestsDirectory = std::filesystem::path(MASTERCONTROL_SOURCE_RESOURCES_DIR) / "manifests";
+        manifestsDirectory = std::filesystem::path(MASTERCONTROL_SOURCE_MODULE_MANIFESTS_DIR);
     }
     if (!std::filesystem::exists(webRootDirectory)) {
-        webRootDirectory = std::filesystem::path(MASTERCONTROL_SOURCE_RESOURCES_DIR) / "web";
+        webRootDirectory = std::filesystem::path(MASTERCONTROL_SOURCE_WEB_RESOURCES_DIR);
     }
 
     std::filesystem::create_directories(dataDirectory / "state");

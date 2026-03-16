@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="MasterControlShell.ProvidersSectionControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <Grid ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.1*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Spacing="20">
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="Provider Editor" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock Text="Select an existing route or stage a new provider integration for the runtime." Style="{StaticResource ShellBodyTextStyle}" />
+
+                        <TextBlock Text="Provider" Style="{StaticResource ShellLabelTextStyle}" />
+                        <ComboBox
+                            x:Name="ProviderSelector"
+                            SelectionChanged="ProviderSelector_SelectionChanged"
+                            PlaceholderText="Choose a provider route" />
+
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Provider ID" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="ProviderIdTextBox" TextChanged="ProviderEditor_TextChanged" PlaceholderText="provider-id" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Spacing="8">
+                                <TextBlock Text="Kind" Style="{StaticResource ShellLabelTextStyle}" />
+                                <ComboBox x:Name="ProviderKindComboBox" SelectionChanged="ProviderKind_SelectionChanged">
+                                    <ComboBoxItem Content="Codex" Tag="codex" />
+                                    <ComboBoxItem Content="Claude Code" Tag="claude_code" />
+                                    <ComboBoxItem Content="OpenAI / ChatGPT" Tag="openai" />
+                                    <ComboBoxItem Content="xAI / Grok" Tag="xai" />
+                                    <ComboBoxItem Content="Generic" Tag="generic" />
+                                </ComboBox>
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="Display Name" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBox x:Name="ProviderDisplayNameTextBox" TextChanged="ProviderEditor_TextChanged" PlaceholderText="Display name" />
+
+                        <TextBlock Text="Base URL" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBox x:Name="ProviderBaseUrlTextBox" TextChanged="ProviderEditor_TextChanged" PlaceholderText="https://api.example.com/v1" />
+
+                        <StackPanel Orientation="Horizontal" Spacing="18">
+                            <ToggleSwitch x:Name="ProviderEnabledToggle" Header="Enabled" Toggled="ProviderToggle_Toggled" />
+                            <ToggleSwitch x:Name="ProviderAutonomousToggle" Header="Allow autonomous control" Toggled="ProviderToggle_Toggled" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <Button x:Name="SaveProviderButton" Click="SaveProviderButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Provider" />
+                            <Button x:Name="NewProviderButton" Click="NewProviderButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Provider" />
+                        </StackPanel>
+
+                        <TextBlock x:Name="ProviderEditorStatusText" Style="{StaticResource ShellDataTextStyle}" Text="Provider changes are saved through the local admin API." />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="AI Autonomy" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock Text="Enable this only when you want the connected AI to configure the dashboard itself." Style="{StaticResource ShellBodyTextStyle}" />
+                        <ToggleSwitch x:Name="AiAutonomyToggle" Header="Allow dashboard self-configuration" Toggled="AiAutonomyToggle_Toggled" />
+                        <Button x:Name="SaveAiAutonomyButton" Click="SaveAiAutonomyButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save AI Autonomy" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Spacing="20">
+                <Grid ColumnSpacing="20">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Style="{StaticResource ShellMetricTileStyle}">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="PROVIDER ROUTES" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBlock x:Name="ProviderRouteCountText" Style="{StaticResource ShellValueTextStyle}" Text="0" />
+                            <TextBlock x:Name="ProviderAutonomyText" Style="{StaticResource ShellLabelTextStyle}" Text="Human-directed" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="1" Style="{StaticResource ShellCardStyle}">
+                        <TextBlock x:Name="ProvidersNarrativeText" Style="{StaticResource ShellBodyTextStyle}" Text="Provider details will populate here." />
+                    </Border>
+                </Grid>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="Provider Connections" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <ListView x:Name="ProvidersListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="680" Style="{StaticResource ShellListViewStyle}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

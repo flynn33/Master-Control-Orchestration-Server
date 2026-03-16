@@ -273,18 +273,29 @@ Forsetti::UIContributions DashboardUIModule::uiContributions() const {
     return Forsetti::UIContributions{
         std::nullopt,
         {
-            Forsetti::ToolbarItemDescriptor{ "dashboard-home", "Dashboard", "network", Forsetti::NavigateAction{ "dashboard" } },
-            Forsetti::ToolbarItemDescriptor{ "dashboard-settings", "Settings", "gear", Forsetti::OpenOverlayAction{ "settings-overlay" } },
-            Forsetti::ToolbarItemDescriptor{ "dashboard-import", "Imports", "arrow.down", Forsetti::OpenOverlayAction{ "imports-overlay" } }
+            Forsetti::ToolbarItemDescriptor{ "dashboard-home", "Overview", "network", Forsetti::NavigateAction{ "overview" } },
+            Forsetti::ToolbarItemDescriptor{ "dashboard-telemetry", "Telemetry", "trackers", Forsetti::NavigateAction{ "telemetry" } },
+            Forsetti::ToolbarItemDescriptor{ "dashboard-runtime", "Runtime", "globe", Forsetti::NavigateAction{ "runtime" } },
+            Forsetti::ToolbarItemDescriptor{ "dashboard-import", "Imports", "arrow.down", Forsetti::OpenOverlayAction{ "imports-overlay" } },
+            Forsetti::ToolbarItemDescriptor{ "dashboard-export", "Exports", "share", Forsetti::OpenOverlayAction{ "exports-overlay" } },
+            Forsetti::ToolbarItemDescriptor{ "dashboard-settings", "Settings", "gear", Forsetti::OpenOverlayAction{ "settings-overlay" } }
         },
         {
             Forsetti::ViewInjectionDescriptor{ "dashboard-hero", "dashboardPrimary", "MasterControlDashboardView", 100 },
-            Forsetti::ViewInjectionDescriptor{ "dashboard-grid", "dashboardMetrics", "MasterControlMetricsGrid", 90 }
+            Forsetti::ViewInjectionDescriptor{ "dashboard-grid", "dashboardMetrics", "MasterControlMetricsGrid", 90 },
+            Forsetti::ViewInjectionDescriptor{ "runtime-grid", "runtimePrimary", "MasterControlRuntimeGrid", 80 },
+            Forsetti::ViewInjectionDescriptor{ "provider-grid", "providerPrimary", "MasterControlProviderGrid", 80 }
         },
         Forsetti::OverlaySchema{
             {
-                Forsetti::NavigationPointer{ "dashboard-nav", "Dashboard", "dashboard" },
-                Forsetti::NavigationPointer{ "providers-nav", "Providers", "providers" }
+                Forsetti::NavigationPointer{ "overview-nav", "Overview", "overview" },
+                Forsetti::NavigationPointer{ "telemetry-nav", "Telemetry", "telemetry" },
+                Forsetti::NavigationPointer{ "runtime-nav", "Runtime", "runtime" },
+                Forsetti::NavigationPointer{ "providers-nav", "Providers", "providers" },
+                Forsetti::NavigationPointer{ "imports-nav", "Imports", "imports" },
+                Forsetti::NavigationPointer{ "exports-nav", "Exports", "exports" },
+                Forsetti::NavigationPointer{ "security-nav", "Security", "security" },
+                Forsetti::NavigationPointer{ "settings-nav", "Settings", "settings" }
             },
             {
                 Forsetti::OverlayRoute{
@@ -298,6 +309,18 @@ Forsetti::UIContributions DashboardUIModule::uiContributions() const {
                     "Imports",
                     Forsetti::OverlayPresentation::Sheet,
                     Forsetti::ModuleOverlayDestination{ descriptor().moduleID, "ImportOverlayView" }
+                },
+                Forsetti::OverlayRoute{
+                    "exports-overlay",
+                    "Exports",
+                    Forsetti::OverlayPresentation::Sheet,
+                    Forsetti::ModuleOverlayDestination{ descriptor().moduleID, "ExportOverlayView" }
+                },
+                Forsetti::OverlayRoute{
+                    "security-overlay",
+                    "Security",
+                    Forsetti::OverlayPresentation::Sheet,
+                    Forsetti::ModuleOverlayDestination{ descriptor().moduleID, "SecurityOverlayView" }
                 }
             }
         }

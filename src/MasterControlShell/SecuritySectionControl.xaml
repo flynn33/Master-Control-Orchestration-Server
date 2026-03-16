@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="MasterControlShell.SecuritySectionControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <Grid ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.1*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Spacing="20">
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="Protection Envelope" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock Text="These settings are written through the local admin API and persisted in the runtime configuration." Style="{StaticResource ShellBodyTextStyle}" />
+
+                        <StackPanel Orientation="Horizontal" Spacing="18">
+                            <ToggleSwitch x:Name="SecurityProtocolsToggle" Header="Security protocols enabled" Toggled="SecurityToggle_Toggled" />
+                            <ToggleSwitch x:Name="OpenLanAccessToggle" Header="Allow open LAN access" Toggled="SecurityToggle_Toggled" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Spacing="18">
+                            <ToggleSwitch x:Name="EnableTlsToggle" Header="Enable TLS" Toggled="SecurityToggle_Toggled" />
+                            <ToggleSwitch x:Name="EnableAuthenticationToggle" Header="Require authentication" Toggled="SecurityToggle_Toggled" />
+                        </StackPanel>
+
+                        <ToggleSwitch x:Name="TroubleshootingBypassToggle" Header="Allow troubleshooting bypass" Toggled="SecurityToggle_Toggled" />
+
+                        <TextBlock Text="Trusted Remote Hosts" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBox
+                            x:Name="TrustedHostsTextBox"
+                            AcceptsReturn="True"
+                            Height="120"
+                            TextChanged="TrustedHostsTextBox_TextChanged"
+                            PlaceholderText="one host per line" />
+
+                        <TextBlock Text="Disabling security protocols requires an explicit warning confirmation." Style="{StaticResource ShellLabelTextStyle}" />
+                        <Button x:Name="SaveSecurityButton" Click="SaveSecurityButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Security Settings" />
+                        <TextBlock x:Name="SecurityEditorStatusText" Style="{StaticResource ShellDataTextStyle}" Text="Security changes are saved through the local admin API." />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Spacing="20">
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Current Runtime Posture" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock Text="Bind Address" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBlock x:Name="BindAddressText" Style="{StaticResource ShellDataTextStyle}" />
+                        <TextBlock Text="Browser Port" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBlock x:Name="BrowserPortText" Style="{StaticResource ShellDataTextStyle}" />
+                        <TextBlock Text="Beacon" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBlock x:Name="BeaconEnabledText" Style="{StaticResource ShellDataTextStyle}" />
+                        <TextBlock Text="AI Autonomy" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBlock x:Name="AiAutonomyText" Style="{StaticResource ShellDataTextStyle}" />
+                        <TextBlock Text="Security Protocols" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBlock x:Name="SecurityProtocolsText" Style="{StaticResource ShellDataTextStyle}" />
+                        <TextBlock Text="Open LAN Access" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBlock x:Name="OpenLanAccessText" Style="{StaticResource ShellDataTextStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <TextBlock x:Name="SecurityNarrativeText" Style="{StaticResource ShellBodyTextStyle}" Text="Security details will populate here." />
+                </Border>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

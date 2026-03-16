@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="MasterControlShell.TelemetrySectionControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <Grid ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.15*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="Live Telemetry" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock Text="CPU" Style="{StaticResource ShellLabelTextStyle}" />
+                    <ProgressBar x:Name="CpuProgressBar" Height="8" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                    <TextBlock x:Name="CpuValueText" Style="{StaticResource ShellDataTextStyle}" />
+                    <TextBlock Text="RAM" Style="{StaticResource ShellLabelTextStyle}" />
+                    <ProgressBar x:Name="MemoryProgressBar" Height="8" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                    <TextBlock x:Name="MemoryValueText" Style="{StaticResource ShellDataTextStyle}" />
+                    <TextBlock Text="Disk" Style="{StaticResource ShellLabelTextStyle}" />
+                    <ProgressBar x:Name="DiskProgressBar" Height="8" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                    <TextBlock x:Name="DiskValueText" Style="{StaticResource ShellDataTextStyle}" />
+                    <TextBlock x:Name="TrafficValueText" Style="{StaticResource ShellValueTextStyle}" />
+                    <TextBlock x:Name="TelemetrySummaryText" Style="{StaticResource ShellDataTextStyle}" />
+                </StackPanel>
+            </Border>
+
+            <StackPanel Grid.Column="1" Spacing="20">
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Environment Profile" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock x:Name="EnvironmentNameText" Style="{StaticResource ShellDataTextStyle}" />
+                        <TextBlock x:Name="HostNameText" Style="{StaticResource ShellDataTextStyle}" />
+                        <TextBlock x:Name="OperatingSystemText" Style="{StaticResource ShellDataTextStyle}" />
+                        <TextBlock x:Name="PrimaryIpText" Style="{StaticResource ShellDataTextStyle}" />
+                        <TextBlock x:Name="PrimaryMacText" Style="{StaticResource ShellDataTextStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Discovery Narrative" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock x:Name="EnvironmentNarrativeText" Style="{StaticResource ShellDataTextStyle}" Text="Environment details will populate here." />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

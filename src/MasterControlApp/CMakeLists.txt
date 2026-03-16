@@ -5,7 +5,6 @@
 add_library(MasterControlApp STATIC
     MasterControlDefaults.cpp
     MasterControlModels.cpp
-    MasterControlModules.cpp
     MasterControlRuntime.cpp
 )
 
@@ -15,6 +14,7 @@ target_include_directories(MasterControlApp PUBLIC
 )
 
 target_link_libraries(MasterControlApp PUBLIC
+    MasterControlModules
     ForsettiCore
     ForsettiPlatform
     nlohmann_json::nlohmann_json
@@ -27,5 +27,6 @@ target_link_libraries(MasterControlApp PUBLIC
 )
 
 target_compile_definitions(MasterControlApp PUBLIC
-    MASTERCONTROL_SOURCE_RESOURCES_DIR="${CMAKE_SOURCE_DIR}/resources"
+    MASTERCONTROL_SOURCE_MODULE_MANIFESTS_DIR="${CMAKE_SOURCE_DIR}/src/MasterControlModules/Resources/ForsettiManifests"
+    MASTERCONTROL_SOURCE_WEB_RESOURCES_DIR="${CMAKE_SOURCE_DIR}/resources/web"
 )

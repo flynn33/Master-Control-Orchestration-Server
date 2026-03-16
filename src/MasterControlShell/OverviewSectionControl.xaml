@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="MasterControlShell.OverviewSectionControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="20">
+            <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="Operational Summary" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock x:Name="OverviewTextBlock" Style="{StaticResource ShellBodyTextStyle}" Text="Loading shell snapshot..." />
+                    <Border Background="{StaticResource ShellPanelDeepBrush}" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="16" Padding="16">
+                        <TextBlock x:Name="OverviewStatusText" Style="{StaticResource ShellBodyTextStyle}" Text="Waiting for local service synchronization." />
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <Grid ColumnSpacing="20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Environment Narrative" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock x:Name="EnvironmentNarrativeText" Style="{StaticResource ShellDataTextStyle}" Text="Environment details will populate here." />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Configuration Narrative" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock x:Name="ConfigurationNarrativeText" Style="{StaticResource ShellDataTextStyle}" Text="Configuration details will populate here." />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Border Style="{StaticResource ShellCardStyle}">
+                <TextBlock
+                    Style="{StaticResource ShellBodyTextStyle}"
+                    Text="This shell now uses dedicated authored desktop sections so operations, telemetry, runtime orchestration, provider routing, and system settings can grow independently without collapsing back into one oversized page." />
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

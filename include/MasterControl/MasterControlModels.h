@@ -4,9 +4,12 @@
 
 #pragma once
 
+#include "ForsettiCore/UIModels.h"
+
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -141,6 +144,13 @@ struct ExportArtifact final {
     std::string content;
 };
 
+struct ForsettiSurfaceSnapshot final {
+    std::optional<Forsetti::ThemeMask> themeMask;
+    std::vector<Forsetti::ToolbarItemDescriptor> toolbarItems;
+    std::map<std::string, std::vector<Forsetti::ViewInjectionDescriptor>> viewInjectionsBySlot;
+    std::optional<Forsetti::OverlaySchema> overlaySchema;
+};
+
 struct OperationResult final {
     bool succeeded = false;
     bool requiresConfirmation = false;
@@ -173,6 +183,7 @@ struct DashboardSnapshot final {
     SecuritySettings security;
     std::vector<InstallProvenance> installHistory;
     std::vector<ExportArtifact> exports;
+    ForsettiSurfaceSnapshot surface;
 };
 
 struct AppConfiguration final {
@@ -311,6 +322,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     content)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ForsettiSurfaceSnapshot,
+    themeMask,
+    toolbarItems,
+    viewInjectionsBySlot,
+    overlaySchema)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     OperationResult,
     succeeded,
     requiresConfirmation,
@@ -342,7 +360,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     resourceAllocation,
     security,
     installHistory,
-    exports)
+    exports,
+    surface)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     AppConfiguration,

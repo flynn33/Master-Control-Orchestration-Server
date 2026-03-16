@@ -10,7 +10,17 @@
 #include "MainWindow.g.cpp"
 #endif
 
+#include "ExportsSectionControl.xaml.h"
+#include "ImportsSectionControl.xaml.h"
 #include "microsoft.ui.xaml.window.h"
+#include "OverviewSectionControl.xaml.h"
+#include "ProvidersSectionControl.xaml.h"
+#include "RuntimeSectionControl.xaml.h"
+#include "SecuritySectionControl.xaml.h"
+#include "SettingsSectionControl.xaml.h"
+#include "ShellFormatting.h"
+#include "TelemetrySectionControl.xaml.h"
+
 #include <winrt/Microsoft.UI.Composition.SystemBackdrops.h>
 
 namespace winrt::MasterControlShell::implementation {
@@ -68,38 +78,112 @@ std::wstring uppercase(const std::wstring& input) {
     return output;
 }
 
-std::wstring boolLabel(const bool value) {
-    return value ? L"Enabled" : L"Disabled";
+void setVisible(const UIElement& element, const bool visible) {
+    element.Visibility(visible ? Visibility::Visible : Visibility::Collapsed);
 }
 
-std::wstring formatPercent(const double value) {
-    std::wostringstream stream;
-    stream.setf(std::ios::fixed);
-    stream.precision(1);
-    stream << value << L'%';
-    return stream.str();
-}
+struct SectionMetadata final {
+    std::wstring eyebrow;
+    std::wstring title;
+    std::wstring description;
+};
 
-std::wstring formatTraffic(const uint64_t txBytesPerSecond, const uint64_t rxBytesPerSecond) {
-    std::wostringstream stream;
-    stream << L"TX " << txBytesPerSecond << L" B/s  |  RX " << rxBytesPerSecond << L" B/s";
-    return stream.str();
-}
-
-std::wstring formatResourceEnvelope(const ::MasterControlShell::ShellSnapshot& snapshot) {
-    std::wostringstream stream;
-    stream << L"CPU " << snapshot.cpuAllocationPercent
-           << L"%  |  RAM " << snapshot.memoryAllocationPercent
-           << L"%  |  Bandwidth " << snapshot.bandwidthAllocationPercent
-           << L"%  |  Storage " << snapshot.storageAllocationPercent << L'%';
-    return stream.str();
-}
-
-void populateListView(const ListView& listView, const std::vector<std::wstring>& rows) {
-    listView.Items().Clear();
-    for (const auto& row : rows) {
-        listView.Items().Append(box_value(row));
+SectionMetadata metadataForSection(const ShellSection section) {
+    switch (section) {
+        case ShellSection::Overview:
+            return {
+                L"OVERVIEW",
+                L"Command Deck",
+                L"Move across the desktop control plane without losing access to core service operations and shell health."
+            };
+        case ShellSection::Telemetry:
+            return {
+                L"TELEMETRY",
+                L"Host Signal Matrix",
+                L"Track live CPU, memory, disk, network, and environment discovery details from the local service snapshot."
+            };
+        case ShellSection::Runtime:
+            return {
+                L"RUNTIME",
+                L"Endpoint Orchestration",
+                L"Inspect MCP runtime lanes, gateway-facing inventory, and the current operational map exposed by the service."
+            };
+        case ShellSection::Providers:
+            return {
+                L"PROVIDERS",
+                L"AI Routing Surface",
+                L"Review provider adapters, autonomous control posture, and the current agent service envelope."
+            };
+        case ShellSection::Imports:
+            return {
+                L"IMPORTS",
+                L"Onboarding Ledger",
+                L"Audit installer provenance, trusted-source flows, and the current software onboarding trail."
+            };
+        case ShellSection::Exports:
+            return {
+                L"EXPORTS",
+                L"Agent Distribution",
+                L"Review exported agent artifacts, browser handoff endpoints, and downstream integration material."
+            };
+        case ShellSection::Security:
+            return {
+                L"SECURITY",
+                L"Protection Envelope",
+                L"Inspect bind policy, browser access posture, beacon state, AI autonomy, and operator-sensitive toggles."
+            };
+        case ShellSection::Settings:
+            return {
+                L"SETTINGS",
+                L"Host Configuration",
+                L"Trace configuration files, data paths, and the current resource envelope that shapes the host runtime."
+            };
+        default:
+            return {
+                L"OVERVIEW",
+                L"Command Deck",
+                L"Move across the desktop control plane without losing access to core service operations and shell health."
+            };
     }
+}
+
+ShellSection sectionFromTag(const winrt::hstring& tag) {
+    const std::wstring value = tag.c_str();
+    if (value == L"telemetry") {
+        return ShellSection::Telemetry;
+    }
+    if (value == L"runtime") {
+        return ShellSection::Runtime;
+    }
+    if (value == L"providers") {
+        return ShellSection::Providers;
+    }
+    if (value == L"imports") {
+        return ShellSection::Imports;
+    }
+    if (value == L"exports") {
+        return ShellSection::Exports;
+    }
+    if (value == L"security") {
+        return ShellSection::Security;
+    }
+    if (value == L"settings") {
+        return ShellSection::Settings;
+    }
+    return ShellSection::Overview;
+}
+
+void syncNavigationItem(const NavigationViewItem& item,
+                        const std::vector<::MasterControlShell::ShellNavigationPointer>& pointers,
+                        const wchar_t* destinationId,
+                        const wchar_t* fallbackLabel) {
+    const auto iterator = std::find_if(
+        pointers.begin(),
+        pointers.end(),
+        [destinationId](const auto& pointer) { return pointer.destinationId == destinationId; });
+
+    item.Tag(box_value(hstring(destinationId)));
+    item.Content(box_value(hstring(iterator != pointers.end() && !iterator->label.empty() ? iterator->label : fallbackLabel)));
 }
 
 void setWindowSize(HWND windowHandle, const int width, const int height) {
@@ -166,6 +250,15 @@ void MainWindow::RootGrid_Loaded(IInspectable const&, RoutedEventArgs const&) {
         ConfigureTimer();
         writeShellLog(L"RootGrid_Loaded: ConfigureTimer finished.");
 
+        writeShellLog(L"RootGrid_Loaded: AttachInteractiveSections starting.");
+        AttachInteractiveSections();
+        writeShellLog(L"RootGrid_Loaded: AttachInteractiveSections finished.");
+
+        writeShellLog(L"RootGrid_Loaded: SetCurrentSection starting.");
+        ShellNavigation().SelectedItem(OverviewNavItem());
+        SetCurrentSection(ShellSection::Overview);
+        writeShellLog(L"RootGrid_Loaded: SetCurrentSection finished.");
+
         writeShellLog(L"RootGrid_Loaded: UpdateStatusBar starting.");
         UpdateStatusBar(L"Loading local service and dashboard state.", InfoBarSeverity::Informational);
         writeShellLog(L"RootGrid_Loaded: UpdateStatusBar finished.");
@@ -175,6 +268,32 @@ void MainWindow::RootGrid_Loaded(IInspectable const&, RoutedEventArgs const&) {
         writeShellLog(L"RootGrid_Loaded: RefreshAsync dispatched.");
     } catch (const winrt::hresult_error& error) {
         writeShellLog(L"RootGrid_Loaded caught HRESULT failure: " + std::wstring(error.message().c_str()));
+    }
+}
+
+void MainWindow::AttachInteractiveSections() {
+    const auto weakThis = get_weak();
+    const auto refreshRequested = [weakThis]() {
+        if (const auto self = weakThis.get()) {
+            self->RefreshAsync();
+        }
+    };
+
+    winrt::get_self<winrt::MasterControlShell::implementation::ProvidersSectionControl>(ProvidersSection())
+        ->AttachRuntime(&runtime_, refreshRequested);
+    winrt::get_self<winrt::MasterControlShell::implementation::ImportsSectionControl>(ImportsSection())
+        ->AttachRuntime(&runtime_, refreshRequested);
+    winrt::get_self<winrt::MasterControlShell::implementation::ExportsSectionControl>(ExportsSection())
+        ->AttachRuntime(&runtime_);
+    winrt::get_self<winrt::MasterControlShell::implementation::SecuritySectionControl>(SecuritySection())
+        ->AttachRuntime(&runtime_, refreshRequested);
+}
+
+void MainWindow::ShellNavigation_SelectionChanged(
+    IInspectable const&,
+    NavigationViewSelectionChangedEventArgs const& args) {
+    if (const auto selectedItem = args.SelectedItem().try_as<NavigationViewItem>()) {
+        SetCurrentSection(sectionFromTag(unbox_value_or<hstring>(selectedItem.Tag(), L"overview")));
     }
 }
 
@@ -238,7 +357,7 @@ void MainWindow::ConfigureWindow() {
     }
 
     if (windowHandle_ != nullptr) {
-        setWindowSize(windowHandle_, 1480, 1024);
+        setWindowSize(windowHandle_, 1560, 1024);
         centerWindow(windowHandle_);
     }
 }
@@ -259,52 +378,53 @@ void MainWindow::ConfigureTimer() {
     }
 }
 
+void MainWindow::SetCurrentSection(const ShellSection section) {
+    currentSection_ = section;
+    const auto metadata = metadataForSection(section);
+    CurrentViewEyebrowText().Text(winrt::hstring(metadata.eyebrow));
+    CurrentViewTitleText().Text(winrt::hstring(metadata.title));
+    CurrentViewDescriptionText().Text(winrt::hstring(metadata.description));
+
+    setVisible(OverviewSection(), section == ShellSection::Overview);
+    setVisible(TelemetrySection(), section == ShellSection::Telemetry);
+    setVisible(RuntimeSection(), section == ShellSection::Runtime);
+    setVisible(ProvidersSection(), section == ShellSection::Providers);
+    setVisible(ImportsSection(), section == ShellSection::Imports);
+    setVisible(ExportsSection(), section == ShellSection::Exports);
+    setVisible(SecuritySection(), section == ShellSection::Security);
+    setVisible(SettingsSection(), section == ShellSection::Settings);
+}
+
 void MainWindow::ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot) {
-    OverviewTextBlock().Text(winrt::hstring(snapshot.overviewText));
+    syncNavigationItem(OverviewNavItem(), snapshot.navigationPointers, L"overview", L"Overview");
+    syncNavigationItem(TelemetryNavItem(), snapshot.navigationPointers, L"telemetry", L"Telemetry");
+    syncNavigationItem(RuntimeNavItem(), snapshot.navigationPointers, L"runtime", L"Runtime");
+    syncNavigationItem(ProvidersNavItem(), snapshot.navigationPointers, L"providers", L"Providers");
+    syncNavigationItem(ImportsNavItem(), snapshot.navigationPointers, L"imports", L"Imports");
+    syncNavigationItem(ExportsNavItem(), snapshot.navigationPointers, L"exports", L"Exports");
+    syncNavigationItem(SecurityNavItem(), snapshot.navigationPointers, L"security", L"Security");
+    syncNavigationItem(SettingsNavItem(), snapshot.navigationPointers, L"settings", L"Settings");
+
     ServiceStateText().Text(winrt::hstring(serviceStateLabel(snapshot.serviceState)));
     ApiStateText().Text(snapshot.apiHealthy ? L"Reachable" : L"Offline");
-    EndpointCountText().Text(winrt::hstring(std::to_wstring(snapshot.endpointRows.size())));
-    ProviderCountText().Text(winrt::hstring(std::to_wstring(snapshot.providerRows.size())));
+    EndpointCountText().Text(winrt::hstring(std::to_wstring(snapshot.endpointCount)));
+    ProviderCountText().Text(winrt::hstring(std::to_wstring(snapshot.providerCount)));
     PulseStateText().Text(winrt::hstring(uppercase(serviceStateLabel(snapshot.serviceState))));
 
     std::wstring pulseCaption = snapshot.apiHealthy ? L"Admin API online" : L"Admin API offline";
     pulseCaption += L"  |  ";
-    pulseCaption += std::to_wstring(snapshot.endpointRows.size());
+    pulseCaption += std::to_wstring(snapshot.endpointCount);
     pulseCaption += L" endpoints";
     PulseCaptionText().Text(winrt::hstring(pulseCaption));
 
-    CpuProgressBar().Value(snapshot.cpuPercent);
-    MemoryProgressBar().Value(snapshot.memoryPercent);
-    DiskProgressBar().Value(snapshot.diskPercent);
-    CpuValueText().Text(winrt::hstring(formatPercent(snapshot.cpuPercent)));
-    MemoryValueText().Text(winrt::hstring(formatPercent(snapshot.memoryPercent)));
-    DiskValueText().Text(winrt::hstring(formatPercent(snapshot.diskPercent)));
-    TrafficValueText().Text(winrt::hstring(formatTraffic(snapshot.bytesSentPerSecond, snapshot.bytesReceivedPerSecond)));
-    TelemetrySummaryText().Text(winrt::hstring(snapshot.telemetryText));
-
-    EnvironmentNameText().Text(winrt::hstring(snapshot.environmentName));
-    HostNameText().Text(winrt::hstring(snapshot.hostName));
-    OperatingSystemText().Text(winrt::hstring(snapshot.operatingSystem));
-    PrimaryIpText().Text(winrt::hstring(snapshot.primaryIpAddress));
-    PrimaryMacText().Text(winrt::hstring(snapshot.primaryMacAddress));
-
-    BindAddressText().Text(winrt::hstring(snapshot.bindAddress));
-    BrowserPortText().Text(winrt::hstring(std::to_wstring(snapshot.browserPort)));
-    BeaconEnabledText().Text(winrt::hstring(boolLabel(snapshot.beaconEnabled)));
-    AiAutonomyText().Text(winrt::hstring(boolLabel(snapshot.aiAutonomyEnabled)));
-    SecurityProtocolsText().Text(winrt::hstring(boolLabel(snapshot.securityProtocolsEnabled)));
-    OpenLanAccessText().Text(winrt::hstring(boolLabel(snapshot.openLanAccess)));
-    ResourceEnvelopeText().Text(winrt::hstring(formatResourceEnvelope(snapshot)));
-    DashboardUrlText().Text(winrt::hstring(snapshot.dashboardUrl));
-    ConfigPathText().Text(winrt::hstring(snapshot.configPath));
-    DataDirectoryText().Text(winrt::hstring(snapshot.dataDirectory));
-    EnvironmentNarrativeText().Text(winrt::hstring(snapshot.environmentText));
-    ConfigurationNarrativeText().Text(winrt::hstring(snapshot.configurationText));
-
-    populateListView(EndpointsListView(), snapshot.endpointRows);
-    populateListView(ProvidersListView(), snapshot.providerRows);
-    populateListView(InstallHistoryListView(), snapshot.installRows);
-    populateListView(ExportsListView(), snapshot.exportRows);
+    winrt::get_self<winrt::MasterControlShell::implementation::OverviewSectionControl>(OverviewSection())->ApplySnapshot(snapshot);
+    winrt::get_self<winrt::MasterControlShell::implementation::TelemetrySectionControl>(TelemetrySection())->ApplySnapshot(snapshot);
+    winrt::get_self<winrt::MasterControlShell::implementation::RuntimeSectionControl>(RuntimeSection())->ApplySnapshot(snapshot);
+    winrt::get_self<winrt::MasterControlShell::implementation::ProvidersSectionControl>(ProvidersSection())->ApplySnapshot(snapshot);
+    winrt::get_self<winrt::MasterControlShell::implementation::ImportsSectionControl>(ImportsSection())->ApplySnapshot(snapshot);
+    winrt::get_self<winrt::MasterControlShell::implementation::ExportsSectionControl>(ExportsSection())->ApplySnapshot(snapshot);
+    winrt::get_self<winrt::MasterControlShell::implementation::SecuritySectionControl>(SecuritySection())->ApplySnapshot(snapshot);
+    winrt::get_self<winrt::MasterControlShell::implementation::SettingsSectionControl>(SettingsSection())->ApplySnapshot(snapshot);
 
     StartServiceButton().IsEnabled(snapshot.canStartService);
     StopServiceButton().IsEnabled(snapshot.canStopService);

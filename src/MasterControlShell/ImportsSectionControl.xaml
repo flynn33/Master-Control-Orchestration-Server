@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="MasterControlShell.ImportsSectionControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <Grid ColumnSpacing="20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.1*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Spacing="20">
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="Import Control" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock Text="Run package, bootstrap repository, or zip-bundle onboarding flows through the local admin API." Style="{StaticResource ShellBodyTextStyle}" />
+
+                        <TextBlock Text="Import Mode" Style="{StaticResource ShellLabelTextStyle}" />
+                        <ComboBox x:Name="ImportModeSelector" SelectionChanged="ImportModeSelector_SelectionChanged">
+                            <ComboBoxItem Content="Package Installer" Tag="package" />
+                            <ComboBoxItem Content="Bootstrap Repository" Tag="repo" />
+                            <ComboBoxItem Content="Zip Bundle" Tag="zip" />
+                        </ComboBox>
+
+                        <StackPanel x:Name="PackageEditorPanel" Spacing="10">
+                            <TextBlock Text="Package Kind" Style="{StaticResource ShellLabelTextStyle}" />
+                            <ComboBox x:Name="PackageKindComboBox">
+                                <ComboBoxItem Content="MSI" Tag="msi" />
+                                <ComboBoxItem Content="EXE" Tag="exe" />
+                                <ComboBoxItem Content="PowerShell" Tag="powershell" />
+                            </ComboBox>
+
+                            <TextBlock Text="Source Or Local Path" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="PackageSourceTextBox" PlaceholderText="https://example.test/gateway-installer.ps1 or C:\Packages\gateway-installer.ps1" />
+
+                            <TextBlock Text="Arguments" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="PackageArgumentsTextBox" PlaceholderText="-EnvironmentName lab -Force" />
+
+                            <ToggleSwitch x:Name="PackageTrustToggle" Header="Allow untrusted execution" />
+                            <Button x:Name="RunPackageImportButton" Click="RunPackageImportButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Run Package Import" />
+                        </StackPanel>
+
+                        <StackPanel x:Name="RepoEditorPanel" Spacing="10" Visibility="Collapsed">
+                            <TextBlock Text="Repository URL Or Local Path" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="RepoUrlTextBox" PlaceholderText="https://github.com/example/mcp-bootstrap or D:\Repos\mcp-bootstrap" />
+
+                            <Grid ColumnSpacing="14">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Branch" Style="{StaticResource ShellLabelTextStyle}" />
+                                    <TextBox x:Name="RepoBranchTextBox" PlaceholderText="main" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Column="1" Spacing="8">
+                                    <TextBlock Text="Manifest File" Style="{StaticResource ShellLabelTextStyle}" />
+                                    <TextBox x:Name="RepoManifestTextBox" PlaceholderText="mcp-bootstrap.json" />
+                                </StackPanel>
+                            </Grid>
+
+                            <ToggleSwitch x:Name="RepoTrustToggle" Header="Allow untrusted execution" />
+                            <Button x:Name="RunRepoImportButton" Click="RunRepoImportButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Run Repository Import" />
+                        </StackPanel>
+
+                        <StackPanel x:Name="ZipEditorPanel" Spacing="10" Visibility="Collapsed">
+                            <TextBlock Text="Zip Source Or Local Path" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="ZipSourceTextBox" PlaceholderText="https://example.test/master-control-bundle.zip or C:\Packages\master-control-bundle.zip" />
+
+                            <TextBlock Text="Manifest File" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="ZipManifestTextBox" PlaceholderText="mcp-bootstrap.json" />
+
+                            <ToggleSwitch x:Name="ZipTrustToggle" Header="Allow untrusted execution" />
+                            <Button x:Name="RunZipImportButton" Click="RunZipImportButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Run Zip Import" />
+                        </StackPanel>
+
+                        <TextBlock Text="Unknown or untrusted sources will be rejected unless you explicitly allow them." Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBlock x:Name="ImportStatusText" Style="{StaticResource ShellDataTextStyle}" Text="Import operations are executed through the local admin API." />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Spacing="20">
+                <Grid ColumnSpacing="20">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Style="{StaticResource ShellMetricTileStyle}">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="IMPORT RECORDS" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBlock x:Name="ImportRecordCountText" Style="{StaticResource ShellValueTextStyle}" Text="0" />
+                            <TextBlock x:Name="ImportTrustText" Style="{StaticResource ShellLabelTextStyle}" Text="Awaiting provenance data" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="1" Style="{StaticResource ShellCardStyle}">
+                        <TextBlock x:Name="ImportsNarrativeText" Style="{StaticResource ShellBodyTextStyle}" Text="Import details will populate here." />
+                    </Border>
+                </Grid>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="Installer Provenance" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <ListView x:Name="InstallHistoryListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="680" Style="{StaticResource ShellListViewStyle}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

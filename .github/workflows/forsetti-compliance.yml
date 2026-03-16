@@ -1,0 +1,35 @@
+name: Forsetti Compliance
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  forsetti-compliance:
+    runs-on: windows-2022
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate vendored Forsetti manifests
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .\Forsetti-Framework-Windows-main\Forsetti-Framework-Windows-main\Scripts\check-manifests.ps1
+
+      - name: Validate vendored Forsetti dependencies
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .\Forsetti-Framework-Windows-main\Forsetti-Framework-Windows-main\Scripts\check-dependencies.ps1
+
+      - name: Validate vendored Forsetti architecture
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .\Forsetti-Framework-Windows-main\Forsetti-Framework-Windows-main\Scripts\check-architecture.ps1
+
+      - name: Validate Master Control Forsetti compliance
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-mastercontrol-forsetti.ps1
