@@ -5,6 +5,16 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.1.1] - 2026-03-16
+### Summary
+Automated patch release for Master Control Program.
+
+### Included Changes
+- chore(repo): add GitHub repository agents (flynn33)
+- fix(hooks): allow pre-push stdin on Windows (flynn33)
+- fix(hooks): use PowerShell guard wrapper (flynn33)
+- fix(agents): preserve git log field separators (flynn33)
+
 ## [0.1.0] - 2026-03-16
 ### Summary
 Initial tracked baseline for the Forsetti-based Master Control Program workspace.

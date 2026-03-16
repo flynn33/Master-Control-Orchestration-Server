@@ -2,9 +2,9 @@
 
 Welcome to the maintained wiki for `master-control-dashboard`.
 
-- Current release: `v0.1.0`
+- Current release: `v0.1.1`
 - Release date: `2026-03-16`
-- Summary: Initial tracked baseline for the Forsetti-based Master Control Program workspace.
+- Summary: Automated patch release for Master Control Program.
 
 ## Core Surfaces
 
