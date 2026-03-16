@@ -56,7 +56,7 @@ def commit_records(revision_range: str | None) -> list[dict]:
     output = git_output(args)
     records: list[dict] = []
     for chunk in output.split("\x1e"):
-        chunk = chunk.strip()
+        chunk = chunk.rstrip("\r\n")
         if not chunk:
             continue
 

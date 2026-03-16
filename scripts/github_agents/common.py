@@ -27,7 +27,7 @@ def run_git(args: list[str], cwd: Path | None = None, check: bool = True) -> sub
 
 
 def git_output(args: list[str], cwd: Path | None = None) -> str:
-    return run_git(args, cwd=cwd).stdout.strip()
+    return run_git(args, cwd=cwd).stdout.rstrip("\r\n")
 
 
 def ensure_directory(path: Path) -> None:
