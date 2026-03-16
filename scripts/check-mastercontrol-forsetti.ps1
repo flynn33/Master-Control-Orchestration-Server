@@ -69,6 +69,8 @@ Assert-NotContains $appCMake 'MasterControlModules\.cpp' "MasterControlApp must 
 $shellWindowXamlPath = Join-Path $repoRoot "src\MasterControlShell\MainWindow.xaml"
 $shellWindowCppPath = Join-Path $repoRoot "src\MasterControlShell\MainWindow.xaml.cpp"
 $shellRuntimePath = Join-Path $repoRoot "src\MasterControlShell\ShellRuntime.cpp"
+$webIndexPath = Join-Path $repoRoot "resources\web\index.html"
+$webAppPath = Join-Path $repoRoot "resources\web\app.js"
 
 if (-not (Test-Path $shellWindowXamlPath)) {
     $violations += "src/MasterControlShell/MainWindow.xaml is missing."
@@ -95,6 +97,29 @@ if (-not (Test-Path $shellRuntimePath)) {
     Assert-Contains $shellRuntime 'viewInjectionsBySlot' "ShellRuntime.cpp must parse Forsetti view injection surface state."
     Assert-Contains $shellRuntime 'overlayRoutes' "ShellRuntime.cpp must parse Forsetti overlay route surface state."
     Assert-Contains $shellRuntime 'toolbarItems' "ShellRuntime.cpp must parse Forsetti toolbar surface state."
+}
+
+if (-not (Test-Path $webIndexPath)) {
+    $violations += "resources/web/index.html is missing."
+} else {
+    $webIndex = Get-Content $webIndexPath -Raw
+    Assert-Contains $webIndex 'id="surfaceToolbar"' "resources/web/index.html must expose a Forsetti surface toolbar host."
+    Assert-Contains $webIndex 'id="surfaceNavigation"' "resources/web/index.html must expose a Forsetti surface navigation host."
+    Assert-Contains $webIndex 'id="surfaceContentHost"' "resources/web/index.html must expose a Forsetti surface content host."
+    Assert-Contains $webIndex 'id="surfaceOverlayDialog"' "resources/web/index.html must expose a Forsetti overlay host."
+    Assert-NotContains $webIndex 'id="telemetryGrid"' "resources/web/index.html must not hardcode legacy telemetry sections."
+    Assert-NotContains $webIndex 'id="endpointTable"' "resources/web/index.html must not hardcode legacy runtime tables."
+}
+
+if (-not (Test-Path $webAppPath)) {
+    $violations += "resources/web/app.js is missing."
+} else {
+    $webApp = Get-Content $webAppPath -Raw
+    Assert-Contains $webApp 'ensureBootstrapSurface' "resources/web/app.js must bootstrap the Forsetti browser surface."
+    Assert-Contains $webApp 'renderSurfaceNavigation' "resources/web/app.js must rebuild browser navigation from Forsetti surface state."
+    Assert-Contains $webApp 'renderSurfaceToolbar' "resources/web/app.js must rebuild the browser toolbar from Forsetti surface state."
+    Assert-Contains $webApp 'resolvePrimaryViewForDestination' "resources/web/app.js must resolve browser content from Forsetti view injections."
+    Assert-Contains $webApp 'openOverlayRoute' "resources/web/app.js must host Forsetti overlay routes."
 }
 
 $manifestDirs = Get-ChildItem -Path (Join-Path $repoRoot "src") -Recurse -Directory -Filter "ForsettiManifests" -ErrorAction SilentlyContinue

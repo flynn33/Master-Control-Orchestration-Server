@@ -8,176 +8,76 @@
 </head>
 <body>
   <div class="grid-backdrop"></div>
+
   <header class="hero">
-    <div>
+    <div class="hero-copy">
       <p class="eyebrow">TRON Operations Surface</p>
       <h1>Master Control Program</h1>
-      <p class="subtitle">Forsetti-compliant control plane for MCP servers, sub-agents, imports, exports, and live LAN telemetry.</p>
+      <p class="subtitle">
+        Forsetti-native browser host for MCP servers, sub-agents, imports, exports, provider routing, and live LAN telemetry.
+      </p>
     </div>
-    <div class="hero-actions">
-      <button id="refreshButton">Refresh</button>
-      <span id="healthBadge" class="badge">Connecting</span>
+
+    <div class="hero-status">
+      <button id="refreshButton" type="button">Refresh Surface</button>
+      <span id="healthBadge" class="badge" data-tone="info">Connecting</span>
     </div>
   </header>
 
-  <main class="layout">
-    <section class="panel">
-      <h2>Host Telemetry</h2>
-      <div id="telemetryGrid" class="telemetry-grid"></div>
-    </section>
+  <section class="hero-toolbar-band">
+    <div>
+      <p class="eyebrow">Forsetti Surface Toolbar</p>
+      <p class="toolbar-caption">Module-defined actions are hosted here instead of hardcoded browser commands.</p>
+    </div>
+    <div id="surfaceToolbar" class="surface-toolbar"></div>
+  </section>
 
-    <section class="panel">
-      <h2>Environment Profile</h2>
-      <div id="environmentGrid" class="telemetry-grid"></div>
-    </section>
-
-    <section class="panel">
-      <h2>Runtime Inventory</h2>
-      <div class="table-wrap">
-        <table id="endpointTable">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Kind</th>
-              <th>Host</th>
-              <th>Port</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+  <main class="surface-shell">
+    <aside class="panel surface-nav-panel">
+      <div class="panel-heading">
+        <p class="eyebrow">Forsetti Navigation</p>
+        <h2>Grid Index</h2>
       </div>
-    </section>
+      <div id="surfaceNavigation" class="surface-navigation"></div>
+      <div id="surfaceSummary" class="surface-summary"></div>
+    </aside>
 
-    <section class="panel">
-      <h2>Configuration</h2>
-      <form id="configForm" class="stack">
-        <label>Instance Name<input name="instanceName" required></label>
-        <label>Bind Address<input name="bindAddress" required></label>
-        <label>Browser Port<input name="browserPort" type="number" min="1" max="65535"></label>
-        <label>Beacon Port<input name="beaconPort" type="number" min="1" max="65535"></label>
-        <label><input name="beaconEnabled" type="checkbox"> Enable LAN Beacon</label>
-        <label><input name="aiAutonomyEnabled" type="checkbox"> Allow AI full autonomy when enabled by user</label>
-        <label><input name="allowOpenLanAccess" type="checkbox"> Open LAN browser access</label>
-        <label><input name="securityProtocolsEnabled" type="checkbox"> Security protocols enabled</label>
-        <button type="submit">Save Configuration</button>
-      </form>
-    </section>
-
-    <section class="panel">
-      <h2>Providers</h2>
-      <div id="providerList" class="provider-list"></div>
-      <form id="providerForm" class="stack">
-        <label>Provider ID<input name="id" required></label>
-        <label>Display Name<input name="displayName" required></label>
-        <label>Base URL<input name="baseUrl" required></label>
-        <label>Kind
-          <select name="kind">
-            <option value="codex">Codex</option>
-            <option value="claude_code">Claude Code</option>
-            <option value="openai">OpenAI / ChatGPT</option>
-            <option value="xai">xAI / Grok</option>
-            <option value="generic">Generic</option>
-          </select>
-        </label>
-        <label><input name="enabled" type="checkbox" checked> Enabled</label>
-        <label><input name="allowAutonomousControl" type="checkbox"> Allow autonomous dashboard control</label>
-        <button type="submit">Save Provider</button>
-      </form>
-    </section>
-
-    <section class="panel">
-      <h2>Imports</h2>
-      <div class="stack">
-        <div class="segmented-control" id="importModeSwitch" aria-label="Import mode">
-          <button type="button" class="segment is-active" data-import-mode="package">Package Installer</button>
-          <button type="button" class="segment" data-import-mode="repo">Bootstrap Repository</button>
-          <button type="button" class="segment" data-import-mode="zip">Zip Bundle</button>
-        </div>
-
-        <p id="importStatus" class="status-message">Import operations are executed through the local admin API.</p>
-
-        <form id="packageInstallForm" class="stack import-form">
-          <h3>MSI / EXE / PowerShell</h3>
-          <label>Source URL or Path<input name="source" required></label>
-          <label>Kind
-            <select name="kind">
-              <option value="msi">MSI</option>
-              <option value="exe" selected>EXE</option>
-              <option value="powershell">PowerShell</option>
-            </select>
-          </label>
-          <label>Arguments<input name="arguments" placeholder="-EnvironmentName lab -Force"></label>
-          <label><input name="allowUntrustedExecution" type="checkbox"> Explicitly approve untrusted source</label>
-          <button type="submit">Run Package Installer</button>
-        </form>
-
-        <form id="repoInstallForm" class="stack import-form is-hidden">
-          <h3>Git Bootstrap Repo</h3>
-          <label>Repository URL or Local Path<input name="repositoryUrl" required></label>
-          <label>Branch<input name="branch" value="main"></label>
-          <label>Manifest File<input name="manifestFile" value="mcp-bootstrap.json"></label>
-          <label><input name="allowUntrustedExecution" type="checkbox"> Explicitly approve untrusted source</label>
-          <button type="submit">Install Repository</button>
-        </form>
-
-        <form id="zipInstallForm" class="stack import-form is-hidden">
-          <h3>Zip Bundle</h3>
-          <label>Source URL or Path<input name="source" required></label>
-          <label>Manifest File<input name="manifestFile" value="mcp-bootstrap.json"></label>
-          <label><input name="allowUntrustedExecution" type="checkbox"> Explicitly approve untrusted source</label>
-          <button type="submit">Install Zip Bundle</button>
-        </form>
+    <section class="panel surface-content-panel">
+      <div class="surface-heading">
+        <p id="currentViewEyebrow" class="eyebrow">OVERVIEW</p>
+        <h2 id="currentViewTitle">Command Deck</h2>
+        <p id="currentViewDescription" class="subtitle">
+          Move across the browser control plane using Forsetti surface descriptors instead of a fixed dashboard layout.
+        </p>
       </div>
-    </section>
-
-    <section class="panel">
-      <h2>Exports</h2>
-      <div class="stack">
-        <div class="toolbar">
-          <label class="compact-field">Artifact
-            <select id="exportSelector"></select>
-          </label>
-          <div class="button-row">
-            <button id="refreshExportsButton" type="button">Refresh Artifacts</button>
-            <button id="downloadSelectedExportButton" type="button">Download Selected</button>
-            <button id="downloadAllExportsButton" type="button">Download All</button>
-          </div>
-        </div>
-
-        <div class="artifact-meta">
-          <article class="telemetry-card">
-            <div>File Name</div>
-            <div id="selectedExportFileName" class="metric metric-compact">No artifact selected</div>
-          </article>
-          <article class="telemetry-card">
-            <div>Media Type</div>
-            <div id="selectedExportMediaType" class="metric metric-compact">n/a</div>
-          </article>
-        </div>
-
-        <label>Artifact Preview
-          <textarea id="exportPreview" rows="14" readonly></textarea>
-        </label>
-
-        <p id="exportStatus" class="status-message">Exports are generated by the service and downloaded directly through the browser.</p>
-        <div id="exportList" class="export-list"></div>
-      </div>
-    </section>
-
-    <section class="panel">
-      <h2>Install History</h2>
-      <div id="installHistory" class="history-list"></div>
+      <div id="surfaceContentHost" class="surface-content-host"></div>
     </section>
   </main>
+
+  <dialog id="surfaceOverlayDialog" class="surface-overlay-dialog">
+    <div class="overlay-shell">
+      <div class="overlay-header">
+        <div>
+          <p id="overlayEyebrow" class="eyebrow">FORSETTI OVERLAY</p>
+          <h3 id="overlayTitle">Overlay</h3>
+          <p id="overlayDescription" class="subtitle">Overlay content is hosted from Forsetti route descriptors.</p>
+        </div>
+        <menu class="dialog-actions">
+          <button id="overlayCloseButton" type="button">Close</button>
+          <button id="overlayWorkspaceButton" type="button">Open In Workspace</button>
+        </menu>
+      </div>
+      <div id="surfaceOverlayContent" class="overlay-content"></div>
+    </div>
+  </dialog>
 
   <dialog id="dangerDialog">
     <form method="dialog" class="stack dialog-body">
       <h3>Disable Security Protocols?</h3>
       <p>This enables troubleshooting mode and weakens the safety posture of the dashboard on your LAN.</p>
       <menu class="dialog-actions">
-        <button value="cancel">Cancel</button>
-        <button value="confirm" class="danger">Disable Security</button>
+        <button value="cancel" type="submit">Cancel</button>
+        <button value="confirm" type="submit" class="danger">Disable Security</button>
       </menu>
     </form>
   </dialog>
