@@ -1,0 +1,44 @@
+# Forsetti Framework — Windows CI Guardrails
+# Copyright (c) 2026 James Daley. All Rights Reserved.
+
+name: Forsetti Guardrails
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: Build & Test (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Bootstrap vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git ${{ runner.temp }}/vcpkg
+          & "${{ runner.temp }}/vcpkg/bootstrap-vcpkg.bat"
+        shell: pwsh
+
+      - name: Configure
+        run: |
+          cmake --preset debug
+        env:
+          VCPKG_ROOT: ${{ runner.temp }}/vcpkg
+
+      - name: Build
+        run: cmake --build --preset debug
+
+      - name: Test
+        run: ctest --preset debug --output-on-failure
+
+      - name: Architecture Enforcement
+        run: .\Scripts\check-architecture.ps1
+        shell: pwsh

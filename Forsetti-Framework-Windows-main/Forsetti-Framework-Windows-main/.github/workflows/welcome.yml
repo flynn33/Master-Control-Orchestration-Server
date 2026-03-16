@@ -1,0 +1,75 @@
+# Forsetti Framework — Welcome Bot
+# Greets first-time contributors on their first PR or issue.
+
+name: Welcome
+
+on:
+  pull_request_target:
+    types: [opened]
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  welcome:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const author = context.payload.sender.login;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const isPR = !!context.payload.pull_request;
+
+            // Check if this is the author's first contribution
+            if (isPR) {
+              const { data: prs } = await github.rest.pulls.list({
+                owner,
+                repo,
+                state: 'all',
+                sort: 'created',
+                direction: 'asc',
+                per_page: 1,
+              });
+
+              // If first PR is not this one, they've contributed before
+              if (prs.length > 0 && prs[0].number !== context.payload.pull_request.number) {
+                console.log(`${author} has contributed before — skipping welcome.`);
+                return;
+              }
+
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: context.payload.pull_request.number,
+                body: `Welcome to the Forsetti Framework, @${author}! Thanks for your first pull request.\n\nA maintainer will review your changes shortly. In the meantime, please make sure:\n- Your PR title follows [Conventional Commits](https://www.conventionalcommits.org/) format (e.g., \`feat: ...\`, \`fix: ...\`)\n- You've selected the appropriate version label\n- Tests pass locally with \`ctest --preset debug\`\n\nThanks for contributing!`,
+              });
+            } else {
+              const { data: issues } = await github.rest.issues.listForRepo({
+                owner,
+                repo,
+                creator: author,
+                state: 'all',
+                sort: 'created',
+                direction: 'asc',
+                per_page: 2,
+              });
+
+              // Filter out PRs (GitHub API returns PRs as issues too)
+              const realIssues = issues.filter(i => !i.pull_request);
+              if (realIssues.length > 1) {
+                console.log(`${author} has opened issues before — skipping welcome.`);
+                return;
+              }
+
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: context.payload.issue.number,
+                body: `Thanks for opening your first issue, @${author}! A maintainer will look into this.\n\nIf this is a bug report, please include steps to reproduce, expected behavior, and your environment (Windows version, MSVC version, etc.).`,
+              });
+            }

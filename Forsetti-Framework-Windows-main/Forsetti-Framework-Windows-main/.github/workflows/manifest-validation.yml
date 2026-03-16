@@ -1,0 +1,23 @@
+# Forsetti Framework — Module Manifest Validation
+# Copyright (c) 2026 James Daley. All Rights Reserved.
+
+name: Manifest Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate-manifests:
+    name: Manifest Schema Check
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate manifests
+        run: .\Scripts\check-manifests.ps1
+        shell: pwsh

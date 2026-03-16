@@ -1,0 +1,81 @@
+# Forsetti Framework — Auto-Label PRs
+# Automatically applies version labels based on PR title conventional commits prefix.
+# Also labels by file paths changed.
+
+name: Auto Label PR
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  label-by-title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label by conventional commit prefix
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = context.payload.pull_request.title.toLowerCase();
+            const labelsToAdd = [];
+
+            // Version labels from conventional commits
+            if (title.startsWith('feat!') || title.startsWith('breaking') || title.includes('!:')) {
+              labelsToAdd.push('version:major');
+            } else if (title.startsWith('feat')) {
+              labelsToAdd.push('version:minor');
+            } else if (title.startsWith('fix') || title.startsWith('patch') || title.startsWith('hotfix')) {
+              labelsToAdd.push('version:patch');
+            }
+
+            // Category labels
+            if (title.startsWith('docs') || title.startsWith('doc')) {
+              labelsToAdd.push('documentation');
+            }
+            if (title.startsWith('fix') || title.startsWith('bug')) {
+              labelsToAdd.push('bug');
+            }
+            if (title.startsWith('feat')) {
+              labelsToAdd.push('enhancement');
+            }
+
+            if (labelsToAdd.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                labels: labelsToAdd,
+              });
+              console.log(`Applied labels: ${labelsToAdd.join(', ')}`);
+            } else {
+              console.log('No matching conventional commit prefix found — no labels applied.');
+            }
+
+  label-by-path:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label by changed file paths
+        uses: actions/labeler@v5
+        with:
+          repo-token: "${{ secrets.GITHUB_TOKEN }}"
+          sync-labels: false
+
+  # Also creates the labeler config if it doesn't exist
+  ensure-labeler-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for labeler config
+        id: check
+        run: |
+          if [ -f ".github/labeler.yml" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Info
+        if: steps.check.outputs.exists == 'false'
+        run: echo "Note — .github/labeler.yml not found. Path-based labeling will be skipped until it's created."

@@ -1,0 +1,23 @@
+# Forsetti Framework — Dependency Audit (R001, R006)
+# Copyright (c) 2026 James Daley. All Rights Reserved.
+
+name: Dependency Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  audit-dependencies:
+    name: Dependency Check (R001/R006)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Audit dependencies
+        run: .\Scripts\check-dependencies.ps1
+        shell: pwsh

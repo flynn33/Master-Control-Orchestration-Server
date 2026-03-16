@@ -1,0 +1,25 @@
+# Forsetti Framework — Release Drafter
+# Maintains a draft release that accumulates PR descriptions as they merge.
+# When ready to release, publish the draft to trigger the changelog workflow.
+
+name: Release Drafter
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-draft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        with:
+          config-name: release-drafter-config.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

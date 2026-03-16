@@ -1,0 +1,101 @@
+// Master Control Program
+// Copyright (c) 2026 James Daley. All Rights Reserved.
+// Proprietary and Confidential.
+
+#pragma once
+
+#include "MasterControl/MasterControlModels.h"
+
+#include <string>
+#include <vector>
+
+namespace MasterControl {
+
+class ITelemetryService {
+public:
+    virtual HostTelemetrySnapshot captureSnapshot() = 0;
+    virtual ~ITelemetryService() = default;
+};
+
+class IRuntimeInventoryService {
+public:
+    virtual std::vector<RuntimeEndpoint> listEndpoints() = 0;
+    virtual void refresh() = 0;
+    virtual ~IRuntimeInventoryService() = default;
+};
+
+class IConfigurationService {
+public:
+    virtual AppConfiguration current() const = 0;
+    virtual OperationResult update(const AppConfiguration& configuration,
+                                   bool confirmUnsafeChanges) = 0;
+    virtual ~IConfigurationService() = default;
+};
+
+class IResourceAllocationService {
+public:
+    virtual ResourceAllocationProfile current() const = 0;
+    virtual OperationResult update(const ResourceAllocationProfile& profile) = 0;
+    virtual ~IResourceAllocationService() = default;
+};
+
+class IPackageTrustEvaluator {
+public:
+    virtual PackageTrustDecision evaluate(const std::string& source,
+                                          bool allowUntrustedExecution) const = 0;
+    virtual ~IPackageTrustEvaluator() = default;
+};
+
+class IBootstrapRepoService {
+public:
+    virtual OperationResult installFromRepository(const BootstrapRepoSpec& spec) = 0;
+    virtual ~IBootstrapRepoService() = default;
+};
+
+class IZipBundleService {
+public:
+    virtual OperationResult installFromZipBundle(const ZipBundleSpec& spec) = 0;
+    virtual ~IZipBundleService() = default;
+};
+
+class IInstallerOrchestrator {
+public:
+    virtual OperationResult installPackage(const InstallerPackageSpec& spec) = 0;
+    virtual std::vector<InstallProvenance> history() const = 0;
+    virtual ~IInstallerOrchestrator() = default;
+};
+
+class IProviderRegistry {
+public:
+    virtual std::vector<ProviderConnection> listProviders() const = 0;
+    virtual OperationResult upsertProvider(const ProviderConnection& provider) = 0;
+    virtual ~IProviderRegistry() = default;
+};
+
+class IExportService {
+public:
+    virtual std::vector<ExportArtifact> generateExports() const = 0;
+    virtual ~IExportService() = default;
+};
+
+class IBeaconService {
+public:
+    virtual BeaconAdvertisement currentAdvertisement() const = 0;
+    virtual void start() = 0;
+    virtual void stop() = 0;
+    virtual ~IBeaconService() = default;
+};
+
+class IAdminApiService {
+public:
+    virtual DashboardSnapshot snapshot() = 0;
+    virtual OperationResult applyConfigurationJson(const std::string& requestBody,
+                                                   bool confirmUnsafeChanges) = 0;
+    virtual OperationResult upsertProviderJson(const std::string& requestBody) = 0;
+    virtual OperationResult installPackageJson(const std::string& requestBody) = 0;
+    virtual OperationResult installRepoJson(const std::string& requestBody) = 0;
+    virtual OperationResult installZipJson(const std::string& requestBody) = 0;
+    virtual ~IAdminApiService() = default;
+};
+
+} // namespace MasterControl

@@ -1,0 +1,59 @@
+# Visual Studio
+.vs/
+*.VC.db
+*.VC.opendb
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.ipch
+
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+build/
+dist/
+out/
+Testing/
+TestResults/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake-build-*/
+compile_commands.json
+CTestTestfile.cmake
+cmake_install.cmake
+install_manifest.txt
+
+# Generated binaries and symbols
+*.obj
+*.o
+*.pch
+*.pdb
+*.ilk
+*.idb
+*.lib
+*.exp
+*.dll
+*.exe
+*.appxrecipe
+*.winmd
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+*.bak
+*.cache
+*.orig
+
+# NuGet package restore output
+packages/
+
+# User-specific CMake presets
+CMakeUserPresets.json

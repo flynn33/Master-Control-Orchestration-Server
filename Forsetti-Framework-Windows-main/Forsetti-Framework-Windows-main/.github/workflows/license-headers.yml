@@ -1,0 +1,56 @@
+# Forsetti Framework — License Header Enforcement (R008)
+# Copyright (c) 2026 James Daley. All Rights Reserved.
+
+name: License Headers
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-headers:
+    name: Copyright Headers (R008)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check license headers
+        run: |
+          $ErrorActionPreference = "Stop"
+          $violations = @()
+          $requiredLines = @(
+            "Forsetti Framework for Windows",
+            "Copyright (c) 2026 James Daley. All Rights Reserved.",
+            "Proprietary and Confidential. Patent Pending."
+          )
+
+          $sourceFiles = Get-ChildItem -Path "include", "src" -Recurse -Include "*.h", "*.cpp" -ErrorAction SilentlyContinue
+
+          foreach ($file in $sourceFiles) {
+            $content = Get-Content $file.FullName -TotalCount 5 -ErrorAction SilentlyContinue
+            $header = $content -join "`n"
+
+            foreach ($line in $requiredLines) {
+              if ($header -notmatch [regex]::Escape($line)) {
+                $rel = $file.FullName.Replace("$PWD\", "").Replace("$PWD/", "")
+                $violations += "R008: $rel — missing '$line' in header"
+                break
+              }
+            }
+          }
+
+          if ($violations.Count -eq 0) {
+            Write-Host "All source files have correct license headers." -ForegroundColor Green
+          } else {
+            Write-Host "License header violations:" -ForegroundColor Red
+            foreach ($v in $violations) {
+              Write-Host "  - $v" -ForegroundColor Red
+            }
+            Write-Host "`n$($violations.Count) violation(s) found." -ForegroundColor Red
+            exit 1
+          }
+        shell: pwsh

@@ -1,0 +1,54 @@
+# Release Drafter configuration
+# See: https://github.com/release-drafter/release-drafter
+
+name-template: 'Forsetti Framework v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+
+categories:
+  - title: 'Breaking Changes'
+    labels:
+      - 'version:major'
+  - title: 'Features'
+    labels:
+      - 'enhancement'
+      - 'version:minor'
+  - title: 'Bug Fixes'
+    labels:
+      - 'bug'
+      - 'version:patch'
+  - title: 'Documentation'
+    labels:
+      - 'documentation'
+  - title: 'Build & CI'
+    labels:
+      - 'build'
+      - 'ci'
+  - title: 'Other Changes'
+    labels:
+      - '*'
+
+change-template: '- $TITLE (#$NUMBER) @$AUTHOR'
+change-title-escapes: '\<*_&'
+no-changes-template: 'No changes since the last release.'
+
+version-resolver:
+  major:
+    labels:
+      - 'version:major'
+  minor:
+    labels:
+      - 'version:minor'
+  patch:
+    labels:
+      - 'version:patch'
+  default: patch
+
+exclude-labels:
+  - 'changelog:skip'
+
+template: |
+  ## What's Changed
+
+  $CHANGES
+
+  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION

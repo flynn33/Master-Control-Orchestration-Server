@@ -1,0 +1,8 @@
+{
+  "name": "forsetti-framework-windows",
+  "version-string": "0.1.0",
+  "description": "Forsetti Framework for Windows — Modular Runtime Framework",
+  "dependencies": [
+    "nlohmann-json"
+  ]
+}

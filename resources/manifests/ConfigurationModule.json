@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1.0",
+  "moduleID": "com.mastercontrol.configuration",
+  "displayName": "Configuration",
+  "moduleVersion": { "major": 0, "minor": 1, "patch": 0, "prerelease": null },
+  "moduleType": "service",
+  "supportedPlatforms": ["Windows"],
+  "minForsettiVersion": { "major": 0, "minor": 1, "patch": 0, "prerelease": null },
+  "maxForsettiVersion": null,
+  "capabilitiesRequested": ["storage", "secure_storage", "event_publishing"],
+  "iapProductID": null,
+  "entryPoint": "ConfigurationModule"
+}

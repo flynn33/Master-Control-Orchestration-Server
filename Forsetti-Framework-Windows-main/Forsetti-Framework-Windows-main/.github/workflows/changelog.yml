@@ -1,0 +1,190 @@
+# Forsetti Framework — Changelog Generator
+# Generates and updates CHANGELOG.md when a new version tag is pushed.
+
+name: Changelog
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  generate-changelog:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get tag info
+        id: tag
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "current=$TAG" >> "$GITHUB_OUTPUT"
+
+          # Find the previous tag
+          PREV=$(git tag --sort=-v:refname | grep '^v' | sed -n '2p')
+          if [ -z "$PREV" ]; then
+            echo "previous=" >> "$GITHUB_OUTPUT"
+            echo "range=HEAD" >> "$GITHUB_OUTPUT"
+          else
+            echo "previous=$PREV" >> "$GITHUB_OUTPUT"
+            echo "range=${PREV}..HEAD" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate changelog entry
+        id: changelog
+        run: |
+          TAG="${{ steps.tag.outputs.current }}"
+          RANGE="${{ steps.tag.outputs.range }}"
+          PREV="${{ steps.tag.outputs.previous }}"
+          DATE=$(date +%Y-%m-%d)
+
+          {
+            echo "entry<<CHANGELOG_EOF"
+            echo "## [$TAG] — $DATE"
+            echo ""
+
+            # Breaking changes
+            BREAKING=$(git log "$RANGE" --pretty=format:"%s" --grep="^feat!\\|^BREAKING\\|!:" 2>/dev/null || true)
+            if [ -n "$BREAKING" ]; then
+              echo "### Breaking Changes"
+              echo "$BREAKING" | while IFS= read -r line; do
+                echo "- $line"
+              done
+              echo ""
+            fi
+
+            # Features
+            FEATURES=$(git log "$RANGE" --pretty=format:"%s" --grep="^feat" 2>/dev/null | grep -v "^feat!" || true)
+            if [ -n "$FEATURES" ]; then
+              echo "### Features"
+              echo "$FEATURES" | while IFS= read -r line; do
+                echo "- $line"
+              done
+              echo ""
+            fi
+
+            # Bug fixes
+            FIXES=$(git log "$RANGE" --pretty=format:"%s" --grep="^fix" 2>/dev/null || true)
+            if [ -n "$FIXES" ]; then
+              echo "### Bug Fixes"
+              echo "$FIXES" | while IFS= read -r line; do
+                echo "- $line"
+              done
+              echo ""
+            fi
+
+            # Other changes (docs, refactor, chore, ci, test, etc.)
+            OTHER=$(git log "$RANGE" --pretty=format:"%s" --grep="^docs\\|^refactor\\|^ci\\|^test\\|^perf\\|^style\\|^build" 2>/dev/null || true)
+            if [ -n "$OTHER" ]; then
+              echo "### Other Changes"
+              echo "$OTHER" | while IFS= read -r line; do
+                echo "- $line"
+              done
+              echo ""
+            fi
+
+            # Compare link
+            if [ -n "$PREV" ]; then
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV}...${TAG}"
+            fi
+            echo ""
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Update CHANGELOG.md
+        run: |
+          ENTRY="${{ steps.changelog.outputs.entry }}"
+
+          if [ -f CHANGELOG.md ]; then
+            # Insert new entry after the title line
+            {
+              head -1 CHANGELOG.md
+              echo ""
+              echo "$ENTRY"
+              tail -n +2 CHANGELOG.md
+            } > CHANGELOG.tmp
+            mv CHANGELOG.tmp CHANGELOG.md
+          else
+            {
+              echo "# Changelog"
+              echo ""
+              echo "All notable changes to the Forsetti Framework are documented in this file."
+              echo "This changelog is automatically generated from commit messages using [Conventional Commits](https://www.conventionalcommits.org/)."
+              echo ""
+              echo "$ENTRY"
+            } > CHANGELOG.md
+          fi
+
+      - name: Commit changelog
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "docs: update changelog for ${{ steps.tag.outputs.current }}"
+          git push origin HEAD:main
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: generate-changelog
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get tag info
+        id: tag
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "current=$TAG" >> "$GITHUB_OUTPUT"
+          PREV=$(git tag --sort=-v:refname | grep '^v' | sed -n '2p')
+          echo "previous=$PREV" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          TAG="${{ steps.tag.outputs.current }}"
+          PREV="${{ steps.tag.outputs.previous }}"
+
+          if [ -n "$PREV" ]; then
+            RANGE="${PREV}..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+
+          {
+            echo "body<<RELEASE_EOF"
+            git log "$RANGE" --pretty=format:"- %s (%h)" 2>/dev/null || true
+            echo ""
+            echo ""
+            if [ -n "$PREV" ]; then
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV}...${TAG}"
+            fi
+            echo "RELEASE_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = '${{ steps.tag.outputs.current }}';
+            const isPrerelease = tag.includes('-alpha') || tag.includes('-beta') || tag.includes('-rc');
+
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `Forsetti Framework ${tag}`,
+              body: `${{ steps.notes.outputs.body }}`,
+              draft: false,
+              prerelease: isPrerelease,
+            });

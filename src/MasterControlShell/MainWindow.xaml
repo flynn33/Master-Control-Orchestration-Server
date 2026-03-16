@@ -1,0 +1,556 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="MasterControlShell.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="Master Control Program">
+    <Grid x:Name="RootGrid" Background="{StaticResource ShellBackgroundBrush}" Loaded="RootGrid_Loaded">
+        <Grid>
+            <Rectangle Fill="{StaticResource ShellBackgroundBrush}" />
+
+            <Canvas IsHitTestVisible="False" Opacity="0.55">
+                <Ellipse
+                    Width="920"
+                    Height="920"
+                    Canvas.Left="-260"
+                    Canvas.Top="-320"
+                    Stroke="{StaticResource ShellAccentSoftBrush}"
+                    StrokeThickness="2" />
+                <Ellipse
+                    Width="560"
+                    Height="560"
+                    Canvas.Left="1010"
+                    Canvas.Top="-120"
+                    Stroke="{StaticResource ShellGlowBrush}"
+                    StrokeThickness="2" />
+                <Rectangle
+                    Width="820"
+                    Height="1"
+                    Canvas.Left="92"
+                    Canvas.Top="188"
+                    Fill="{StaticResource ShellGridlineBrush}" />
+                <Rectangle
+                    Width="1"
+                    Height="980"
+                    Canvas.Left="134"
+                    Canvas.Top="120"
+                    Fill="{StaticResource ShellGridlineBrush}" />
+            </Canvas>
+
+            <Grid Margin="24">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border
+                    x:Name="TitleBarHost"
+                    Padding="22,18"
+                    Background="#2400F6FF"
+                    BorderBrush="{StaticResource ShellCardEdgeBrush}"
+                    BorderThickness="1"
+                    CornerRadius="24">
+                    <Grid ColumnSpacing="18">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Orientation="Horizontal" Spacing="16">
+                            <Border
+                                Width="52"
+                                Height="52"
+                                Background="#1800F6FF"
+                                BorderBrush="{StaticResource ShellCardEdgeBrush}"
+                                BorderThickness="1"
+                                CornerRadius="18">
+                                <FontIcon
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    FontSize="28"
+                                    Foreground="{StaticResource ShellAccentBrush}"
+                                    Glyph="&#xE7F4;" />
+                            </Border>
+
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="MASTER CONTROL PROGRAM" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                <TextBlock
+                                    Text="WinUI command shell for telemetry, MCP orchestration, provider routing, and LAN gateway control."
+                                    Style="{StaticResource ShellLabelTextStyle}" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel
+                            Grid.Column="1"
+                            Orientation="Horizontal"
+                            Spacing="10"
+                            VerticalAlignment="Center">
+                            <Border
+                                x:Name="ApiBadgeBorder"
+                                Padding="12,6"
+                                Background="#2200F6FF"
+                                BorderBrush="{StaticResource ShellCardEdgeBrush}"
+                                BorderThickness="1"
+                                CornerRadius="999">
+                                <TextBlock
+                                    x:Name="ApiBadgeText"
+                                    Text="API UNKNOWN"
+                                    Style="{StaticResource ShellEyebrowTextStyle}" />
+                            </Border>
+                            <Border
+                                x:Name="ServiceBadgeBorder"
+                                Padding="12,6"
+                                Background="#2200F6FF"
+                                BorderBrush="{StaticResource ShellCardEdgeBrush}"
+                                BorderThickness="1"
+                                CornerRadius="999">
+                                <TextBlock
+                                    x:Name="ServiceBadgeText"
+                                    Text="SERVICE UNKNOWN"
+                                    Style="{StaticResource ShellEyebrowTextStyle}" />
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border
+                    x:Name="StatusBannerBorder"
+                    Grid.Row="1"
+                    Margin="0,18,0,0"
+                    Padding="18,14"
+                    Background="#1A103045"
+                    BorderBrush="{StaticResource ShellTileEdgeBrush}"
+                    BorderThickness="1"
+                    CornerRadius="18">
+                    <Grid ColumnSpacing="18">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock x:Name="StatusBannerStateText" Text="SYSTEM STATUS" Style="{StaticResource ShellEyebrowTextStyle}" />
+
+                        <TextBlock
+                            x:Name="StatusBannerText"
+                            Grid.Column="1"
+                            Style="{StaticResource ShellBodyTextStyle}"
+                            Text="Loading local service and dashboard state."
+                            VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <ScrollViewer
+                    Grid.Row="2"
+                    Margin="0,22,0,0"
+                    HorizontalScrollBarVisibility="Disabled"
+                    VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="22">
+                        <Grid ColumnSpacing="22">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.7*" />
+                                <ColumnDefinition Width="1*" />
+                            </Grid.ColumnDefinitions>
+
+                            <Border Style="{StaticResource ShellHeroCardStyle}">
+                                <Grid RowSpacing="20">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <StackPanel Spacing="14">
+                                        <TextBlock Text="COMMAND DECK" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                        <TextBlock
+                                            Text="A neon control surface for service operations, live telemetry, LAN beaconing, and AI-provider command flow."
+                                            Style="{StaticResource ShellHeroTitleTextStyle}" />
+                                        <TextBlock
+                                            x:Name="OverviewTextBlock"
+                                            MaxWidth="760"
+                                            Style="{StaticResource ShellBodyTextStyle}"
+                                            Text="Loading shell snapshot..." />
+                                    </StackPanel>
+
+                                    <Grid Grid.Row="1" ColumnSpacing="14" RowSpacing="14">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <Button
+                                            x:Name="RefreshButton"
+                                            Click="RefreshButton_Click"
+                                            Style="{StaticResource ShellCommandButtonStyle}">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="10">
+                                                <FontIcon FontSize="15" Foreground="{StaticResource ShellAccentBrush}" Glyph="&#xE72C;" />
+                                                <TextBlock Text="Refresh" />
+                                            </StackPanel>
+                                        </Button>
+
+                                        <Button
+                                            x:Name="StartServiceButton"
+                                            Grid.Column="1"
+                                            Click="StartServiceButton_Click"
+                                            Style="{StaticResource ShellCommandButtonStyle}">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="10">
+                                                <FontIcon FontSize="15" Foreground="{StaticResource ShellSuccessBrush}" Glyph="&#xE768;" />
+                                                <TextBlock Text="Start Service" />
+                                            </StackPanel>
+                                        </Button>
+
+                                        <Button
+                                            x:Name="StopServiceButton"
+                                            Grid.Column="2"
+                                            Click="StopServiceButton_Click"
+                                            Style="{StaticResource ShellCommandButtonStyle}">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="10">
+                                                <FontIcon FontSize="15" Foreground="{StaticResource ShellDangerBrush}" Glyph="&#xE71A;" />
+                                                <TextBlock Text="Stop Service" />
+                                            </StackPanel>
+                                        </Button>
+
+                                        <Button
+                                            x:Name="OpenDashboardButton"
+                                            Grid.Row="1"
+                                            Click="OpenDashboardButton_Click"
+                                            Style="{StaticResource ShellCommandButtonStyle}">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="10">
+                                                <FontIcon FontSize="15" Foreground="{StaticResource ShellAccentBrush}" Glyph="&#xE8A7;" />
+                                                <TextBlock Text="Open Dashboard" />
+                                            </StackPanel>
+                                        </Button>
+
+                                        <Button
+                                            x:Name="OpenConfigButton"
+                                            Grid.Row="1"
+                                            Grid.Column="1"
+                                            Click="OpenConfigButton_Click"
+                                            Style="{StaticResource ShellCommandButtonStyle}">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="10">
+                                                <FontIcon FontSize="15" Foreground="{StaticResource ShellWarningBrush}" Glyph="&#xE713;" />
+                                                <TextBlock Text="Open Config" />
+                                            </StackPanel>
+                                        </Button>
+
+                                        <Button
+                                            x:Name="OpenDataButton"
+                                            Grid.Row="1"
+                                            Grid.Column="2"
+                                            Click="OpenDataButton_Click"
+                                            Style="{StaticResource ShellCommandButtonStyle}">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="10">
+                                                <FontIcon FontSize="15" Foreground="{StaticResource ShellAccentBrush}" Glyph="&#xE8B7;" />
+                                                <TextBlock Text="Open Data" />
+                                            </StackPanel>
+                                        </Button>
+                                    </Grid>
+
+                                    <Grid Grid.Row="2" ColumnSpacing="14" RowSpacing="14">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <Border Style="{StaticResource ShellMetricTileStyle}">
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="SERVICE" Style="{StaticResource ShellLabelTextStyle}" />
+                                                <TextBlock x:Name="ServiceStateText" Style="{StaticResource ShellValueTextStyle}" Text="Unknown" />
+                                            </StackPanel>
+                                        </Border>
+
+                                        <Border Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="ADMIN API" Style="{StaticResource ShellLabelTextStyle}" />
+                                                <TextBlock x:Name="ApiStateText" Style="{StaticResource ShellValueTextStyle}" Text="Unknown" />
+                                            </StackPanel>
+                                        </Border>
+
+                                        <Border Grid.Row="1" Style="{StaticResource ShellMetricTileStyle}">
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="ENDPOINTS" Style="{StaticResource ShellLabelTextStyle}" />
+                                                <TextBlock x:Name="EndpointCountText" Style="{StaticResource ShellValueTextStyle}" Text="0" />
+                                            </StackPanel>
+                                        </Border>
+
+                                        <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
+                                            <StackPanel Spacing="6">
+                                                <TextBlock Text="PROVIDERS" Style="{StaticResource ShellLabelTextStyle}" />
+                                                <TextBlock x:Name="ProviderCountText" Style="{StaticResource ShellValueTextStyle}" Text="0" />
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
+                                </Grid>
+                            </Border>
+
+                            <Border Grid.Column="1" Style="{StaticResource ShellCardStyle}">
+                                <Grid>
+                                    <Grid Width="280" Height="280" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <Ellipse Stroke="#1800F6FF" StrokeThickness="2" />
+                                        <Ellipse Width="230" Height="230" Stroke="#3200F6FF" StrokeThickness="2" />
+                                        <Ellipse Width="174" Height="174" Stroke="#5000F6FF" StrokeThickness="2" />
+                                        <Ellipse Width="110" Height="110" Fill="#1800F6FF" Stroke="{StaticResource ShellAccentBrush}" StrokeThickness="2" />
+                                        <Rectangle Width="2" Height="280" Fill="{StaticResource ShellGridlineBrush}" HorizontalAlignment="Center" />
+                                        <Rectangle Width="280" Height="2" Fill="{StaticResource ShellGridlineBrush}" VerticalAlignment="Center" />
+
+                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
+                                            <TextBlock Text="GRID PULSE" HorizontalAlignment="Center" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                            <TextBlock
+                                                x:Name="PulseStateText"
+                                                HorizontalAlignment="Center"
+                                                Style="{StaticResource ShellStatusTextStyle}"
+                                                Text="SYNC" />
+                                            <TextBlock
+                                                x:Name="PulseCaptionText"
+                                                HorizontalAlignment="Center"
+                                                Style="{StaticResource ShellLabelTextStyle}"
+                                                Text="Awaiting runtime telemetry." />
+                                        </StackPanel>
+                                    </Grid>
+                                </Grid>
+                            </Border>
+                        </Grid>
+
+                        <Grid ColumnSpacing="22" RowSpacing="22">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.35*" />
+                                <ColumnDefinition Width="1*" />
+                            </Grid.ColumnDefinitions>
+
+                            <Border Style="{StaticResource ShellCardStyle}">
+                                <StackPanel Spacing="18">
+                                    <TextBlock Text="Live Telemetry" Style="{StaticResource ShellSectionTitleTextStyle}" />
+
+                                    <Grid ColumnSpacing="14">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="70" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="CPU" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
+                                        <ProgressBar x:Name="CpuProgressBar" Grid.Column="1" Height="8" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                                        <TextBlock x:Name="CpuValueText" Grid.Column="2" HorizontalAlignment="Right" Style="{StaticResource ShellDataTextStyle}" />
+                                    </Grid>
+
+                                    <Grid ColumnSpacing="14">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="70" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="RAM" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
+                                        <ProgressBar x:Name="MemoryProgressBar" Grid.Column="1" Height="8" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                                        <TextBlock x:Name="MemoryValueText" Grid.Column="2" HorizontalAlignment="Right" Style="{StaticResource ShellDataTextStyle}" />
+                                    </Grid>
+
+                                    <Grid ColumnSpacing="14">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="70" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="DISK" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
+                                        <ProgressBar x:Name="DiskProgressBar" Grid.Column="1" Height="8" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                                        <TextBlock x:Name="DiskValueText" Grid.Column="2" HorizontalAlignment="Right" Style="{StaticResource ShellDataTextStyle}" />
+                                    </Grid>
+
+                                    <Border
+                                        Padding="16"
+                                        Background="{StaticResource ShellPanelDeepBrush}"
+                                        BorderBrush="{StaticResource ShellTileEdgeBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="16">
+                                        <StackPanel Spacing="8">
+                                            <TextBlock Text="NETWORK TRAFFIC" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock x:Name="TrafficValueText" Style="{StaticResource ShellValueTextStyle}" />
+                                            <TextBlock x:Name="TelemetrySummaryText" Style="{StaticResource ShellDataTextStyle}" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+
+                            <Grid Grid.Column="1" RowSpacing="22">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <Border Style="{StaticResource ShellCardStyle}">
+                                    <StackPanel Spacing="16">
+                                        <TextBlock Text="Environment" Style="{StaticResource ShellSectionTitleTextStyle}" />
+
+                                        <Grid ColumnSpacing="14" RowSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="120" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Text="Profile" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock x:Name="EnvironmentNameText" Grid.Column="1" Style="{StaticResource ShellDataTextStyle}" />
+
+                                            <TextBlock Grid.Row="1" Text="Host" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock x:Name="HostNameText" Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellDataTextStyle}" />
+
+                                            <TextBlock Grid.Row="2" Text="OS" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock x:Name="OperatingSystemText" Grid.Row="2" Grid.Column="1" Style="{StaticResource ShellDataTextStyle}" />
+
+                                            <TextBlock Grid.Row="3" Text="Primary IP" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock x:Name="PrimaryIpText" Grid.Row="3" Grid.Column="1" Style="{StaticResource ShellDataTextStyle}" />
+
+                                            <TextBlock Grid.Row="4" Text="Primary MAC" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock x:Name="PrimaryMacText" Grid.Row="4" Grid.Column="1" Style="{StaticResource ShellDataTextStyle}" />
+                                        </Grid>
+
+                                        <TextBlock
+                                            x:Name="EnvironmentNarrativeText"
+                                            Style="{StaticResource ShellDataTextStyle}"
+                                            Text="Environment details will populate here." />
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Grid.Row="1" Style="{StaticResource ShellCardStyle}">
+                                    <StackPanel Spacing="16">
+                                        <TextBlock Text="Configuration Envelope" Style="{StaticResource ShellSectionTitleTextStyle}" />
+
+                                        <Grid ColumnSpacing="14" RowSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="128" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+
+                                            <TextBlock Text="Bind Address" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock x:Name="BindAddressText" Grid.Column="1" Style="{StaticResource ShellDataTextStyle}" />
+
+                                            <TextBlock Grid.Row="1" Text="Browser Port" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock x:Name="BrowserPortText" Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellDataTextStyle}" />
+
+                                            <TextBlock Grid.Row="2" Text="Beacon" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock x:Name="BeaconEnabledText" Grid.Row="2" Grid.Column="1" Style="{StaticResource ShellDataTextStyle}" />
+
+                                            <TextBlock Grid.Row="3" Text="AI Autonomy" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock x:Name="AiAutonomyText" Grid.Row="3" Grid.Column="1" Style="{StaticResource ShellDataTextStyle}" />
+
+                                            <TextBlock Grid.Row="4" Text="Security" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock x:Name="SecurityProtocolsText" Grid.Row="4" Grid.Column="1" Style="{StaticResource ShellDataTextStyle}" />
+
+                                            <TextBlock Grid.Row="5" Text="Open LAN" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock x:Name="OpenLanAccessText" Grid.Row="5" Grid.Column="1" Style="{StaticResource ShellDataTextStyle}" />
+                                        </Grid>
+
+                                        <TextBlock
+                                            x:Name="ConfigurationNarrativeText"
+                                            Style="{StaticResource ShellDataTextStyle}"
+                                            Text="Configuration details will populate here." />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </Grid>
+
+                        <Grid ColumnSpacing="22" RowSpacing="22">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <Border Style="{StaticResource ShellCardStyle}">
+                                <StackPanel Spacing="16">
+                                    <TextBlock Text="Runtime Endpoints" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                    <ListView
+                                        x:Name="EndpointsListView"
+                                        ItemTemplate="{StaticResource ShellListItemTemplate}"
+                                        MaxHeight="250"
+                                        Style="{StaticResource ShellListViewStyle}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Column="1" Style="{StaticResource ShellCardStyle}">
+                                <StackPanel Spacing="16">
+                                    <TextBlock Text="Provider Connections" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                    <ListView
+                                        x:Name="ProvidersListView"
+                                        ItemTemplate="{StaticResource ShellListItemTemplate}"
+                                        MaxHeight="250"
+                                        Style="{StaticResource ShellListViewStyle}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Row="1" Style="{StaticResource ShellCardStyle}">
+                                <StackPanel Spacing="16">
+                                    <TextBlock Text="Installer Provenance" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                    <ListView
+                                        x:Name="InstallHistoryListView"
+                                        ItemTemplate="{StaticResource ShellListItemTemplate}"
+                                        MaxHeight="250"
+                                        Style="{StaticResource ShellListViewStyle}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellCardStyle}">
+                                <StackPanel Spacing="16">
+                                    <TextBlock Text="Agent Exports" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                    <ListView
+                                        x:Name="ExportsListView"
+                                        ItemTemplate="{StaticResource ShellListItemTemplate}"
+                                        MaxHeight="250"
+                                        Style="{StaticResource ShellListViewStyle}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Row="2" Style="{StaticResource ShellCardStyle}">
+                                <StackPanel Spacing="14">
+                                    <TextBlock Text="Paths and Allocation" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                    <TextBlock Text="Resource Envelope" Style="{StaticResource ShellLabelTextStyle}" />
+                                    <TextBlock x:Name="ResourceEnvelopeText" Style="{StaticResource ShellDataTextStyle}" />
+                                    <TextBlock Text="Dashboard URL" Style="{StaticResource ShellLabelTextStyle}" />
+                                    <TextBlock x:Name="DashboardUrlText" Style="{StaticResource ShellDataTextStyle}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Row="2" Grid.Column="1" Style="{StaticResource ShellCardStyle}">
+                                <StackPanel Spacing="14">
+                                    <TextBlock Text="Host Storage" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                    <TextBlock Text="Configuration File" Style="{StaticResource ShellLabelTextStyle}" />
+                                    <TextBlock x:Name="ConfigPathText" Style="{StaticResource ShellDataTextStyle}" />
+                                    <TextBlock Text="Data Directory" Style="{StaticResource ShellLabelTextStyle}" />
+                                    <TextBlock x:Name="DataDirectoryText" Style="{StaticResource ShellDataTextStyle}" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

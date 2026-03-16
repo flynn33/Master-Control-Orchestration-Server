@@ -1,0 +1,39 @@
+# Path-based label rules for actions/labeler
+# Used by the Auto Label PR workflow.
+
+documentation:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'docs/**'
+      - '*.md'
+      - 'LICENSE*'
+
+build:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'vcpkg.json'
+      - 'Scripts/**'
+
+core:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'src/ForsettiCore/**'
+      - 'include/ForsettiCore/**'
+
+platform:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'src/ForsettiPlatform/**'
+      - 'include/ForsettiPlatform/**'
+
+tests:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'tests/**'
+
+ci:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.github/**'

@@ -1,0 +1,48 @@
+# Forsetti Framework — Branch Cleanup
+# Automatically deletes branches after their PR is merged.
+
+name: Branch Cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  delete-branch:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete merged branch
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.payload.pull_request.head.ref;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            // Don't delete main or protected branches
+            const protectedBranches = ['main', 'master', 'develop', 'release'];
+            if (protectedBranches.includes(branch)) {
+              console.log(`Skipping deletion of protected branch: ${branch}`);
+              return;
+            }
+
+            // Only delete branches from the same repo (not forks)
+            if (context.payload.pull_request.head.repo.full_name !== `${owner}/${repo}`) {
+              console.log(`Skipping deletion of fork branch: ${branch}`);
+              return;
+            }
+
+            try {
+              await github.rest.git.deleteRef({
+                owner,
+                repo,
+                ref: `heads/${branch}`,
+              });
+              console.log(`Deleted branch: ${branch}`);
+            } catch (error) {
+              console.log(`Branch ${branch} may have already been deleted: ${error.message}`);
+            }

@@ -1,0 +1,114 @@
+{
+  "schemaVersion": "1.0",
+  "projectName": "Forsetti Framework — Windows",
+  "projectDescription": "A modular runtime framework for Windows 11, built with C++20 and WinUI 3. Port of the Forsetti Framework from Swift/SwiftUI.",
+  "owner": "James Daley",
+  "license": "Proprietary",
+  "principles": [
+    "Strict modularity: all features live inside first- or third-party modules",
+    "Framework-mediated everything: modules never talk to each other directly",
+    "Single active UI module at a time; unlimited service modules",
+    "Entitlement-gated activation with runtime reconciliation"
+  ],
+  "architecture": {
+    "layers": [
+      {
+        "name": "ForsettiCore",
+        "type": "static_library",
+        "description": "Pure C++20 foundation. No platform dependencies.",
+        "dependencies": []
+      },
+      {
+        "name": "ForsettiPlatform",
+        "type": "static_library",
+        "description": "Windows SDK service implementations.",
+        "dependencies": ["ForsettiCore"]
+      },
+      {
+        "name": "ForsettiModulesExample",
+        "type": "static_library",
+        "description": "Example first-party modules for testing and reference.",
+        "dependencies": ["ForsettiCore"]
+      },
+      {
+        "name": "ForsettiHostTemplate",
+        "type": "static_library",
+        "description": "WinUI 3 host application template with framework chrome.",
+        "dependencies": ["ForsettiCore", "ForsettiPlatform"]
+      }
+    ],
+    "dependencyRule": "One-way only. Core depends on nothing. Platform depends on Core. HostTemplate depends on Core and Platform. ModulesExample depends on Core only. No reverse or lateral dependencies."
+  },
+  "moduleModel": {
+    "types": ["service", "ui", "app"],
+    "lifecycle": "discover -> validate -> activate -> deactivate",
+    "manifest": {
+      "format": "JSON",
+      "schemaVersion": "1.0",
+      "requiredFields": ["schemaVersion", "moduleID", "displayName", "moduleVersion", "moduleType", "supportedPlatforms", "minForsettiVersion", "entryPoint"]
+    }
+  },
+  "corePublicAPI": {
+    "interfaces": [
+      "IForsettiModule",
+      "IForsettiUIModule",
+      "IForsettiAppModule",
+      "IEntitlementProvider",
+      "ICapabilityPolicy",
+      "IActivationStore",
+      "IForsettiEventBus",
+      "IServiceProvider",
+      "IForsettiLogger",
+      "IOverlayRouter",
+      "IModuleCommunicationGuard"
+    ],
+    "valueTypes": [
+      "SemVer",
+      "ModuleManifest",
+      "ModuleDescriptor",
+      "ForsettiEvent",
+      "ActivationState",
+      "CompatibilityReport",
+      "CompatibilityIssue",
+      "UIContributions",
+      "ToolbarItemDescriptor",
+      "ViewInjectionDescriptor",
+      "OverlaySchema"
+    ],
+    "enums": [
+      "Platform",
+      "ModuleType",
+      "Capability",
+      "LogLevel",
+      "CapabilityPolicyDecision",
+      "CompatibilitySeverity",
+      "ToolbarAction",
+      "OverlayPresentation",
+      "OverlayDestination"
+    ]
+  },
+  "runtimeComponents": [
+    "ForsettiRuntime",
+    "ModuleManager",
+    "ManifestLoader",
+    "ModuleRegistry",
+    "ForsettiStaticModuleRegistry",
+    "CompatibilityChecker",
+    "InMemoryEventBus",
+    "ServiceContainer",
+    "ForsettiContext",
+    "UISurfaceManager",
+    "ConsoleLogger"
+  ],
+  "hostAppContract": {
+    "description": "Host applications use ForsettiHostTemplate for turnkey integration or build custom hosts using ForsettiCore + ForsettiPlatform.",
+    "components": [
+      "ForsettiHostController",
+      "ForsettiHostBootstrap",
+      "ForsettiHostOverlayRouter",
+      "ForsettiViewInjectionRegistry",
+      "BaseDestinationCatalog",
+      "SlotCatalog"
+    ]
+  }
+}

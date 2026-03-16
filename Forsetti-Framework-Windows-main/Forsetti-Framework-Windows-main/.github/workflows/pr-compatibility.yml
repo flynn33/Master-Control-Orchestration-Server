@@ -1,0 +1,23 @@
+# Forsetti Framework — PR Compatibility Gate
+# Copyright (c) 2026 James Daley. All Rights Reserved.
+
+name: PR Compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  compatibility-check:
+    name: Compatibility Gate
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run compatibility checks
+        run: .\Scripts\check-pr-compatibility.ps1
+        shell: pwsh
