@@ -1,0 +1,39 @@
+name: AI Contributor Guard
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-commit-identities:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Enforce no-AI-contributor rule
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python scripts/github_agents/check_no_ai_contributors.py \
+            --event-name "$EVENT_NAME" \
+            --before "$BEFORE_SHA" \
+            --after "$AFTER_SHA" \
+            --pr-base "$PR_BASE_SHA" \
+            --pr-head "$PR_HEAD_SHA"

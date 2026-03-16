@@ -51,6 +51,8 @@ install_manifest.txt
 *.bak
 *.cache
 *.orig
+.agent-release*.json
+__pycache__/
 
 # NuGet package restore output
 packages/
