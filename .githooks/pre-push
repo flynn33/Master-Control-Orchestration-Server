@@ -16,4 +16,4 @@ if [ -z "$python_cmd" ]; then
   exit 1
 fi
 
-"$python_cmd" "$repo_root/scripts/github_agents/check_no_ai_contributors.py" --hook < /dev/stdin
+"$python_cmd" "$repo_root/scripts/github_agents/check_no_ai_contributors.py" --hook
