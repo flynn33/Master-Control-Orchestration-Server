@@ -2,18 +2,10 @@
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
-python_cmd=""
+refs_payload="$(cat)"
 
-for candidate in python3 python py; do
-  if command -v "$candidate" >/dev/null 2>&1; then
-    python_cmd="$candidate"
-    break
-  fi
-done
-
-if [ -z "$python_cmd" ]; then
-  echo "pre-push hook: unable to find python3, python, or py" >&2
-  exit 1
+if [ -z "$refs_payload" ]; then
+  exit 0
 fi
 
-"$python_cmd" "$repo_root/scripts/github_agents/check_no_ai_contributors.py" --hook
+printf '%s\n' "$refs_payload" | powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$repo_root/scripts/Invoke-AiContributorGuard.ps1"
