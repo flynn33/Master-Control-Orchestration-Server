@@ -281,10 +281,14 @@ Forsetti::UIContributions DashboardUIModule::uiContributions() const {
             Forsetti::ToolbarItemDescriptor{ "dashboard-settings", "Settings", "gear", Forsetti::OpenOverlayAction{ "settings-overlay" } }
         },
         {
-            Forsetti::ViewInjectionDescriptor{ "dashboard-hero", "dashboardPrimary", "MasterControlDashboardView", 100 },
-            Forsetti::ViewInjectionDescriptor{ "dashboard-grid", "dashboardMetrics", "MasterControlMetricsGrid", 90 },
-            Forsetti::ViewInjectionDescriptor{ "runtime-grid", "runtimePrimary", "MasterControlRuntimeGrid", 80 },
-            Forsetti::ViewInjectionDescriptor{ "provider-grid", "providerPrimary", "MasterControlProviderGrid", 80 }
+            Forsetti::ViewInjectionDescriptor{ "overview-surface", "overview", "OverviewSectionView", 100 },
+            Forsetti::ViewInjectionDescriptor{ "telemetry-surface", "telemetry", "TelemetrySectionView", 100 },
+            Forsetti::ViewInjectionDescriptor{ "runtime-surface", "runtime", "RuntimeSectionView", 100 },
+            Forsetti::ViewInjectionDescriptor{ "providers-surface", "providers", "ProvidersSectionView", 100 },
+            Forsetti::ViewInjectionDescriptor{ "imports-surface", "imports", "ImportsSectionView", 100 },
+            Forsetti::ViewInjectionDescriptor{ "exports-surface", "exports", "ExportsSectionView", 100 },
+            Forsetti::ViewInjectionDescriptor{ "security-surface", "security", "SecuritySectionView", 100 },
+            Forsetti::ViewInjectionDescriptor{ "settings-surface", "settings", "SettingsSectionView", 100 }
         },
         Forsetti::OverlaySchema{
             {
@@ -302,25 +306,25 @@ Forsetti::UIContributions DashboardUIModule::uiContributions() const {
                     "settings-overlay",
                     "Settings",
                     Forsetti::OverlayPresentation::Sheet,
-                    Forsetti::ModuleOverlayDestination{ descriptor().moduleID, "SettingsOverlayView" }
+                    Forsetti::ModuleOverlayDestination{ descriptor().moduleID, "SettingsSectionView" }
                 },
                 Forsetti::OverlayRoute{
                     "imports-overlay",
                     "Imports",
                     Forsetti::OverlayPresentation::Sheet,
-                    Forsetti::ModuleOverlayDestination{ descriptor().moduleID, "ImportOverlayView" }
+                    Forsetti::ModuleOverlayDestination{ descriptor().moduleID, "ImportsSectionView" }
                 },
                 Forsetti::OverlayRoute{
                     "exports-overlay",
                     "Exports",
                     Forsetti::OverlayPresentation::Sheet,
-                    Forsetti::ModuleOverlayDestination{ descriptor().moduleID, "ExportOverlayView" }
+                    Forsetti::ModuleOverlayDestination{ descriptor().moduleID, "ExportsSectionView" }
                 },
                 Forsetti::OverlayRoute{
                     "security-overlay",
                     "Security",
                     Forsetti::OverlayPresentation::Sheet,
-                    Forsetti::ModuleOverlayDestination{ descriptor().moduleID, "SecurityOverlayView" }
+                    Forsetti::ModuleOverlayDestination{ descriptor().moduleID, "SecuritySectionView" }
                 }
             }
         }

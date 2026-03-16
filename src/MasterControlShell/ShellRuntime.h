@@ -87,6 +87,44 @@ struct ShellNavigationPointer final {
     std::wstring destinationId;
 };
 
+enum class ShellToolbarActionKind {
+    Unknown,
+    Navigate,
+    OpenOverlay,
+    PublishEvent
+};
+
+struct ShellToolbarItem final {
+    std::wstring id;
+    std::wstring title;
+    std::wstring systemImageName;
+    ShellToolbarActionKind actionKind = ShellToolbarActionKind::Unknown;
+    std::wstring targetId;
+};
+
+enum class ShellOverlayPresentation {
+    Sheet,
+    FullScreen,
+    Popover
+};
+
+struct ShellOverlayRoute final {
+    std::wstring id;
+    std::wstring label;
+    ShellOverlayPresentation presentation = ShellOverlayPresentation::Sheet;
+    bool targetsModuleView = false;
+    std::wstring destinationId;
+    std::wstring moduleId;
+    std::wstring viewId;
+};
+
+struct ShellViewInjection final {
+    std::wstring id;
+    std::wstring slot;
+    std::wstring viewId;
+    int priority = 0;
+};
+
 struct ShellSnapshot final {
     ServiceState serviceState = ServiceState::Missing;
     uint32_t serviceProcessId = 0;
@@ -127,6 +165,9 @@ struct ShellSnapshot final {
     ShellSecuritySettings securitySettings;
     std::vector<ShellProviderConnection> providers;
     std::vector<ShellNavigationPointer> navigationPointers;
+    std::vector<ShellToolbarItem> toolbarItems;
+    std::vector<ShellOverlayRoute> overlayRoutes;
+    std::map<std::wstring, std::vector<ShellViewInjection>> viewInjectionsBySlot;
     std::vector<std::wstring> endpointRows;
     std::vector<std::wstring> providerRows;
     std::vector<std::wstring> installRows;

@@ -11,17 +11,6 @@
 
 namespace winrt::MasterControlShell::implementation {
 
-enum class ShellSection {
-    Overview,
-    Telemetry,
-    Runtime,
-    Providers,
-    Imports,
-    Exports,
-    Security,
-    Settings
-};
-
 struct MainWindow : MainWindowT<MainWindow> {
     MainWindow();
 
@@ -35,25 +24,39 @@ struct MainWindow : MainWindowT<MainWindow> {
     void OpenDashboardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void OpenConfigButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void OpenDataButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void SurfaceToolbarButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
 
 private:
-    void AttachInteractiveSections();
     void ConfigureWindow();
     void ConfigureTimer();
-    void SetCurrentSection(ShellSection section);
+    void EnsureBootstrapSurface(::MasterControlShell::ShellSnapshot& snapshot);
+    void SetCurrentDestination(std::wstring const& destinationId);
     void ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void ApplySurfaceNavigation(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void ApplySurfaceToolbar(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void ApplySectionMetadata(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void ApplyCachedSectionSnapshots(const ::MasterControlShell::ShellSnapshot& snapshot);
+    Microsoft::UI::Xaml::FrameworkElement ResolvePrimaryViewForDestination(
+        std::wstring const& destinationId,
+        const ::MasterControlShell::ShellSnapshot& snapshot);
+    Microsoft::UI::Xaml::FrameworkElement CreateViewForViewId(std::wstring const& viewId, bool cacheable);
+    Microsoft::UI::Xaml::FrameworkElement CreateUnavailableView(
+        winrt::hstring const& title,
+        winrt::hstring const& message);
     void UpdateStatusBar(winrt::hstring const& message, Microsoft::UI::Xaml::Controls::InfoBarSeverity severity);
 
     winrt::Windows::Foundation::IAsyncAction RefreshAsync();
     winrt::Windows::Foundation::IAsyncAction RunServiceActionAsync(bool start);
     winrt::Windows::Foundation::IAsyncAction HandleOpenDashboardAsync();
+    winrt::Windows::Foundation::IAsyncAction OpenOverlayRouteAsync(std::wstring routeId);
     winrt::Windows::Foundation::IAsyncAction ShowDialogAsync(winrt::hstring const& title, winrt::hstring const& message);
 
     HWND windowHandle_ = nullptr;
     bool windowInitialized_ = false;
     ::MasterControlShell::ShellRuntime runtime_{};
     ::MasterControlShell::ShellSnapshot currentSnapshot_{};
-    ShellSection currentSection_ = ShellSection::Overview;
+    std::wstring currentDestination_ = L"overview";
+    std::map<std::wstring, Microsoft::UI::Xaml::FrameworkElement> cachedViews_;
     Microsoft::UI::Dispatching::DispatcherQueueTimer refreshTimer_{ nullptr };
     std::atomic_bool refreshInFlight_{ false };
 };

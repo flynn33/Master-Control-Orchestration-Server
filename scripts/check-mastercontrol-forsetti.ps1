@@ -66,6 +66,37 @@ Assert-Contains $appCMake 'target_link_libraries\(MasterControlApp\s+PUBLIC\s+Ma
 Assert-Contains $appCMake 'ForsettiPlatform' "MasterControlApp must link ForsettiPlatform."
 Assert-NotContains $appCMake 'MasterControlModules\.cpp' "MasterControlApp must not compile MasterControlModules.cpp directly."
 
+$shellWindowXamlPath = Join-Path $repoRoot "src\MasterControlShell\MainWindow.xaml"
+$shellWindowCppPath = Join-Path $repoRoot "src\MasterControlShell\MainWindow.xaml.cpp"
+$shellRuntimePath = Join-Path $repoRoot "src\MasterControlShell\ShellRuntime.cpp"
+
+if (-not (Test-Path $shellWindowXamlPath)) {
+    $violations += "src/MasterControlShell/MainWindow.xaml is missing."
+} else {
+    $shellWindowXaml = Get-Content $shellWindowXamlPath -Raw
+    Assert-Contains $shellWindowXaml 'SectionContentHost' "MainWindow.xaml must expose a dynamic Forsetti section content host."
+    Assert-NotContains $shellWindowXaml '<NavigationView\.MenuItems>' "MainWindow.xaml must not hardcode NavigationView.MenuItems."
+}
+
+if (-not (Test-Path $shellWindowCppPath)) {
+    $violations += "src/MasterControlShell/MainWindow.xaml.cpp is missing."
+} else {
+    $shellWindowCpp = Get-Content $shellWindowCppPath -Raw
+    Assert-Contains $shellWindowCpp 'ApplySurfaceNavigation' "MainWindow.xaml.cpp must rebuild navigation from Forsetti surface state."
+    Assert-Contains $shellWindowCpp 'ApplySurfaceToolbar' "MainWindow.xaml.cpp must rebuild the toolbar from Forsetti surface state."
+    Assert-Contains $shellWindowCpp 'ResolvePrimaryViewForDestination' "MainWindow.xaml.cpp must resolve section content from Forsetti view injections."
+    Assert-Contains $shellWindowCpp 'OpenOverlayRouteAsync' "MainWindow.xaml.cpp must host Forsetti overlay routes."
+}
+
+if (-not (Test-Path $shellRuntimePath)) {
+    $violations += "src/MasterControlShell/ShellRuntime.cpp is missing."
+} else {
+    $shellRuntime = Get-Content $shellRuntimePath -Raw
+    Assert-Contains $shellRuntime 'viewInjectionsBySlot' "ShellRuntime.cpp must parse Forsetti view injection surface state."
+    Assert-Contains $shellRuntime 'overlayRoutes' "ShellRuntime.cpp must parse Forsetti overlay route surface state."
+    Assert-Contains $shellRuntime 'toolbarItems' "ShellRuntime.cpp must parse Forsetti toolbar surface state."
+}
+
 $manifestDirs = Get-ChildItem -Path (Join-Path $repoRoot "src") -Recurse -Directory -Filter "ForsettiManifests" -ErrorAction SilentlyContinue
 $manifestFiles = @()
 foreach ($dir in $manifestDirs) {

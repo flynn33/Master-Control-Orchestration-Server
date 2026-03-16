@@ -275,6 +275,21 @@ int main() {
                 snapshot.surface.overlaySchema->navigationPointers.size() >= 8,
             "Forsetti overlay metadata should describe the shell navigation lanes");
         success &= expect(snapshot.surface.toolbarItems.size() >= 6, "Forsetti surface snapshot should expose toolbar items");
+        success &= expect(
+            snapshot.surface.viewInjectionsBySlot.size() >= 8,
+            "Forsetti surface snapshot should expose injected section slots");
+        success &= expect(
+            snapshot.surface.viewInjectionsBySlot.contains("overview") &&
+                !snapshot.surface.viewInjectionsBySlot.at("overview").empty() &&
+                snapshot.surface.viewInjectionsBySlot.at("overview").front().viewID == "OverviewSectionView",
+            "Forsetti overview slot should resolve to the overview section view");
+        success &= expect(
+            snapshot.surface.overlaySchema.has_value() &&
+                std::any_of(
+                    snapshot.surface.overlaySchema->overlayRoutes.begin(),
+                    snapshot.surface.overlaySchema->overlayRoutes.end(),
+                    [](const auto& route) { return route.routeID == "imports-overlay"; }),
+            "Forsetti overlay metadata should publish the imports overlay route");
 
         auto unsafeConfiguration = configuration;
         unsafeConfiguration.security.securityProtocolsEnabled = false;

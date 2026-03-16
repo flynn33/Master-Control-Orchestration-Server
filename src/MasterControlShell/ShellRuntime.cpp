@@ -477,6 +477,82 @@ ShellNavigationPointer navigationPointerFromJson(const JsonObject& object) {
     return pointer;
 }
 
+ShellToolbarActionKind toolbarActionKindFromJson(const JsonObject& action) {
+    const auto type = jsonStringOr(action, L"type", "");
+    if (type == "navigate") {
+        return ShellToolbarActionKind::Navigate;
+    }
+    if (type == "openOverlay") {
+        return ShellToolbarActionKind::OpenOverlay;
+    }
+    if (type == "publishEvent") {
+        return ShellToolbarActionKind::PublishEvent;
+    }
+    return ShellToolbarActionKind::Unknown;
+}
+
+ShellToolbarItem toolbarItemFromJson(const JsonObject& object) {
+    ShellToolbarItem item;
+    item.id = wideFromUtf8(jsonStringOr(object, L"itemID", ""));
+    item.title = wideFromUtf8(jsonStringOr(object, L"title", ""));
+    item.systemImageName = wideFromUtf8(jsonStringOr(object, L"systemImageName", ""));
+
+    const auto action = object.GetNamedObject(L"action", JsonObject());
+    item.actionKind = toolbarActionKindFromJson(action);
+    switch (item.actionKind) {
+        case ShellToolbarActionKind::Navigate:
+            item.targetId = wideFromUtf8(jsonStringOr(action, L"destinationID", ""));
+            break;
+        case ShellToolbarActionKind::OpenOverlay:
+            item.targetId = wideFromUtf8(jsonStringOr(action, L"routeID", ""));
+            break;
+        case ShellToolbarActionKind::PublishEvent:
+            item.targetId = wideFromUtf8(jsonStringOr(action, L"eventType", ""));
+            break;
+        default:
+            break;
+    }
+    return item;
+}
+
+ShellOverlayPresentation overlayPresentationFromJson(const std::string& presentation) {
+    if (presentation == "fullScreen") {
+        return ShellOverlayPresentation::FullScreen;
+    }
+    if (presentation == "popover") {
+        return ShellOverlayPresentation::Popover;
+    }
+    return ShellOverlayPresentation::Sheet;
+}
+
+ShellOverlayRoute overlayRouteFromJson(const JsonObject& object) {
+    ShellOverlayRoute route;
+    route.id = wideFromUtf8(jsonStringOr(object, L"routeID", ""));
+    route.label = wideFromUtf8(jsonStringOr(object, L"label", ""));
+    route.presentation = overlayPresentationFromJson(jsonStringOr(object, L"presentation", "sheet"));
+
+    const auto destination = object.GetNamedObject(L"destination", JsonObject());
+    const auto destinationType = jsonStringOr(destination, L"type", "base");
+    if (destinationType == "moduleOverlay") {
+        route.targetsModuleView = true;
+        route.moduleId = wideFromUtf8(jsonStringOr(destination, L"moduleID", ""));
+        route.viewId = wideFromUtf8(jsonStringOr(destination, L"viewID", ""));
+    } else {
+        route.destinationId = wideFromUtf8(jsonStringOr(destination, L"destinationID", ""));
+    }
+
+    return route;
+}
+
+ShellViewInjection viewInjectionFromJson(const JsonObject& object) {
+    ShellViewInjection injection;
+    injection.id = wideFromUtf8(jsonStringOr(object, L"injectionID", ""));
+    injection.slot = wideFromUtf8(jsonStringOr(object, L"slot", ""));
+    injection.viewId = wideFromUtf8(jsonStringOr(object, L"viewID", ""));
+    injection.priority = static_cast<int>(jsonNumberOr(object, L"priority", 0));
+    return injection;
+}
+
 JsonArray stringArrayToJson(const std::vector<std::wstring>& values) {
     JsonArray array;
     for (const auto& value : values) {
@@ -827,6 +903,9 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     std::wstring ipAddress = wideFromUtf8(preferredBindAddress);
     std::wstring telemetryText = L"Live telemetry will appear when the service and local admin API are reachable.";
     std::vector<ShellNavigationPointer> navigationPointers;
+    std::vector<ShellToolbarItem> toolbarItems;
+    std::vector<ShellOverlayRoute> overlayRoutes;
+    std::map<std::wstring, std::vector<ShellViewInjection>> viewInjectionsBySlot;
     std::vector<std::wstring> endpointRows;
     std::vector<std::wstring> providerRows;
     std::vector<std::wstring> installRows;
@@ -883,11 +962,41 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
 
                 if (dashboardJson->HasKey(L"surface")) {
                     const auto surface = dashboardJson->GetNamedObject(L"surface", JsonObject());
+                    for (const auto& value : surface.GetNamedArray(L"toolbarItems", JsonArray())) {
+                        if (value.ValueType() == JsonValueType::Object) {
+                            toolbarItems.push_back(toolbarItemFromJson(value.GetObject()));
+                        }
+                    }
+
+                    const auto viewInjectionObject = surface.GetNamedObject(L"viewInjectionsBySlot", JsonObject());
+                    for (const auto& pair : viewInjectionObject.GetView()) {
+                        if (pair.Value().ValueType() != JsonValueType::Array) {
+                            continue;
+                        }
+
+                        auto& slotInjections = viewInjectionsBySlot[std::wstring(pair.Key().c_str())];
+                        for (const auto& value : pair.Value().GetArray()) {
+                            if (value.ValueType() == JsonValueType::Object) {
+                                slotInjections.push_back(viewInjectionFromJson(value.GetObject()));
+                            }
+                        }
+
+                        std::sort(
+                            slotInjections.begin(),
+                            slotInjections.end(),
+                            [](const auto& left, const auto& right) { return left.priority > right.priority; });
+                    }
+
                     if (surface.HasKey(L"overlaySchema")) {
                         const auto overlaySchema = surface.GetNamedObject(L"overlaySchema", JsonObject());
                         for (const auto& value : overlaySchema.GetNamedArray(L"navigationPointers", JsonArray())) {
                             if (value.ValueType() == JsonValueType::Object) {
                                 navigationPointers.push_back(navigationPointerFromJson(value.GetObject()));
+                            }
+                        }
+                        for (const auto& value : overlaySchema.GetNamedArray(L"overlayRoutes", JsonArray())) {
+                            if (value.ValueType() == JsonValueType::Object) {
+                                overlayRoutes.push_back(overlayRouteFromJson(value.GetObject()));
                             }
                         }
                     }
@@ -984,6 +1093,9 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.bindAddress = wideFromUtf8(bindAddress);
     snapshot.providers = std::move(providers);
     snapshot.navigationPointers = std::move(navigationPointers);
+    snapshot.toolbarItems = std::move(toolbarItems);
+    snapshot.overlayRoutes = std::move(overlayRoutes);
+    snapshot.viewInjectionsBySlot = std::move(viewInjectionsBySlot);
     snapshot.endpointRows = std::move(endpointRows);
     snapshot.providerRows = std::move(providerRows);
     snapshot.installRows = std::move(installRows);

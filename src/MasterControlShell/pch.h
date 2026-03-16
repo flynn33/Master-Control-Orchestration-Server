@@ -38,6 +38,7 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <string>
