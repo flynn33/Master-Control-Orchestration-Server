@@ -6,6 +6,7 @@
 
 #include "MasterControl/MasterControlModels.h"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -83,6 +84,7 @@ public:
 class IProviderCredentialStore {
 public:
     virtual std::vector<ProviderCredentialStatus> listStatuses() const = 0;
+    virtual std::map<std::string, std::string> readCredentials(const std::string& providerId) const = 0;
     virtual OperationResult upsertCredentials(const ProviderCredentialUpdate& update) = 0;
     virtual ~IProviderCredentialStore() = default;
 };
@@ -93,6 +95,21 @@ public:
     virtual std::vector<ProviderAssignment> listAssignments() const = 0;
     virtual OperationResult upsertAssignment(const ProviderAssignment& assignment) = 0;
     virtual ~IProviderAssignmentService() = default;
+};
+
+class IProviderExecutionCatalogService {
+public:
+    virtual std::vector<ProviderExecutionRegistration> listRegistrations() const = 0;
+    virtual void upsertRegistration(const ProviderExecutionRegistration& registration) = 0;
+    virtual void removeRegistration(const std::string& providerId) = 0;
+    virtual ~IProviderExecutionCatalogService() = default;
+};
+
+class IProviderExecutionService {
+public:
+    virtual std::vector<ProviderExecutionRecord> history() const = 0;
+    virtual ProviderExecutionRecord execute(const ProviderExecutionRequest& request) = 0;
+    virtual ~IProviderExecutionService() = default;
 };
 
 class IExportService {
@@ -143,6 +160,7 @@ public:
     virtual OperationResult upsertProviderJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertProviderCredentialsJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertProviderAssignmentJson(const std::string& requestBody) = 0;
+    virtual ProviderExecutionRecord executeProviderTaskJson(const std::string& requestBody) = 0;
     virtual OperationResult installPackageJson(const std::string& requestBody) = 0;
     virtual OperationResult installRepoJson(const std::string& requestBody) = 0;
     virtual OperationResult installZipJson(const std::string& requestBody) = 0;

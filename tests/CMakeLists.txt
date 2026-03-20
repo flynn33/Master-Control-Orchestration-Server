@@ -8,6 +8,7 @@ add_executable(MasterControlProgramTests
 
 target_link_libraries(MasterControlProgramTests PRIVATE
     MasterControlApp
+    ws2_32
 )
 
 add_test(

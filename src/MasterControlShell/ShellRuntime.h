@@ -85,6 +85,40 @@ struct ShellProviderAssignment final {
     std::wstring updatedAtUtc;
 };
 
+struct ShellProviderExecutionRegistration final {
+    std::wstring moduleId;
+    std::wstring providerId;
+    std::wstring kind;
+    std::wstring displayName;
+    std::wstring transport;
+    bool supportsSharedMcpAccess = true;
+    bool supportsDirectMcpConfig = false;
+};
+
+struct ShellProviderExecutionRequest final {
+    std::wstring targetId;
+    std::wstring prompt;
+    bool allowToolAccess = true;
+    int maxTurns = 4;
+};
+
+struct ShellProviderExecutionRecord final {
+    std::wstring executionId;
+    std::wstring targetId;
+    std::wstring targetDisplayName;
+    std::wstring providerId;
+    std::wstring providerDisplayName;
+    std::wstring status;
+    std::wstring modelId;
+    std::vector<std::wstring> referencedMcpServerIds;
+    std::vector<std::wstring> toolEvents;
+    std::wstring outputText;
+    std::wstring rawResponse;
+    std::wstring startedAtUtc;
+    std::wstring completedAtUtc;
+    std::wstring errorMessage;
+};
+
 struct ShellSecuritySettings final {
     bool enableTls = false;
     bool enableAuthentication = false;
@@ -228,6 +262,8 @@ struct ShellSnapshot final {
     std::vector<ShellProviderCredentialStatus> providerCredentialStatuses;
     std::vector<ShellProviderAssignmentTarget> providerAssignmentTargets;
     std::vector<ShellProviderAssignment> providerAssignments;
+    std::vector<ShellProviderExecutionRegistration> providerExecutionRegistrations;
+    std::vector<ShellProviderExecutionRecord> providerExecutionHistory;
     std::vector<ShellNavigationPointer> navigationPointers;
     std::vector<ShellToolbarItem> toolbarItems;
     std::vector<ShellOverlayRoute> overlayRoutes;
@@ -258,6 +294,7 @@ public:
         const std::wstring& providerId,
         const std::vector<std::pair<std::wstring, std::wstring>>& values) const;
     [[nodiscard]] ShellOperationResult UpsertProviderAssignment(const ShellProviderAssignment& assignment) const;
+    [[nodiscard]] ShellProviderExecutionRecord ExecuteProviderTask(const ShellProviderExecutionRequest& request) const;
     [[nodiscard]] ShellOperationResult UpdateAiAutonomyEnabled(bool enabled) const;
     [[nodiscard]] ShellOperationResult UpdateSecuritySettings(const ShellSecuritySettings& settings,
                                                              bool confirmUnsafeChanges) const;

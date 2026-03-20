@@ -153,6 +153,52 @@
                         <ListView x:Name="ProviderAssignmentsListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="360" Style="{StaticResource ShellListViewStyle}" />
                     </StackPanel>
                 </Border>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="Execution Console" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock Text="Run a live provider-owned task through the local admin API to validate credentials, ownership routing, and shared MCP access." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="Wrap" />
+
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.3*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="120" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Execution Target" Style="{StaticResource ShellLabelTextStyle}" />
+                                <ComboBox x:Name="ProviderExecutionTargetSelector" SelectionChanged="ProviderExecutionTargetSelector_SelectionChanged" PlaceholderText="Choose a role or sub-agent" />
+                            </StackPanel>
+
+                            <ToggleSwitch Grid.Column="1" x:Name="ProviderExecutionToolAccessToggle" Header="Shared MCP Access" Toggled="ProviderExecutionEditor_Changed" />
+
+                            <StackPanel Grid.Column="2" Spacing="8">
+                                <TextBlock Text="Max Turns" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="ProviderExecutionMaxTurnsTextBox" Text="4" TextChanged="ProviderExecutionEditor_Changed" />
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="Prompt" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBox
+                            x:Name="ProviderExecutionPromptTextBox"
+                            AcceptsReturn="True"
+                            Height="120"
+                            TextWrapping="Wrap"
+                            TextChanged="ProviderExecutionEditor_Changed"
+                            PlaceholderText="Ask the assigned provider to act within its orchestration lane." />
+
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <Button x:Name="ExecuteProviderTaskButton" Click="ExecuteProviderTaskButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Run Provider Task" />
+                        </StackPanel>
+
+                        <TextBlock x:Name="ProviderExecutionStatusText" Style="{StaticResource ShellDataTextStyle}" Text="No provider task has been executed yet." TextWrapping="Wrap" />
+                        <TextBox x:Name="ProviderExecutionOutputTextBox" IsReadOnly="True" AcceptsReturn="True" Height="140" TextWrapping="Wrap" />
+
+                        <TextBlock Text="Execution History" Style="{StaticResource ShellLabelTextStyle}" />
+                        <ListView x:Name="ProviderExecutionHistoryListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="260" Style="{StaticResource ShellListViewStyle}" />
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </Grid>
     </ScrollViewer>

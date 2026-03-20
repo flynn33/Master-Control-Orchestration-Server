@@ -379,6 +379,45 @@ void unregisterProviderCapability(Forsetti::ForsettiContext& context,
     });
 }
 
+void registerProviderExecution(Forsetti::ForsettiContext& context,
+                               const ProviderExecutionRegistration& registration) {
+    const auto executionCatalogService = context.services()->resolve<IProviderExecutionCatalogService>();
+    if (!executionCatalogService) {
+        return;
+    }
+
+    executionCatalogService->upsertRegistration(registration);
+    context.publishFrameworkEvent(Forsetti::ForsettiEvent{
+        "mastercontrol.provider.execution.changed",
+        {
+            { "moduleID", registration.moduleId },
+            { "providerID", registration.providerId },
+            { "action", "upsert" }
+        },
+        registration.moduleId
+    });
+}
+
+void unregisterProviderExecution(Forsetti::ForsettiContext& context,
+                                 const std::string& moduleId,
+                                 const std::string& providerId) {
+    const auto executionCatalogService = context.services()->resolve<IProviderExecutionCatalogService>();
+    if (!executionCatalogService) {
+        return;
+    }
+
+    executionCatalogService->removeRegistration(providerId);
+    context.publishFrameworkEvent(Forsetti::ForsettiEvent{
+        "mastercontrol.provider.execution.changed",
+        {
+            { "moduleID", moduleId },
+            { "providerID", providerId },
+            { "action", "remove" }
+        },
+        moduleId
+    });
+}
+
 ProviderCapabilityDescriptor makeCodexProviderCapability() {
     return ProviderCapabilityDescriptor{
         "com.mastercontrol.provider-codex",
@@ -413,6 +452,18 @@ ProviderCapabilityDescriptor makeCodexProviderCapability() {
         },
         true,
         true
+    };
+}
+
+ProviderExecutionRegistration makeCodexProviderExecutionRegistration() {
+    return ProviderExecutionRegistration{
+        "com.mastercontrol.provider-codex",
+        "codex",
+        ProviderKind::Codex,
+        "Codex",
+        ProviderExecutionTransport::OpenAICompatibleChat,
+        true,
+        false
     };
 }
 
@@ -464,6 +515,18 @@ ProviderCapabilityDescriptor makeClaudeCodeProviderCapability() {
     };
 }
 
+ProviderExecutionRegistration makeClaudeCodeProviderExecutionRegistration() {
+    return ProviderExecutionRegistration{
+        "com.mastercontrol.provider-claude-code",
+        "claude-code",
+        ProviderKind::ClaudeCode,
+        "Claude Code",
+        ProviderExecutionTransport::ClaudeCodeCli,
+        true,
+        true
+    };
+}
+
 ProviderCapabilityDescriptor makeXAIProviderCapability() {
     return ProviderCapabilityDescriptor{
         "com.mastercontrol.provider-xai",
@@ -498,6 +561,18 @@ ProviderCapabilityDescriptor makeXAIProviderCapability() {
         },
         true,
         true
+    };
+}
+
+ProviderExecutionRegistration makeXAIProviderExecutionRegistration() {
+    return ProviderExecutionRegistration{
+        "com.mastercontrol.provider-xai",
+        "xai-grok",
+        ProviderKind::XAI,
+        "xAI",
+        ProviderExecutionTransport::OpenAICompatibleChat,
+        true,
+        false
     };
 }
 
@@ -827,10 +902,12 @@ Forsetti::ModuleManifest CodexProviderModule::manifest() const {
 void CodexProviderModule::start(Forsetti::ForsettiContext& context) {
     registerControlSurfaceRequests(context, makeCodexProviderControlSurfaceRequests());
     registerProviderCapability(context, makeCodexProviderCapability());
+    registerProviderExecution(context, makeCodexProviderExecutionRegistration());
     publishLifecycleEvent(context, "mastercontrol.provider.codex.started", descriptor().moduleID);
 }
 
 void CodexProviderModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterProviderExecution(context, descriptor().moduleID, "codex");
     unregisterProviderCapability(context, descriptor().moduleID, "codex");
     unregisterControlSurfaceRequests(context, descriptor().moduleID);
     publishLifecycleEvent(context, "mastercontrol.provider.codex.stopped", descriptor().moduleID);
@@ -853,10 +930,12 @@ Forsetti::ModuleManifest ClaudeCodeProviderModule::manifest() const {
 void ClaudeCodeProviderModule::start(Forsetti::ForsettiContext& context) {
     registerControlSurfaceRequests(context, makeClaudeCodeProviderControlSurfaceRequests());
     registerProviderCapability(context, makeClaudeCodeProviderCapability());
+    registerProviderExecution(context, makeClaudeCodeProviderExecutionRegistration());
     publishLifecycleEvent(context, "mastercontrol.provider.claude-code.started", descriptor().moduleID);
 }
 
 void ClaudeCodeProviderModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterProviderExecution(context, descriptor().moduleID, "claude-code");
     unregisterProviderCapability(context, descriptor().moduleID, "claude-code");
     unregisterControlSurfaceRequests(context, descriptor().moduleID);
     publishLifecycleEvent(context, "mastercontrol.provider.claude-code.stopped", descriptor().moduleID);
@@ -879,10 +958,12 @@ Forsetti::ModuleManifest XAIProviderModule::manifest() const {
 void XAIProviderModule::start(Forsetti::ForsettiContext& context) {
     registerControlSurfaceRequests(context, makeXAIProviderControlSurfaceRequests());
     registerProviderCapability(context, makeXAIProviderCapability());
+    registerProviderExecution(context, makeXAIProviderExecutionRegistration());
     publishLifecycleEvent(context, "mastercontrol.provider.xai.started", descriptor().moduleID);
 }
 
 void XAIProviderModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterProviderExecution(context, descriptor().moduleID, "xai-grok");
     unregisterProviderCapability(context, descriptor().moduleID, "xai-grok");
     unregisterControlSurfaceRequests(context, descriptor().moduleID);
     publishLifecycleEvent(context, "mastercontrol.provider.xai.stopped", descriptor().moduleID);

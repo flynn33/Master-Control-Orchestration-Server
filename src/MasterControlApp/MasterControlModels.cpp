@@ -89,6 +89,22 @@ std::string to_string(ProviderAssignmentTargetKind value) {
     });
 }
 
+std::string to_string(ProviderExecutionStatus value) {
+    return enumToString(value, {
+        { ProviderExecutionStatus::Pending, "pending" },
+        { ProviderExecutionStatus::Running, "running" },
+        { ProviderExecutionStatus::Succeeded, "succeeded" },
+        { ProviderExecutionStatus::Failed, "failed" }
+    });
+}
+
+std::string to_string(ProviderExecutionTransport value) {
+    return enumToString(value, {
+        { ProviderExecutionTransport::OpenAICompatibleChat, "openai_compatible_chat" },
+        { ProviderExecutionTransport::ClaudeCodeCli, "claude_code_cli" }
+    });
+}
+
 std::string to_string(InstallerKind value) {
     return enumToString(value, {
         { InstallerKind::Msi, "msi" },
@@ -153,6 +169,22 @@ ProviderAssignmentTargetKind providerAssignmentTargetKindFromString(const std::s
     });
 }
 
+ProviderExecutionStatus providerExecutionStatusFromString(const std::string& value) {
+    return enumFromString<ProviderExecutionStatus>(value, {
+        { ProviderExecutionStatus::Pending, "pending" },
+        { ProviderExecutionStatus::Running, "running" },
+        { ProviderExecutionStatus::Succeeded, "succeeded" },
+        { ProviderExecutionStatus::Failed, "failed" }
+    });
+}
+
+ProviderExecutionTransport providerExecutionTransportFromString(const std::string& value) {
+    return enumFromString<ProviderExecutionTransport>(value, {
+        { ProviderExecutionTransport::OpenAICompatibleChat, "openai_compatible_chat" },
+        { ProviderExecutionTransport::ClaudeCodeCli, "claude_code_cli" }
+    });
+}
+
 InstallerKind installerKindFromString(const std::string& value) {
     return enumFromString<InstallerKind>(value, {
         { InstallerKind::Msi, "msi" },
@@ -208,6 +240,22 @@ void to_json(nlohmann::json& json, ProviderAssignmentTargetKind value) {
 
 void from_json(const nlohmann::json& json, ProviderAssignmentTargetKind& value) {
     value = providerAssignmentTargetKindFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, ProviderExecutionStatus value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, ProviderExecutionStatus& value) {
+    value = providerExecutionStatusFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, ProviderExecutionTransport value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, ProviderExecutionTransport& value) {
+    value = providerExecutionTransportFromString(json.get<std::string>());
 }
 
 void to_json(nlohmann::json& json, InstallerKind value) {

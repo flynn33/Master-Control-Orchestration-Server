@@ -42,6 +42,31 @@ const ::MasterControlShell::ShellProviderCredentialStatus* findCredentialStatus(
     return iterator == statuses.end() ? nullptr : &(*iterator);
 }
 
+std::wstring executionRegistrationRow(const ::MasterControlShell::ShellProviderExecutionRegistration& registration) {
+    std::wstring label = registration.displayName.empty() ? registration.providerId : registration.displayName;
+    label += L"  |  ";
+    label += registration.transport;
+    label += registration.supportsSharedMcpAccess ? L"  |  shared MCP" : L"  |  isolated";
+    if (registration.supportsDirectMcpConfig) {
+        label += L"  |  direct config";
+    }
+    return label;
+}
+
+std::wstring executionHistoryRow(const ::MasterControlShell::ShellProviderExecutionRecord& record) {
+    std::wstring label = L"[";
+    label += record.status;
+    label += L"] ";
+    label += record.targetDisplayName.empty() ? record.targetId : record.targetDisplayName;
+    label += L"  |  ";
+    label += record.providerDisplayName.empty() ? record.providerId : record.providerDisplayName;
+    if (!record.completedAtUtc.empty()) {
+        label += L"  |  ";
+        label += record.completedAtUtc;
+    }
+    return label;
+}
+
 } // namespace
 
 ProvidersSectionControl::ProvidersSectionControl() {
@@ -54,6 +79,7 @@ void ProvidersSectionControl::AttachRuntime(::MasterControlShell::ShellRuntime* 
     refreshRequested_ = std::move(refreshRequested);
     ApplyCredentialFields();
     RefreshAssignmentSelectors();
+    RefreshExecutionTargetSelector();
     UpdateEditorState();
 }
 
@@ -63,6 +89,8 @@ void ProvidersSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
     providerCredentialStatuses_ = snapshot.providerCredentialStatuses;
     providerAssignmentTargets_ = snapshot.providerAssignmentTargets;
     providerAssignments_ = snapshot.providerAssignments;
+    providerExecutionRegistrations_ = snapshot.providerExecutionRegistrations;
+    providerExecutionHistory_ = snapshot.providerExecutionHistory;
     aiAutonomyEnabled_ = snapshot.aiAutonomyEnabled;
 
     ProviderRouteCountText().Text(winrt::hstring(std::to_wstring(snapshot.providerCount)));
@@ -71,9 +99,19 @@ void ProvidersSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
     populateListView(ProvidersListView(), snapshot.providerRows);
     populateListView(ProviderCapabilitiesListView(), snapshot.providerCapabilityRows);
     populateListView(ProviderAssignmentsListView(), snapshot.providerAssignmentRows);
+    std::vector<std::wstring> executionHistoryRows;
+    executionHistoryRows.reserve(providerExecutionHistory_.size());
+    for (const auto& record : providerExecutionHistory_) {
+        executionHistoryRows.push_back(executionHistoryRow(record));
+    }
+    if (executionHistoryRows.empty()) {
+        executionHistoryRows.push_back(L"No provider execution history has been recorded yet.");
+    }
+    populateListView(ProviderExecutionHistoryListView(), executionHistoryRows);
 
     RefreshProviderSelector();
     RefreshAssignmentSelectors();
+    RefreshExecutionTargetSelector();
 
     if (!autonomyDirty_) {
         suspendDirtyTracking_ = true;
@@ -102,6 +140,18 @@ void ProvidersSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
     }
 
     ApplyCredentialFields();
+    if (!providerExecutionHistory_.empty()) {
+        const auto& lastRecord = providerExecutionHistory_.front();
+        ProviderExecutionOutputTextBox().Text(winrt::hstring(
+            lastRecord.outputText.empty() ? lastRecord.rawResponse : lastRecord.outputText));
+        if (!providerExecutionDirty_) {
+            ProviderExecutionStatusText().Text(winrt::hstring(
+                lastRecord.errorMessage.empty() ? L"Last provider task completed." : lastRecord.errorMessage));
+        }
+    } else if (!providerExecutionDirty_) {
+        ProviderExecutionOutputTextBox().Text(L"");
+        ProviderExecutionStatusText().Text(L"No provider task has been executed yet.");
+    }
     UpdateEditorState();
 }
 
@@ -181,6 +231,34 @@ void ProvidersSectionControl::ProviderAssignmentProviderSelector_SelectionChange
     }
 }
 
+void ProvidersSectionControl::ProviderExecutionTargetSelector_SelectionChanged(
+    Windows::Foundation::IInspectable const&,
+    SelectionChangedEventArgs const&) {
+    if (!suspendDirtyTracking_) {
+        selectedExecutionTargetIndex_ = ProviderExecutionTargetSelector().SelectedIndex();
+        providerExecutionDirty_ = true;
+        UpdateEditorState();
+    }
+}
+
+void ProvidersSectionControl::ProviderExecutionEditor_Changed(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    if (!suspendDirtyTracking_) {
+        providerExecutionDirty_ = true;
+        UpdateEditorState();
+    }
+}
+
+void ProvidersSectionControl::ProviderExecutionEditor_Changed(
+    Windows::Foundation::IInspectable const&,
+    TextChangedEventArgs const&) {
+    if (!suspendDirtyTracking_) {
+        providerExecutionDirty_ = true;
+        UpdateEditorState();
+    }
+}
+
 void ProvidersSectionControl::AiAutonomyToggle_Toggled(
     Windows::Foundation::IInspectable const&,
     Microsoft::UI::Xaml::RoutedEventArgs const&) {
@@ -219,6 +297,12 @@ void ProvidersSectionControl::NewProviderButton_Click(
     ApplyCredentialFields();
     SetStatus(L"Staged a new provider route. Fill in the editor and save it.");
     UpdateEditorState();
+}
+
+void ProvidersSectionControl::ExecuteProviderTaskButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    ExecuteProviderTaskAsync();
 }
 
 void ProvidersSectionControl::SaveAiAutonomyButton_Click(
@@ -354,6 +438,33 @@ void ProvidersSectionControl::RefreshAssignmentSelectors() {
     suspendDirtyTracking_ = false;
 }
 
+void ProvidersSectionControl::RefreshExecutionTargetSelector() {
+    const auto previousTargetIndex = selectedExecutionTargetIndex_;
+    suspendDirtyTracking_ = true;
+
+    ProviderExecutionTargetSelector().Items().Clear();
+    for (const auto& target : providerAssignmentTargets_) {
+        std::wstring label = target.displayName;
+        if (target.kind == L"sub_agent_group") {
+            label += L"  |  ";
+            label += std::to_wstring(target.memberTargetIds.size());
+            label += L" members";
+        }
+        ProviderExecutionTargetSelector().Items().Append(winrt::box_value(winrt::hstring(label)));
+    }
+
+    if (previousTargetIndex >= 0 && previousTargetIndex < static_cast<int>(providerAssignmentTargets_.size())) {
+        ProviderExecutionTargetSelector().SelectedIndex(previousTargetIndex);
+    } else if (!providerAssignmentTargets_.empty()) {
+        ProviderExecutionTargetSelector().SelectedIndex(0);
+        selectedExecutionTargetIndex_ = 0;
+    } else {
+        selectedExecutionTargetIndex_ = -1;
+    }
+
+    suspendDirtyTracking_ = false;
+}
+
 void ProvidersSectionControl::ApplyCredentialFields() {
     auto setField = [](StackPanel const& panel,
                        TextBlock const& label,
@@ -433,6 +544,11 @@ void ProvidersSectionControl::UpdateEditorState() {
         selectedAssignmentTargetIndex_ >= 0 &&
         selectedAssignmentTargetIndex_ < static_cast<int>(providerAssignmentTargets_.size()) &&
         providerAssignmentDirty_);
+    ExecuteProviderTaskButton().IsEnabled(
+        hasRuntime &&
+        selectedExecutionTargetIndex_ >= 0 &&
+        selectedExecutionTargetIndex_ < static_cast<int>(providerAssignmentTargets_.size()) &&
+        !std::wstring(ProviderExecutionPromptTextBox().Text().c_str()).empty());
     SaveAiAutonomyButton().IsEnabled(hasRuntime && autonomyDirty_);
 }
 
@@ -581,6 +697,57 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::SaveProviderAs
         }
     }
     UpdateEditorState();
+}
+
+winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ExecuteProviderTaskAsync() {
+    if (runtime_ == nullptr) {
+        ProviderExecutionStatusText().Text(L"Provider execution is unavailable until the shell runtime is attached.");
+        co_return;
+    }
+    if (selectedExecutionTargetIndex_ < 0 ||
+        selectedExecutionTargetIndex_ >= static_cast<int>(providerAssignmentTargets_.size())) {
+        ProviderExecutionStatusText().Text(L"Select a role or sub-agent before running a provider task.");
+        co_return;
+    }
+
+    const auto prompt = std::wstring(ProviderExecutionPromptTextBox().Text().c_str());
+    if (prompt.empty()) {
+        ProviderExecutionStatusText().Text(L"Enter a prompt before running a provider task.");
+        co_return;
+    }
+
+    int maxTurns = 4;
+    try {
+        maxTurns = (std::max)(1, std::stoi(std::wstring(ProviderExecutionMaxTurnsTextBox().Text().c_str())));
+    } catch (...) {
+        maxTurns = 4;
+    }
+
+    ExecuteProviderTaskButton().IsEnabled(false);
+    ProviderExecutionStatusText().Text(L"Dispatching provider task through the local admin API...");
+    winrt::apartment_context uiThread;
+    const auto request = ::MasterControlShell::ShellProviderExecutionRequest{
+        providerAssignmentTargets_[static_cast<size_t>(selectedExecutionTargetIndex_)].targetId,
+        prompt,
+        ProviderExecutionToolAccessToggle().IsOn(),
+        maxTurns
+    };
+    co_await winrt::resume_background();
+    const auto record = runtime_->ExecuteProviderTask(request);
+    co_await uiThread;
+
+    providerExecutionDirty_ = false;
+    ProviderExecutionStatusText().Text(winrt::hstring(
+        record.errorMessage.empty()
+            ? (record.status == L"succeeded" ? L"Provider task completed successfully." : L"Provider task finished.")
+            : record.errorMessage));
+    ProviderExecutionOutputTextBox().Text(winrt::hstring(
+        !record.outputText.empty() ? record.outputText : record.rawResponse));
+    if (refreshRequested_) {
+        refreshRequested_();
+    } else {
+        UpdateEditorState();
+    }
 }
 
 winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::SaveAiAutonomyAsync() {

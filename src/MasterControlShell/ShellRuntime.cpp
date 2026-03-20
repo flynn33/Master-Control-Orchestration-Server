@@ -468,6 +468,37 @@ ShellProviderAssignment providerAssignmentFromJson(const JsonObject& object) {
     return assignment;
 }
 
+ShellProviderExecutionRegistration providerExecutionRegistrationFromJson(const JsonObject& object) {
+    ShellProviderExecutionRegistration registration;
+    registration.moduleId = wideFromUtf8(jsonStringOr(object, L"moduleId", ""));
+    registration.providerId = wideFromUtf8(jsonStringOr(object, L"providerId", ""));
+    registration.kind = wideFromUtf8(jsonStringOr(object, L"kind", "generic"));
+    registration.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
+    registration.transport = wideFromUtf8(jsonStringOr(object, L"transport", ""));
+    registration.supportsSharedMcpAccess = jsonBoolOr(object, L"supportsSharedMcpAccess", true);
+    registration.supportsDirectMcpConfig = jsonBoolOr(object, L"supportsDirectMcpConfig", false);
+    return registration;
+}
+
+ShellProviderExecutionRecord providerExecutionRecordFromJson(const JsonObject& object) {
+    ShellProviderExecutionRecord record;
+    record.executionId = wideFromUtf8(jsonStringOr(object, L"executionId", ""));
+    record.targetId = wideFromUtf8(jsonStringOr(object, L"targetId", ""));
+    record.targetDisplayName = wideFromUtf8(jsonStringOr(object, L"targetDisplayName", ""));
+    record.providerId = wideFromUtf8(jsonStringOr(object, L"providerId", ""));
+    record.providerDisplayName = wideFromUtf8(jsonStringOr(object, L"providerDisplayName", ""));
+    record.status = wideFromUtf8(jsonStringOr(object, L"status", "failed"));
+    record.modelId = wideFromUtf8(jsonStringOr(object, L"modelId", ""));
+    record.referencedMcpServerIds = jsonStringArrayOr(object, L"referencedMcpServerIds");
+    record.toolEvents = jsonStringArrayOr(object, L"toolEvents");
+    record.outputText = wideFromUtf8(jsonStringOr(object, L"outputText", ""));
+    record.rawResponse = wideFromUtf8(jsonStringOr(object, L"rawResponse", ""));
+    record.startedAtUtc = wideFromUtf8(jsonStringOr(object, L"startedAtUtc", ""));
+    record.completedAtUtc = wideFromUtf8(jsonStringOr(object, L"completedAtUtc", ""));
+    record.errorMessage = wideFromUtf8(jsonStringOr(object, L"errorMessage", ""));
+    return record;
+}
+
 ShellSecuritySettings securityFromJson(const JsonObject& object) {
     ShellSecuritySettings settings;
     settings.enableTls = jsonBoolOr(object, L"enableTls", false);
@@ -765,6 +796,31 @@ std::wstring providerAssignmentRow(const ShellProviderAssignment& assignment,
     return stream.str();
 }
 
+std::wstring providerExecutionRegistrationRow(const ShellProviderExecutionRegistration& registration) {
+    std::wostringstream stream;
+    stream << (registration.displayName.empty() ? registration.providerId : registration.displayName)
+           << L"  |  "
+           << registration.transport
+           << L"  |  shared MCP "
+           << boolLabel(registration.supportsSharedMcpAccess);
+    if (registration.supportsDirectMcpConfig) {
+        stream << L"  |  direct config";
+    }
+    return stream.str();
+}
+
+std::wstring providerExecutionHistoryRow(const ShellProviderExecutionRecord& record) {
+    std::wostringstream stream;
+    stream << L"[" << record.status << L"] "
+           << (record.targetDisplayName.empty() ? record.targetId : record.targetDisplayName)
+           << L"  |  "
+           << (record.providerDisplayName.empty() ? record.providerId : record.providerDisplayName);
+    if (!record.completedAtUtc.empty()) {
+        stream << L"  |  " << record.completedAtUtc;
+    }
+    return stream.str();
+}
+
 std::wstring installRow(const JsonObject& object) {
     std::wostringstream stream;
     stream << wideFromUtf8(jsonStringOr(object, L"source", "import"))
@@ -923,6 +979,53 @@ ShellOperationResult postJsonObjectToAdminApi(const std::filesystem::path& confi
     return operationResultFromResponse(*response);
 }
 
+ShellProviderExecutionRecord postProviderExecutionToAdminApi(const std::filesystem::path& configurationFile,
+                                                             const ShellProviderExecutionRequest& request) {
+    ShellProviderExecutionRecord record;
+    record.targetId = request.targetId;
+    record.status = L"failed";
+
+    JsonObject payload;
+    payload.SetNamedValue(L"targetId", JsonValue::CreateStringValue(request.targetId));
+    payload.SetNamedValue(L"prompt", JsonValue::CreateStringValue(request.prompt));
+    payload.SetNamedValue(L"allowToolAccess", JsonValue::CreateBooleanValue(request.allowToolAccess));
+    payload.SetNamedValue(L"maxTurns", JsonValue::CreateNumberValue(request.maxTurns));
+
+    std::wstring errorMessage;
+    const auto [host, port] = adminApiEndpoint(configurationFile);
+    const auto response = httpRequest(
+        host,
+        port,
+        L"POST",
+        L"/api/providers/execute",
+        narrowFromWide(payload.Stringify().c_str()),
+        {},
+        errorMessage);
+    if (!response.has_value()) {
+        record.errorMessage = errorMessage.empty()
+            ? L"Unable to execute the provider task through the local admin API."
+            : errorMessage;
+        return record;
+    }
+
+    const auto json = parseJsonObject(response->body);
+    if (!json.has_value()) {
+        record.errorMessage = response->statusCode == 200
+            ? L"Local admin API returned invalid execution JSON."
+            : L"Local admin API rejected the provider execution request.";
+        return record;
+    }
+
+    auto parsedRecord = providerExecutionRecordFromJson(*json);
+    if (parsedRecord.status.empty()) {
+        parsedRecord.status = response->statusCode == 200 ? L"succeeded" : L"failed";
+    }
+    if (response->statusCode != 200 && parsedRecord.errorMessage.empty()) {
+        parsedRecord.errorMessage = L"Local admin API rejected the provider execution request.";
+    }
+    return parsedRecord;
+}
+
 ShellExportFetchResult fetchExportsFromAdminApi(const std::filesystem::path& configurationFile) {
     std::wstring errorMessage;
     const auto [host, port] = adminApiEndpoint(configurationFile);
@@ -1028,6 +1131,8 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     std::vector<ShellProviderCredentialStatus> providerCredentialStatuses;
     std::vector<ShellProviderAssignmentTarget> providerAssignmentTargets;
     std::vector<ShellProviderAssignment> providerAssignments;
+    std::vector<ShellProviderExecutionRegistration> providerExecutionRegistrations;
+    std::vector<ShellProviderExecutionRecord> providerExecutionHistory;
     int cpuPercent = 50;
     int memoryPercent = 50;
     int bandwidthPercent = 50;
@@ -1087,6 +1192,8 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     std::vector<std::wstring> providerRows;
     std::vector<std::wstring> providerCapabilityRows;
     std::vector<std::wstring> providerAssignmentRows;
+    std::vector<std::wstring> providerExecutionRegistrationRows;
+    std::vector<std::wstring> providerExecutionHistoryRows;
     std::vector<std::wstring> installRows;
     std::vector<std::wstring> exportRows;
     std::wstring governancePosture = L"Pending";
@@ -1161,6 +1268,16 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                 for (const auto& value : dashboardJson->GetNamedArray(L"providerAssignments", JsonArray())) {
                     if (value.ValueType() == JsonValueType::Object) {
                         providerAssignments.push_back(providerAssignmentFromJson(value.GetObject()));
+                    }
+                }
+                for (const auto& value : dashboardJson->GetNamedArray(L"providerExecutionRegistrations", JsonArray())) {
+                    if (value.ValueType() == JsonValueType::Object) {
+                        providerExecutionRegistrations.push_back(providerExecutionRegistrationFromJson(value.GetObject()));
+                    }
+                }
+                for (const auto& value : dashboardJson->GetNamedArray(L"providerExecutionHistory", JsonArray())) {
+                    if (value.ValueType() == JsonValueType::Object) {
+                        providerExecutionHistory.push_back(providerExecutionRecordFromJson(value.GetObject()));
                     }
                 }
                 appendJsonArrayRows(
@@ -1270,6 +1387,16 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
             providerAssignmentRows.push_back(providerAssignmentRow(assignment, providerAssignmentTargets, providers));
         }
     }
+    if (providerExecutionRegistrationRows.empty() && !providerExecutionRegistrations.empty()) {
+        for (const auto& registration : providerExecutionRegistrations) {
+            providerExecutionRegistrationRows.push_back(providerExecutionRegistrationRow(registration));
+        }
+    }
+    if (providerExecutionHistoryRows.empty() && !providerExecutionHistory.empty()) {
+        for (const auto& record : providerExecutionHistory) {
+            providerExecutionHistoryRows.push_back(providerExecutionHistoryRow(record));
+        }
+    }
 
     snapshot.endpointCount = endpointRows.size();
     snapshot.providerCount = providers.empty() ? providerRows.size() : providers.size();
@@ -1291,6 +1418,12 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     }
     if (providerAssignmentRows.empty()) {
         providerAssignmentRows.push_back(L"No orchestration roles or sub-agents have provider ownership yet.");
+    }
+    if (providerExecutionRegistrationRows.empty()) {
+        providerExecutionRegistrationRows.push_back(L"No provider execution modules have registered transports yet.");
+    }
+    if (providerExecutionHistoryRows.empty()) {
+        providerExecutionHistoryRows.push_back(L"No provider execution history has been recorded yet.");
     }
     if (installRows.empty()) {
         installRows.push_back(L"No installer provenance has been recorded yet.");
@@ -1383,6 +1516,8 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.providerCredentialStatuses = std::move(providerCredentialStatuses);
     snapshot.providerAssignmentTargets = std::move(providerAssignmentTargets);
     snapshot.providerAssignments = std::move(providerAssignments);
+    snapshot.providerExecutionRegistrations = std::move(providerExecutionRegistrations);
+    snapshot.providerExecutionHistory = std::move(providerExecutionHistory);
     snapshot.navigationPointers = std::move(navigationPointers);
     snapshot.toolbarItems = std::move(toolbarItems);
     snapshot.overlayRoutes = std::move(overlayRoutes);
@@ -1500,6 +1635,23 @@ ShellOperationResult ShellRuntime::UpsertProviderAssignment(const ShellProviderA
         L"/api/providers/assignments",
         providerAssignmentToJson(assignment),
         L"Unable to update provider ownership through the local admin API.");
+}
+
+ShellProviderExecutionRecord ShellRuntime::ExecuteProviderTask(const ShellProviderExecutionRequest& request) const {
+    ShellProviderExecutionRecord record;
+    record.targetId = request.targetId;
+    record.status = L"failed";
+
+    if (request.targetId.empty()) {
+        record.errorMessage = L"Select an orchestration target before executing a provider task.";
+        return record;
+    }
+    if (request.prompt.empty()) {
+        record.errorMessage = L"Enter a prompt before executing a provider task.";
+        return record;
+    }
+
+    return postProviderExecutionToAdminApi(ResolveConfigurationFile(), request);
 }
 
 ShellOperationResult ShellRuntime::UpdateAiAutonomyEnabled(const bool enabled) const {

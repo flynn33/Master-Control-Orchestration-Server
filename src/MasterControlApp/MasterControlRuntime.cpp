@@ -26,6 +26,7 @@
 #include <iphlpapi.h>
 #include <urlmon.h>
 #include <wincrypt.h>
+#include <winhttp.h>
 
 #include <algorithm>
 #include <array>
@@ -73,8 +74,50 @@ std::wstring wideFromUtf8(const std::string& input) {
     return output;
 }
 
+std::string utf8FromWide(const std::wstring& input) {
+    if (input.empty()) {
+        return {};
+    }
+
+    const int required = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        input.c_str(),
+        static_cast<int>(input.size()),
+        nullptr,
+        0,
+        nullptr,
+        nullptr);
+
+    std::string output(static_cast<size_t>(required), '\0');
+    WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        input.c_str(),
+        static_cast<int>(input.size()),
+        output.data(),
+        required,
+        nullptr,
+        nullptr);
+    return output;
+}
+
 bool startsWith(const std::string& value, const std::string& prefix) {
     return value.rfind(prefix, 0) == 0;
+}
+
+bool startsWithInsensitive(const std::string& value, const std::string& prefix) {
+    if (value.size() < prefix.size()) {
+        return false;
+    }
+
+    for (size_t index = 0; index < prefix.size(); ++index) {
+        if (std::tolower(static_cast<unsigned char>(value[index])) !=
+            std::tolower(static_cast<unsigned char>(prefix[index]))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool isRemoteSource(const std::string& source) {
@@ -102,6 +145,390 @@ std::string sanitizePathComponent(std::string value) {
         }
     }
     return value;
+}
+
+std::string trimCopy(std::string value) {
+    value.erase(
+        value.begin(),
+        std::find_if(
+            value.begin(),
+            value.end(),
+            [](unsigned char character) { return !std::isspace(character); }));
+    value.erase(
+        std::find_if(
+            value.rbegin(),
+            value.rend(),
+            [](unsigned char character) { return !std::isspace(character); })
+            .base(),
+        value.end());
+    return value;
+}
+
+std::wstring quoteWindowsArgument(const std::wstring& argument) {
+    if (argument.empty()) {
+        return L"\"\"";
+    }
+
+    const bool requiresQuotes = argument.find_first_of(L" \t\n\v\"") != std::wstring::npos;
+    if (!requiresQuotes) {
+        return argument;
+    }
+
+    std::wstring quoted = L"\"";
+    size_t backslashCount = 0;
+    for (const wchar_t character : argument) {
+        if (character == L'\\') {
+            ++backslashCount;
+            continue;
+        }
+        if (character == L'"') {
+            quoted.append(backslashCount * 2 + 1, L'\\');
+            quoted.push_back(L'"');
+            backslashCount = 0;
+            continue;
+        }
+        if (backslashCount > 0) {
+            quoted.append(backslashCount, L'\\');
+            backslashCount = 0;
+        }
+        quoted.push_back(character);
+    }
+    if (backslashCount > 0) {
+        quoted.append(backslashCount * 2, L'\\');
+    }
+    quoted.push_back(L'"');
+    return quoted;
+}
+
+std::wstring joinCommandArguments(const std::vector<std::wstring>& arguments) {
+    std::wstring commandLine;
+    for (size_t index = 0; index < arguments.size(); ++index) {
+        if (index > 0) {
+            commandLine.push_back(L' ');
+        }
+        commandLine += quoteWindowsArgument(arguments[index]);
+    }
+    return commandLine;
+}
+
+std::optional<std::filesystem::path> findCommandOnPath(const std::vector<std::wstring>& fileNames) {
+    for (const auto& fileName : fileNames) {
+        std::array<wchar_t, 4096> buffer{};
+        const DWORD length = SearchPathW(nullptr, fileName.c_str(), nullptr, static_cast<DWORD>(buffer.size()), buffer.data(), nullptr);
+        if (length > 0 && length < buffer.size()) {
+            return std::filesystem::path(buffer.data());
+        }
+    }
+    return std::nullopt;
+}
+
+struct ParsedUrl final {
+    bool valid = false;
+    bool secure = false;
+    std::string host;
+    INTERNET_PORT port = 0;
+    std::wstring pathAndQuery = L"/";
+};
+
+ParsedUrl parseUrl(const std::string& url) {
+    ParsedUrl parsed;
+    URL_COMPONENTSW components{};
+    components.dwStructSize = sizeof(components);
+
+    std::wstring wideUrl = wideFromUtf8(url);
+    std::wstring host(256, L'\0');
+    std::wstring path(2048, L'\0');
+    std::wstring extraInfo(2048, L'\0');
+    components.lpszHostName = host.data();
+    components.dwHostNameLength = static_cast<DWORD>(host.size());
+    components.lpszUrlPath = path.data();
+    components.dwUrlPathLength = static_cast<DWORD>(path.size());
+    components.lpszExtraInfo = extraInfo.data();
+    components.dwExtraInfoLength = static_cast<DWORD>(extraInfo.size());
+
+    if (!WinHttpCrackUrl(wideUrl.c_str(), static_cast<DWORD>(wideUrl.size()), 0, &components)) {
+        return parsed;
+    }
+
+    host.resize(components.dwHostNameLength);
+    path.resize(components.dwUrlPathLength);
+    extraInfo.resize(components.dwExtraInfoLength);
+
+    parsed.valid = true;
+    parsed.secure = components.nScheme == INTERNET_SCHEME_HTTPS;
+    parsed.host = utf8FromWide(host);
+    parsed.port = components.nPort;
+    parsed.pathAndQuery = path.empty() ? L"/" : path;
+    if (!extraInfo.empty()) {
+        parsed.pathAndQuery += extraInfo;
+    }
+    return parsed;
+}
+
+struct HttpClientResponse final {
+    bool succeeded = false;
+    int statusCode = 0;
+    std::string body;
+    std::string errorMessage;
+};
+
+HttpClientResponse sendJsonRequest(const std::string& method,
+                                   const std::string& url,
+                                   const std::vector<std::pair<std::wstring, std::wstring>>& headers,
+                                   const std::string& body) {
+    HttpClientResponse response;
+    const auto parsed = parseUrl(url);
+    if (!parsed.valid) {
+        response.errorMessage = "Invalid URL.";
+        return response;
+    }
+
+    HINTERNET session = WinHttpOpen(
+        L"MasterControlServiceHost/2.0",
+        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+        WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS,
+        0);
+    if (session == nullptr) {
+        response.errorMessage = "Unable to initialize WinHTTP.";
+        return response;
+    }
+
+    WinHttpSetTimeouts(session, 3000, 3000, 10000, 30000);
+
+    HINTERNET connection = WinHttpConnect(session, wideFromUtf8(parsed.host).c_str(), parsed.port, 0);
+    if (connection == nullptr) {
+        response.errorMessage = "Unable to connect to the remote provider.";
+        WinHttpCloseHandle(session);
+        return response;
+    }
+
+    const DWORD requestFlags = parsed.secure ? WINHTTP_FLAG_SECURE : 0;
+    HINTERNET request = WinHttpOpenRequest(
+        connection,
+        wideFromUtf8(method).c_str(),
+        parsed.pathAndQuery.c_str(),
+        nullptr,
+        WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES,
+        requestFlags);
+    if (request == nullptr) {
+        response.errorMessage = "Unable to open the remote provider request.";
+        WinHttpCloseHandle(connection);
+        WinHttpCloseHandle(session);
+        return response;
+    }
+
+    std::wstring headerBlock = L"Content-Type: application/json\r\n";
+    for (const auto& [name, value] : headers) {
+        headerBlock += name;
+        headerBlock += L": ";
+        headerBlock += value;
+        headerBlock += L"\r\n";
+    }
+
+    LPVOID optionalData = body.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<char*>(body.data());
+    const DWORD optionalLength = static_cast<DWORD>(body.size());
+    if (WinHttpSendRequest(
+            request,
+            headerBlock.c_str(),
+            static_cast<DWORD>(headerBlock.size()),
+            optionalData,
+            optionalLength,
+            optionalLength,
+            0) == 0 ||
+        WinHttpReceiveResponse(request, nullptr) == 0) {
+        response.errorMessage = "The remote provider request failed.";
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connection);
+        WinHttpCloseHandle(session);
+        return response;
+    }
+
+    DWORD statusCode = 0;
+    DWORD statusCodeSize = sizeof(statusCode);
+    WinHttpQueryHeaders(
+        request,
+        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX,
+        &statusCode,
+        &statusCodeSize,
+        WINHTTP_NO_HEADER_INDEX);
+    response.statusCode = static_cast<int>(statusCode);
+
+    std::string responseBody;
+    for (;;) {
+        DWORD available = 0;
+        if (WinHttpQueryDataAvailable(request, &available) == 0 || available == 0) {
+            break;
+        }
+
+        std::string chunk(static_cast<size_t>(available), '\0');
+        DWORD bytesRead = 0;
+        if (WinHttpReadData(request, chunk.data(), available, &bytesRead) == 0) {
+            response.errorMessage = "Unable to read the remote provider response.";
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            WinHttpCloseHandle(session);
+            return response;
+        }
+
+        chunk.resize(static_cast<size_t>(bytesRead));
+        responseBody += chunk;
+    }
+
+    response.succeeded = response.statusCode >= 200 && response.statusCode < 300;
+    response.body = std::move(responseBody);
+    if (!response.succeeded && response.errorMessage.empty()) {
+        response.errorMessage = "Remote provider returned an unsuccessful status code.";
+    }
+
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connection);
+    WinHttpCloseHandle(session);
+    return response;
+}
+
+struct ProcessCaptureResult final {
+    bool launched = false;
+    int exitCode = -1;
+    std::string stdoutText;
+    std::string stderrText;
+};
+
+ProcessCaptureResult runProcessCapture(const std::wstring& commandLine,
+                                       const std::filesystem::path& workingDirectory,
+                                       const std::vector<std::pair<std::wstring, std::wstring>>& environmentOverrides = {}) {
+    ProcessCaptureResult result;
+
+    SECURITY_ATTRIBUTES securityAttributes{};
+    securityAttributes.nLength = sizeof(securityAttributes);
+    securityAttributes.bInheritHandle = TRUE;
+
+    HANDLE stdoutRead = nullptr;
+    HANDLE stdoutWrite = nullptr;
+    HANDLE stderrRead = nullptr;
+    HANDLE stderrWrite = nullptr;
+    if (!CreatePipe(&stdoutRead, &stdoutWrite, &securityAttributes, 0) ||
+        !SetHandleInformation(stdoutRead, HANDLE_FLAG_INHERIT, 0) ||
+        !CreatePipe(&stderrRead, &stderrWrite, &securityAttributes, 0) ||
+        !SetHandleInformation(stderrRead, HANDLE_FLAG_INHERIT, 0)) {
+        if (stdoutRead) CloseHandle(stdoutRead);
+        if (stdoutWrite) CloseHandle(stdoutWrite);
+        if (stderrRead) CloseHandle(stderrRead);
+        if (stderrWrite) CloseHandle(stderrWrite);
+        return result;
+    }
+
+    LPWCH environmentBlock = nullptr;
+    if (!environmentOverrides.empty()) {
+        const LPWCH currentEnvironment = GetEnvironmentStringsW();
+        if (currentEnvironment != nullptr) {
+            std::map<std::wstring, std::wstring> variables;
+            for (const wchar_t* cursor = currentEnvironment; *cursor != L'\0'; cursor += wcslen(cursor) + 1) {
+                std::wstring entry(cursor);
+                const auto separator = entry.find(L'=');
+                if (separator == std::wstring::npos) {
+                    continue;
+                }
+                variables[entry.substr(0, separator)] = entry.substr(separator + 1);
+            }
+            FreeEnvironmentStringsW(currentEnvironment);
+
+            for (const auto& [name, value] : environmentOverrides) {
+                variables[name] = value;
+            }
+
+            std::wstring flatEnvironment;
+            for (const auto& [name, value] : variables) {
+                flatEnvironment += name;
+                flatEnvironment += L'=';
+                flatEnvironment += value;
+                flatEnvironment.push_back(L'\0');
+            }
+            flatEnvironment.push_back(L'\0');
+
+            environmentBlock = static_cast<LPWCH>(HeapAlloc(GetProcessHeap(), 0, (flatEnvironment.size() + 1) * sizeof(wchar_t)));
+            if (environmentBlock != nullptr) {
+                memcpy(environmentBlock, flatEnvironment.data(), flatEnvironment.size() * sizeof(wchar_t));
+            }
+        }
+    }
+
+    STARTUPINFOW startupInfo{};
+    startupInfo.cb = sizeof(startupInfo);
+    startupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startupInfo.hStdOutput = stdoutWrite;
+    startupInfo.hStdError = stderrWrite;
+
+    PROCESS_INFORMATION processInformation{};
+    std::wstring mutableCommandLine = commandLine;
+    const std::wstring workingDirectoryWide = workingDirectory.wstring();
+    const DWORD creationFlags = CREATE_NO_WINDOW | (environmentBlock != nullptr ? CREATE_UNICODE_ENVIRONMENT : 0);
+    result.launched = CreateProcessW(
+        nullptr,
+        mutableCommandLine.data(),
+        nullptr,
+        nullptr,
+        TRUE,
+        creationFlags,
+        environmentBlock,
+        workingDirectoryWide.empty() ? nullptr : workingDirectoryWide.c_str(),
+        &startupInfo,
+        &processInformation) != 0;
+
+    if (environmentBlock != nullptr) {
+        HeapFree(GetProcessHeap(), 0, environmentBlock);
+    }
+    CloseHandle(stdoutWrite);
+    CloseHandle(stderrWrite);
+
+    if (!result.launched) {
+        CloseHandle(stdoutRead);
+        CloseHandle(stderrRead);
+        return result;
+    }
+
+    auto readPipe = [](HANDLE handle) {
+        std::string captured;
+        char buffer[4096];
+        DWORD bytesRead = 0;
+        while (ReadFile(handle, buffer, sizeof(buffer), &bytesRead, nullptr) && bytesRead > 0) {
+            captured.append(buffer, buffer + bytesRead);
+        }
+        return captured;
+    };
+
+    result.stdoutText = readPipe(stdoutRead);
+    result.stderrText = readPipe(stderrRead);
+    WaitForSingleObject(processInformation.hProcess, INFINITE);
+
+    DWORD exitCode = 0;
+    if (GetExitCodeProcess(processInformation.hProcess, &exitCode) != 0) {
+        result.exitCode = static_cast<int>(exitCode);
+    }
+
+    CloseHandle(stdoutRead);
+    CloseHandle(stderrRead);
+    CloseHandle(processInformation.hThread);
+    CloseHandle(processInformation.hProcess);
+    return result;
+}
+
+std::string buildEndpointUrl(const RuntimeEndpoint& endpoint) {
+    const std::string scheme = endpoint.protocol.empty() ? "http" : endpoint.protocol;
+    const std::string routePath = endpoint.routePath.empty()
+        ? std::string("/")
+        : (endpoint.routePath.front() == '/' ? endpoint.routePath : "/" + endpoint.routePath);
+    return scheme + "://" + endpoint.host + ":" + std::to_string(endpoint.port) + routePath;
+}
+
+std::string generateExecutionId() {
+    static std::atomic<uint64_t> counter{ 1 };
+    const auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    return "exec-" + std::to_string(stamp) + "-" + std::to_string(counter.fetch_add(1));
 }
 
 nlohmann::json readJsonFile(const std::filesystem::path& filePath) {
@@ -266,6 +693,7 @@ struct SharedState final {
     mutable std::mutex mutex;
     AppConfiguration configuration;
     std::vector<InstallProvenance> installHistory;
+    std::vector<ProviderExecutionRecord> providerExecutionHistory;
 };
 
 struct BootstrapManifestContract final {
@@ -1014,6 +1442,22 @@ public:
         return loadStatusesLocked();
     }
 
+    std::map<std::string, std::string> readCredentials(const std::string& providerId) const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto document = loadDocumentLocked();
+        const auto iterator = document.protectedPayloadsByProviderId.find(providerId);
+        if (iterator == document.protectedPayloadsByProviderId.end()) {
+            return {};
+        }
+
+        try {
+            const auto payload = nlohmann::json::parse(unprotectSecretPayload(iterator->second));
+            return payload.get<std::map<std::string, std::string>>();
+        } catch (...) {
+            return {};
+        }
+    }
+
     OperationResult upsertCredentials(const ProviderCredentialUpdate& update) override {
         if (update.providerId.empty() || isBlank(update.providerId)) {
             return OperationResult{ false, false, "Provider credentials must target a provider route." };
@@ -1283,6 +1727,609 @@ private:
     std::filesystem::path configurationFile_;
     std::shared_ptr<IRuntimeInventoryService> inventoryService_;
     std::shared_ptr<IProviderRegistry> providerRegistry_;
+};
+
+class ProviderExecutionCatalogService final : public IProviderExecutionCatalogService {
+public:
+    std::vector<ProviderExecutionRegistration> listRegistrations() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<ProviderExecutionRegistration> registrations;
+        registrations.reserve(registrationsByKind_.size());
+        for (const auto& [kind, registration] : registrationsByKind_) {
+            (void)kind;
+            registrations.push_back(registration);
+        }
+
+        std::sort(
+            registrations.begin(),
+            registrations.end(),
+            [](const ProviderExecutionRegistration& left, const ProviderExecutionRegistration& right) {
+                return std::tie(left.displayName, left.providerId) < std::tie(right.displayName, right.providerId);
+            });
+        return registrations;
+    }
+
+    void upsertRegistration(const ProviderExecutionRegistration& registration) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        registrationsByKind_[registration.kind] = registration;
+    }
+
+    void removeRegistration(const std::string& providerId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto iterator = registrationsByKind_.begin(); iterator != registrationsByKind_.end();) {
+            if (iterator->second.providerId == providerId) {
+                iterator = registrationsByKind_.erase(iterator);
+            } else {
+                ++iterator;
+            }
+        }
+    }
+
+private:
+    mutable std::mutex mutex_;
+    std::map<ProviderKind, ProviderExecutionRegistration> registrationsByKind_;
+};
+
+class ProviderExecutionService final : public IProviderExecutionService {
+public:
+    ProviderExecutionService(std::shared_ptr<SharedState> state,
+                             std::shared_ptr<IProviderRegistry> providerRegistry,
+                             std::shared_ptr<IProviderCredentialStore> providerCredentialStore,
+                             std::shared_ptr<IProviderAssignmentService> providerAssignmentService,
+                             std::shared_ptr<IRuntimeInventoryService> inventoryService,
+                             std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService)
+        : state_(std::move(state))
+        , providerRegistry_(std::move(providerRegistry))
+        , providerCredentialStore_(std::move(providerCredentialStore))
+        , providerAssignmentService_(std::move(providerAssignmentService))
+        , inventoryService_(std::move(inventoryService))
+        , providerExecutionCatalogService_(std::move(providerExecutionCatalogService)) {}
+
+    std::vector<ProviderExecutionRecord> history() const override {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        return state_->providerExecutionHistory;
+    }
+
+    ProviderExecutionRecord execute(const ProviderExecutionRequest& request) override {
+        ProviderExecutionRecord record;
+        record.executionId = generateExecutionId();
+        record.targetId = request.targetId;
+        record.status = ProviderExecutionStatus::Failed;
+        record.startedAtUtc = timestampNowUtc();
+
+        if (request.targetId.empty() || isBlank(request.targetId)) {
+            record.errorMessage = "A provider execution target is required.";
+            record.completedAtUtc = timestampNowUtc();
+            persistRecord(record);
+            return record;
+        }
+        if (request.prompt.empty() || isBlank(request.prompt)) {
+            record.errorMessage = "A provider execution prompt is required.";
+            record.completedAtUtc = timestampNowUtc();
+            persistRecord(record);
+            return record;
+        }
+
+        const auto targets = providerAssignmentService_->listTargets();
+        const auto targetIterator = std::find_if(
+            targets.begin(),
+            targets.end(),
+            [&request](const ProviderAssignmentTarget& target) { return target.targetId == request.targetId; });
+        if (targetIterator == targets.end()) {
+            record.errorMessage = "The requested orchestration target is not available.";
+            record.completedAtUtc = timestampNowUtc();
+            persistRecord(record);
+            return record;
+        }
+        record.targetDisplayName = targetIterator->displayName;
+
+        const auto assignments = providerAssignmentService_->listAssignments();
+        const auto assignmentIterator = std::find_if(
+            assignments.begin(),
+            assignments.end(),
+            [&request](const ProviderAssignment& assignment) { return assignment.targetId == request.targetId; });
+        if (assignmentIterator == assignments.end() || assignmentIterator->providerId.empty()) {
+            record.errorMessage = "No provider route owns the requested orchestration target.";
+            record.completedAtUtc = timestampNowUtc();
+            persistRecord(record);
+            return record;
+        }
+
+        const auto providers = providerRegistry_->listProviders();
+        const auto providerIterator = std::find_if(
+            providers.begin(),
+            providers.end(),
+            [&assignmentIterator](const ProviderConnection& provider) { return provider.id == assignmentIterator->providerId; });
+        if (providerIterator == providers.end()) {
+            record.errorMessage = "The assigned provider route is no longer available.";
+            record.completedAtUtc = timestampNowUtc();
+            persistRecord(record);
+            return record;
+        }
+
+        record.providerId = providerIterator->id;
+        record.providerKind = providerIterator->kind;
+        record.providerDisplayName = providerIterator->displayName;
+        record.modelId = providerIterator->modelId;
+
+        const auto registrations = providerExecutionCatalogService_->listRegistrations();
+        const auto registrationIterator = std::find_if(
+            registrations.begin(),
+            registrations.end(),
+            [providerKind = providerIterator->kind](const ProviderExecutionRegistration& registration) {
+                return registration.kind == providerKind;
+            });
+        if (registrationIterator == registrations.end()) {
+            record.errorMessage = "No active provider execution module is available for the assigned provider kind.";
+            record.completedAtUtc = timestampNowUtc();
+            persistRecord(record);
+            return record;
+        }
+
+        const auto credentials = providerCredentialStore_->readCredentials(providerIterator->id);
+        if (credentials.empty()) {
+            record.errorMessage = "Provider credentials must be configured before execution can start.";
+            record.completedAtUtc = timestampNowUtc();
+            persistRecord(record);
+            return record;
+        }
+
+        const auto accessibleEndpoints = resolveAccessibleMcpEndpoints(request);
+        for (const auto& endpoint : accessibleEndpoints) {
+            record.referencedMcpServerIds.push_back(endpoint.id);
+        }
+
+        record.status = ProviderExecutionStatus::Running;
+        if (registrationIterator->transport == ProviderExecutionTransport::ClaudeCodeCli) {
+            record = executeClaudeCodeCli(*providerIterator, request, accessibleEndpoints, credentials, record);
+        } else {
+            record = executeOpenAICompatibleChat(*providerIterator, request, accessibleEndpoints, credentials, record);
+        }
+        if (record.completedAtUtc.empty()) {
+            record.completedAtUtc = timestampNowUtc();
+        }
+        persistRecord(record);
+        return record;
+    }
+
+private:
+    std::vector<RuntimeEndpoint> resolveAccessibleMcpEndpoints(const ProviderExecutionRequest& request) const {
+        std::vector<RuntimeEndpoint> endpoints;
+        for (const auto& endpoint : inventoryService_->listEndpoints()) {
+            if (endpoint.kind != EndpointKind::MCPServer && endpoint.kind != EndpointKind::Gateway) {
+                continue;
+            }
+            if (endpoint.host.empty() || endpoint.port == 0) {
+                continue;
+            }
+            if (!request.preferredMcpServerIds.empty() &&
+                std::find(request.preferredMcpServerIds.begin(), request.preferredMcpServerIds.end(), endpoint.id) ==
+                    request.preferredMcpServerIds.end()) {
+                continue;
+            }
+            endpoints.push_back(endpoint);
+        }
+        return endpoints;
+    }
+
+    static std::string firstCredentialValue(
+        const std::map<std::string, std::string>& credentials,
+        const std::initializer_list<const char*>& keys) {
+        for (const char* key : keys) {
+            const auto iterator = credentials.find(key);
+            if (iterator != credentials.end() && !iterator->second.empty() && !isBlank(iterator->second)) {
+                return iterator->second;
+            }
+        }
+        return {};
+    }
+
+    static std::string normalizeBaseUrl(std::string baseUrl) {
+        while (!baseUrl.empty() && baseUrl.back() == '/') {
+            baseUrl.pop_back();
+        }
+        return baseUrl;
+    }
+
+    static std::string extractAssistantText(const nlohmann::json& message) {
+        if (!message.contains("content")) {
+            return {};
+        }
+        const auto& content = message.at("content");
+        if (content.is_string()) {
+            return content.get<std::string>();
+        }
+        if (!content.is_array()) {
+            return {};
+        }
+
+        std::ostringstream stream;
+        for (const auto& item : content) {
+            if (!item.is_object()) {
+                continue;
+            }
+            if (item.value("type", "") == "text") {
+                if (item.contains("text")) {
+                    if (item.at("text").is_string()) {
+                        stream << item.at("text").get<std::string>();
+                    } else if (item.at("text").is_object()) {
+                        stream << item.at("text").value("value", "");
+                    }
+                }
+            }
+        }
+        return trimCopy(stream.str());
+    }
+
+    std::string buildExecutionSystemPrompt(const ProviderConnection& provider,
+                                           const ProviderExecutionRequest& request,
+                                           const std::vector<RuntimeEndpoint>& endpoints,
+                                           const bool useJsonRpcTools) const {
+        std::ostringstream prompt;
+        prompt << "You are operating inside Master Control Program as the provider assigned to target '" << request.targetId << "'.\n"
+               << "Stay within the requested orchestration lane and do not assume ownership of other roles or sub-agents.\n"
+               << "Assigned provider route: " << provider.displayName << " (" << provider.id << ").\n";
+        if (!request.workingDirectory.empty()) {
+            prompt << "Preferred working directory: " << request.workingDirectory << "\n";
+        }
+        if (endpoints.empty()) {
+            prompt << "No shared MCP servers are currently published for this execution.\n";
+        } else {
+            prompt << "Shared MCP server access is available for these endpoints:\n";
+            for (const auto& endpoint : endpoints) {
+                prompt << "- " << endpoint.id << " | " << endpoint.displayName << " | " << buildEndpointUrl(endpoint) << "\n";
+            }
+        }
+        if (useJsonRpcTools) {
+            prompt << "Use the provided function tools to inspect shared MCP servers and invoke JSON-RPC requests against them when you need tool access.\n";
+        } else {
+            prompt << "Use the provided MCP configuration to access the shared MCP servers directly.\n";
+        }
+        return prompt.str();
+    }
+
+    static nlohmann::json buildClaudeMcpConfig(const std::vector<RuntimeEndpoint>& endpoints) {
+        nlohmann::json servers = nlohmann::json::object();
+        for (const auto& endpoint : endpoints) {
+            servers[endpoint.id] = {
+                { "type", "http" },
+                { "url", buildEndpointUrl(endpoint) }
+            };
+        }
+        return nlohmann::json{ { "mcpServers", servers } };
+    }
+
+    ProviderExecutionRecord executeOpenAICompatibleChat(const ProviderConnection& provider,
+                                                        const ProviderExecutionRequest& request,
+                                                        const std::vector<RuntimeEndpoint>& endpoints,
+                                                        const std::map<std::string, std::string>& credentials,
+                                                        ProviderExecutionRecord record) const {
+        const std::string bearerToken = firstCredentialValue(credentials, { "openai_api_key", "xai_api_key" });
+        if (bearerToken.empty()) {
+            record.status = ProviderExecutionStatus::Failed;
+            record.errorMessage = "A bearer API key is required for the selected provider route.";
+            record.completedAtUtc = timestampNowUtc();
+            return record;
+        }
+
+        nlohmann::json messages = nlohmann::json::array({
+            {
+                { "role", "system" },
+                { "content", buildExecutionSystemPrompt(provider, request, endpoints, true) }
+            },
+            {
+                { "role", "user" },
+                { "content", request.prompt }
+            }
+        });
+
+        const nlohmann::json tools = nlohmann::json::array({
+            {
+                { "type", "function" },
+                { "function", {
+                    { "name", "master_control_list_mcp_servers" },
+                    { "description", "List the MCP server endpoints currently shared through Master Control Program for this execution." },
+                    { "parameters", {
+                        { "type", "object" },
+                        { "properties", nlohmann::json::object() },
+                        { "additionalProperties", false }
+                    } }
+                } }
+            },
+            {
+                { "type", "function" },
+                { "function", {
+                    { "name", "master_control_invoke_mcp_jsonrpc" },
+                    { "description", "Invoke a JSON-RPC request against a shared MCP server endpoint exposed by Master Control Program." },
+                    { "parameters", {
+                        { "type", "object" },
+                        { "properties", {
+                            { "server_id", { { "type", "string" }, { "description", "The MCP server id returned by master_control_list_mcp_servers." } } },
+                            { "request", {
+                                { "type", "object" },
+                                { "description", "A complete JSON-RPC request body to send to the MCP server." }
+                            } }
+                        } },
+                        { "required", nlohmann::json::array({ "server_id", "request" }) },
+                        { "additionalProperties", false }
+                    } }
+                } }
+            }
+        });
+
+        const std::string endpointUrl = normalizeBaseUrl(provider.baseUrl) + "/chat/completions";
+        const int maxTurns = (std::max)(1, request.maxTurns);
+        for (int turn = 0; turn < maxTurns; ++turn) {
+            nlohmann::json requestBody = {
+                { "model", provider.modelId },
+                { "messages", messages }
+            };
+            if (request.allowToolAccess) {
+                requestBody["tools"] = tools;
+                requestBody["tool_choice"] = "auto";
+            }
+
+            const auto response = sendJsonRequest(
+                "POST",
+                endpointUrl,
+                { { L"Authorization", L"Bearer " + wideFromUtf8(bearerToken) } },
+                requestBody.dump());
+            record.rawResponse = response.body;
+            if (!response.succeeded) {
+                record.status = ProviderExecutionStatus::Failed;
+                record.errorMessage = response.errorMessage.empty() ? response.body : response.errorMessage;
+                record.completedAtUtc = timestampNowUtc();
+                return record;
+            }
+
+            nlohmann::json payload;
+            try {
+                payload = nlohmann::json::parse(response.body);
+            } catch (...) {
+                record.status = ProviderExecutionStatus::Failed;
+                record.errorMessage = "The provider returned an unreadable JSON payload.";
+                record.completedAtUtc = timestampNowUtc();
+                return record;
+            }
+
+            const auto* choices = payload.contains("choices") && payload.at("choices").is_array() && !payload.at("choices").empty()
+                ? &payload.at("choices")
+                : nullptr;
+            if (choices == nullptr || !choices->front().contains("message")) {
+                record.status = ProviderExecutionStatus::Failed;
+                record.errorMessage = "The provider response did not include a completion message.";
+                record.completedAtUtc = timestampNowUtc();
+                return record;
+            }
+
+            const auto assistantMessage = choices->front().at("message");
+            messages.push_back(assistantMessage);
+            if (request.allowToolAccess &&
+                assistantMessage.contains("tool_calls") &&
+                assistantMessage.at("tool_calls").is_array() &&
+                !assistantMessage.at("tool_calls").empty()) {
+                for (const auto& toolCall : assistantMessage.at("tool_calls")) {
+                    const std::string toolName = toolCall.contains("function")
+                        ? toolCall.at("function").value("name", "")
+                        : std::string{};
+                    std::string toolResponse = R"({"ok":false,"message":"Unsupported tool call."})";
+                    if (toolName == "master_control_list_mcp_servers") {
+                        nlohmann::json servers = nlohmann::json::array();
+                        for (const auto& endpoint : endpoints) {
+                            servers.push_back({
+                                { "id", endpoint.id },
+                                { "displayName", endpoint.displayName },
+                                { "url", buildEndpointUrl(endpoint) }
+                            });
+                        }
+                        toolResponse = nlohmann::json{ { "servers", servers } }.dump();
+                    } else if (toolName == "master_control_invoke_mcp_jsonrpc") {
+                        try {
+                            const auto arguments = nlohmann::json::parse(
+                                toolCall.at("function").value("arguments", "{}"));
+                            const std::string serverId = arguments.value("server_id", "");
+                            const auto endpointIterator = std::find_if(
+                                endpoints.begin(),
+                                endpoints.end(),
+                                [&serverId](const RuntimeEndpoint& endpoint) { return endpoint.id == serverId; });
+                            if (endpointIterator == endpoints.end()) {
+                                toolResponse = R"({"ok":false,"message":"Requested MCP server is not available for this execution."})";
+                            } else {
+                                const auto proxyResponse = sendJsonRequest(
+                                    "POST",
+                                    buildEndpointUrl(*endpointIterator),
+                                    {},
+                                    arguments.at("request").dump());
+                                if (proxyResponse.succeeded) {
+                                    nlohmann::json proxyPayload = {
+                                        { "ok", true },
+                                        { "statusCode", proxyResponse.statusCode }
+                                    };
+                                    try {
+                                        proxyPayload["body"] = nlohmann::json::parse(proxyResponse.body);
+                                    } catch (...) {
+                                        proxyPayload["body"] = proxyResponse.body;
+                                    }
+                                    toolResponse = proxyPayload.dump();
+                                } else {
+                                    toolResponse = nlohmann::json{
+                                        { "ok", false },
+                                        { "statusCode", proxyResponse.statusCode },
+                                        { "message", proxyResponse.errorMessage.empty() ? proxyResponse.body : proxyResponse.errorMessage }
+                                    }.dump();
+                                }
+                            }
+                        } catch (...) {
+                            toolResponse = R"({"ok":false,"message":"Tool call arguments were invalid JSON."})";
+                        }
+                    }
+
+                    record.toolEvents.push_back(toolName);
+                    messages.push_back({
+                        { "role", "tool" },
+                        { "tool_call_id", toolCall.value("id", "") },
+                        { "content", toolResponse }
+                    });
+                }
+                continue;
+            }
+
+            record.outputText = extractAssistantText(assistantMessage);
+            if (record.outputText.empty()) {
+                record.outputText = payload.dump(2);
+            }
+            record.status = ProviderExecutionStatus::Succeeded;
+            record.completedAtUtc = timestampNowUtc();
+            return record;
+        }
+
+        record.status = ProviderExecutionStatus::Failed;
+        record.errorMessage = "The provider execution exhausted its turn budget before returning a final answer.";
+        record.completedAtUtc = timestampNowUtc();
+        return record;
+    }
+
+    ProviderExecutionRecord executeClaudeCodeCli(const ProviderConnection& provider,
+                                                 const ProviderExecutionRequest& request,
+                                                 const std::vector<RuntimeEndpoint>& endpoints,
+                                                 const std::map<std::string, std::string>& credentials,
+                                                 ProviderExecutionRecord record) const {
+        std::optional<std::filesystem::path> claudeCommand;
+        const DWORD configuredCommandLength = GetEnvironmentVariableW(L"MASTERCONTROL_CLAUDE_COMMAND", nullptr, 0);
+        if (configuredCommandLength > 0) {
+            std::wstring configured(static_cast<size_t>(configuredCommandLength - 1), L'\0');
+            GetEnvironmentVariableW(L"MASTERCONTROL_CLAUDE_COMMAND", configured.data(), configuredCommandLength);
+            claudeCommand = std::filesystem::path(configured);
+        } else {
+            claudeCommand = findCommandOnPath({ L"claude.exe", L"claude.cmd", L"claude.bat" });
+        }
+        if (!claudeCommand.has_value()) {
+            record.status = ProviderExecutionStatus::Failed;
+            record.errorMessage = "Claude Code was not found on PATH.";
+            record.completedAtUtc = timestampNowUtc();
+            return record;
+        }
+
+        const auto executionDirectory = std::filesystem::temp_directory_path() / "MasterControlProgram" / "provider-executions" / sanitizePathComponent(record.executionId);
+        std::filesystem::create_directories(executionDirectory);
+        const auto systemPromptFile = executionDirectory / "system-prompt.txt";
+        {
+            std::ofstream stream(systemPromptFile, std::ios::trunc);
+            stream << buildExecutionSystemPrompt(provider, request, endpoints, false);
+        }
+
+        std::filesystem::path mcpConfigFile;
+        if (request.allowToolAccess && !endpoints.empty()) {
+            mcpConfigFile = executionDirectory / "mcp.json";
+            writeJsonFile(mcpConfigFile, buildClaudeMcpConfig(endpoints));
+        }
+
+        std::vector<std::wstring> arguments{
+            claudeCommand->wstring(),
+            L"-p",
+            wideFromUtf8(request.prompt),
+            L"--output-format",
+            L"json",
+            L"--max-turns",
+            std::to_wstring((std::max)(1, request.maxTurns)),
+            L"--append-system-prompt-file",
+            systemPromptFile.wstring()
+        };
+        if (!provider.modelId.empty()) {
+            arguments.push_back(L"--model");
+            arguments.push_back(wideFromUtf8(provider.modelId));
+        }
+        if (!mcpConfigFile.empty()) {
+            arguments.push_back(L"--mcp-config");
+            arguments.push_back(mcpConfigFile.wstring());
+            arguments.push_back(L"--strict-mcp-config");
+            arguments.push_back(L"--dangerously-skip-permissions");
+            record.toolEvents.push_back("claude_code_cli_mcp");
+        }
+
+        std::wstring commandLine;
+        if (startsWithInsensitive(claudeCommand->extension().string(), ".cmd") ||
+            startsWithInsensitive(claudeCommand->extension().string(), ".bat")) {
+            commandLine = L"cmd.exe /d /s /c ";
+            commandLine += quoteWindowsArgument(joinCommandArguments(arguments));
+        } else {
+            commandLine = joinCommandArguments(arguments);
+        }
+
+        std::vector<std::pair<std::wstring, std::wstring>> environmentOverrides;
+        const std::string apiKey = firstCredentialValue(credentials, { "anthropic_api_key" });
+        const std::string authToken = firstCredentialValue(credentials, { "anthropic_auth_token" });
+        if (!apiKey.empty()) {
+            environmentOverrides.emplace_back(L"ANTHROPIC_API_KEY", wideFromUtf8(apiKey));
+        }
+        if (!authToken.empty()) {
+            environmentOverrides.emplace_back(L"ANTHROPIC_AUTH_TOKEN", wideFromUtf8(authToken));
+        }
+        if (!provider.baseUrl.empty()) {
+            environmentOverrides.emplace_back(L"ANTHROPIC_BASE_URL", wideFromUtf8(provider.baseUrl));
+        }
+        if (!provider.modelId.empty()) {
+            environmentOverrides.emplace_back(L"ANTHROPIC_MODEL", wideFromUtf8(provider.modelId));
+        }
+
+        const auto workingDirectory = request.workingDirectory.empty()
+            ? std::filesystem::current_path()
+            : std::filesystem::path(wideFromUtf8(request.workingDirectory));
+        const auto process = runProcessCapture(commandLine, workingDirectory, environmentOverrides);
+        record.rawResponse = process.stdoutText.empty() ? process.stderrText : process.stdoutText;
+        if (!process.launched) {
+            record.status = ProviderExecutionStatus::Failed;
+            record.errorMessage = "Claude Code could not be launched.";
+            record.completedAtUtc = timestampNowUtc();
+            return record;
+        }
+        if (process.exitCode != 0) {
+            record.status = ProviderExecutionStatus::Failed;
+            record.errorMessage = trimCopy(process.stderrText.empty() ? process.stdoutText : process.stderrText);
+            if (record.errorMessage.empty()) {
+                record.errorMessage = "Claude Code returned a non-zero exit code.";
+            }
+            record.completedAtUtc = timestampNowUtc();
+            return record;
+        }
+
+        const std::string stdoutText = trimCopy(process.stdoutText);
+        try {
+            const auto payload = nlohmann::json::parse(stdoutText);
+            if (payload.contains("result") && payload.at("result").is_string()) {
+                record.outputText = payload.at("result").get<std::string>();
+            } else if (payload.contains("content") && payload.at("content").is_string()) {
+                record.outputText = payload.at("content").get<std::string>();
+            } else if (payload.contains("message") && payload.at("message").is_string()) {
+                record.outputText = payload.at("message").get<std::string>();
+            } else {
+                record.outputText = stdoutText;
+            }
+        } catch (...) {
+            record.outputText = stdoutText;
+        }
+        if (record.outputText.empty()) {
+            record.outputText = trimCopy(process.stderrText);
+        }
+        record.status = ProviderExecutionStatus::Succeeded;
+        record.completedAtUtc = timestampNowUtc();
+        return record;
+    }
+
+    void persistRecord(const ProviderExecutionRecord& record) const {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        state_->providerExecutionHistory.insert(state_->providerExecutionHistory.begin(), record);
+        if (state_->providerExecutionHistory.size() > 24) {
+            state_->providerExecutionHistory.resize(24);
+        }
+    }
+
+    std::shared_ptr<SharedState> state_;
+    std::shared_ptr<IProviderRegistry> providerRegistry_;
+    std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
+    std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
+    std::shared_ptr<IRuntimeInventoryService> inventoryService_;
+    std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService_;
 };
 
 class InstallerOrchestrator final : public IInstallerOrchestrator, public IBootstrapRepoService, public IZipBundleService {
@@ -2172,6 +3219,8 @@ public:
                     std::shared_ptr<IProviderCatalogService> providerCatalogService,
                     std::shared_ptr<IProviderCredentialStore> providerCredentialStore,
                     std::shared_ptr<IProviderAssignmentService> providerAssignmentService,
+                    std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService,
+                    std::shared_ptr<IProviderExecutionService> providerExecutionService,
                     std::shared_ptr<IInstallerOrchestrator> installerOrchestrator,
                     std::shared_ptr<IBootstrapRepoService> bootstrapRepoService,
                     std::shared_ptr<IZipBundleService> zipBundleService,
@@ -2185,6 +3234,8 @@ public:
         , providerCatalogService_(std::move(providerCatalogService))
         , providerCredentialStore_(std::move(providerCredentialStore))
         , providerAssignmentService_(std::move(providerAssignmentService))
+        , providerExecutionCatalogService_(std::move(providerExecutionCatalogService))
+        , providerExecutionService_(std::move(providerExecutionService))
         , installerOrchestrator_(std::move(installerOrchestrator))
         , bootstrapRepoService_(std::move(bootstrapRepoService))
         , zipBundleService_(std::move(zipBundleService))
@@ -2203,6 +3254,8 @@ public:
         snapshot.providerCredentialStatuses = providerCredentialStore_->listStatuses();
         snapshot.providerAssignmentTargets = providerAssignmentService_->listTargets();
         snapshot.providerAssignments = providerAssignmentService_->listAssignments();
+        snapshot.providerExecutionRegistrations = providerExecutionCatalogService_->listRegistrations();
+        snapshot.providerExecutionHistory = providerExecutionService_->history();
         for (auto& provider : snapshot.providers) {
             const auto statusIterator = std::find_if(
                 snapshot.providerCredentialStatuses.begin(),
@@ -2242,6 +3295,10 @@ public:
         return providerAssignmentService_->upsertAssignment(nlohmann::json::parse(requestBody).get<ProviderAssignment>());
     }
 
+    ProviderExecutionRecord executeProviderTaskJson(const std::string& requestBody) override {
+        return providerExecutionService_->execute(nlohmann::json::parse(requestBody).get<ProviderExecutionRequest>());
+    }
+
     OperationResult installPackageJson(const std::string& requestBody) override {
         return installerOrchestrator_->installPackage(nlohmann::json::parse(requestBody).get<InstallerPackageSpec>());
     }
@@ -2262,6 +3319,8 @@ private:
     std::shared_ptr<IProviderCatalogService> providerCatalogService_;
     std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
     std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
+    std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService_;
+    std::shared_ptr<IProviderExecutionService> providerExecutionService_;
     std::shared_ptr<IInstallerOrchestrator> installerOrchestrator_;
     std::shared_ptr<IBootstrapRepoService> bootstrapRepoService_;
     std::shared_ptr<IZipBundleService> zipBundleService_;
@@ -2499,6 +3558,7 @@ public:
     OperationResult upsertProviderJson(const std::string& requestBody) { return adminApiService_->upsertProviderJson(requestBody); }
     OperationResult upsertProviderCredentialsJson(const std::string& requestBody) { return adminApiService_->upsertProviderCredentialsJson(requestBody); }
     OperationResult upsertProviderAssignmentJson(const std::string& requestBody) { return adminApiService_->upsertProviderAssignmentJson(requestBody); }
+    ProviderExecutionRecord executeProviderTaskJson(const std::string& requestBody) { return adminApiService_->executeProviderTaskJson(requestBody); }
     OperationResult installPackageJson(const std::string& requestBody) { return adminApiService_->installPackageJson(requestBody); }
     OperationResult installRepoJson(const std::string& requestBody) { return adminApiService_->installRepoJson(requestBody); }
     OperationResult installZipJson(const std::string& requestBody) { return adminApiService_->installZipJson(requestBody); }
@@ -2529,6 +3589,8 @@ private:
     std::shared_ptr<IProviderCatalogService> providerCatalogService_;
     std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
     std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
+    std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService_;
+    std::shared_ptr<IProviderExecutionService> providerExecutionService_;
     std::shared_ptr<IExportService> exportService_;
     std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService_;
     std::shared_ptr<IModuleControlSurfaceService> controlSurfaceService_;
@@ -2554,6 +3616,14 @@ bool MasterControlApplication::Impl::initialize() {
     providerRegistry_ = std::make_shared<ProviderRegistryService>(state_, paths_.configurationFile, providerCatalogService_);
     providerCredentialStore_ = std::make_shared<ProviderCredentialStore>(paths_.providerCredentialsFile, providerRegistry_, providerCatalogService_);
     providerAssignmentService_ = std::make_shared<ProviderAssignmentService>(state_, paths_.configurationFile, inventoryService_, providerRegistry_);
+    providerExecutionCatalogService_ = std::make_shared<ProviderExecutionCatalogService>();
+    providerExecutionService_ = std::make_shared<ProviderExecutionService>(
+        state_,
+        providerRegistry_,
+        providerCredentialStore_,
+        providerAssignmentService_,
+        inventoryService_,
+        providerExecutionCatalogService_);
     exportService_ = std::make_shared<ExportService>(inventoryService_, configurationService_);
     commandLogicUnitService_ = std::make_shared<CommandLogicUnitService>(
         paths_.cluProfileFile,
@@ -2575,6 +3645,8 @@ bool MasterControlApplication::Impl::initialize() {
         providerCatalogService_,
         providerCredentialStore_,
         providerAssignmentService_,
+        providerExecutionCatalogService_,
+        providerExecutionService_,
         installerOrchestrator_,
         installerOrchestrator_,
         installerOrchestrator_,
@@ -2661,6 +3733,8 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
     services->registerService<IProviderCatalogService>(providerCatalogService_);
     services->registerService<IProviderCredentialStore>(providerCredentialStore_);
     services->registerService<IProviderAssignmentService>(providerAssignmentService_);
+    services->registerService<IProviderExecutionCatalogService>(providerExecutionCatalogService_);
+    services->registerService<IProviderExecutionService>(providerExecutionService_);
     services->registerService<IExportService>(exportService_);
     services->registerService<ICommandLogicUnitService>(commandLogicUnitService_);
     services->registerService<IModuleControlSurfaceService>(controlSurfaceService_);
@@ -2774,6 +3848,10 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const auto result = adminApiService_->upsertProviderAssignmentJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
+        if (request.method == "POST" && request.path == "/api/providers/execute") {
+            const auto result = adminApiService_->executeProviderTaskJson(request.body);
+            return jsonResponse(result, result.status == ProviderExecutionStatus::Succeeded ? 200 : 400);
+        }
         if (request.method == "POST" && request.path == "/api/install/package") {
             const auto result = adminApiService_->installPackageJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
@@ -2854,6 +3932,10 @@ OperationResult MasterControlApplication::upsertProviderCredentialsJson(const st
 
 OperationResult MasterControlApplication::upsertProviderAssignmentJson(const std::string& requestBody) {
     return impl_->upsertProviderAssignmentJson(requestBody);
+}
+
+ProviderExecutionRecord MasterControlApplication::executeProviderTaskJson(const std::string& requestBody) {
+    return impl_->executeProviderTaskJson(requestBody);
 }
 
 OperationResult MasterControlApplication::installPackageJson(const std::string& requestBody) {

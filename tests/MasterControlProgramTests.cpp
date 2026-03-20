@@ -6,14 +6,22 @@
 #include "MasterControl/MasterControlModels.h"
 #include "MasterControl/MasterControlRuntime.h"
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <Windows.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -63,6 +71,295 @@ void writeTextFile(const std::filesystem::path& filePath, const std::string& con
     std::ofstream output(filePath, std::ios::binary | std::ios::trunc);
     output << contents;
 }
+
+std::string utf8FromWide(const std::wstring& input) {
+    if (input.empty()) {
+        return {};
+    }
+
+    const int required = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        input.c_str(),
+        static_cast<int>(input.size()),
+        nullptr,
+        0,
+        nullptr,
+        nullptr);
+    std::string output(static_cast<size_t>(required), '\0');
+    WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        input.c_str(),
+        static_cast<int>(input.size()),
+        output.data(),
+        required,
+        nullptr,
+        nullptr);
+    return output;
+}
+
+std::optional<std::string> readFileUtf8(const std::filesystem::path& filePath) {
+    std::ifstream stream(filePath, std::ios::binary);
+    if (!stream.is_open()) {
+        return std::nullopt;
+    }
+
+    return std::string(
+        (std::istreambuf_iterator<char>(stream)),
+        std::istreambuf_iterator<char>());
+}
+
+struct TestHttpRequest final {
+    std::string method;
+    std::string path;
+    std::map<std::string, std::string> headers;
+    std::string body;
+};
+
+struct TestHttpResponse final {
+    int statusCode = 200;
+    std::string contentType = "application/json";
+    std::string body;
+};
+
+std::string trimAscii(std::string value) {
+    const auto first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) {
+        return {};
+    }
+    const auto last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+std::string lowercaseAscii(std::string value) {
+    std::transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](const unsigned char character) { return static_cast<char>(std::tolower(character)); });
+    return value;
+}
+
+std::string httpStatusReason(const int statusCode) {
+    switch (statusCode) {
+        case 200: return "OK";
+        case 400: return "Bad Request";
+        case 404: return "Not Found";
+        case 500: return "Internal Server Error";
+        default: return "OK";
+    }
+}
+
+class SimpleHttpServer final {
+public:
+    using Handler = std::function<TestHttpResponse(const TestHttpRequest&)>;
+
+    explicit SimpleHttpServer(Handler handler)
+        : handler_(std::move(handler)) {
+        WSAData data{};
+        if (WSAStartup(MAKEWORD(2, 2), &data) != 0) {
+            throw std::runtime_error("WSAStartup failed");
+        }
+
+        listenSocket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (listenSocket_ == INVALID_SOCKET) {
+            WSACleanup();
+            throw std::runtime_error("Unable to create test socket");
+        }
+
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_port = 0;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+        if (bind(listenSocket_, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR) {
+            closesocket(listenSocket_);
+            WSACleanup();
+            throw std::runtime_error("Unable to bind test socket");
+        }
+
+        if (listen(listenSocket_, SOMAXCONN) == SOCKET_ERROR) {
+            closesocket(listenSocket_);
+            WSACleanup();
+            throw std::runtime_error("Unable to listen on test socket");
+        }
+
+        sockaddr_in boundAddress{};
+        int boundAddressLength = sizeof(boundAddress);
+        getsockname(listenSocket_, reinterpret_cast<sockaddr*>(&boundAddress), &boundAddressLength);
+        port_ = ntohs(boundAddress.sin_port);
+
+        worker_ = std::thread([this]() { Run(); });
+    }
+
+    ~SimpleHttpServer() {
+        Stop();
+        WSACleanup();
+    }
+
+    SimpleHttpServer(const SimpleHttpServer&) = delete;
+    SimpleHttpServer& operator=(const SimpleHttpServer&) = delete;
+
+    [[nodiscard]] uint16_t port() const {
+        return port_;
+    }
+
+    [[nodiscard]] std::vector<TestHttpRequest> requests() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return requests_;
+    }
+
+    void Stop() {
+        if (stopped_.exchange(true)) {
+            return;
+        }
+
+        if (listenSocket_ != INVALID_SOCKET) {
+            SOCKET wakeSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            if (wakeSocket != INVALID_SOCKET) {
+                sockaddr_in address{};
+                address.sin_family = AF_INET;
+                address.sin_port = htons(port_);
+                inet_pton(AF_INET, "127.0.0.1", &address.sin_addr);
+                connect(wakeSocket, reinterpret_cast<const sockaddr*>(&address), sizeof(address));
+                closesocket(wakeSocket);
+            }
+
+            closesocket(listenSocket_);
+            listenSocket_ = INVALID_SOCKET;
+        }
+
+        if (worker_.joinable()) {
+            worker_.join();
+        }
+    }
+
+private:
+    void Run() {
+        while (!stopped_) {
+            SOCKET clientSocket = accept(listenSocket_, nullptr, nullptr);
+            if (clientSocket == INVALID_SOCKET) {
+                if (stopped_) {
+                    break;
+                }
+                continue;
+            }
+
+            if (stopped_) {
+                closesocket(clientSocket);
+                break;
+            }
+
+            HandleClient(clientSocket);
+            closesocket(clientSocket);
+        }
+    }
+
+    void HandleClient(const SOCKET clientSocket) {
+        DWORD timeoutMilliseconds = 5000;
+        setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeoutMilliseconds), sizeof(timeoutMilliseconds));
+        setsockopt(clientSocket, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeoutMilliseconds), sizeof(timeoutMilliseconds));
+
+        std::string requestBuffer;
+        char chunk[4096]{};
+        size_t contentLength = 0;
+        bool parsedHeaders = false;
+
+        while (true) {
+            const int bytesReceived = recv(clientSocket, chunk, sizeof(chunk), 0);
+            if (bytesReceived <= 0) {
+                break;
+            }
+
+            requestBuffer.append(chunk, static_cast<size_t>(bytesReceived));
+            const size_t headerEnd = requestBuffer.find("\r\n\r\n");
+            if (headerEnd == std::string::npos) {
+                continue;
+            }
+
+            if (!parsedHeaders) {
+                parsedHeaders = true;
+                const std::string headerText = requestBuffer.substr(0, headerEnd);
+                std::istringstream headerStream(headerText);
+                std::string line;
+                std::getline(headerStream, line); // request line
+                while (std::getline(headerStream, line)) {
+                    if (!line.empty() && line.back() == '\r') {
+                        line.pop_back();
+                    }
+                    const auto colon = line.find(':');
+                    if (colon == std::string::npos) {
+                        continue;
+                    }
+                    const auto key = lowercaseAscii(trimAscii(line.substr(0, colon)));
+                    const auto value = trimAscii(line.substr(colon + 1));
+                    if (key == "content-length") {
+                        contentLength = static_cast<size_t>(std::stoul(value));
+                    }
+                }
+            }
+
+            const size_t bodyStart = headerEnd + 4;
+            if (requestBuffer.size() >= bodyStart + contentLength) {
+                break;
+            }
+        }
+
+        TestHttpRequest request;
+        const size_t headerEnd = requestBuffer.find("\r\n\r\n");
+        if (headerEnd != std::string::npos) {
+            std::istringstream headerStream(requestBuffer.substr(0, headerEnd));
+            std::string requestLine;
+            std::getline(headerStream, requestLine);
+            if (!requestLine.empty() && requestLine.back() == '\r') {
+                requestLine.pop_back();
+            }
+
+            std::istringstream requestLineStream(requestLine);
+            requestLineStream >> request.method >> request.path;
+
+            std::string line;
+            while (std::getline(headerStream, line)) {
+                if (!line.empty() && line.back() == '\r') {
+                    line.pop_back();
+                }
+                const auto colon = line.find(':');
+                if (colon == std::string::npos) {
+                    continue;
+                }
+                request.headers.emplace(
+                    lowercaseAscii(trimAscii(line.substr(0, colon))),
+                    trimAscii(line.substr(colon + 1)));
+            }
+
+            request.body = requestBuffer.substr(headerEnd + 4);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            requests_.push_back(request);
+        }
+
+        const auto response = handler_(request);
+        std::ostringstream responseStream;
+        responseStream << "HTTP/1.1 " << response.statusCode << ' ' << httpStatusReason(response.statusCode) << "\r\n"
+                       << "Content-Type: " << response.contentType << "\r\n"
+                       << "Content-Length: " << response.body.size() << "\r\n"
+                       << "Connection: close\r\n\r\n"
+                       << response.body;
+        const auto responseText = responseStream.str();
+        send(clientSocket, responseText.data(), static_cast<int>(responseText.size()), 0);
+    }
+
+    Handler handler_;
+    SOCKET listenSocket_ = INVALID_SOCKET;
+    uint16_t port_ = 0;
+    std::thread worker_;
+    std::atomic<bool> stopped_{ false };
+    mutable std::mutex mutex_;
+    std::vector<TestHttpRequest> requests_;
+};
 
 std::filesystem::path currentExecutablePath() {
     wchar_t buffer[MAX_PATH]{};
@@ -255,6 +552,21 @@ bool hasHistoryEntry(const std::vector<MasterControl::InstallProvenance>& entrie
         entries.end(),
         [kind, &source](const MasterControl::InstallProvenance& entry) {
             return entry.kind == kind && entry.source == source;
+        });
+}
+
+bool hasProviderExecutionTool(const MasterControl::ProviderExecutionRecord& record, const std::string& toolName) {
+    return std::find(record.toolEvents.begin(), record.toolEvents.end(), toolName) != record.toolEvents.end();
+}
+
+bool hasProviderExecutionRegistration(
+    const std::vector<MasterControl::ProviderExecutionRegistration>& registrations,
+    const std::string& providerId) {
+    return std::any_of(
+        registrations.begin(),
+        registrations.end(),
+        [&providerId](const MasterControl::ProviderExecutionRegistration& registration) {
+            return registration.providerId == providerId;
         });
 }
 
@@ -623,6 +935,210 @@ int main() {
             findAssignment(snapshot.providerAssignments, "sentinel").has_value(),
             "Sub-agent group ownership should fan out to the live sub-agent pool.");
         success &= expect(hasExport(snapshot.exports, "master-control-gateway-profile.json"), "Exports should include the gateway profile");
+        success &= expect(
+            hasProviderExecutionRegistration(snapshot.providerExecutionRegistrations, "codex") &&
+                hasProviderExecutionRegistration(snapshot.providerExecutionRegistrations, "claude-code") &&
+                hasProviderExecutionRegistration(snapshot.providerExecutionRegistrations, "xai-grok"),
+            "Provider modules should register their execution transports with the runtime.");
+
+        {
+            std::atomic<int> providerRequestCount{ 0 };
+            SimpleHttpServer providerServer([&providerRequestCount](const TestHttpRequest&) {
+                const int requestIndex = providerRequestCount.fetch_add(1);
+                if (requestIndex == 0) {
+                    return TestHttpResponse{
+                        200,
+                        "application/json",
+                        nlohmann::json{
+                            { "choices", nlohmann::json::array({
+                                {
+                                    { "message", {
+                                        { "role", "assistant" },
+                                        { "content", "" },
+                                        { "tool_calls", nlohmann::json::array({
+                                            {
+                                                { "id", "call-1" },
+                                                { "type", "function" },
+                                                { "function", {
+                                                    { "name", "master_control_list_mcp_servers" },
+                                                    { "arguments", "{}" }
+                                                } }
+                                            }
+                                        }) }
+                                    } }
+                                }
+                            }) }
+                        }.dump()
+                    };
+                }
+
+                return TestHttpResponse{
+                    200,
+                    "application/json",
+                    nlohmann::json{
+                        { "choices", nlohmann::json::array({
+                            {
+                                { "message", {
+                                    { "role", "assistant" },
+                                    { "content", "Planner route complete." }
+                                } }
+                            }
+                        }) }
+                    }.dump()
+                };
+            });
+
+            const auto providerRouteResult = application.upsertProviderJson(nlohmann::json{
+                { "id", "local-xai-provider" },
+                { "kind", "xai" },
+                { "displayName", "Local xAI Provider" },
+                { "baseUrl", "http://127.0.0.1:" + std::to_string(providerServer.port()) + "/v1" },
+                { "modelId", "grok-code-fast-1" },
+                { "enabled", true },
+                { "allowAutonomousControl", false }
+            }.dump());
+            success &= expect(providerRouteResult.succeeded, "Local xAI provider route should save successfully.");
+
+            const auto providerCredentialResult = application.upsertProviderCredentialsJson(nlohmann::json{
+                { "providerId", "local-xai-provider" },
+                { "values", nlohmann::json{
+                    { "xai_api_key", "local-xai-key" }
+                } }
+            }.dump());
+            success &= expect(providerCredentialResult.succeeded, "Local xAI provider credentials should save successfully.");
+
+            const auto plannerOwnershipResult = application.upsertProviderAssignmentJson(nlohmann::json{
+                { "targetId", "planner" },
+                { "kind", "role" },
+                { "providerId", "local-xai-provider" }
+            }.dump());
+            success &= expect(plannerOwnershipResult.succeeded, "Planner ownership should be reassigned to the local xAI provider.");
+
+            const auto executionRecord = application.executeProviderTaskJson(nlohmann::json{
+                { "targetId", "planner" },
+                { "prompt", "Review shared MCP capacity and produce a planning response." },
+                { "allowToolAccess", true },
+                { "maxTurns", 3 }
+            }.dump());
+            success &= expect(
+                executionRecord.status == MasterControl::ProviderExecutionStatus::Succeeded,
+                "OpenAI-compatible provider execution should succeed against the local test server.");
+            success &= expect(executionRecord.providerId == "local-xai-provider", "Execution should route to the assigned provider.");
+            success &= expect(executionRecord.outputText == "Planner route complete.", "Execution should return the provider's final assistant text.");
+            success &= expect(
+                hasProviderExecutionTool(executionRecord, "master_control_list_mcp_servers"),
+                "OpenAI-compatible provider execution should record shared MCP tool usage.");
+            success &= expect(
+                !executionRecord.referencedMcpServerIds.empty(),
+                "OpenAI-compatible provider execution should receive the shared MCP endpoint set.");
+
+            const auto providerRequests = providerServer.requests();
+            success &= expect(providerRequests.size() == 2, "OpenAI-compatible execution should complete a tool-call round trip.");
+            if (providerRequests.size() >= 2) {
+                success &= expect(providerRequests[0].path == "/v1/chat/completions", "Provider requests should target the OpenAI-compatible chat completions route.");
+                success &= expect(
+                    providerRequests[0].headers.find("authorization") != providerRequests[0].headers.end() &&
+                        providerRequests[0].headers.at("authorization") == "Bearer local-xai-key",
+                    "Provider execution should forward bearer authorization.");
+
+                const auto firstPayload = nlohmann::json::parse(providerRequests[0].body);
+                success &= expect(firstPayload.contains("tools"), "OpenAI-compatible execution should publish shared MCP tools to the provider.");
+                success &= expect(firstPayload.value("model", "") == "grok-code-fast-1", "OpenAI-compatible execution should send the selected model.");
+
+                const auto secondPayload = nlohmann::json::parse(providerRequests[1].body);
+                success &= expect(secondPayload.contains("messages"), "Tool-followup requests should include the full message transcript.");
+                const auto hasToolRole = std::any_of(
+                    secondPayload.at("messages").begin(),
+                    secondPayload.at("messages").end(),
+                    [](const auto& message) {
+                        return message.is_object() && message.value("role", "") == "tool";
+                    });
+                success &= expect(hasToolRole, "Tool-followup requests should append a tool response message.");
+            }
+
+            snapshot = application.snapshot();
+            success &= expect(
+                !snapshot.providerExecutionHistory.empty() &&
+                    snapshot.providerExecutionHistory.front().executionId == executionRecord.executionId,
+                "Successful provider execution should be persisted to runtime history.");
+        }
+
+        {
+            const auto fakeClaudeCommand = tempRoot / "fake-claude.cmd";
+            const auto fakeClaudeArgs = tempRoot / "fake-claude-args.txt";
+            const auto fakeClaudeKey = tempRoot / "fake-claude-key.txt";
+            writeTextFile(
+                fakeClaudeCommand,
+                "@echo off\r\n"
+                "setlocal\r\n"
+                "set \"ARGS_FILE=" + utf8FromWide(fakeClaudeArgs.wstring()) + "\"\r\n"
+                "set \"KEY_FILE=" + utf8FromWide(fakeClaudeKey.wstring()) + "\"\r\n"
+                "echo %* > \"%ARGS_FILE%\"\r\n"
+                "echo %ANTHROPIC_API_KEY% > \"%KEY_FILE%\"\r\n"
+                "echo {\"result\":\"Claude execution ok.\"}\r\n"
+                "exit /b 0\r\n");
+
+            ScopedEnvironmentOverride claudeCommandOverride(L"MASTERCONTROL_CLAUDE_COMMAND", fakeClaudeCommand.wstring());
+
+            const auto claudeProviderResult = application.upsertProviderJson(nlohmann::json{
+                { "id", "local-claude-provider" },
+                { "kind", "claude_code" },
+                { "displayName", "Local Claude Provider" },
+                { "baseUrl", "https://api.anthropic.com" },
+                { "modelId", "claude-sonnet-4-5" },
+                { "enabled", true },
+                { "allowAutonomousControl", false }
+            }.dump());
+            success &= expect(claudeProviderResult.succeeded, "Local Claude Code provider route should save successfully.");
+
+            const auto claudeCredentialResult = application.upsertProviderCredentialsJson(nlohmann::json{
+                { "providerId", "local-claude-provider" },
+                { "values", nlohmann::json{
+                    { "anthropic_api_key", "local-anthropic-key" }
+                } }
+            }.dump());
+            success &= expect(claudeCredentialResult.succeeded, "Local Claude Code credentials should save successfully.");
+
+            const auto architectOwnershipResult = application.upsertProviderAssignmentJson(nlohmann::json{
+                { "targetId", "architect" },
+                { "kind", "role" },
+                { "providerId", "local-claude-provider" }
+            }.dump());
+            success &= expect(architectOwnershipResult.succeeded, "Architect ownership should be assigned to the local Claude provider.");
+
+            const auto claudeExecution = application.executeProviderTaskJson(nlohmann::json{
+                { "targetId", "architect" },
+                { "prompt", "Produce a concise architecture note." },
+                { "allowToolAccess", true },
+                { "maxTurns", 2 }
+            }.dump());
+            success &= expect(
+                claudeExecution.status == MasterControl::ProviderExecutionStatus::Succeeded,
+                "Claude Code execution should succeed against the local CLI shim.");
+            success &= expect(claudeExecution.providerId == "local-claude-provider", "Claude execution should route to the assigned provider.");
+            success &= expect(claudeExecution.outputText == "Claude execution ok.", "Claude execution should parse JSON CLI output.");
+            success &= expect(
+                hasProviderExecutionTool(claudeExecution, "claude_code_cli_mcp"),
+                "Claude execution should record direct MCP configuration usage when tool access is enabled.");
+            success &= expect(std::filesystem::exists(fakeClaudeArgs), "Claude execution should invoke the configured CLI shim.");
+            success &= expect(std::filesystem::exists(fakeClaudeKey), "Claude execution should project provider credentials into the CLI environment.");
+            if (std::filesystem::exists(fakeClaudeArgs)) {
+                const auto argsFile = readFileUtf8(fakeClaudeArgs);
+                success &= expect(argsFile.has_value() && argsFile->find("--output-format json") != std::string::npos, "Claude execution should request JSON output mode.");
+                success &= expect(argsFile.has_value() && argsFile->find("--append-system-prompt-file") != std::string::npos, "Claude execution should pass the system prompt file.");
+                success &= expect(argsFile.has_value() && argsFile->find("--mcp-config") != std::string::npos, "Claude execution should pass the generated MCP config when tool access is enabled.");
+            }
+            if (std::filesystem::exists(fakeClaudeKey)) {
+                const auto keyFile = readFileUtf8(fakeClaudeKey);
+                success &= expect(keyFile.has_value() && keyFile->find("local-anthropic-key") != std::string::npos, "Claude execution should forward the configured API key.");
+            }
+
+            snapshot = application.snapshot();
+            success &= expect(
+                !snapshot.providerExecutionHistory.empty() &&
+                    snapshot.providerExecutionHistory.front().executionId == claudeExecution.executionId,
+                "Claude execution should be persisted to runtime history.");
+        }
 
         if (toolExists(L"pwsh.exe")) {
             const auto packageScript = tempRoot / "package-install.ps1";

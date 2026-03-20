@@ -53,6 +53,18 @@ enum class ProviderAssignmentTargetKind {
     SubAgent
 };
 
+enum class ProviderExecutionStatus {
+    Pending,
+    Running,
+    Succeeded,
+    Failed
+};
+
+enum class ProviderExecutionTransport {
+    OpenAICompatibleChat,
+    ClaudeCodeCli
+};
+
 enum class InstallerKind {
     Msi,
     Exe,
@@ -183,6 +195,43 @@ struct ProviderAssignment final {
     ProviderAssignmentTargetKind kind = ProviderAssignmentTargetKind::Role;
     std::string providerId;
     std::string updatedAtUtc;
+};
+
+struct ProviderExecutionRegistration final {
+    std::string moduleId;
+    std::string providerId;
+    ProviderKind kind = ProviderKind::Generic;
+    std::string displayName;
+    ProviderExecutionTransport transport = ProviderExecutionTransport::OpenAICompatibleChat;
+    bool supportsSharedMcpAccess = true;
+    bool supportsDirectMcpConfig = false;
+};
+
+struct ProviderExecutionRequest final {
+    std::string targetId;
+    std::string prompt;
+    std::vector<std::string> preferredMcpServerIds;
+    std::string workingDirectory;
+    bool allowToolAccess = true;
+    int maxTurns = 4;
+};
+
+struct ProviderExecutionRecord final {
+    std::string executionId;
+    std::string targetId;
+    std::string targetDisplayName;
+    std::string providerId;
+    ProviderKind providerKind = ProviderKind::Generic;
+    std::string providerDisplayName;
+    ProviderExecutionStatus status = ProviderExecutionStatus::Pending;
+    std::string modelId;
+    std::vector<std::string> referencedMcpServerIds;
+    std::vector<std::string> toolEvents;
+    std::string outputText;
+    std::string rawResponse;
+    std::string startedAtUtc;
+    std::string completedAtUtc;
+    std::string errorMessage;
 };
 
 struct InstallerPackageSpec final {
@@ -331,6 +380,8 @@ struct DashboardSnapshot final {
     std::vector<ProviderCredentialStatus> providerCredentialStatuses;
     std::vector<ProviderAssignmentTarget> providerAssignmentTargets;
     std::vector<ProviderAssignment> providerAssignments;
+    std::vector<ProviderExecutionRegistration> providerExecutionRegistrations;
+    std::vector<ProviderExecutionRecord> providerExecutionHistory;
     ResourceAllocationProfile resourceAllocation;
     SecuritySettings security;
     std::vector<InstallProvenance> installHistory;
@@ -359,6 +410,8 @@ std::string to_string(EndpointStatus value);
 std::string to_string(ProviderKind value);
 std::string to_string(ProviderCredentialFieldKind value);
 std::string to_string(ProviderAssignmentTargetKind value);
+std::string to_string(ProviderExecutionStatus value);
+std::string to_string(ProviderExecutionTransport value);
 std::string to_string(InstallerKind value);
 std::string to_string(ControlSurfaceToolbarAction value);
 
@@ -367,6 +420,8 @@ EndpointStatus endpointStatusFromString(const std::string& value);
 ProviderKind providerKindFromString(const std::string& value);
 ProviderCredentialFieldKind providerCredentialFieldKindFromString(const std::string& value);
 ProviderAssignmentTargetKind providerAssignmentTargetKindFromString(const std::string& value);
+ProviderExecutionStatus providerExecutionStatusFromString(const std::string& value);
+ProviderExecutionTransport providerExecutionTransportFromString(const std::string& value);
 InstallerKind installerKindFromString(const std::string& value);
 ControlSurfaceToolbarAction controlSurfaceToolbarActionFromString(const std::string& value);
 
@@ -384,6 +439,12 @@ void from_json(const nlohmann::json& json, ProviderCredentialFieldKind& value);
 
 void to_json(nlohmann::json& json, ProviderAssignmentTargetKind value);
 void from_json(const nlohmann::json& json, ProviderAssignmentTargetKind& value);
+
+void to_json(nlohmann::json& json, ProviderExecutionStatus value);
+void from_json(const nlohmann::json& json, ProviderExecutionStatus& value);
+
+void to_json(nlohmann::json& json, ProviderExecutionTransport value);
+void from_json(const nlohmann::json& json, ProviderExecutionTransport& value);
 
 void to_json(nlohmann::json& json, InstallerKind value);
 void from_json(const nlohmann::json& json, InstallerKind& value);
@@ -512,6 +573,43 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     kind,
     providerId,
     updatedAtUtc)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ProviderExecutionRegistration,
+    moduleId,
+    providerId,
+    kind,
+    displayName,
+    transport,
+    supportsSharedMcpAccess,
+    supportsDirectMcpConfig)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ProviderExecutionRequest,
+    targetId,
+    prompt,
+    preferredMcpServerIds,
+    workingDirectory,
+    allowToolAccess,
+    maxTurns)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ProviderExecutionRecord,
+    executionId,
+    targetId,
+    targetDisplayName,
+    providerId,
+    providerKind,
+    providerDisplayName,
+    status,
+    modelId,
+    referencedMcpServerIds,
+    toolEvents,
+    outputText,
+    rawResponse,
+    startedAtUtc,
+    completedAtUtc,
+    errorMessage)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     InstallerPackageSpec,
@@ -660,6 +758,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     providerCredentialStatuses,
     providerAssignmentTargets,
     providerAssignments,
+    providerExecutionRegistrations,
+    providerExecutionHistory,
     resourceAllocation,
     security,
     installHistory,

@@ -23,6 +23,7 @@ target_link_libraries(MasterControlApp PUBLIC
     urlmon
     advapi32
     crypt32
+    winhttp
     shlwapi
     shell32
 )
