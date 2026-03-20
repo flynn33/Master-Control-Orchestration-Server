@@ -391,6 +391,22 @@ std::vector<std::wstring> jsonStringArrayOr(const JsonObject& object, const wcha
     return values;
 }
 
+ShellRuntimeEndpoint runtimeEndpointFromJson(const JsonObject& object) {
+    ShellRuntimeEndpoint endpoint;
+    endpoint.id = wideFromUtf8(jsonStringOr(object, L"id", ""));
+    endpoint.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
+    endpoint.kind = wideFromUtf8(jsonStringOr(object, L"kind", "mcp_server"));
+    endpoint.host = wideFromUtf8(jsonStringOr(object, L"host", ""));
+    endpoint.port = static_cast<uint16_t>(jsonNumberOr(object, L"port", 0));
+    endpoint.protocol = wideFromUtf8(jsonStringOr(object, L"protocol", "http"));
+    endpoint.status = wideFromUtf8(jsonStringOr(object, L"status", "unknown"));
+    endpoint.description = wideFromUtf8(jsonStringOr(object, L"description", ""));
+    endpoint.routePath = wideFromUtf8(jsonStringOr(object, L"routePath", ""));
+    endpoint.specialization = wideFromUtf8(jsonStringOr(object, L"specialization", ""));
+    endpoint.userDefined = jsonBoolOr(object, L"userDefined", false);
+    return endpoint;
+}
+
 ShellProviderConnection providerFromJson(const JsonObject& object) {
     ShellProviderConnection provider;
     provider.id = wideFromUtf8(jsonStringOr(object, L"id", ""));
@@ -538,6 +554,21 @@ JsonObject providerToJson(const ShellProviderConnection& provider) {
     object.SetNamedValue(L"modelId", JsonValue::CreateStringValue(provider.modelId));
     object.SetNamedValue(L"enabled", JsonValue::CreateBooleanValue(provider.enabled));
     object.SetNamedValue(L"allowAutonomousControl", JsonValue::CreateBooleanValue(provider.allowAutonomousControl));
+    return object;
+}
+
+JsonObject runtimeEndpointToJson(const ShellRuntimeEndpoint& endpoint) {
+    JsonObject object;
+    object.SetNamedValue(L"id", JsonValue::CreateStringValue(endpoint.id));
+    object.SetNamedValue(L"displayName", JsonValue::CreateStringValue(endpoint.displayName));
+    object.SetNamedValue(L"kind", JsonValue::CreateStringValue(L"sub_agent"));
+    object.SetNamedValue(L"host", JsonValue::CreateStringValue(endpoint.host));
+    object.SetNamedValue(L"port", JsonValue::CreateNumberValue(endpoint.port));
+    object.SetNamedValue(L"protocol", JsonValue::CreateStringValue(endpoint.protocol));
+    object.SetNamedValue(L"description", JsonValue::CreateStringValue(endpoint.description));
+    object.SetNamedValue(L"routePath", JsonValue::CreateStringValue(endpoint.routePath));
+    object.SetNamedValue(L"specialization", JsonValue::CreateStringValue(endpoint.specialization));
+    object.SetNamedValue(L"userDefined", JsonValue::CreateBooleanValue(true));
     return object;
 }
 
@@ -757,6 +788,27 @@ std::wstring endpointRow(const JsonObject& object) {
            << static_cast<int>(jsonNumberOr(object, L"port", 0))
            << L"  |  "
            << wideFromUtf8(jsonStringOr(object, L"status", "unknown"));
+    return stream.str();
+}
+
+std::wstring runtimeEndpointRow(const ShellRuntimeEndpoint& endpoint) {
+    std::wostringstream stream;
+    stream << (endpoint.displayName.empty() ? endpoint.id : endpoint.displayName)
+           << L"  |  "
+           << (endpoint.specialization.empty() ? endpoint.kind : endpoint.specialization)
+           << L"  |  ";
+    if (!endpoint.host.empty()) {
+        stream << endpoint.host;
+        if (endpoint.port != 0) {
+            stream << L':' << endpoint.port;
+        }
+    } else {
+        stream << L"logical lane";
+    }
+    stream << L"  |  " << (endpoint.status.empty() ? L"unknown" : endpoint.status);
+    if (endpoint.userDefined) {
+        stream << L"  |  custom";
+    }
     return stream.str();
 }
 
@@ -1149,6 +1201,7 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     bool securityProtocolsEnabled = true;
     bool openLanAccess = true;
     ShellSecuritySettings securitySettings;
+    std::vector<ShellRuntimeEndpoint> endpoints;
     std::vector<ShellProviderConnection> providers;
     std::vector<ShellProviderCapability> providerCapabilities;
     std::vector<ShellProviderCredentialStatus> providerCredentialStatuses;
@@ -1172,6 +1225,11 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                 environmentName = jsonStringOr(profile, L"environmentName", environmentName);
                 preferredBindAddress = jsonStringOr(profile, L"preferredBindAddress", preferredBindAddress);
                 macAddress = jsonStringOr(profile, L"macAddress", macAddress);
+                for (const auto& value : profile.GetNamedArray(L"seededEndpoints", JsonArray())) {
+                    if (value.ValueType() == JsonValueType::Object) {
+                        endpoints.push_back(runtimeEndpointFromJson(value.GetObject()));
+                    }
+                }
             }
 
             if (configuration->HasKey(L"security")) {
@@ -1273,6 +1331,12 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                     dashboardJson->GetNamedArray(L"endpoints", JsonArray()),
                     endpointRow,
                     endpointRows);
+                endpoints.clear();
+                for (const auto& value : dashboardJson->GetNamedArray(L"endpoints", JsonArray())) {
+                    if (value.ValueType() == JsonValueType::Object) {
+                        endpoints.push_back(runtimeEndpointFromJson(value.GetObject()));
+                    }
+                }
                 appendJsonArrayRows(
                     dashboardJson->GetNamedArray(L"providers", JsonArray()),
                     providerRow,
@@ -1434,6 +1498,11 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
             providerExecutionHistoryRows.push_back(providerExecutionHistoryRow(record));
         }
     }
+    if (endpointRows.empty() && !endpoints.empty()) {
+        for (const auto& endpoint : endpoints) {
+            endpointRows.push_back(runtimeEndpointRow(endpoint));
+        }
+    }
 
     snapshot.endpointCount = endpointRows.size();
     snapshot.providerCount = providers.empty() ? providerRows.size() : providers.size();
@@ -1538,6 +1607,7 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.securityProtocolsEnabled = securityProtocolsEnabled;
     snapshot.openLanAccess = openLanAccess;
     snapshot.securitySettings = std::move(securitySettings);
+    snapshot.endpoints = std::move(endpoints);
     snapshot.cpuAllocationPercent = cpuPercent;
     snapshot.memoryAllocationPercent = memoryPercent;
     snapshot.bandwidthAllocationPercent = bandwidthPercent;
@@ -1633,6 +1703,35 @@ bool ShellRuntime::StopService(std::wstring& message) const {
     CloseServiceHandle(service);
     CloseServiceHandle(scm);
     return stopped;
+}
+
+ShellOperationResult ShellRuntime::UpsertSubAgent(const ShellRuntimeEndpoint& subAgent) const {
+    if (subAgent.id.empty()) {
+        return ShellOperationResult{ false, false, L"Sub-agent ID is required." };
+    }
+    if (subAgent.displayName.empty()) {
+        return ShellOperationResult{ false, false, L"Sub-agent display name is required." };
+    }
+
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/runtime/subagents",
+        runtimeEndpointToJson(subAgent),
+        L"Unable to save custom sub-agent settings through the local admin API.");
+}
+
+ShellOperationResult ShellRuntime::RemoveSubAgent(const std::wstring& subAgentId) const {
+    if (subAgentId.empty()) {
+        return ShellOperationResult{ false, false, L"Select a custom sub-agent before removing it." };
+    }
+
+    JsonObject payload;
+    payload.SetNamedValue(L"subAgentId", JsonValue::CreateStringValue(subAgentId));
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/runtime/subagents/remove",
+        payload,
+        L"Unable to remove the selected custom sub-agent through the local admin API.");
 }
 
 ShellOperationResult ShellRuntime::UpsertProvider(const ShellProviderConnection& provider) const {

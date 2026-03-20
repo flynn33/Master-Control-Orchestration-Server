@@ -97,6 +97,14 @@ public:
     virtual ~ISubAgentGroupService() = default;
 };
 
+class ISubAgentCatalogService {
+public:
+    virtual std::vector<RuntimeEndpoint> listCustomSubAgents() const = 0;
+    virtual OperationResult upsertSubAgent(const RuntimeEndpoint& subAgent) = 0;
+    virtual OperationResult removeSubAgent(const std::string& subAgentId) = 0;
+    virtual ~ISubAgentCatalogService() = default;
+};
+
 class IProviderAssignmentService {
 public:
     virtual std::vector<ProviderAssignmentTarget> listTargets() const = 0;
@@ -167,6 +175,8 @@ public:
                                                    bool confirmUnsafeChanges) = 0;
     virtual OperationResult upsertProviderJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertProviderCredentialsJson(const std::string& requestBody) = 0;
+    virtual OperationResult upsertSubAgentJson(const std::string& requestBody) = 0;
+    virtual OperationResult removeSubAgentJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertSubAgentGroupJson(const std::string& requestBody) = 0;
     virtual OperationResult removeSubAgentGroupJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertProviderAssignmentJson(const std::string& requestBody) = 0;

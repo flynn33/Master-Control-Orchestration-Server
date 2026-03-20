@@ -1237,8 +1237,13 @@ void RuntimeInventoryService::refresh() {
     }
 
     for (auto& endpoint : endpoints) {
-        endpoint.status = probeEndpoint(endpoint.host, endpoint.port);
         endpoint.lastCheckedUtc = timestampNowUtc();
+        if (endpoint.port == 0 || endpoint.host.empty() || endpoint.protocol == "virtual") {
+            endpoint.status = EndpointStatus::Unknown;
+            continue;
+        }
+
+        endpoint.status = probeEndpoint(endpoint.host, endpoint.port);
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1576,6 +1581,179 @@ private:
     std::shared_ptr<IProviderRegistry> providerRegistry_;
     std::shared_ptr<IProviderCatalogService> providerCatalogService_;
     mutable std::mutex mutex_;
+};
+
+class SubAgentCatalogService final : public ISubAgentCatalogService {
+public:
+    SubAgentCatalogService(std::shared_ptr<SharedState> state,
+                           std::filesystem::path configurationFile,
+                           std::shared_ptr<IRuntimeInventoryService> inventoryService)
+        : state_(std::move(state))
+        , configurationFile_(std::move(configurationFile))
+        , inventoryService_(std::move(inventoryService)) {}
+
+    std::vector<RuntimeEndpoint> listCustomSubAgents() const override {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        std::vector<RuntimeEndpoint> subAgents;
+        for (const auto& endpoint : state_->configuration.activeProfile.seededEndpoints) {
+            if (endpoint.kind == EndpointKind::SubAgent && endpoint.userDefined) {
+                subAgents.push_back(endpoint);
+            }
+        }
+
+        std::sort(
+            subAgents.begin(),
+            subAgents.end(),
+            [](const RuntimeEndpoint& left, const RuntimeEndpoint& right) {
+                return std::tie(left.displayName, left.id) < std::tie(right.displayName, right.id);
+            });
+        return subAgents;
+    }
+
+    OperationResult upsertSubAgent(const RuntimeEndpoint& subAgent) override {
+        if (subAgent.id.empty() || isBlank(subAgent.id)) {
+            return OperationResult{ false, false, "Sub-agent ID is required." };
+        }
+        if (subAgent.displayName.empty() || isBlank(subAgent.displayName)) {
+            return OperationResult{ false, false, "Sub-agent display name is required." };
+        }
+
+        const std::set<std::string> reservedTargetIds{
+            "planner",
+            "architect",
+            "coding-specialists"
+        };
+        if (reservedTargetIds.contains(subAgent.id)) {
+            return OperationResult{ false, false, "The requested sub-agent ID conflicts with a reserved orchestration target." };
+        }
+
+        RuntimeEndpoint normalized = subAgent;
+        normalized.kind = EndpointKind::SubAgent;
+        normalized.userDefined = true;
+        normalized.id = trimCopy(normalized.id);
+        normalized.displayName = trimCopy(normalized.displayName);
+        normalized.host = trimCopy(normalized.host);
+        normalized.protocol = trimCopy(normalized.protocol);
+        normalized.description = trimCopy(normalized.description);
+        normalized.routePath = trimCopy(normalized.routePath);
+        normalized.specialization = trimCopy(normalized.specialization);
+        normalized.status = EndpointStatus::Unknown;
+        normalized.lastCheckedUtc = timestampNowUtc();
+        if (normalized.host.empty()) {
+            normalized.host = state_->configuration.activeProfile.preferredBindAddress;
+        }
+        if (normalized.protocol.empty()) {
+            normalized.protocol = normalized.port == 0 ? "virtual" : "http";
+        }
+        if (normalized.description.empty() && !normalized.specialization.empty()) {
+            normalized.description = normalized.specialization + " specialist lane";
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+
+            const auto conflictingGroup = std::find_if(
+                state_->configuration.subAgentGroups.begin(),
+                state_->configuration.subAgentGroups.end(),
+                [&normalized](const SubAgentGroupDefinition& group) { return group.groupId == normalized.id; });
+            if (conflictingGroup != state_->configuration.subAgentGroups.end()) {
+                return OperationResult{ false, false, "The requested sub-agent ID conflicts with an existing sub-agent group." };
+            }
+
+            auto& endpoints = state_->configuration.activeProfile.seededEndpoints;
+            const auto endpointIterator = std::find_if(
+                endpoints.begin(),
+                endpoints.end(),
+                [&normalized](const RuntimeEndpoint& endpoint) { return endpoint.id == normalized.id; });
+            if (endpointIterator != endpoints.end() && !endpointIterator->userDefined) {
+                return OperationResult{ false, false, "The requested sub-agent ID is already owned by a seeded or imported runtime endpoint." };
+            }
+
+            if (endpointIterator == endpoints.end()) {
+                endpoints.push_back(normalized);
+            } else {
+                *endpointIterator = normalized;
+            }
+
+            writeJsonFile(configurationFile_, state_->configuration);
+        }
+        inventoryService_->refresh();
+        return OperationResult{ true, false, "Custom sub-agent settings updated." };
+    }
+
+    OperationResult removeSubAgent(const std::string& subAgentId) override {
+        if (subAgentId.empty() || isBlank(subAgentId)) {
+            return OperationResult{ false, false, "A custom sub-agent ID is required." };
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+
+            auto& endpoints = state_->configuration.activeProfile.seededEndpoints;
+            const auto iterator = std::find_if(
+                endpoints.begin(),
+                endpoints.end(),
+                [&subAgentId](const RuntimeEndpoint& endpoint) { return endpoint.id == subAgentId && endpoint.kind == EndpointKind::SubAgent; });
+            if (iterator == endpoints.end()) {
+                return OperationResult{ false, false, "The requested sub-agent was not found." };
+            }
+            if (!iterator->userDefined) {
+                return OperationResult{ false, false, "Only user-defined sub-agents can be removed." };
+            }
+
+            endpoints.erase(iterator);
+
+            auto& assignments = state_->configuration.providerAssignments;
+            assignments.erase(
+                std::remove_if(
+                    assignments.begin(),
+                    assignments.end(),
+                    [&subAgentId](const ProviderAssignment& assignment) { return assignment.targetId == subAgentId; }),
+                assignments.end());
+
+            auto& groups = state_->configuration.subAgentGroups;
+            for (auto& group : groups) {
+                group.memberTargetIds.erase(
+                    std::remove(group.memberTargetIds.begin(), group.memberTargetIds.end(), subAgentId),
+                    group.memberTargetIds.end());
+            }
+
+            std::vector<std::string> removedGroupIds;
+            groups.erase(
+                std::remove_if(
+                    groups.begin(),
+                    groups.end(),
+                    [&removedGroupIds](const SubAgentGroupDefinition& group) {
+                        if (!group.memberTargetIds.empty()) {
+                            return false;
+                        }
+                        removedGroupIds.push_back(group.groupId);
+                        return true;
+                    }),
+                groups.end());
+
+            if (!removedGroupIds.empty()) {
+                assignments.erase(
+                    std::remove_if(
+                        assignments.begin(),
+                        assignments.end(),
+                        [&removedGroupIds](const ProviderAssignment& assignment) {
+                            return std::find(removedGroupIds.begin(), removedGroupIds.end(), assignment.targetId) != removedGroupIds.end() ||
+                                std::find(removedGroupIds.begin(), removedGroupIds.end(), assignment.sourceGroupId) != removedGroupIds.end();
+                        }),
+                    assignments.end());
+            }
+
+            writeJsonFile(configurationFile_, state_->configuration);
+        }
+        inventoryService_->refresh();
+        return OperationResult{ true, false, "Custom sub-agent removed." };
+    }
+
+private:
+    std::shared_ptr<SharedState> state_;
+    std::filesystem::path configurationFile_;
+    std::shared_ptr<IRuntimeInventoryService> inventoryService_;
 };
 
 class SubAgentGroupService final : public ISubAgentGroupService {
@@ -3387,6 +3565,7 @@ public:
                     std::shared_ptr<IProviderRegistry> providerRegistry,
                     std::shared_ptr<IProviderCatalogService> providerCatalogService,
                     std::shared_ptr<IProviderCredentialStore> providerCredentialStore,
+                    std::shared_ptr<ISubAgentCatalogService> subAgentCatalogService,
                     std::shared_ptr<ISubAgentGroupService> subAgentGroupService,
                     std::shared_ptr<IProviderAssignmentService> providerAssignmentService,
                     std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService,
@@ -3403,6 +3582,7 @@ public:
         , providerRegistry_(std::move(providerRegistry))
         , providerCatalogService_(std::move(providerCatalogService))
         , providerCredentialStore_(std::move(providerCredentialStore))
+        , subAgentCatalogService_(std::move(subAgentCatalogService))
         , subAgentGroupService_(std::move(subAgentGroupService))
         , providerAssignmentService_(std::move(providerAssignmentService))
         , providerExecutionCatalogService_(std::move(providerExecutionCatalogService))
@@ -3463,6 +3643,15 @@ public:
         return providerCredentialStore_->upsertCredentials(nlohmann::json::parse(requestBody).get<ProviderCredentialUpdate>());
     }
 
+    OperationResult upsertSubAgentJson(const std::string& requestBody) override {
+        return subAgentCatalogService_->upsertSubAgent(nlohmann::json::parse(requestBody).get<RuntimeEndpoint>());
+    }
+
+    OperationResult removeSubAgentJson(const std::string& requestBody) override {
+        return subAgentCatalogService_->removeSubAgent(
+            nlohmann::json::parse(requestBody).get<SubAgentRemovalRequest>().subAgentId);
+    }
+
     OperationResult upsertSubAgentGroupJson(const std::string& requestBody) override {
         return subAgentGroupService_->upsertGroup(nlohmann::json::parse(requestBody).get<SubAgentGroupDefinition>());
     }
@@ -3499,6 +3688,7 @@ private:
     std::shared_ptr<IProviderRegistry> providerRegistry_;
     std::shared_ptr<IProviderCatalogService> providerCatalogService_;
     std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
+    std::shared_ptr<ISubAgentCatalogService> subAgentCatalogService_;
     std::shared_ptr<ISubAgentGroupService> subAgentGroupService_;
     std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
     std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService_;
@@ -3739,6 +3929,8 @@ public:
     OperationResult applyConfigurationJson(const std::string& requestBody, bool confirmUnsafeChanges) { return adminApiService_->applyConfigurationJson(requestBody, confirmUnsafeChanges); }
     OperationResult upsertProviderJson(const std::string& requestBody) { return adminApiService_->upsertProviderJson(requestBody); }
     OperationResult upsertProviderCredentialsJson(const std::string& requestBody) { return adminApiService_->upsertProviderCredentialsJson(requestBody); }
+    OperationResult upsertSubAgentJson(const std::string& requestBody) { return adminApiService_->upsertSubAgentJson(requestBody); }
+    OperationResult removeSubAgentJson(const std::string& requestBody) { return adminApiService_->removeSubAgentJson(requestBody); }
     OperationResult upsertSubAgentGroupJson(const std::string& requestBody) { return adminApiService_->upsertSubAgentGroupJson(requestBody); }
     OperationResult removeSubAgentGroupJson(const std::string& requestBody) { return adminApiService_->removeSubAgentGroupJson(requestBody); }
     OperationResult upsertProviderAssignmentJson(const std::string& requestBody) { return adminApiService_->upsertProviderAssignmentJson(requestBody); }
@@ -3772,6 +3964,7 @@ private:
     std::shared_ptr<IProviderRegistry> providerRegistry_;
     std::shared_ptr<IProviderCatalogService> providerCatalogService_;
     std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
+    std::shared_ptr<ISubAgentCatalogService> subAgentCatalogService_;
     std::shared_ptr<ISubAgentGroupService> subAgentGroupService_;
     std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
     std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService_;
@@ -3800,6 +3993,7 @@ bool MasterControlApplication::Impl::initialize() {
     providerCatalogService_ = std::make_shared<ProviderCatalogService>();
     providerRegistry_ = std::make_shared<ProviderRegistryService>(state_, paths_.configurationFile, providerCatalogService_);
     providerCredentialStore_ = std::make_shared<ProviderCredentialStore>(paths_.providerCredentialsFile, providerRegistry_, providerCatalogService_);
+    subAgentCatalogService_ = std::make_shared<SubAgentCatalogService>(state_, paths_.configurationFile, inventoryService_);
     subAgentGroupService_ = std::make_shared<SubAgentGroupService>(state_, paths_.configurationFile, inventoryService_);
     providerAssignmentService_ = std::make_shared<ProviderAssignmentService>(
         state_,
@@ -3835,6 +4029,7 @@ bool MasterControlApplication::Impl::initialize() {
         providerRegistry_,
         providerCatalogService_,
         providerCredentialStore_,
+        subAgentCatalogService_,
         subAgentGroupService_,
         providerAssignmentService_,
         providerExecutionCatalogService_,
@@ -3924,6 +4119,7 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
     services->registerService<IProviderRegistry>(providerRegistry_);
     services->registerService<IProviderCatalogService>(providerCatalogService_);
     services->registerService<IProviderCredentialStore>(providerCredentialStore_);
+    services->registerService<ISubAgentCatalogService>(subAgentCatalogService_);
     services->registerService<ISubAgentGroupService>(subAgentGroupService_);
     services->registerService<IProviderAssignmentService>(providerAssignmentService_);
     services->registerService<IProviderExecutionCatalogService>(providerExecutionCatalogService_);
@@ -4037,6 +4233,14 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const auto result = adminApiService_->upsertProviderCredentialsJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
+        if (request.method == "POST" && request.path == "/api/runtime/subagents") {
+            const auto result = adminApiService_->upsertSubAgentJson(request.body);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
+        if (request.method == "POST" && request.path == "/api/runtime/subagents/remove") {
+            const auto result = adminApiService_->removeSubAgentJson(request.body);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
         if (request.method == "POST" && request.path == "/api/providers/groups") {
             const auto result = adminApiService_->upsertSubAgentGroupJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
@@ -4129,6 +4333,14 @@ OperationResult MasterControlApplication::upsertProviderJson(const std::string& 
 
 OperationResult MasterControlApplication::upsertProviderCredentialsJson(const std::string& requestBody) {
     return impl_->upsertProviderCredentialsJson(requestBody);
+}
+
+OperationResult MasterControlApplication::upsertSubAgentJson(const std::string& requestBody) {
+    return impl_->upsertSubAgentJson(requestBody);
+}
+
+OperationResult MasterControlApplication::removeSubAgentJson(const std::string& requestBody) {
+    return impl_->removeSubAgentJson(requestBody);
 }
 
 OperationResult MasterControlApplication::upsertSubAgentGroupJson(const std::string& requestBody) {

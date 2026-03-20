@@ -106,6 +106,8 @@ struct RuntimeEndpoint final {
     std::string description;
     std::string lastCheckedUtc;
     std::string routePath;
+    std::string specialization;
+    bool userDefined = false;
 };
 
 struct ManagedNodeProfile final {
@@ -188,6 +190,10 @@ struct SubAgentGroupDefinition final {
     std::string description;
     std::vector<std::string> memberTargetIds;
     std::string updatedAtUtc;
+};
+
+struct SubAgentRemovalRequest final {
+    std::string subAgentId;
 };
 
 struct SubAgentGroupRemovalRequest final {
@@ -498,7 +504,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     status,
     description,
     lastCheckedUtc,
-    routePath)
+    routePath,
+    specialization,
+    userDefined)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ManagedNodeProfile,
@@ -581,6 +589,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     description,
     memberTargetIds,
     updatedAtUtc)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    SubAgentRemovalRequest,
+    subAgentId)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     SubAgentGroupRemovalRequest,

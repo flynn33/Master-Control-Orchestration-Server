@@ -27,6 +27,73 @@
             </Grid>
 
             <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="Custom Sub-Agents" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock Text="Define specialist lanes here so the runtime can route providers to user-created sub-agents just like imported or seeded agents." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
+
+                    <TextBlock Text="Sub-Agent" Style="{StaticResource ShellLabelTextStyle}" />
+                    <ComboBox x:Name="CustomSubAgentSelector" SelectionChanged="CustomSubAgentSelector_SelectionChanged" PlaceholderText="Choose a saved specialist lane" />
+
+                    <Grid ColumnSpacing="14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="1.2*" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Sub-Agent ID" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="CustomSubAgentIdTextBox" TextChanged="CustomSubAgentEditor_TextChanged" PlaceholderText="swift-specialist" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Spacing="8">
+                            <TextBlock Text="Display Name" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="CustomSubAgentDisplayNameTextBox" TextChanged="CustomSubAgentEditor_TextChanged" PlaceholderText="Swift Specialist" />
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Text="Specialization" Style="{StaticResource ShellLabelTextStyle}" />
+                    <TextBox x:Name="CustomSubAgentSpecializationTextBox" TextChanged="CustomSubAgentEditor_TextChanged" PlaceholderText="Swift, C++, documentation, test automation..." />
+
+                    <Grid ColumnSpacing="14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="160" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Host" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="CustomSubAgentHostTextBox" TextChanged="CustomSubAgentEditor_TextChanged" PlaceholderText="Optional bind or LAN host" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Spacing="8">
+                            <TextBlock Text="Port" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="CustomSubAgentPortTextBox" TextChanged="CustomSubAgentEditor_TextChanged" PlaceholderText="0" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2" Spacing="8">
+                            <TextBlock Text="Protocol" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="CustomSubAgentProtocolTextBox" TextChanged="CustomSubAgentEditor_TextChanged" PlaceholderText="virtual or http" />
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Text="Route Path" Style="{StaticResource ShellLabelTextStyle}" />
+                    <TextBox x:Name="CustomSubAgentRoutePathTextBox" TextChanged="CustomSubAgentEditor_TextChanged" PlaceholderText="/status or blank for logical lanes" />
+
+                    <TextBlock Text="Description" Style="{StaticResource ShellLabelTextStyle}" />
+                    <TextBox x:Name="CustomSubAgentDescriptionTextBox" TextChanged="CustomSubAgentEditor_TextChanged" AcceptsReturn="True" Height="72" TextWrapping="Wrap" PlaceholderText="Optional notes about the specialist lane, purpose, or operating doctrine." />
+
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <Button x:Name="SaveCustomSubAgentButton" Click="SaveCustomSubAgentButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Sub-Agent" />
+                        <Button x:Name="NewCustomSubAgentButton" Click="NewCustomSubAgentButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent" />
+                        <Button x:Name="RemoveCustomSubAgentButton" Click="RemoveCustomSubAgentButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Remove Sub-Agent" />
+                    </StackPanel>
+
+                    <TextBlock x:Name="CustomSubAgentStatusText" Style="{StaticResource ShellDataTextStyle}" Text="No custom sub-agent changes are staged." TextWrapping="WrapWholeWords" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource ShellCardStyle}">
                 <StackPanel Spacing="16">
                     <TextBlock Text="Runtime Endpoints" Style="{StaticResource ShellSectionTitleTextStyle}" />
                     <ListView x:Name="EndpointsListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="680" Style="{StaticResource ShellListViewStyle}" />

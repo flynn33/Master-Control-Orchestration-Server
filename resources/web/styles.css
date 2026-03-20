@@ -279,6 +279,23 @@ input, select, textarea {
   gap: .75rem;
 }
 
+.form-grid.two-up {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: .75rem;
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+}
+
+.history-item.selected {
+  border-color: rgba(0, 242, 255, 0.42);
+  box-shadow: 0 0 0 1px rgba(0, 242, 255, 0.18);
+}
+
 .artifact-meta {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

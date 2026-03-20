@@ -35,6 +35,20 @@ struct ShellProviderConnection final {
     bool credentialsConfigured = false;
 };
 
+struct ShellRuntimeEndpoint final {
+    std::wstring id;
+    std::wstring displayName;
+    std::wstring kind;
+    std::wstring host;
+    uint16_t port = 0;
+    std::wstring protocol;
+    std::wstring status;
+    std::wstring description;
+    std::wstring routePath;
+    std::wstring specialization;
+    bool userDefined = false;
+};
+
 struct ShellProviderCredentialField final {
     std::wstring fieldId;
     std::wstring label;
@@ -265,6 +279,7 @@ struct ShellSnapshot final {
     std::wstring governanceNarrative;
     std::wstring governanceLastEvaluatedUtc;
     ShellSecuritySettings securitySettings;
+    std::vector<ShellRuntimeEndpoint> endpoints;
     std::vector<ShellProviderConnection> providers;
     std::vector<ShellProviderCapability> providerCapabilities;
     std::vector<ShellProviderCredentialStatus> providerCredentialStatuses;
@@ -298,6 +313,8 @@ public:
     [[nodiscard]] ShellSnapshot CaptureSnapshot() const;
     [[nodiscard]] bool StartService(std::wstring& message) const;
     [[nodiscard]] bool StopService(std::wstring& message) const;
+    [[nodiscard]] ShellOperationResult UpsertSubAgent(const ShellRuntimeEndpoint& subAgent) const;
+    [[nodiscard]] ShellOperationResult RemoveSubAgent(const std::wstring& subAgentId) const;
     [[nodiscard]] ShellOperationResult UpsertProvider(const ShellProviderConnection& provider) const;
     [[nodiscard]] ShellOperationResult UpsertProviderCredentials(
         const std::wstring& providerId,

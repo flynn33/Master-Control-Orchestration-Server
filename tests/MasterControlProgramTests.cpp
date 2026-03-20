@@ -922,6 +922,40 @@ int main() {
         }.dump());
         success &= expect(providerCredentialsResult.succeeded, "Provider credentials should save through the secure store.");
 
+        const auto customSubAgentResult = application.upsertSubAgentJson(nlohmann::json{
+            { "id", "swift-agent" },
+            { "displayName", "Swift Agent" },
+            { "kind", "sub_agent" },
+            { "host", "" },
+            { "port", 0 },
+            { "protocol", "virtual" },
+            { "routePath", "" },
+            { "description", "Custom Swift coding specialist lane." },
+            { "specialization", "Swift" },
+            { "userDefined", true }
+        }.dump());
+        success &= expect(customSubAgentResult.succeeded, "Custom sub-agent creation should succeed.");
+
+        snapshot = application.snapshot();
+        const auto swiftAgentEndpoint = findEndpoint(snapshot.endpoints, "swift-agent");
+        success &= expect(swiftAgentEndpoint.has_value(), "Custom sub-agents should be reflected in the runtime snapshot.");
+        success &= expect(
+            swiftAgentEndpoint.has_value() && swiftAgentEndpoint->userDefined,
+            "Custom sub-agents should be marked as user-defined lanes.");
+        success &= expect(
+            swiftAgentEndpoint.has_value() && swiftAgentEndpoint->specialization == "Swift",
+            "Custom sub-agents should persist their specialization.");
+        success &= expect(
+            hasAssignmentTarget(snapshot.providerAssignmentTargets, "swift-agent"),
+            "Custom sub-agents should be published as provider ownership targets.");
+
+        const auto swiftAgentAssignmentResult = application.upsertProviderAssignmentJson(nlohmann::json{
+            { "targetId", "swift-agent" },
+            { "kind", "sub_agent" },
+            { "providerId", "ops-provider" }
+        }.dump());
+        success &= expect(swiftAgentAssignmentResult.succeeded, "Custom sub-agents should support individual provider ownership.");
+
         const auto plannerAssignmentResult = application.upsertProviderAssignmentJson(nlohmann::json{
             { "targetId", "planner" },
             { "kind", "role" },
@@ -1010,12 +1044,31 @@ int main() {
         success &= expect(
             !findAssignment(snapshot.providerAssignments, "forge").has_value(),
             "Clearing a custom group should remove remaining group-fanout ownership for untouched members.");
+        success &= expect(
+            findAssignment(snapshot.providerAssignments, "swift-agent").has_value(),
+            "Custom sub-agent ownership should persist independently of unrelated group changes.");
         success &= expect(hasExport(snapshot.exports, "master-control-gateway-profile.json"), "Exports should include the gateway profile");
         success &= expect(
             hasProviderExecutionRegistration(snapshot.providerExecutionRegistrations, "codex") &&
                 hasProviderExecutionRegistration(snapshot.providerExecutionRegistrations, "claude-code") &&
                 hasProviderExecutionRegistration(snapshot.providerExecutionRegistrations, "xai-grok"),
             "Provider modules should register their execution transports with the runtime.");
+
+        const auto removeCustomSubAgentResult = application.removeSubAgentJson(nlohmann::json{
+            { "subAgentId", "swift-agent" }
+        }.dump());
+        success &= expect(removeCustomSubAgentResult.succeeded, "Custom sub-agents should be removable.");
+
+        snapshot = application.snapshot();
+        success &= expect(
+            !findEndpoint(snapshot.endpoints, "swift-agent").has_value(),
+            "Removing a custom sub-agent should remove it from the runtime snapshot.");
+        success &= expect(
+            !hasAssignmentTarget(snapshot.providerAssignmentTargets, "swift-agent"),
+            "Removing a custom sub-agent should remove it from the ownership target list.");
+        success &= expect(
+            !findAssignment(snapshot.providerAssignments, "swift-agent").has_value(),
+            "Removing a custom sub-agent should clear its provider ownership assignment.");
 
         {
             std::atomic<int> providerRequestCount{ 0 };

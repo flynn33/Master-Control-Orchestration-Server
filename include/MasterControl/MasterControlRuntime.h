@@ -30,6 +30,8 @@ public:
                                            bool confirmUnsafeChanges);
     OperationResult upsertProviderJson(const std::string& requestBody);
     OperationResult upsertProviderCredentialsJson(const std::string& requestBody);
+    OperationResult upsertSubAgentJson(const std::string& requestBody);
+    OperationResult removeSubAgentJson(const std::string& requestBody);
     OperationResult upsertSubAgentGroupJson(const std::string& requestBody);
     OperationResult removeSubAgentGroupJson(const std::string& requestBody);
     OperationResult upsertProviderAssignmentJson(const std::string& requestBody);
