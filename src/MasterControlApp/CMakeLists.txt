@@ -29,4 +29,5 @@ target_link_libraries(MasterControlApp PUBLIC
 target_compile_definitions(MasterControlApp PUBLIC
     MASTERCONTROL_SOURCE_MODULE_MANIFESTS_DIR="${CMAKE_SOURCE_DIR}/src/MasterControlModules/Resources/ForsettiManifests"
     MASTERCONTROL_SOURCE_WEB_RESOURCES_DIR="${CMAKE_SOURCE_DIR}/resources/web"
+    MASTERCONTROL_SOURCE_CLU_RESOURCES_DIR="${CMAKE_SOURCE_DIR}/resources/clu"
 )

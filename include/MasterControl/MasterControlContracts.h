@@ -78,9 +78,28 @@ public:
     virtual ~IExportService() = default;
 };
 
+class ICommandLogicUnitService {
+public:
+    virtual GovernanceSnapshot currentGovernance() const = 0;
+    virtual ~ICommandLogicUnitService() = default;
+};
+
+class IModuleControlSurfaceService {
+public:
+    virtual void upsertControlSurfaceRequest(const ModuleControlSurfaceRequest& request) = 0;
+    virtual void removeControlSurfaceRequest(const std::string& moduleId,
+                                             const std::string& featureId) = 0;
+    virtual void removeControlSurfaceRequestsForModule(const std::string& moduleId) = 0;
+    virtual std::vector<ModuleControlSurfaceRequest> listControlSurfaceRequests() const = 0;
+    virtual ~IModuleControlSurfaceService() = default;
+};
+
 class IForsettiSurfaceService {
 public:
     virtual ForsettiSurfaceSnapshot currentSurface() const = 0;
+    virtual void publishModuleSurface(const std::string& moduleId,
+                                      const Forsetti::UIContributions& contributions) = 0;
+    virtual void removeModuleSurface(const std::string& moduleId) = 0;
     virtual ~IForsettiSurfaceService() = default;
 };
 
@@ -95,6 +114,7 @@ public:
 class IAdminApiService {
 public:
     virtual DashboardSnapshot snapshot() = 0;
+    virtual GovernanceSnapshot governance() const = 0;
     virtual OperationResult applyConfigurationJson(const std::string& requestBody,
                                                    bool confirmUnsafeChanges) = 0;
     virtual OperationResult upsertProviderJson(const std::string& requestBody) = 0;

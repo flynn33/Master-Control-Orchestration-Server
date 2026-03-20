@@ -37,6 +37,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -198,6 +199,104 @@ struct ValidatedBootstrapManifest final {
     std::filesystem::path bootstrapPath;
 };
 
+struct EntitlementStateDocument final {
+    std::vector<std::string> unlockedModuleIDs;
+    std::vector<std::string> unlockedProductIDs;
+};
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    EntitlementStateDocument,
+    unlockedModuleIDs,
+    unlockedProductIDs)
+
+EntitlementStateDocument buildDefaultEntitlementStateDocument() {
+    return EntitlementStateDocument{
+        {
+            "com.mastercontrol.environment-discovery",
+            "com.mastercontrol.host-telemetry",
+            "com.mastercontrol.runtime-inventory",
+            "com.mastercontrol.configuration",
+            "com.mastercontrol.dashboard-ui"
+        },
+        {
+            "mastercontrol.iap.installer-import",
+            "mastercontrol.iap.provider-integration",
+            "mastercontrol.iap.export",
+            "mastercontrol.iap.command-logic-unit",
+            "mastercontrol.iap.beacon-gateway"
+        }
+    };
+}
+
+GovernanceProfile buildFallbackGovernanceProfile() {
+    return GovernanceProfile{
+        "Command Logic Unit",
+        "Governance is not assumed. CLU keeps the local MCP command plane inside declared operator intent and surfaces runtime drift before it becomes invisible.",
+        {
+            GovernanceDocument{
+                "clu-constitution",
+                "CLU Constitution",
+                "constitution",
+                "Defines the baseline rules for agentic operation inside Master Control Program.",
+                "Contract before action. Scope is binding. Truthfulness is mandatory. Governance overrides convenience."
+            }
+        },
+        {
+            GovernanceRole{
+                "architect",
+                "Architect",
+                "planning",
+                { "Define allowed scope", "Classify changes", "Establish delivery intent" },
+                { "Expand scope without approval" },
+                { "Task contract", "Scope definition" }
+            },
+            GovernanceRole{
+                "builder",
+                "Builder",
+                "execution",
+                { "Implement approved changes", "Report runtime outcomes" },
+                { "Hide failures", "Edit unrelated surfaces" },
+                { "Artifact changes", "Change summary" }
+            },
+            GovernanceRole{
+                "validator",
+                "Validator",
+                "verification",
+                { "Review compliance posture", "Block incomplete delivery" },
+                { "Approve blocked findings" },
+                { "Validation status", "Compliance report" }
+            }
+        },
+        {
+            GovernanceRule{
+                "CLU-C001",
+                "No meaningful autonomous action without declared scope",
+                "critical",
+                "block_operation",
+                "Agent autonomy should remain disabled unless the operator has explicitly enabled it for the dashboard."
+            },
+            GovernanceRule{
+                "CLU-C002",
+                "No unsafe open-LAN posture without explicit operator intent",
+                "critical",
+                "block_operation",
+                "Security protocols should not be disabled while the browser surface remains open on the LAN."
+            },
+            GovernanceRule{
+                "CLU-C003",
+                "Troubleshooting bypass must remain visible and temporary",
+                "high",
+                "warn_operator",
+                "Troubleshooting bypass is allowed, but it should remain visible until normal protections are restored."
+            }
+        },
+        {
+            "Confirm the security posture before enabling AI autonomy.",
+            "Review trusted hosts before allowing unattended remote imports."
+        }
+    };
+}
+
 class JsonActivationStore final : public Forsetti::IActivationStore {
 public:
     explicit JsonActivationStore(std::filesystem::path filePath)
@@ -217,6 +316,113 @@ public:
 
 private:
     std::filesystem::path filePath_;
+};
+
+class FileBackedEntitlementProvider final : public Forsetti::IEntitlementProvider {
+public:
+    FileBackedEntitlementProvider(std::filesystem::path filePath,
+                                  EntitlementStateDocument defaultState)
+        : filePath_(std::move(filePath))
+        , defaultState_(std::move(defaultState)) {
+        ensureStateFile();
+        refreshEntitlements();
+        watcher_ = std::thread([this]() { watchForChanges(); });
+    }
+
+    ~FileBackedEntitlementProvider() override {
+        stopRequested_.store(true, std::memory_order_release);
+        if (watcher_.joinable()) {
+            watcher_.join();
+        }
+    }
+
+    bool isUnlocked(const std::string& moduleIDOrProductID) const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return unlockedModuleIDs_.find(moduleIDOrProductID) != unlockedModuleIDs_.end() ||
+            unlockedProductIDs_.find(moduleIDOrProductID) != unlockedProductIDs_.end();
+    }
+
+    void refreshEntitlements() override {
+        ensureStateFile();
+        const auto stateJson = readJsonFile(filePath_);
+        const auto state = stateJson.empty()
+            ? defaultState_
+            : stateJson.get<EntitlementStateDocument>();
+
+        std::set<std::string> nextModuleIDs(
+            state.unlockedModuleIDs.begin(),
+            state.unlockedModuleIDs.end());
+        std::set<std::string> nextProductIDs(
+            state.unlockedProductIDs.begin(),
+            state.unlockedProductIDs.end());
+
+        std::vector<std::function<void()>> callbacks;
+        bool changed = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            changed = nextModuleIDs != unlockedModuleIDs_ ||
+                nextProductIDs != unlockedProductIDs_;
+            unlockedModuleIDs_ = std::move(nextModuleIDs);
+            unlockedProductIDs_ = std::move(nextProductIDs);
+            if (changed) {
+                callbacks = callbacks_;
+            }
+        }
+
+        for (const auto& callback : callbacks) {
+            callback();
+        }
+    }
+
+    void onEntitlementsChanged(std::function<void()> callback) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        callbacks_.push_back(std::move(callback));
+    }
+
+    void restorePurchases() override {
+        refreshEntitlements();
+    }
+
+private:
+    void ensureStateFile() const {
+        if (!std::filesystem::exists(filePath_)) {
+            writeJsonFile(filePath_, defaultState_);
+        }
+    }
+
+    std::filesystem::file_time_type lastWriteTime() const {
+        std::error_code errorCode;
+        if (!std::filesystem::exists(filePath_, errorCode)) {
+            return {};
+        }
+
+        const auto value = std::filesystem::last_write_time(filePath_, errorCode);
+        if (errorCode) {
+            return {};
+        }
+        return value;
+    }
+
+    void watchForChanges() {
+        auto knownWriteTime = lastWriteTime();
+        while (!stopRequested_.load(std::memory_order_acquire)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(750));
+            const auto currentWriteTime = lastWriteTime();
+            if (currentWriteTime != knownWriteTime) {
+                knownWriteTime = currentWriteTime;
+                refreshEntitlements();
+            }
+        }
+    }
+
+    std::filesystem::path filePath_;
+    EntitlementStateDocument defaultState_;
+    mutable std::mutex mutex_;
+    std::set<std::string> unlockedModuleIDs_;
+    std::set<std::string> unlockedProductIDs_;
+    std::vector<std::function<void()>> callbacks_;
+    std::atomic<bool> stopRequested_{ false };
+    std::thread watcher_;
 };
 
 class FileBackedConfigurationService final : public IConfigurationService {
@@ -1156,26 +1362,274 @@ private:
     std::shared_ptr<IConfigurationService> configurationService_;
 };
 
+class CommandLogicUnitService final : public ICommandLogicUnitService {
+public:
+    CommandLogicUnitService(std::filesystem::path profileFile,
+                            std::shared_ptr<IConfigurationService> configurationService,
+                            std::shared_ptr<IProviderRegistry> providerRegistry,
+                            std::shared_ptr<IInstallerOrchestrator> installerOrchestrator,
+                            std::shared_ptr<IExportService> exportService)
+        : profile_(loadProfile(std::move(profileFile)))
+        , configurationService_(std::move(configurationService))
+        , providerRegistry_(std::move(providerRegistry))
+        , installerOrchestrator_(std::move(installerOrchestrator))
+        , exportService_(std::move(exportService)) {}
+
+    GovernanceSnapshot currentGovernance() const override {
+        GovernanceSnapshot snapshot;
+        snapshot.unitName = profile_.unitName.empty() ? std::string("Command Logic Unit") : profile_.unitName;
+        snapshot.posture = "pass";
+        snapshot.doctrine = profile_.doctrine;
+        snapshot.lastEvaluatedUtc = timestampNowUtc();
+        snapshot.documents = profile_.documents;
+        snapshot.roles = profile_.roles;
+        snapshot.rules = profile_.rules;
+        snapshot.operatorChecklist = profile_.operatorChecklist;
+
+        const auto configuration = configurationService_->current();
+        const auto providers = providerRegistry_->listProviders();
+        const auto installHistory = installerOrchestrator_->history();
+        const auto exports = exportService_->generateExports();
+
+        auto appendFinding = [&](const std::string& ruleId,
+                                 const std::string& status,
+                                 const std::string& message,
+                                 std::optional<std::string> severityOverride = std::nullopt) {
+            GovernanceFinding finding;
+            if (const auto* rule = findRule(ruleId); rule != nullptr) {
+                finding.ruleId = rule->ruleId;
+                finding.title = rule->title;
+                finding.severity = severityOverride.value_or(rule->severity);
+            } else {
+                finding.ruleId = ruleId;
+                finding.title = ruleId;
+                finding.severity = severityOverride.value_or(std::string("medium"));
+            }
+            finding.status = status;
+            finding.message = message;
+            snapshot.findings.push_back(std::move(finding));
+
+            if (status == "blocked") {
+                snapshot.posture = "blocked";
+            } else if (status == "warning" && snapshot.posture != "blocked") {
+                snapshot.posture = "warning";
+            }
+        };
+
+        const auto autonomousProviderCount = static_cast<size_t>(std::count_if(
+            providers.begin(),
+            providers.end(),
+            [](const ProviderConnection& provider) {
+                return provider.enabled && provider.allowAutonomousControl;
+            }));
+
+        if (!configuration.security.securityProtocolsEnabled && configuration.security.allowOpenLanAccess) {
+            appendFinding(
+                "CLU-C002",
+                "blocked",
+                "Security protocols are disabled while browser access remains open on the LAN. Restore protocols or close LAN exposure.");
+            snapshot.recommendedActions.push_back("Re-enable security protocols or disable open LAN access before continuing unattended operations.");
+        }
+
+        if (configuration.security.allowTroubleshootingBypass) {
+            appendFinding(
+                "CLU-C003",
+                "warning",
+                "Troubleshooting bypass is enabled. CLU is treating the runtime as temporarily degraded until bypass mode is cleared.");
+            snapshot.recommendedActions.push_back("Turn off troubleshooting bypass after diagnostics are complete.");
+        }
+
+        if (configuration.aiAutonomyEnabled && autonomousProviderCount == 0U) {
+            appendFinding(
+                "CLU-C001",
+                "warning",
+                "Global AI autonomy is enabled, but no provider route currently allows autonomous control.");
+            snapshot.recommendedActions.push_back("Either disable global AI autonomy or explicitly authorize at least one provider for autonomous control.");
+        }
+
+        if (!configuration.aiAutonomyEnabled && autonomousProviderCount > 0U) {
+            appendFinding(
+                "CLU-C004",
+                "warning",
+                "One or more provider routes advertise autonomous control while global dashboard autonomy remains disabled.");
+            snapshot.recommendedActions.push_back("Align provider autonomy flags with the global AI autonomy posture.");
+        }
+
+        if (std::none_of(providers.begin(), providers.end(), [](const ProviderConnection& provider) { return provider.enabled; })) {
+            appendFinding(
+                "CLU-C004",
+                "warning",
+                "No enabled provider routes are available for governed agent operations.");
+            snapshot.recommendedActions.push_back("Enable at least one provider route before expecting CLU-managed agent workflows to run.");
+        }
+
+        if (std::any_of(installHistory.begin(), installHistory.end(), [](const InstallProvenance& entry) { return !entry.trusted; })) {
+            appendFinding(
+                "CLU-C005",
+                "warning",
+                "One or more imported packages were recorded as untrusted. CLU is surfacing the provenance risk for operator review.");
+            snapshot.recommendedActions.push_back("Review untrusted install history entries and replace or remove them if they are no longer needed.");
+        }
+
+        const bool hasGatewayProfile = std::any_of(
+            exports.begin(),
+            exports.end(),
+            [](const ExportArtifact& artifact) { return artifact.fileName == "master-control-gateway-profile.json"; });
+        const bool hasCodexHelper = std::any_of(
+            exports.begin(),
+            exports.end(),
+            [](const ExportArtifact& artifact) { return artifact.fileName == "Install-CodexGateway.ps1"; });
+        const bool hasClaudeHelper = std::any_of(
+            exports.begin(),
+            exports.end(),
+            [](const ExportArtifact& artifact) { return artifact.fileName == "Install-ClaudeGateway.ps1"; });
+
+        if (!(hasGatewayProfile && hasCodexHelper && hasClaudeHelper)) {
+            appendFinding(
+                "CLU-C006",
+                "warning",
+                "One or more expected governance and agent handoff artifacts are missing from the current export set.");
+            snapshot.recommendedActions.push_back("Refresh exports and verify the gateway, Codex, and Claude handoff artifacts are still being generated.");
+        }
+
+        if (snapshot.findings.empty()) {
+            snapshot.recommendedActions.push_back("Current runtime posture is aligned with the CLU governance profile.");
+        }
+
+        return snapshot;
+    }
+
+private:
+    static GovernanceProfile loadProfile(std::filesystem::path profileFile) {
+        if (!profileFile.empty() && std::filesystem::exists(profileFile)) {
+            const auto json = readJsonFile(profileFile);
+            if (!json.is_null() && !json.empty()) {
+                try {
+                    return json.get<GovernanceProfile>();
+                } catch (...) {
+                }
+            }
+        }
+        return buildFallbackGovernanceProfile();
+    }
+
+    const GovernanceRule* findRule(const std::string& ruleId) const {
+        const auto iterator = std::find_if(
+            profile_.rules.begin(),
+            profile_.rules.end(),
+            [&ruleId](const GovernanceRule& rule) { return rule.ruleId == ruleId; });
+        return iterator == profile_.rules.end() ? nullptr : &(*iterator);
+    }
+
+    GovernanceProfile profile_;
+    std::shared_ptr<IConfigurationService> configurationService_;
+    std::shared_ptr<IProviderRegistry> providerRegistry_;
+    std::shared_ptr<IInstallerOrchestrator> installerOrchestrator_;
+    std::shared_ptr<IExportService> exportService_;
+};
+
 class ForsettiSurfaceService final : public IForsettiSurfaceService {
 public:
-    explicit ForsettiSurfaceService(std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager)
-        : surfaceManager_(std::move(surfaceManager)) {}
+    ForsettiSurfaceService(std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager,
+                           std::shared_ptr<IModuleControlSurfaceService> controlSurfaceService)
+        : surfaceManager_(std::move(surfaceManager))
+        , controlSurfaceService_(std::move(controlSurfaceService)) {}
 
     ForsettiSurfaceSnapshot currentSurface() const override {
         if (!surfaceManager_) {
             return {};
         }
 
+        std::lock_guard<std::mutex> lock(mutex_);
         return ForsettiSurfaceSnapshot{
             surfaceManager_->currentThemeMask(),
             surfaceManager_->currentToolbarItems(),
             surfaceManager_->currentViewInjectionsBySlot(),
-            surfaceManager_->currentOverlaySchema()
+            surfaceManager_->currentOverlaySchema(),
+            controlSurfaceService_ ? controlSurfaceService_->listControlSurfaceRequests() : std::vector<ModuleControlSurfaceRequest>{},
+            publishedByModuleId_,
+            publishedAtUtc_
         };
+    }
+
+    void publishModuleSurface(const std::string& moduleId,
+                              const Forsetti::UIContributions& contributions) override {
+        if (!surfaceManager_) {
+            return;
+        }
+
+        surfaceManager_->addModuleContributions(moduleId, contributions);
+        surfaceManager_->rebuildSurfaceState();
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        publishedByModuleId_ = moduleId;
+        publishedAtUtc_ = timestampNowUtc();
+    }
+
+    void removeModuleSurface(const std::string& moduleId) override {
+        if (!surfaceManager_) {
+            return;
+        }
+
+        surfaceManager_->removeModuleContributions(moduleId);
+        surfaceManager_->rebuildSurfaceState();
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (publishedByModuleId_ == moduleId) {
+            publishedByModuleId_.clear();
+            publishedAtUtc_.clear();
+        }
     }
 
 private:
     std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager_;
+    std::shared_ptr<IModuleControlSurfaceService> controlSurfaceService_;
+    mutable std::mutex mutex_;
+    std::string publishedByModuleId_;
+    std::string publishedAtUtc_;
+};
+
+class ModuleControlSurfaceService final : public IModuleControlSurfaceService {
+public:
+    void upsertControlSurfaceRequest(const ModuleControlSurfaceRequest& request) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        requestsByKey_[makeKey(request.moduleId, request.featureId)] = request;
+    }
+
+    void removeControlSurfaceRequest(const std::string& moduleId,
+                                     const std::string& featureId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        requestsByKey_.erase(makeKey(moduleId, featureId));
+    }
+
+    void removeControlSurfaceRequestsForModule(const std::string& moduleId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto iterator = requestsByKey_.begin(); iterator != requestsByKey_.end();) {
+            if (iterator->second.moduleId == moduleId) {
+                iterator = requestsByKey_.erase(iterator);
+            } else {
+                ++iterator;
+            }
+        }
+    }
+
+    std::vector<ModuleControlSurfaceRequest> listControlSurfaceRequests() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<ModuleControlSurfaceRequest> requests;
+        requests.reserve(requestsByKey_.size());
+        for (const auto& [key, request] : requestsByKey_) {
+            requests.push_back(request);
+        }
+        return requests;
+    }
+
+private:
+    static std::string makeKey(const std::string& moduleId, const std::string& featureId) {
+        return moduleId + "::" + featureId;
+    }
+
+    mutable std::mutex mutex_;
+    std::map<std::string, ModuleControlSurfaceRequest> requestsByKey_;
 };
 
 class BeaconService final : public IBeaconService {
@@ -1264,6 +1718,7 @@ public:
                     std::shared_ptr<IBootstrapRepoService> bootstrapRepoService,
                     std::shared_ptr<IZipBundleService> zipBundleService,
                     std::shared_ptr<IExportService> exportService,
+                    std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService,
                     std::shared_ptr<IForsettiSurfaceService> surfaceService)
         : telemetryService_(std::move(telemetryService))
         , inventoryService_(std::move(inventoryService))
@@ -1273,6 +1728,7 @@ public:
         , bootstrapRepoService_(std::move(bootstrapRepoService))
         , zipBundleService_(std::move(zipBundleService))
         , exportService_(std::move(exportService))
+        , commandLogicUnitService_(std::move(commandLogicUnitService))
         , surfaceService_(std::move(surfaceService)) {}
 
     DashboardSnapshot snapshot() override {
@@ -1287,8 +1743,13 @@ public:
         const auto configuration = configurationService_->current();
         snapshot.resourceAllocation = configuration.resourceAllocation;
         snapshot.security = configuration.security;
+        snapshot.governance = commandLogicUnitService_->currentGovernance();
         snapshot.surface = surfaceService_->currentSurface();
         return snapshot;
+    }
+
+    GovernanceSnapshot governance() const override {
+        return commandLogicUnitService_->currentGovernance();
     }
 
     OperationResult applyConfigurationJson(const std::string& requestBody,
@@ -1321,6 +1782,7 @@ private:
     std::shared_ptr<IBootstrapRepoService> bootstrapRepoService_;
     std::shared_ptr<IZipBundleService> zipBundleService_;
     std::shared_ptr<IExportService> exportService_;
+    std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService_;
     std::shared_ptr<IForsettiSurfaceService> surfaceService_;
 };
 
@@ -1579,10 +2041,13 @@ private:
     std::shared_ptr<InstallerOrchestrator> installerOrchestrator_;
     std::shared_ptr<IProviderRegistry> providerRegistry_;
     std::shared_ptr<IExportService> exportService_;
+    std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService_;
+    std::shared_ptr<IModuleControlSurfaceService> controlSurfaceService_;
     std::shared_ptr<IForsettiSurfaceService> surfaceService_;
     std::shared_ptr<IBeaconService> beaconService_;
     std::shared_ptr<IAdminApiService> adminApiService_;
     std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager_;
+    std::shared_ptr<Forsetti::IEntitlementProvider> entitlementProvider_;
     std::unique_ptr<Forsetti::ForsettiRuntime> runtime_;
     std::unique_ptr<SimpleHttpServer> httpServer_;
     std::atomic<bool> stopRequested_{ false };
@@ -1598,6 +2063,13 @@ bool MasterControlApplication::Impl::initialize() {
     installerOrchestrator_ = std::make_shared<InstallerOrchestrator>(state_, trustEvaluator_, paths_);
     providerRegistry_ = std::make_shared<ProviderRegistryService>(state_, paths_.configurationFile);
     exportService_ = std::make_shared<ExportService>(inventoryService_, configurationService_);
+    commandLogicUnitService_ = std::make_shared<CommandLogicUnitService>(
+        paths_.cluProfileFile,
+        configurationService_,
+        providerRegistry_,
+        installerOrchestrator_,
+        exportService_);
+    controlSurfaceService_ = std::make_shared<ModuleControlSurfaceService>();
     beaconService_ = std::make_shared<BeaconService>(configurationService_, telemetryService_);
     registerConfigurationDefaults();
     createForsettiRuntime();
@@ -1611,9 +2083,18 @@ bool MasterControlApplication::Impl::initialize() {
         installerOrchestrator_,
         installerOrchestrator_,
         exportService_,
+        commandLogicUnitService_,
         surfaceService_);
 
     runtime_->boot();
+    if (entitlementProvider_) {
+        entitlementProvider_->onEntitlementsChanged([this]() {
+            if (!runtime_ || !runtime_->isBooted()) {
+                return;
+            }
+            activateDefaultModules();
+        });
+    }
     activateDefaultModules();
 
     if (configurationService_->current().beaconEnabled) {
@@ -1682,6 +2163,8 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
     services->registerService<IZipBundleService>(installerOrchestrator_);
     services->registerService<IProviderRegistry>(providerRegistry_);
     services->registerService<IExportService>(exportService_);
+    services->registerService<ICommandLogicUnitService>(commandLogicUnitService_);
+    services->registerService<IModuleControlSurfaceService>(controlSurfaceService_);
     services->registerService<IBeaconService>(beaconService_);
 
     auto eventBus = std::make_shared<Forsetti::InMemoryEventBus>();
@@ -1690,11 +2173,13 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
     auto guard = std::make_shared<Forsetti::DefaultModuleCommunicationGuard>();
     auto context = std::make_shared<Forsetti::ForsettiContext>(services, eventBus, logger, router, guard);
     surfaceManager_ = std::make_shared<Forsetti::UISurfaceManager>();
-    surfaceService_ = std::make_shared<ForsettiSurfaceService>(surfaceManager_);
+    surfaceService_ = std::make_shared<ForsettiSurfaceService>(surfaceManager_, controlSurfaceService_);
     services->registerService<IForsettiSurfaceService>(surfaceService_);
     auto compatibilityPolicy = std::make_shared<Forsetti::AllowAllCapabilityPolicy>();
     auto checker = std::make_shared<Forsetti::CompatibilityChecker>(Forsetti::SemVer{ 0, 1, 0 }, compatibilityPolicy);
-    auto entitlementProvider = std::make_shared<Forsetti::AllowAllEntitlementProvider>();
+    entitlementProvider_ = std::make_shared<FileBackedEntitlementProvider>(
+        paths_.entitlementsFile,
+        buildDefaultEntitlementStateDocument());
     auto activationStore = std::make_shared<JsonActivationStore>(paths_.dataDirectory / "state" / "activation-state.json");
 
     auto registry = Forsetti::ForsettiStaticModuleRegistry::buildRegistry([](Forsetti::ModuleRegistry& registry) {
@@ -1704,20 +2189,20 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
     auto moduleManager = std::make_unique<Forsetti::ModuleManager>(
         std::move(registry),
         checker,
-        entitlementProvider,
+        entitlementProvider_,
         activationStore,
         surfaceManager_,
         context);
 
     runtime_ = std::make_unique<Forsetti::ForsettiRuntime>(
         std::move(moduleManager),
-        entitlementProvider,
+        entitlementProvider_,
         eventBus,
         paths_.manifestsDirectory.string());
 }
 
 void MasterControlApplication::Impl::activateDefaultModules() {
-    static const std::array<const char*, 9> moduleIds = {
+    static const std::array<const char*, 10> moduleIds = {
         "com.mastercontrol.environment-discovery",
         "com.mastercontrol.host-telemetry",
         "com.mastercontrol.runtime-inventory",
@@ -1725,13 +2210,17 @@ void MasterControlApplication::Impl::activateDefaultModules() {
         "com.mastercontrol.installer-import",
         "com.mastercontrol.provider-integration",
         "com.mastercontrol.export",
+        "com.mastercontrol.command-logic-unit",
         "com.mastercontrol.beacon-gateway",
         "com.mastercontrol.dashboard-ui"
     };
 
     for (const auto* moduleId : moduleIds) {
         if (!runtime_->moduleManager().isModuleActive(moduleId)) {
-            runtime_->activateModule(moduleId);
+            try {
+                runtime_->activateModule(moduleId);
+            } catch (const std::exception&) {
+            }
         }
     }
 }
@@ -1752,6 +2241,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "GET" && request.path == "/api/exports") {
             return jsonResponse(exportService_->generateExports());
+        }
+        if (request.method == "GET" && request.path == "/api/clu") {
+            return jsonResponse(commandLogicUnitService_->currentGovernance());
         }
         if (request.method == "GET" && request.path == "/api/forsetti/surface") {
             return jsonResponse(surfaceService_->currentSurface());

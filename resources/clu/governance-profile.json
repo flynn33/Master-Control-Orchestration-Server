@@ -1,0 +1,172 @@
+{
+  "unitName": "Command Logic Unit",
+  "doctrine": "Governance is not assumed. CLU keeps agentic operations inside declared scope, exposes operator-visible policy, and reports when the runtime posture drifts away from the intended command model.",
+  "documents": [
+    {
+      "id": "clu-constitution",
+      "title": "CLU Constitution",
+      "category": "constitution",
+      "summary": "Defines the non-negotiable operating principles for agentic work inside Master Control Program.",
+      "content": "Contract before action. Scope is binding. Truthfulness is mandatory. Governance overrides convenience. Documentation is part of delivery. Compliance must be measurable. Release and operational integrity are non-negotiable."
+    },
+    {
+      "id": "clu-change-control",
+      "title": "Change Control Policy",
+      "category": "policy",
+      "summary": "High-impact runtime changes must be deliberate, attributable, and recoverable.",
+      "content": "CLU expects meaningful runtime changes to be operator-visible, attributable to an approved actor, and recoverable through configuration history, exports, or reinstall paths."
+    },
+    {
+      "id": "clu-compliance",
+      "title": "Compliance Policy",
+      "category": "policy",
+      "summary": "A change is compliant only when required conditions and evidence are present.",
+      "content": "Blocking violations include out-of-scope autonomy, unsafe LAN posture without explicit intent, hidden failures, missing operator confirmation for dangerous security changes, and contradictions between runtime state and declared policy."
+    },
+    {
+      "id": "clu-documentation",
+      "title": "Documentation Policy",
+      "category": "policy",
+      "summary": "Operational understanding is part of delivery, not a postscript.",
+      "content": "If runtime behavior, agent authority, import/export contracts, or security posture changes, CLU expects those changes to remain explainable through surfaced policies, exports, and current governance state."
+    },
+    {
+      "id": "clu-release",
+      "title": "Release Integrity Policy",
+      "category": "policy",
+      "summary": "Operational releases must preserve traceability and impact awareness.",
+      "content": "Installer, provider, import, and security changes should preserve version, provenance, and posture visibility so operators can understand what changed and why."
+    },
+    {
+      "id": "clu-vision",
+      "title": "CLU Vision",
+      "category": "vision",
+      "summary": "Provide a command-grade governance lane for local MCP and sub-agent orchestration.",
+      "content": "CLU exists so Master Control Program can host AI-enabled orchestration without collapsing into unchecked autonomy, undocumented drift, or opaque security tradeoffs."
+    }
+  ],
+  "roles": [
+    {
+      "roleId": "architect",
+      "name": "Architect",
+      "authorityLevel": "planning",
+      "responsibilities": [
+        "Classify tasks and operational changes",
+        "Define allowed scope and forbidden scope",
+        "Identify documentation and release impact",
+        "Produce a task contract before execution"
+      ],
+      "forbiddenActions": [
+        "Expand scope without explicit approval"
+      ],
+      "requiredOutputs": [
+        "Task contract",
+        "Scope definition",
+        "Change classification"
+      ]
+    },
+    {
+      "roleId": "builder",
+      "name": "Builder",
+      "authorityLevel": "execution",
+      "responsibilities": [
+        "Implement authorized runtime and configuration changes",
+        "Modify only approved surfaces and modules",
+        "Report what changed and any known issues"
+      ],
+      "forbiddenActions": [
+        "Edit unrelated areas",
+        "Hide partial or failed results"
+      ],
+      "requiredOutputs": [
+        "Artifact changes",
+        "Change summary",
+        "Scope confirmation"
+      ]
+    },
+    {
+      "roleId": "validator",
+      "name": "Validator",
+      "authorityLevel": "verification",
+      "responsibilities": [
+        "Review scope compliance",
+        "Review documentation and release obligations",
+        "Block incomplete or unsafe delivery"
+      ],
+      "forbiddenActions": [
+        "Approve unresolved blocking failures"
+      ],
+      "requiredOutputs": [
+        "Compliance report",
+        "Validation status"
+      ]
+    },
+    {
+      "roleId": "operator",
+      "name": "Operator",
+      "authorityLevel": "runtime",
+      "responsibilities": [
+        "Approve high-risk runtime posture changes",
+        "Own the security and autonomy envelope",
+        "Review CLU findings and recommended actions"
+      ],
+      "forbiddenActions": [
+        "Delegate dangerous changes without visibility"
+      ],
+      "requiredOutputs": [
+        "Approval decision",
+        "Operational acknowledgement"
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "ruleId": "CLU-C001",
+      "title": "No meaningful autonomous action without declared scope",
+      "severity": "critical",
+      "failureConsequence": "block_operation",
+      "description": "Agent autonomy should remain disabled unless the operator has explicitly enabled it for the dashboard."
+    },
+    {
+      "ruleId": "CLU-C002",
+      "title": "No unsafe open-LAN posture without explicit operator intent",
+      "severity": "critical",
+      "failureConsequence": "block_operation",
+      "description": "Security protocols should not be disabled while the browser surface remains open on the LAN."
+    },
+    {
+      "ruleId": "CLU-C003",
+      "title": "Troubleshooting bypass must remain visible and temporary",
+      "severity": "high",
+      "failureConsequence": "warn_operator",
+      "description": "Bypass posture is allowed for troubleshooting, but CLU should continue to surface it as a risk until it is turned off."
+    },
+    {
+      "ruleId": "CLU-C004",
+      "title": "Provider authority must align with dashboard autonomy",
+      "severity": "high",
+      "failureConsequence": "warn_operator",
+      "description": "Provider-level autonomous control settings should not silently conflict with the global autonomy posture."
+    },
+    {
+      "ruleId": "CLU-C005",
+      "title": "Imported software provenance must remain visible",
+      "severity": "high",
+      "failureConsequence": "warn_operator",
+      "description": "Trusted versus untrusted install history should remain visible after package, repo, or zip onboarding."
+    },
+    {
+      "ruleId": "CLU-C006",
+      "title": "Gateway and agent handoff material must remain exportable",
+      "severity": "medium",
+      "failureConsequence": "warn_operator",
+      "description": "Operators should be able to export the current gateway and agent connection material from the running system."
+    }
+  ],
+  "operatorChecklist": [
+    "Confirm the security posture before enabling AI autonomy.",
+    "Review trusted hosts before allowing unattended remote imports.",
+    "Treat troubleshooting bypass as temporary and reversible.",
+    "Verify exported gateway and agent profiles after provider or port changes."
+  ]
+}

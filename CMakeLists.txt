@@ -62,3 +62,8 @@ install(
     DIRECTORY "${CMAKE_SOURCE_DIR}/resources/web"
     DESTINATION "share/MasterControlProgram"
 )
+
+install(
+    DIRECTORY "${CMAKE_SOURCE_DIR}/resources/clu"
+    DESTINATION "share/MasterControlProgram"
+)

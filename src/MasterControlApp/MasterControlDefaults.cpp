@@ -300,18 +300,22 @@ AppPaths resolveAppPaths() {
         ? std::filesystem::path(*dataDirectoryOverride)
         : programDataDirectory() / "MasterControlProgram";
     const auto installHistoryFile = dataDirectory / "state" / "install-history.json";
+    const auto entitlementsFile = dataDirectory / "state" / "entitlements.json";
     const auto configurationFile = dataDirectory / "config" / "master-control-program.json";
     const auto workDirectory = dataDirectory / "work";
 
-    std::filesystem::path manifestsDirectory;
-    std::filesystem::path webRootDirectory;
+std::filesystem::path manifestsDirectory;
+std::filesystem::path webRootDirectory;
+std::filesystem::path cluProfileFile;
 
     if (const auto resourceDirectory = wideEnvironmentVariable(kResourceDirectoryOverrideVariable); resourceDirectory.has_value()) {
         manifestsDirectory = std::filesystem::path(*resourceDirectory) / "ForsettiManifests";
         webRootDirectory = std::filesystem::path(*resourceDirectory) / "web";
+        cluProfileFile = std::filesystem::path(*resourceDirectory) / "clu" / "governance-profile.json";
     } else {
         manifestsDirectory = executableDirectory / "share" / "MasterControlProgram" / "ForsettiManifests";
         webRootDirectory = executableDirectory / "share" / "MasterControlProgram" / "web";
+        cluProfileFile = executableDirectory / "share" / "MasterControlProgram" / "clu" / "governance-profile.json";
     }
 
     if (!std::filesystem::exists(manifestsDirectory)) {
@@ -319,6 +323,9 @@ AppPaths resolveAppPaths() {
     }
     if (!std::filesystem::exists(webRootDirectory)) {
         webRootDirectory = std::filesystem::path(MASTERCONTROL_SOURCE_WEB_RESOURCES_DIR);
+    }
+    if (!std::filesystem::exists(cluProfileFile)) {
+        cluProfileFile = std::filesystem::path(MASTERCONTROL_SOURCE_CLU_RESOURCES_DIR) / "governance-profile.json";
     }
 
     std::filesystem::create_directories(dataDirectory / "state");
@@ -330,8 +337,10 @@ AppPaths resolveAppPaths() {
         dataDirectory,
         configurationFile,
         installHistoryFile,
+        entitlementsFile,
         manifestsDirectory,
         webRootDirectory,
+        cluProfileFile,
         workDirectory
     };
 }

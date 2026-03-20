@@ -82,6 +82,13 @@ std::string to_string(InstallerKind value) {
     });
 }
 
+std::string to_string(ControlSurfaceToolbarAction value) {
+    return enumToString(value, {
+        { ControlSurfaceToolbarAction::Navigate, "navigate" },
+        { ControlSurfaceToolbarAction::OpenOverlay, "open_overlay" }
+    });
+}
+
 EndpointKind endpointKindFromString(const std::string& value) {
     return enumFromString<EndpointKind>(value, {
         { EndpointKind::Host, "host" },
@@ -122,6 +129,13 @@ InstallerKind installerKindFromString(const std::string& value) {
     });
 }
 
+ControlSurfaceToolbarAction controlSurfaceToolbarActionFromString(const std::string& value) {
+    return enumFromString<ControlSurfaceToolbarAction>(value, {
+        { ControlSurfaceToolbarAction::Navigate, "navigate" },
+        { ControlSurfaceToolbarAction::OpenOverlay, "open_overlay" }
+    });
+}
+
 void to_json(nlohmann::json& json, EndpointKind value) {
     json = to_string(value);
 }
@@ -152,6 +166,14 @@ void to_json(nlohmann::json& json, InstallerKind value) {
 
 void from_json(const nlohmann::json& json, InstallerKind& value) {
     value = installerKindFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, ControlSurfaceToolbarAction value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, ControlSurfaceToolbarAction& value) {
+    value = controlSurfaceToolbarActionFromString(json.get<std::string>());
 }
 
 std::string toPrettyJson(const nlohmann::json& json) {

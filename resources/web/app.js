@@ -117,6 +117,7 @@ function iconToken(systemImageName) {
     case 'network': return '◎';
     case 'trackers': return '◉';
     case 'globe': return '◌';
+    case 'shield': return '⬡';
     case 'arrow.down': return '↓';
     case 'share': return '↗';
     case 'gear': return '◇';
@@ -332,6 +333,10 @@ function dashboardSnapshot() {
   };
 }
 
+function governanceSnapshot() {
+  return state.dashboard?.governance || {};
+}
+
 function setHealthBadge(label, tone = 'info') {
   healthBadge.textContent = label;
   healthBadge.dataset.tone = tone;
@@ -355,6 +360,7 @@ function labelForDestination(destinationId) {
     || ({
       telemetry: 'Telemetry',
       runtime: 'Runtime',
+      clu: 'Command Logic Unit',
       providers: 'Providers',
       imports: 'Imports',
       exports: 'Exports',
@@ -368,6 +374,7 @@ function destinationForViewId(viewId) {
     OverviewSectionView: 'overview',
     TelemetrySectionView: 'telemetry',
     RuntimeSectionView: 'runtime',
+    CommandLogicUnitSectionView: 'clu',
     ProvidersSectionView: 'providers',
     ImportsSectionView: 'imports',
     ExportsSectionView: 'exports',
@@ -390,6 +397,13 @@ function metadataForDestination(destinationId) {
       eyebrow: 'RUNTIME',
       title,
       description: 'Inspect MCP servers, sub-agents, browser gateway lanes, and installation provenance from the shared runtime map.'
+    };
+  }
+  if (destinationId === 'clu') {
+    return {
+      eyebrow: 'CLU',
+      title,
+      description: 'Review the Command Logic Unit governance profile, live posture findings, and operator-visible control doctrine.'
     };
   }
   if (destinationId === 'providers') {
@@ -665,6 +679,116 @@ function renderRuntimeView() {
           ${installHistory}
         </article>
       </div>
+    </section>
+  `;
+}
+
+function renderCluView() {
+  const governance = governanceSnapshot();
+  const findings = safeArray(governance.findings);
+  const roles = safeArray(governance.roles);
+  const rules = safeArray(governance.rules);
+  const documents = safeArray(governance.documents);
+  const actions = safeArray(governance.recommendedActions);
+  const operatorChecklist = safeArray(governance.operatorChecklist);
+
+  const findingsMarkup = findings.length ? `
+    <div class="history-list">
+      ${findings.map((finding) => `
+        <article class="history-item">
+          <strong>${escapeHtml(finding.title || finding.ruleId || 'Governance Finding')}</strong>
+          <div>${statusPill(finding.status || 'warning')}</div>
+          <div>${escapeHtml(finding.message || '')}</div>
+          <div>${escapeHtml(finding.severity || 'governance')}</div>
+        </article>
+      `).join('')}
+    </div>
+  ` : emptyState('No active findings', 'CLU currently reports no active governance findings.');
+
+  const rolesMarkup = roles.length ? `
+    <div class="history-list">
+      ${roles.map((role) => `
+        <article class="history-item">
+          <strong>${escapeHtml(role.displayName || role.roleId || 'Role')}</strong>
+          <div>${escapeHtml(role.domain || 'governance')}</div>
+          <div>${escapeHtml(formatPreview(safeArray(role.authorities).join(' | '), 180) || 'No published authorities')}</div>
+        </article>
+      `).join('')}
+    </div>
+  ` : emptyState('No roles published', 'The CLU governance profile has not published any roles yet.');
+
+  const rulesMarkup = rules.length ? `
+    <div class="history-list">
+      ${rules.map((rule) => `
+        <article class="history-item">
+          <strong>${escapeHtml(rule.ruleId || 'Rule')}</strong>
+          <div>${escapeHtml(rule.title || 'Governance rule')}</div>
+          <div>${escapeHtml(rule.severity || 'unspecified')} | ${escapeHtml(rule.enforcement || 'advisory')}</div>
+        </article>
+      `).join('')}
+    </div>
+  ` : emptyState('No rules published', 'The CLU governance profile has not published any rules yet.');
+
+  const documentsMarkup = documents.length ? `
+    <div class="history-list">
+      ${documents.map((document) => `
+        <article class="history-item">
+          <strong>${escapeHtml(document.title || document.documentId || 'Document')}</strong>
+          <div>${escapeHtml(document.category || 'governance')}</div>
+          <div>${escapeHtml(formatPreview(document.summary || document.body || '', 180) || 'No summary provided')}</div>
+        </article>
+      `).join('')}
+    </div>
+  ` : emptyState('No documents published', 'The CLU governance profile has not published any reference documents yet.');
+
+  const actionNarrative = actions.length ? actions.join('\n') : 'No recommended actions are currently required.';
+  const checklistNarrative = operatorChecklist.length ? operatorChecklist.join('\n') : 'No operator checklist is published yet.';
+
+  return `
+    <section class="section-shell">
+      <div class="card-grid">
+        ${metricCard('Posture', String(governance.posture || 'pending').toUpperCase(), 'live governance evaluation')}
+        ${metricCard('Findings', formatCount(findings.length), governance.lastEvaluatedUtc || 'awaiting evaluation')}
+        ${metricCard('Roles', formatCount(roles.length), 'published authorities')}
+        ${metricCard('Rules', formatCount(rules.length), `${documents.length} documents`)}
+      </div>
+
+      <div class="split-grid">
+        ${narrativePanel('Doctrine', governance.unitName || 'Command Logic Unit', governance.doctrine || 'Governance doctrine is waiting for the current CLU profile.')}
+        ${narrativePanel('Recommended Actions', 'Operator Queue', actionNarrative)}
+      </div>
+
+      <div class="split-grid">
+        <article class="panel-block">
+          <p class="eyebrow">Operator Checklist</p>
+          <h3>Published Guidance</h3>
+          <p class="narrative-copy">${multilineHtml(checklistNarrative)}</p>
+        </article>
+        <article class="panel-block">
+          <p class="eyebrow">Current Findings</p>
+          <h3>Live Governance Posture</h3>
+          ${findingsMarkup}
+        </article>
+      </div>
+
+      <div class="split-grid">
+        <article class="panel-block">
+          <p class="eyebrow">Roles</p>
+          <h3>Published Authorities</h3>
+          ${rolesMarkup}
+        </article>
+        <article class="panel-block">
+          <p class="eyebrow">Rules</p>
+          <h3>Measured Controls</h3>
+          ${rulesMarkup}
+        </article>
+      </div>
+
+      <article class="panel-block">
+        <p class="eyebrow">Documents</p>
+        <h3>Governance Corpus</h3>
+        ${documentsMarkup}
+      </article>
     </section>
   `;
 }
@@ -961,6 +1085,7 @@ function renderViewById(viewId) {
     case 'OverviewSectionView': return renderOverviewView();
     case 'TelemetrySectionView': return renderTelemetryView();
     case 'RuntimeSectionView': return renderRuntimeView();
+    case 'CommandLogicUnitSectionView': return renderCluView();
     case 'ProvidersSectionView': return renderProvidersView();
     case 'ImportsSectionView': return renderImportsView();
     case 'ExportsSectionView': return renderExportsView();

@@ -10,6 +10,7 @@
 #include "MainWindow.g.cpp"
 #endif
 
+#include "CommandLogicUnitSectionControl.xaml.h"
 #include "ExportsSectionControl.xaml.h"
 #include "ImportsSectionControl.xaml.h"
 #include "microsoft.ui.xaml.window.h"
@@ -36,6 +37,7 @@ namespace {
 constexpr wchar_t kOverviewDestination[] = L"overview";
 constexpr wchar_t kTelemetryDestination[] = L"telemetry";
 constexpr wchar_t kRuntimeDestination[] = L"runtime";
+constexpr wchar_t kCluDestination[] = L"clu";
 constexpr wchar_t kProvidersDestination[] = L"providers";
 constexpr wchar_t kImportsDestination[] = L"imports";
 constexpr wchar_t kExportsDestination[] = L"exports";
@@ -45,6 +47,7 @@ constexpr wchar_t kSettingsDestination[] = L"settings";
 constexpr wchar_t kOverviewView[] = L"OverviewSectionView";
 constexpr wchar_t kTelemetryView[] = L"TelemetrySectionView";
 constexpr wchar_t kRuntimeView[] = L"RuntimeSectionView";
+constexpr wchar_t kCluView[] = L"CommandLogicUnitSectionView";
 constexpr wchar_t kProvidersView[] = L"ProvidersSectionView";
 constexpr wchar_t kImportsView[] = L"ImportsSectionView";
 constexpr wchar_t kExportsView[] = L"ExportsSectionView";
@@ -108,6 +111,9 @@ std::wstring labelForDestination(const std::wstring& destinationId) {
     if (destinationId == kRuntimeDestination) {
         return L"Runtime";
     }
+    if (destinationId == kCluDestination) {
+        return L"Command Logic Unit";
+    }
     if (destinationId == kProvidersDestination) {
         return L"Providers";
     }
@@ -133,6 +139,9 @@ std::wstring destinationForViewId(const std::wstring& viewId) {
     if (viewId == kRuntimeView) {
         return kRuntimeDestination;
     }
+    if (viewId == kCluView) {
+        return kCluDestination;
+    }
     if (viewId == kProvidersView) {
         return kProvidersDestination;
     }
@@ -157,6 +166,9 @@ SectionMetadata metadataForDestination(const std::wstring& destinationId, const 
     }
     if (destinationId == kRuntimeDestination) {
         return { L"RUNTIME", title, L"Inspect MCP runtime lanes, gateway-facing inventory, and the current operational map exposed by the service." };
+    }
+    if (destinationId == kCluDestination) {
+        return { L"CLU", title, L"Inspect the Command Logic Unit governance profile, live posture findings, and operator-visible control rules." };
     }
     if (destinationId == kProvidersDestination) {
         return { L"PROVIDERS", title, L"Review provider adapters, autonomous control posture, and the current agent service envelope." };
@@ -231,6 +243,9 @@ winrt::hstring glyphForSystemImageName(const std::wstring& systemImageName) {
     }
     if (systemImageName == L"globe") {
         return L"\uE909";
+    }
+    if (systemImageName == L"shield") {
+        return L"\uE72E";
     }
     if (systemImageName == L"arrow.down") {
         return L"\uE898";
@@ -326,6 +341,11 @@ void applySnapshotToView(const FrameworkElement& view,
     if (viewId == kRuntimeView) {
         const auto typed = view.as<winrt::MasterControlShell::RuntimeSectionControl>();
         winrt::get_self<winrt::MasterControlShell::implementation::RuntimeSectionControl>(typed)->ApplySnapshot(snapshot);
+        return;
+    }
+    if (viewId == kCluView) {
+        const auto typed = view.as<winrt::MasterControlShell::CommandLogicUnitSectionControl>();
+        winrt::get_self<winrt::MasterControlShell::implementation::CommandLogicUnitSectionControl>(typed)->ApplySnapshot(snapshot);
         return;
     }
     if (viewId == kProvidersView) {
@@ -650,6 +670,8 @@ FrameworkElement MainWindow::CreateViewForViewId(const std::wstring& viewId, con
         view = winrt::MasterControlShell::TelemetrySectionControl();
     } else if (viewId == kRuntimeView) {
         view = winrt::MasterControlShell::RuntimeSectionControl();
+    } else if (viewId == kCluView) {
+        view = winrt::MasterControlShell::CommandLogicUnitSectionControl();
     } else if (viewId == kProvidersView) {
         view = winrt::MasterControlShell::ProvidersSectionControl();
     } else if (viewId == kImportsView) {

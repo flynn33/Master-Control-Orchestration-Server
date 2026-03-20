@@ -12,4 +12,8 @@ target_link_libraries(MasterControlBootstrapper PRIVATE
     shell32
 )
 
+target_compile_definitions(MasterControlBootstrapper PRIVATE
+    MASTERCONTROL_BOOTSTRAPPER_VERSION="${PROJECT_VERSION}"
+)
+
 install(TARGETS MasterControlBootstrapper RUNTIME DESTINATION .)

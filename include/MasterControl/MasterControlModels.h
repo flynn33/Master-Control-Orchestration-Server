@@ -48,6 +48,11 @@ enum class InstallerKind {
     ZipBundle
 };
 
+enum class ControlSurfaceToolbarAction {
+    Navigate,
+    OpenOverlay
+};
+
 struct HostTelemetrySnapshot final {
     double cpuPercent = 0.0;
     double memoryPercent = 0.0;
@@ -144,11 +149,84 @@ struct ExportArtifact final {
     std::string content;
 };
 
+struct GovernanceDocument final {
+    std::string id;
+    std::string title;
+    std::string category;
+    std::string summary;
+    std::string content;
+};
+
+struct GovernanceRole final {
+    std::string roleId;
+    std::string name;
+    std::string authorityLevel;
+    std::vector<std::string> responsibilities;
+    std::vector<std::string> forbiddenActions;
+    std::vector<std::string> requiredOutputs;
+};
+
+struct GovernanceRule final {
+    std::string ruleId;
+    std::string title;
+    std::string severity;
+    std::string failureConsequence;
+    std::string description;
+};
+
+struct GovernanceFinding final {
+    std::string ruleId;
+    std::string title;
+    std::string severity;
+    std::string status;
+    std::string message;
+};
+
+struct GovernanceProfile final {
+    std::string unitName;
+    std::string doctrine;
+    std::vector<GovernanceDocument> documents;
+    std::vector<GovernanceRole> roles;
+    std::vector<GovernanceRule> rules;
+    std::vector<std::string> operatorChecklist;
+};
+
+struct GovernanceSnapshot final {
+    std::string unitName;
+    std::string posture;
+    std::string doctrine;
+    std::string lastEvaluatedUtc;
+    std::vector<GovernanceDocument> documents;
+    std::vector<GovernanceRole> roles;
+    std::vector<GovernanceRule> rules;
+    std::vector<GovernanceFinding> findings;
+    std::vector<std::string> operatorChecklist;
+    std::vector<std::string> recommendedActions;
+};
+
+struct ModuleControlSurfaceRequest final {
+    std::string moduleId;
+    std::string featureId;
+    std::string displayName;
+    std::string destinationId;
+    std::string surfaceTemplateId;
+    std::string toolbarIcon;
+    std::string overlayRouteId;
+    ControlSurfaceToolbarAction toolbarAction = ControlSurfaceToolbarAction::Navigate;
+    Forsetti::OverlayPresentation overlayPresentation = Forsetti::OverlayPresentation::Sheet;
+    bool includeToolbarShortcut = true;
+    bool includeNavigationLane = true;
+    int sortOrder = 100;
+};
+
 struct ForsettiSurfaceSnapshot final {
     std::optional<Forsetti::ThemeMask> themeMask;
     std::vector<Forsetti::ToolbarItemDescriptor> toolbarItems;
     std::map<std::string, std::vector<Forsetti::ViewInjectionDescriptor>> viewInjectionsBySlot;
     std::optional<Forsetti::OverlaySchema> overlaySchema;
+    std::vector<ModuleControlSurfaceRequest> registeredControlSurfaceRequests;
+    std::string publishedByModuleId;
+    std::string publishedAtUtc;
 };
 
 struct OperationResult final {
@@ -183,6 +261,7 @@ struct DashboardSnapshot final {
     SecuritySettings security;
     std::vector<InstallProvenance> installHistory;
     std::vector<ExportArtifact> exports;
+    GovernanceSnapshot governance;
     ForsettiSurfaceSnapshot surface;
 };
 
@@ -204,11 +283,13 @@ std::string to_string(EndpointKind value);
 std::string to_string(EndpointStatus value);
 std::string to_string(ProviderKind value);
 std::string to_string(InstallerKind value);
+std::string to_string(ControlSurfaceToolbarAction value);
 
 EndpointKind endpointKindFromString(const std::string& value);
 EndpointStatus endpointStatusFromString(const std::string& value);
 ProviderKind providerKindFromString(const std::string& value);
 InstallerKind installerKindFromString(const std::string& value);
+ControlSurfaceToolbarAction controlSurfaceToolbarActionFromString(const std::string& value);
 
 void to_json(nlohmann::json& json, EndpointKind value);
 void from_json(const nlohmann::json& json, EndpointKind& value);
@@ -221,6 +302,9 @@ void from_json(const nlohmann::json& json, ProviderKind& value);
 
 void to_json(nlohmann::json& json, InstallerKind value);
 void from_json(const nlohmann::json& json, InstallerKind& value);
+
+void to_json(nlohmann::json& json, ControlSurfaceToolbarAction value);
+void from_json(const nlohmann::json& json, ControlSurfaceToolbarAction& value);
 
 std::string toPrettyJson(const nlohmann::json& json);
 std::string timestampNowUtc();
@@ -322,11 +406,84 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     content)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceDocument,
+    id,
+    title,
+    category,
+    summary,
+    content)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceRole,
+    roleId,
+    name,
+    authorityLevel,
+    responsibilities,
+    forbiddenActions,
+    requiredOutputs)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceRule,
+    ruleId,
+    title,
+    severity,
+    failureConsequence,
+    description)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceFinding,
+    ruleId,
+    title,
+    severity,
+    status,
+    message)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceProfile,
+    unitName,
+    doctrine,
+    documents,
+    roles,
+    rules,
+    operatorChecklist)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceSnapshot,
+    unitName,
+    posture,
+    doctrine,
+    lastEvaluatedUtc,
+    documents,
+    roles,
+    rules,
+    findings,
+    operatorChecklist,
+    recommendedActions)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ModuleControlSurfaceRequest,
+    moduleId,
+    featureId,
+    displayName,
+    destinationId,
+    surfaceTemplateId,
+    toolbarIcon,
+    overlayRouteId,
+    toolbarAction,
+    overlayPresentation,
+    includeToolbarShortcut,
+    includeNavigationLane,
+    sortOrder)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ForsettiSurfaceSnapshot,
     themeMask,
     toolbarItems,
     viewInjectionsBySlot,
-    overlaySchema)
+    overlaySchema,
+    registeredControlSurfaceRequests,
+    publishedByModuleId,
+    publishedAtUtc)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     OperationResult,
@@ -361,6 +518,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     security,
     installHistory,
     exports,
+    governance,
     surface)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(

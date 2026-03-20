@@ -25,6 +25,12 @@ namespace MasterControlShell
     }
 
     [default_interface]
+    runtimeclass CommandLogicUnitSectionControl : Microsoft.UI.Xaml.Controls.UserControl
+    {
+        CommandLogicUnitSectionControl();
+    }
+
+    [default_interface]
     runtimeclass ProvidersSectionControl : Microsoft.UI.Xaml.Controls.UserControl
     {
         ProvidersSectionControl();

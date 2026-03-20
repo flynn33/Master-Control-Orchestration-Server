@@ -599,6 +599,14 @@ void appendJsonArrayRows(const JsonArray& array,
     }
 }
 
+void appendStringArrayRows(const JsonArray& array, std::vector<std::wstring>& rows) {
+    for (const auto& value : array) {
+        if (value.ValueType() == JsonValueType::String) {
+            rows.push_back(std::wstring(value.GetString().c_str()));
+        }
+    }
+}
+
 std::wstring endpointRow(const JsonObject& object) {
     std::wostringstream stream;
     stream << wideFromUtf8(jsonStringOr(object, L"displayName", "endpoint"))
@@ -648,6 +656,45 @@ std::wstring exportRow(const JsonObject& object) {
     stream << wideFromUtf8(jsonStringOr(object, L"fileName", "artifact"))
            << L"  |  "
            << wideFromUtf8(jsonStringOr(object, L"mediaType", ""));
+    return stream.str();
+}
+
+std::wstring governanceFindingRow(const JsonObject& object) {
+    std::wostringstream stream;
+    stream << L"["
+           << wideFromUtf8(jsonStringOr(object, L"status", "pass"))
+           << L"] "
+           << wideFromUtf8(jsonStringOr(object, L"title", "Governance finding"))
+           << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"message", ""));
+    return stream.str();
+}
+
+std::wstring governanceRoleRow(const JsonObject& object) {
+    std::wostringstream stream;
+    stream << wideFromUtf8(jsonStringOr(object, L"name", "Role"))
+           << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"authorityLevel", "authority"));
+    return stream.str();
+}
+
+std::wstring governanceRuleRow(const JsonObject& object) {
+    std::wostringstream stream;
+    stream << wideFromUtf8(jsonStringOr(object, L"ruleId", "CLU"))
+           << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"title", "Governance rule"))
+           << L"  |  severity="
+           << wideFromUtf8(jsonStringOr(object, L"severity", "medium"));
+    return stream.str();
+}
+
+std::wstring governanceDocumentRow(const JsonObject& object) {
+    std::wostringstream stream;
+    stream << wideFromUtf8(jsonStringOr(object, L"title", "Governance document"))
+           << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"category", "policy"))
+           << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"summary", ""));
     return stream.str();
 }
 
@@ -910,6 +957,14 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     std::vector<std::wstring> providerRows;
     std::vector<std::wstring> installRows;
     std::vector<std::wstring> exportRows;
+    std::wstring governancePosture = L"Pending";
+    std::wstring governanceDoctrine = L"CLU governance posture will appear when the local admin API is reachable.";
+    std::wstring governanceLastEvaluatedUtc = L"Pending";
+    std::vector<std::wstring> governanceFindingRows;
+    std::vector<std::wstring> governanceRoleRows;
+    std::vector<std::wstring> governanceRuleRows;
+    std::vector<std::wstring> governanceDocumentRows;
+    std::vector<std::wstring> governanceActionRows;
 
     if (service.state == ServiceState::Running || service.state == ServiceState::StartPending) {
         std::wstring errorMessage;
@@ -959,6 +1014,32 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                     dashboardJson->GetNamedArray(L"exports", JsonArray()),
                     exportRow,
                     exportRows);
+                if (dashboardJson->HasKey(L"governance")) {
+                    const auto governance = dashboardJson->GetNamedObject(L"governance", JsonObject());
+                    governancePosture = wideFromUtf8(jsonStringOr(governance, L"posture", "pass"));
+                    governanceDoctrine = wideFromUtf8(jsonStringOr(governance, L"doctrine", narrowFromWide(governanceDoctrine)));
+                    governanceLastEvaluatedUtc = wideFromUtf8(jsonStringOr(governance, L"lastEvaluatedUtc", "Pending"));
+
+                    appendJsonArrayRows(
+                        governance.GetNamedArray(L"findings", JsonArray()),
+                        governanceFindingRow,
+                        governanceFindingRows);
+                    appendJsonArrayRows(
+                        governance.GetNamedArray(L"roles", JsonArray()),
+                        governanceRoleRow,
+                        governanceRoleRows);
+                    appendJsonArrayRows(
+                        governance.GetNamedArray(L"rules", JsonArray()),
+                        governanceRuleRow,
+                        governanceRuleRows);
+                    appendJsonArrayRows(
+                        governance.GetNamedArray(L"documents", JsonArray()),
+                        governanceDocumentRow,
+                        governanceDocumentRows);
+                    appendStringArrayRows(
+                        governance.GetNamedArray(L"recommendedActions", JsonArray()),
+                        governanceActionRows);
+                }
 
                 if (dashboardJson->HasKey(L"surface")) {
                     const auto surface = dashboardJson->GetNamedObject(L"surface", JsonObject());
@@ -1027,6 +1108,10 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.providerCount = providers.empty() ? providerRows.size() : providers.size();
     snapshot.installCount = installRows.size();
     snapshot.exportCount = exportRows.size();
+    snapshot.governanceRoleCount = governanceRoleRows.size();
+    snapshot.governanceRuleCount = governanceRuleRows.size();
+    snapshot.governanceDocumentCount = governanceDocumentRows.size();
+    snapshot.governanceFindingCount = governanceFindingRows.size();
 
     if (endpointRows.empty()) {
         endpointRows.push_back(L"No endpoint snapshot is available yet.");
@@ -1039,6 +1124,21 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     }
     if (exportRows.empty()) {
         exportRows.push_back(L"No export artifacts are currently published.");
+    }
+    if (governanceFindingRows.empty()) {
+        governanceFindingRows.push_back(L"No active CLU findings. Current posture is aligned with the published governance profile.");
+    }
+    if (governanceRoleRows.empty()) {
+        governanceRoleRows.push_back(L"No CLU role definitions are available.");
+    }
+    if (governanceRuleRows.empty()) {
+        governanceRuleRows.push_back(L"No CLU rule definitions are available.");
+    }
+    if (governanceDocumentRows.empty()) {
+        governanceDocumentRows.push_back(L"No CLU documents are available.");
+    }
+    if (governanceActionRows.empty()) {
+        governanceActionRows.push_back(L"No immediate operator actions are recommended.");
     }
 
     std::wostringstream overviewStream;
@@ -1071,10 +1171,24 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                         << L"% | Bandwidth " << bandwidthPercent
                         << L"% | Storage " << storagePercent << L'%';
 
+    std::wostringstream governanceStream;
+    governanceStream << L"CLU posture: " << governancePosture << L'\n'
+                     << L"Evaluated: " << governanceLastEvaluatedUtc << L'\n'
+                     << L"Findings: " << snapshot.governanceFindingCount << L'\n'
+                     << L"Roles / rules / documents: "
+                     << snapshot.governanceRoleCount << L" / "
+                     << snapshot.governanceRuleCount << L" / "
+                     << snapshot.governanceDocumentCount << L'\n'
+                     << governanceDoctrine;
+
     snapshot.overviewText = overviewStream.str();
     snapshot.telemetryText = telemetryText;
     snapshot.environmentText = environmentStream.str();
     snapshot.configurationText = configurationStream.str();
+    snapshot.governancePosture = governancePosture;
+    snapshot.governanceDoctrine = governanceDoctrine;
+    snapshot.governanceNarrative = governanceStream.str();
+    snapshot.governanceLastEvaluatedUtc = governanceLastEvaluatedUtc;
     snapshot.browserPort = browserPort;
     snapshot.beaconEnabled = beaconEnabled;
     snapshot.aiAutonomyEnabled = aiAutonomyEnabled;
@@ -1100,6 +1214,11 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.providerRows = std::move(providerRows);
     snapshot.installRows = std::move(installRows);
     snapshot.exportRows = std::move(exportRows);
+    snapshot.governanceFindingRows = std::move(governanceFindingRows);
+    snapshot.governanceRoleRows = std::move(governanceRoleRows);
+    snapshot.governanceRuleRows = std::move(governanceRuleRows);
+    snapshot.governanceDocumentRows = std::move(governanceDocumentRows);
+    snapshot.governanceActionRows = std::move(governanceActionRows);
     return snapshot;
 }
 

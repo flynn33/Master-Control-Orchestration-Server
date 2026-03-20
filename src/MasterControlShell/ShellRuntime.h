@@ -149,6 +149,10 @@ struct ShellSnapshot final {
     size_t providerCount = 0;
     size_t installCount = 0;
     size_t exportCount = 0;
+    size_t governanceRoleCount = 0;
+    size_t governanceRuleCount = 0;
+    size_t governanceDocumentCount = 0;
+    size_t governanceFindingCount = 0;
     std::wstring dashboardUrl;
     std::wstring configPath;
     std::wstring dataDirectory;
@@ -162,6 +166,10 @@ struct ShellSnapshot final {
     std::wstring telemetryText;
     std::wstring environmentText;
     std::wstring configurationText;
+    std::wstring governancePosture;
+    std::wstring governanceDoctrine;
+    std::wstring governanceNarrative;
+    std::wstring governanceLastEvaluatedUtc;
     ShellSecuritySettings securitySettings;
     std::vector<ShellProviderConnection> providers;
     std::vector<ShellNavigationPointer> navigationPointers;
@@ -172,6 +180,11 @@ struct ShellSnapshot final {
     std::vector<std::wstring> providerRows;
     std::vector<std::wstring> installRows;
     std::vector<std::wstring> exportRows;
+    std::vector<std::wstring> governanceFindingRows;
+    std::vector<std::wstring> governanceRoleRows;
+    std::vector<std::wstring> governanceRuleRows;
+    std::vector<std::wstring> governanceDocumentRows;
+    std::vector<std::wstring> governanceActionRows;
     std::wstring statusMessage;
 };
 

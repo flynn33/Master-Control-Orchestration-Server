@@ -16,9 +16,12 @@ $requiredModuleIDs = @(
     "com.mastercontrol.installer-import",
     "com.mastercontrol.provider-integration",
     "com.mastercontrol.export",
+    "com.mastercontrol.command-logic-unit",
     "com.mastercontrol.beacon-gateway",
     "com.mastercontrol.dashboard-ui"
 )
+
+$cluManifestPath = Join-Path $repoRoot "src\MasterControlModules\Resources\ForsettiManifests\CommandLogicUnitModule.json"
 
 function Assert-Contains {
     param(
@@ -69,6 +72,10 @@ Assert-NotContains $appCMake 'MasterControlModules\.cpp' "MasterControlApp must 
 $shellWindowXamlPath = Join-Path $repoRoot "src\MasterControlShell\MainWindow.xaml"
 $shellWindowCppPath = Join-Path $repoRoot "src\MasterControlShell\MainWindow.xaml.cpp"
 $shellRuntimePath = Join-Path $repoRoot "src\MasterControlShell\ShellRuntime.cpp"
+$contractsPath = Join-Path $repoRoot "include\MasterControl\MasterControlContracts.h"
+$modelsPath = Join-Path $repoRoot "include\MasterControl\MasterControlModels.h"
+$modulesCppPath = Join-Path $repoRoot "src\MasterControlModules\MasterControlModules.cpp"
+$runtimePath = Join-Path $repoRoot "src\MasterControlApp\MasterControlRuntime.cpp"
 $webIndexPath = Join-Path $repoRoot "resources\web\index.html"
 $webAppPath = Join-Path $repoRoot "resources\web\app.js"
 
@@ -88,6 +95,9 @@ if (-not (Test-Path $shellWindowCppPath)) {
     Assert-Contains $shellWindowCpp 'ApplySurfaceToolbar' "MainWindow.xaml.cpp must rebuild the toolbar from Forsetti surface state."
     Assert-Contains $shellWindowCpp 'ResolvePrimaryViewForDestination' "MainWindow.xaml.cpp must resolve section content from Forsetti view injections."
     Assert-Contains $shellWindowCpp 'OpenOverlayRouteAsync' "MainWindow.xaml.cpp must host Forsetti overlay routes."
+    Assert-NotContains $shellWindowCpp 'dashboard-clu' "MainWindow.xaml.cpp must not hardcode the CLU toolbar item in bootstrap surface data."
+    Assert-NotContains $shellWindowCpp 'clu-nav' "MainWindow.xaml.cpp must not hardcode the CLU navigation pointer in bootstrap surface data."
+    Assert-NotContains $shellWindowCpp 'clu-surface' "MainWindow.xaml.cpp must not hardcode the CLU view injection in bootstrap surface data."
 }
 
 if (-not (Test-Path $shellRuntimePath)) {
@@ -97,6 +107,24 @@ if (-not (Test-Path $shellRuntimePath)) {
     Assert-Contains $shellRuntime 'viewInjectionsBySlot' "ShellRuntime.cpp must parse Forsetti view injection surface state."
     Assert-Contains $shellRuntime 'overlayRoutes' "ShellRuntime.cpp must parse Forsetti overlay route surface state."
     Assert-Contains $shellRuntime 'toolbarItems' "ShellRuntime.cpp must parse Forsetti toolbar surface state."
+}
+
+if (-not (Test-Path $contractsPath)) {
+    $violations += "include/MasterControl/MasterControlContracts.h is missing."
+} else {
+    $contracts = Get-Content $contractsPath -Raw
+    Assert-Contains $contracts 'IModuleControlSurfaceService' "MasterControlContracts.h must define a framework control-surface registry service."
+    Assert-Contains $contracts 'upsertControlSurfaceRequest' "MasterControlContracts.h must let modules publish control-surface requests through the framework."
+    Assert-Contains $contracts 'removeControlSurfaceRequestsForModule' "MasterControlContracts.h must let the framework remove all control requests for a module during lifecycle changes."
+}
+
+if (-not (Test-Path $modelsPath)) {
+    $violations += "include/MasterControl/MasterControlModels.h is missing."
+} else {
+    $models = Get-Content $modelsPath -Raw
+    Assert-Contains $models 'overlayRouteId' "MasterControlModels.h must let modules describe overlay routing requirements through the framework control contract."
+    Assert-Contains $models 'registeredControlSurfaceRequests' "MasterControlModels.h must expose registered control-surface requests in the runtime surface snapshot."
+    Assert-Contains $models 'publishedByModuleId' "MasterControlModels.h must expose which UI module registered the composed framework surface."
 }
 
 if (-not (Test-Path $webIndexPath)) {
@@ -120,6 +148,61 @@ if (-not (Test-Path $webAppPath)) {
     Assert-Contains $webApp 'renderSurfaceToolbar' "resources/web/app.js must rebuild the browser toolbar from Forsetti surface state."
     Assert-Contains $webApp 'resolvePrimaryViewForDestination' "resources/web/app.js must resolve browser content from Forsetti view injections."
     Assert-Contains $webApp 'openOverlayRoute' "resources/web/app.js must host Forsetti overlay routes."
+    Assert-Contains $webApp 'CommandLogicUnitSectionView' "resources/web/app.js must expose a renderer for the CLU view when Forsetti publishes it."
+    Assert-NotContains $webApp "dashboard-clu" "resources/web/app.js must not hardcode the CLU toolbar item in bootstrap surface data."
+    Assert-NotContains $webApp "clu-nav" "resources/web/app.js must not hardcode the CLU navigation pointer in bootstrap surface data."
+    Assert-NotContains $webApp "clu-surface" "resources/web/app.js must not hardcode the CLU view injection in bootstrap surface data."
+}
+
+if (-not (Test-Path $modulesCppPath)) {
+    $violations += "src/MasterControlModules/MasterControlModules.cpp is missing."
+} else {
+    $modulesCpp = Get-Content $modulesCppPath -Raw
+    Assert-Contains $modulesCpp 'CommandLogicUnitModule::descriptor' "MasterControlModules.cpp must define the CLU service module."
+    Assert-Contains $modulesCpp 'upsertControlSurfaceRequest' "MasterControlModules.cpp must let CLU publish control-surface requests through the framework registry."
+    Assert-Contains $modulesCpp 'GovernanceSection' "MasterControlModules.cpp must describe CLU control needs as a control-surface request, not a raw UI contribution payload."
+    Assert-Contains $modulesCpp 'publishDashboardSurface' "DashboardUIModule must own the final framework surface publication."
+    Assert-Contains $modulesCpp 'makeEnvironmentDiscoveryControlSurfaceRequests' "EnvironmentDiscoveryModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeHostTelemetryControlSurfaceRequests' "HostTelemetryModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeRuntimeInventoryControlSurfaceRequests' "RuntimeInventoryModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeConfigurationControlSurfaceRequests' "ConfigurationModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeInstallerImportControlSurfaceRequests' "InstallerImportModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeProviderIntegrationControlSurfaceRequests' "ProviderIntegrationModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeExportControlSurfaceRequests' "ExportModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeBeaconGatewayControlSurfaceRequests' "BeaconGatewayModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'return Forsetti::UIContributions{};' "DashboardUIModule must bootstrap from framework control requests instead of shipping hardcoded UI contributions."
+    Assert-Contains $modulesCpp 'mastercontrol.dashboard.surface.registered' "DashboardUIModule must publish startup surface registration metadata."
+    Assert-NotContains $modulesCpp 'makeCommandLogicUnitSurfaceContributions' "CLU must not build raw UI contribution payloads directly."
+}
+
+if (-not (Test-Path $runtimePath)) {
+    $violations += "src/MasterControlApp/MasterControlRuntime.cpp is missing."
+} else {
+    $runtime = Get-Content $runtimePath -Raw
+    Assert-Contains $runtime 'class FileBackedEntitlementProvider' "MasterControlRuntime.cpp must use a reconciled entitlement provider."
+    Assert-Contains $runtime 'buildDefaultEntitlementStateDocument' "MasterControlRuntime.cpp must seed entitlement state for runtime reconciliation."
+    Assert-Contains $runtime 'paths_.entitlementsFile' "MasterControlRuntime.cpp must use the app entitlement state file."
+    Assert-NotContains $runtime 'AllowAllEntitlementProvider' "MasterControlRuntime.cpp must not bypass Forsetti entitlement gating with AllowAllEntitlementProvider."
+}
+
+if (-not (Test-Path $cluManifestPath)) {
+    $violations += "src/MasterControlModules/Resources/ForsettiManifests/CommandLogicUnitModule.json is missing."
+} else {
+    $cluManifest = Get-Content $cluManifestPath -Raw | ConvertFrom-Json
+    $cluCapabilities = @($cluManifest.capabilitiesRequested)
+    foreach ($uiCapability in @("routing_overlay", "toolbar_items", "view_injection", "ui_theme_mask")) {
+        if ($uiCapability -in $cluCapabilities) {
+            $violations += "CommandLogicUnitModule.json must not request UI capabilities directly."
+        }
+    }
+}
+
+$requiredIapProductIDs = @{
+    "com.mastercontrol.installer-import" = "mastercontrol.iap.installer-import"
+    "com.mastercontrol.provider-integration" = "mastercontrol.iap.provider-integration"
+    "com.mastercontrol.export" = "mastercontrol.iap.export"
+    "com.mastercontrol.command-logic-unit" = "mastercontrol.iap.command-logic-unit"
+    "com.mastercontrol.beacon-gateway" = "mastercontrol.iap.beacon-gateway"
 }
 
 $manifestDirs = Get-ChildItem -Path (Join-Path $repoRoot "src") -Recurse -Directory -Filter "ForsettiManifests" -ErrorAction SilentlyContinue
@@ -167,6 +250,12 @@ if ($manifestFiles.Count -eq 0) {
             $violations += "$rel - Duplicate moduleID '$($manifest.moduleID)'"
         } else {
             $seenModuleIDs[$manifest.moduleID] = $file.FullName
+        }
+
+        if ($requiredIapProductIDs.ContainsKey($manifest.moduleID)) {
+            if ($manifest.iapProductID -ne $requiredIapProductIDs[$manifest.moduleID]) {
+                $violations += "$rel - iapProductID must be '$($requiredIapProductIDs[$manifest.moduleID])'"
+            }
         }
     }
 

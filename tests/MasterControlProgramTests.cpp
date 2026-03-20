@@ -9,11 +9,13 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -60,6 +62,19 @@ void writeTextFile(const std::filesystem::path& filePath, const std::string& con
     std::filesystem::create_directories(filePath.parent_path());
     std::ofstream output(filePath, std::ios::binary | std::ios::trunc);
     output << contents;
+}
+
+std::filesystem::path currentExecutablePath() {
+    wchar_t buffer[MAX_PATH]{};
+    const auto length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+    return std::filesystem::path(std::wstring(buffer, length));
+}
+
+std::filesystem::path bootstrapperBinaryPath() {
+    const auto executablePath = currentExecutablePath();
+    const auto configurationName = executablePath.parent_path().filename();
+    const auto buildRoot = executablePath.parent_path().parent_path().parent_path();
+    return buildRoot / "src" / "MasterControlBootstrapper" / configurationName / "MasterControlBootstrapper.exe";
 }
 
 int runProcess(const std::wstring& command, const std::filesystem::path& workingDirectory) {
@@ -133,6 +148,59 @@ bool hasExport(const std::vector<MasterControl::ExportArtifact>& artifacts, cons
         artifacts.begin(),
         artifacts.end(),
         [&fileName](const MasterControl::ExportArtifact& artifact) { return artifact.fileName == fileName; });
+}
+
+bool hasNavigationDestination(const std::optional<Forsetti::OverlaySchema>& overlaySchema,
+                              const std::string& destinationId) {
+    if (!overlaySchema.has_value()) {
+        return false;
+    }
+
+    return std::any_of(
+        overlaySchema->navigationPointers.begin(),
+        overlaySchema->navigationPointers.end(),
+        [&destinationId](const Forsetti::NavigationPointer& pointer) {
+            return pointer.baseDestinationID == destinationId;
+        });
+}
+
+bool hasToolbarItemId(const std::vector<Forsetti::ToolbarItemDescriptor>& toolbarItems,
+                      const std::string& itemId) {
+    return std::any_of(
+        toolbarItems.begin(),
+        toolbarItems.end(),
+        [&itemId](const Forsetti::ToolbarItemDescriptor& item) {
+            return item.itemID == itemId;
+        });
+}
+
+bool hasOverlayRouteId(const std::optional<Forsetti::OverlaySchema>& overlaySchema,
+                       const std::string& routeId) {
+    if (!overlaySchema.has_value()) {
+        return false;
+    }
+
+    return std::any_of(
+        overlaySchema->overlayRoutes.begin(),
+        overlaySchema->overlayRoutes.end(),
+        [&routeId](const Forsetti::OverlayRoute& route) {
+            return route.routeID == routeId;
+        });
+}
+
+bool hasControlRequestsForModules(const std::vector<MasterControl::ModuleControlSurfaceRequest>& requests,
+                                  const std::vector<std::string>& moduleIds) {
+    return std::all_of(
+        moduleIds.begin(),
+        moduleIds.end(),
+        [&requests](const std::string& moduleId) {
+            return std::any_of(
+                requests.begin(),
+                requests.end(),
+                [&moduleId](const MasterControl::ModuleControlSurfaceRequest& request) {
+                    return request.moduleId == moduleId;
+                });
+        });
 }
 
 bool hasHistoryEntry(const std::vector<MasterControl::InstallProvenance>& entries,
@@ -261,14 +329,30 @@ int main() {
     const auto tempRoot = makeTempRoot();
     {
         ScopedEnvironmentOverride dataDirectoryOverride(L"MASTERCONTROL_DATA_DIR", (tempRoot / "data").wstring());
+        const auto appPaths = MasterControl::resolveAppPaths();
 
         MasterControl::MasterControlApplication application;
         success &= expect(application.initialize(), "Application should initialize");
 
         auto snapshot = application.snapshot();
+        const std::vector<std::string> controlSurfaceModuleIds = {
+            "com.mastercontrol.environment-discovery",
+            "com.mastercontrol.host-telemetry",
+            "com.mastercontrol.runtime-inventory",
+            "com.mastercontrol.configuration",
+            "com.mastercontrol.installer-import",
+            "com.mastercontrol.provider-integration",
+            "com.mastercontrol.export",
+            "com.mastercontrol.command-logic-unit",
+            "com.mastercontrol.beacon-gateway"
+        };
         success &= expect(!snapshot.endpoints.empty(), "Snapshot should include endpoints");
         success &= expect(hasExport(snapshot.exports, "Install-ClaudeGateway.ps1"), "Exports should include a Claude installer helper");
         success &= expect(hasExport(snapshot.exports, "Install-CodexGateway.ps1"), "Exports should include a Codex installer helper");
+        success &= expect(snapshot.governance.unitName == "Command Logic Unit", "Snapshot should expose the CLU governance unit");
+        success &= expect(!snapshot.governance.roles.empty(), "CLU snapshot should publish governance roles");
+        success &= expect(!snapshot.governance.rules.empty(), "CLU snapshot should publish governance rules");
+        success &= expect(!snapshot.governance.documents.empty(), "CLU snapshot should publish governance documents");
         success &= expect(snapshot.surface.overlaySchema.has_value(), "Snapshot should expose Forsetti overlay metadata");
         success &= expect(
             snapshot.surface.overlaySchema.has_value() &&
@@ -279,17 +363,104 @@ int main() {
             snapshot.surface.viewInjectionsBySlot.size() >= 8,
             "Forsetti surface snapshot should expose injected section slots");
         success &= expect(
+            hasControlRequestsForModules(snapshot.surface.registeredControlSurfaceRequests, controlSurfaceModuleIds),
+            "Every service module should register its control-surface needs with the framework");
+        success &= expect(
+            snapshot.surface.publishedByModuleId == "com.mastercontrol.dashboard-ui",
+            "The dashboard UI module should publish the composed framework surface");
+        success &= expect(
+            !snapshot.surface.publishedAtUtc.empty(),
+            "The framework surface snapshot should record when the UI module registered its composed surface");
+        success &= expect(
             snapshot.surface.viewInjectionsBySlot.contains("overview") &&
                 !snapshot.surface.viewInjectionsBySlot.at("overview").empty() &&
                 snapshot.surface.viewInjectionsBySlot.at("overview").front().viewID == "OverviewSectionView",
             "Forsetti overview slot should resolve to the overview section view");
         success &= expect(
-            snapshot.surface.overlaySchema.has_value() &&
-                std::any_of(
-                    snapshot.surface.overlaySchema->overlayRoutes.begin(),
-                    snapshot.surface.overlaySchema->overlayRoutes.end(),
-                    [](const auto& route) { return route.routeID == "imports-overlay"; }),
+            hasNavigationDestination(snapshot.surface.overlaySchema, "clu"),
+            "Forsetti overlay metadata should publish CLU navigation through the framework surface");
+        success &= expect(
+            hasToolbarItemId(snapshot.surface.toolbarItems, "command-logic-unit-dashboard"),
+            "Forsetti surface snapshot should publish the CLU toolbar item");
+        success &= expect(
+            snapshot.surface.viewInjectionsBySlot.contains("clu") &&
+                !snapshot.surface.viewInjectionsBySlot.at("clu").empty() &&
+                snapshot.surface.viewInjectionsBySlot.at("clu").front().viewID == "CommandLogicUnitSectionView",
+            "Forsetti CLU slot should resolve to the CLU section view");
+        success &= expect(
+            hasOverlayRouteId(snapshot.surface.overlaySchema, "imports-overlay"),
             "Forsetti overlay metadata should publish the imports overlay route");
+        success &= expect(
+            hasOverlayRouteId(snapshot.surface.overlaySchema, "settings-overlay"),
+            "Forsetti overlay metadata should publish the settings overlay route");
+        success &= expect(
+            hasOverlayRouteId(snapshot.surface.overlaySchema, "exports-overlay"),
+            "Forsetti overlay metadata should publish the exports overlay route");
+
+        success &= expect(std::filesystem::exists(appPaths.entitlementsFile), "The runtime should seed an entitlement state file");
+        writeTextFile(
+            appPaths.entitlementsFile,
+            nlohmann::json{
+                { "unlockedModuleIDs", nlohmann::json::array({
+                    "com.mastercontrol.environment-discovery",
+                    "com.mastercontrol.host-telemetry",
+                    "com.mastercontrol.runtime-inventory",
+                    "com.mastercontrol.configuration",
+                    "com.mastercontrol.dashboard-ui"
+                }) },
+                { "unlockedProductIDs", nlohmann::json::array({
+                    "mastercontrol.iap.installer-import",
+                    "mastercontrol.iap.provider-integration",
+                    "mastercontrol.iap.export",
+                    "mastercontrol.iap.beacon-gateway"
+                }) }
+            }.dump(2));
+
+        for (int attempt = 0; attempt < 12; ++attempt) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            snapshot = application.snapshot();
+            if (!hasNavigationDestination(snapshot.surface.overlaySchema, "clu")) {
+                break;
+            }
+        }
+
+        success &= expect(
+            !hasNavigationDestination(snapshot.surface.overlaySchema, "clu"),
+            "Forsetti entitlement reconciliation should remove CLU navigation when its product is no longer unlocked");
+        success &= expect(
+            !hasToolbarItemId(snapshot.surface.toolbarItems, "command-logic-unit-dashboard"),
+            "Forsetti entitlement reconciliation should remove the CLU toolbar item when its product is no longer unlocked");
+
+        writeTextFile(
+            appPaths.entitlementsFile,
+            nlohmann::json{
+                { "unlockedModuleIDs", nlohmann::json::array({
+                    "com.mastercontrol.environment-discovery",
+                    "com.mastercontrol.host-telemetry",
+                    "com.mastercontrol.runtime-inventory",
+                    "com.mastercontrol.configuration",
+                    "com.mastercontrol.dashboard-ui"
+                }) },
+                { "unlockedProductIDs", nlohmann::json::array({
+                    "mastercontrol.iap.installer-import",
+                    "mastercontrol.iap.provider-integration",
+                    "mastercontrol.iap.export",
+                    "mastercontrol.iap.command-logic-unit",
+                    "mastercontrol.iap.beacon-gateway"
+                }) }
+            }.dump(2));
+
+        for (int attempt = 0; attempt < 12; ++attempt) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            snapshot = application.snapshot();
+            if (hasNavigationDestination(snapshot.surface.overlaySchema, "clu")) {
+                break;
+            }
+        }
+
+        success &= expect(
+            hasNavigationDestination(snapshot.surface.overlaySchema, "clu"),
+            "Forsetti entitlement reconciliation should restore CLU navigation when the product is unlocked again");
 
         auto unsafeConfiguration = configuration;
         unsafeConfiguration.security.securityProtocolsEnabled = false;
@@ -297,6 +468,9 @@ int main() {
         success &= expect(!unsafeResult.succeeded && unsafeResult.requiresConfirmation, "Unsafe configuration should require confirmation");
         const auto confirmedResult = application.applyConfigurationJson(nlohmann::json(unsafeConfiguration).dump(), true);
         success &= expect(confirmedResult.succeeded, "Unsafe configuration should succeed after confirmation");
+        snapshot = application.snapshot();
+        success &= expect(snapshot.governance.posture == "blocked", "CLU should block unsafe open-LAN posture when security protocols are disabled");
+        success &= expect(!snapshot.governance.findings.empty(), "CLU should record findings for blocked security posture");
 
         auto managedConfiguration = configuration;
         managedConfiguration.aiAutonomyEnabled = true;
@@ -425,6 +599,66 @@ int main() {
         }
 
         application.shutdown();
+    }
+
+    const auto bootstrapperBinary = bootstrapperBinaryPath();
+    success &= expect(std::filesystem::exists(bootstrapperBinary), "Bootstrapper binary should exist for installer validation");
+    if (success) {
+        const auto bootstrapInstallDirectory = tempRoot / "bootstrapper-install";
+        const auto bootstrapDataDirectory = tempRoot / "bootstrapper-data";
+        const auto bootstrapConfigurationFile = bootstrapDataDirectory / "config" / "master-control-program.json";
+        const auto bootstrapInstallStateFile = bootstrapInstallDirectory / "installation-state.json";
+
+        ScopedEnvironmentOverride bootstrapDataOverride(L"MASTERCONTROL_DATA_DIR", bootstrapDataDirectory.wstring());
+
+        const auto installCommand = L"\"" + bootstrapperBinary.wstring() + L"\" install \"" +
+            bootstrapInstallDirectory.wstring() +
+            L"\" --skip-service --skip-firewall --skip-shortcuts --skip-uninstall-registration";
+        success &= expect(
+            runProcess(installCommand, tempRoot) == 0,
+            "Bootstrapper install should succeed when system integrations are skipped");
+        success &= expect(
+            std::filesystem::exists(bootstrapInstallDirectory / "MasterControlServiceHost.exe"),
+            "Bootstrapper install should stage the service host");
+        success &= expect(
+            std::filesystem::exists(bootstrapInstallDirectory / "MasterControlShell.exe"),
+            "Bootstrapper install should stage the shell host");
+        success &= expect(
+            std::filesystem::exists(bootstrapInstallDirectory / "share" / "MasterControlProgram" / "web" / "index.html"),
+            "Bootstrapper install should stage browser resources");
+        success &= expect(
+            std::filesystem::exists(bootstrapInstallDirectory / "share" / "MasterControlProgram" / "ForsettiManifests" / "DashboardUIModule.json"),
+            "Bootstrapper install should stage Forsetti manifests");
+        success &= expect(
+            std::filesystem::exists(bootstrapInstallStateFile),
+            "Bootstrapper install should write installation state");
+        success &= expect(
+            std::filesystem::exists(bootstrapConfigurationFile),
+            "Bootstrapper install should seed configuration in the configured data directory");
+
+        std::filesystem::remove(bootstrapConfigurationFile);
+        const auto repairCommand = L"\"" + bootstrapperBinary.wstring() + L"\" repair \"" +
+            bootstrapInstallDirectory.wstring() +
+            L"\" --skip-service --skip-firewall --skip-shortcuts --skip-uninstall-registration";
+        success &= expect(
+            runProcess(repairCommand, tempRoot) == 0,
+            "Bootstrapper repair should succeed when system integrations are skipped");
+        success &= expect(
+            std::filesystem::exists(bootstrapConfigurationFile),
+            "Bootstrapper repair should reseed missing configuration");
+
+        const auto uninstallCommand = L"\"" + bootstrapperBinary.wstring() + L"\" uninstall \"" +
+            bootstrapInstallDirectory.wstring() +
+            L"\" --purge-install-dir --purge-data --skip-service --skip-firewall --skip-shortcuts --skip-uninstall-registration";
+        success &= expect(
+            runProcess(uninstallCommand, tempRoot) == 0,
+            "Bootstrapper uninstall should succeed when system integrations are skipped");
+        success &= expect(
+            !std::filesystem::exists(bootstrapInstallDirectory),
+            "Bootstrapper uninstall should remove the install directory when requested");
+        success &= expect(
+            !std::filesystem::exists(bootstrapDataDirectory),
+            "Bootstrapper uninstall should remove the data directory when requested");
     }
 
     std::filesystem::remove_all(tempRoot);

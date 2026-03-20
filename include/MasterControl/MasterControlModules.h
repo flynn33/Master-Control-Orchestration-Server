@@ -5,8 +5,11 @@
 #pragma once
 
 #include "ForsettiCore/ForsettiProtocols.h"
+#include "ForsettiCore/ForsettiEventBus.h"
 #include "ForsettiCore/ModuleRegistry.h"
 #include "MasterControl/MasterControlModels.h"
+
+#include <optional>
 
 namespace MasterControl {
 
@@ -66,6 +69,14 @@ public:
     void stop(Forsetti::ForsettiContext& context) override;
 };
 
+class CommandLogicUnitModule final : public Forsetti::IForsettiModule {
+public:
+    Forsetti::ModuleDescriptor descriptor() const override;
+    Forsetti::ModuleManifest manifest() const override;
+    void start(Forsetti::ForsettiContext& context) override;
+    void stop(Forsetti::ForsettiContext& context) override;
+};
+
 class BeaconGatewayModule final : public Forsetti::IForsettiModule {
 public:
     Forsetti::ModuleDescriptor descriptor() const override;
@@ -81,6 +92,9 @@ public:
     Forsetti::UIContributions uiContributions() const override;
     void start(Forsetti::ForsettiContext& context) override;
     void stop(Forsetti::ForsettiContext& context) override;
+
+private:
+    std::optional<Forsetti::SubscriptionToken> controlSurfaceSubscription_;
 };
 
 void registerMasterControlModules(Forsetti::ModuleRegistry& registry);

@@ -1,13 +1,13 @@
 {
   "schemaVersion": "1.0",
-  "moduleID": "com.mastercontrol.installer-import",
-  "displayName": "Installer Import",
+  "moduleID": "com.mastercontrol.command-logic-unit",
+  "displayName": "Command Logic Unit",
   "moduleVersion": { "major": 0, "minor": 1, "patch": 0, "prerelease": null },
   "moduleType": "service",
   "supportedPlatforms": ["Windows"],
   "minForsettiVersion": { "major": 0, "minor": 1, "patch": 0, "prerelease": null },
   "maxForsettiVersion": null,
-  "capabilitiesRequested": ["networking", "storage", "file_export", "event_publishing"],
-  "iapProductID": "mastercontrol.iap.installer-import",
-  "entryPoint": "InstallerImportModule"
+  "capabilitiesRequested": ["storage", "telemetry", "event_publishing"],
+  "iapProductID": "mastercontrol.iap.command-logic-unit",
+  "entryPoint": "CommandLogicUnitModule"
 }

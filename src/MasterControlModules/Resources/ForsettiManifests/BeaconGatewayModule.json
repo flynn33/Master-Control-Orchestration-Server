@@ -8,6 +8,6 @@
   "minForsettiVersion": { "major": 0, "minor": 1, "patch": 0, "prerelease": null },
   "maxForsettiVersion": null,
   "capabilitiesRequested": ["networking", "telemetry", "event_publishing"],
-  "iapProductID": null,
+  "iapProductID": "mastercontrol.iap.beacon-gateway",
   "entryPoint": "BeaconGatewayModule"
 }
