@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.5",
-  "current_tag": "v0.1.5",
+  "current_version": "0.1.6",
+  "current_tag": "v0.1.6",
   "released_at": "2026-03-20",
-  "last_release_commit": "6d6412b0c11512ec2f053f1f5e18e52735ae2d4d",
+  "last_release_commit": "fb11fc97a007c2d672596cebb24a7a540539d112",
   "history": [
+    {
+      "version": "0.1.6",
+      "tag": "v0.1.6",
+      "released_at": "2026-03-20",
+      "commit": "fb11fc97a007c2d672596cebb24a7a540539d112",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Split AI integration into provider modules (flynn33)"
+      ]
+    },
     {
       "version": "0.1.5",
       "tag": "v0.1.5",
