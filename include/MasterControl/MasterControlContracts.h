@@ -89,6 +89,14 @@ public:
     virtual ~IProviderCredentialStore() = default;
 };
 
+class ISubAgentGroupService {
+public:
+    virtual std::vector<SubAgentGroupDefinition> listGroups() const = 0;
+    virtual OperationResult upsertGroup(const SubAgentGroupDefinition& group) = 0;
+    virtual OperationResult removeGroup(const std::string& groupId) = 0;
+    virtual ~ISubAgentGroupService() = default;
+};
+
 class IProviderAssignmentService {
 public:
     virtual std::vector<ProviderAssignmentTarget> listTargets() const = 0;
@@ -159,6 +167,8 @@ public:
                                                    bool confirmUnsafeChanges) = 0;
     virtual OperationResult upsertProviderJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertProviderCredentialsJson(const std::string& requestBody) = 0;
+    virtual OperationResult upsertSubAgentGroupJson(const std::string& requestBody) = 0;
+    virtual OperationResult removeSubAgentGroupJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertProviderAssignmentJson(const std::string& requestBody) = 0;
     virtual ProviderExecutionRecord executeProviderTaskJson(const std::string& requestBody) = 0;
     virtual OperationResult installPackageJson(const std::string& requestBody) = 0;

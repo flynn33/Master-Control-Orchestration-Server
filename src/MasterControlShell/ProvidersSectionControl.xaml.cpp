@@ -78,6 +78,8 @@ void ProvidersSectionControl::AttachRuntime(::MasterControlShell::ShellRuntime* 
     runtime_ = runtime;
     refreshRequested_ = std::move(refreshRequested);
     ApplyCredentialFields();
+    RefreshSubAgentGroupSelector();
+    RefreshSubAgentMemberSelector();
     RefreshAssignmentSelectors();
     RefreshExecutionTargetSelector();
     UpdateEditorState();
@@ -87,6 +89,7 @@ void ProvidersSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
     providers_ = snapshot.providers;
     providerCapabilities_ = snapshot.providerCapabilities;
     providerCredentialStatuses_ = snapshot.providerCredentialStatuses;
+    subAgentGroups_ = snapshot.subAgentGroups;
     providerAssignmentTargets_ = snapshot.providerAssignmentTargets;
     providerAssignments_ = snapshot.providerAssignments;
     providerExecutionRegistrations_ = snapshot.providerExecutionRegistrations;
@@ -110,6 +113,8 @@ void ProvidersSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
     populateListView(ProviderExecutionHistoryListView(), executionHistoryRows);
 
     RefreshProviderSelector();
+    RefreshSubAgentGroupSelector();
+    RefreshSubAgentMemberSelector();
     RefreshAssignmentSelectors();
     RefreshExecutionTargetSelector();
 
@@ -136,6 +141,26 @@ void ProvidersSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
             PopulateProviderEditor(0);
         } else {
             ClearProviderEditor();
+        }
+    }
+
+    if (!subAgentGroupDirty_) {
+        if (!selectedSubAgentGroupId_.empty()) {
+            const auto iterator = std::find_if(
+                subAgentGroups_.begin(),
+                subAgentGroups_.end(),
+                [this](const auto& group) { return group.groupId == selectedSubAgentGroupId_; });
+            if (iterator != subAgentGroups_.end()) {
+                PopulateSubAgentGroupEditor(static_cast<size_t>(std::distance(subAgentGroups_.begin(), iterator)));
+            } else if (!subAgentGroups_.empty()) {
+                PopulateSubAgentGroupEditor(0);
+            } else {
+                ClearSubAgentGroupEditor();
+            }
+        } else if (!subAgentGroups_.empty()) {
+            PopulateSubAgentGroupEditor(0);
+        } else {
+            ClearSubAgentGroupEditor();
         }
     }
 
@@ -212,6 +237,42 @@ void ProvidersSectionControl::ProviderCredentialEditor_PasswordChanged(
     }
 }
 
+void ProvidersSectionControl::SubAgentGroupSelector_SelectionChanged(
+    Windows::Foundation::IInspectable const&,
+    SelectionChangedEventArgs const&) {
+    if (suspendDirtyTracking_) {
+        return;
+    }
+
+    const auto index = SubAgentGroupSelector().SelectedIndex();
+    if (index < 0 || index >= static_cast<int>(subAgentGroups_.size())) {
+        return;
+    }
+
+    subAgentGroupDirty_ = false;
+    PopulateSubAgentGroupEditor(static_cast<size_t>(index));
+    SubAgentGroupStatusText().Text(L"Loaded sub-agent group into the editor.");
+    UpdateEditorState();
+}
+
+void ProvidersSectionControl::SubAgentGroupEditor_TextChanged(
+    Windows::Foundation::IInspectable const&,
+    TextChangedEventArgs const&) {
+    if (!suspendDirtyTracking_) {
+        subAgentGroupDirty_ = true;
+        UpdateEditorState();
+    }
+}
+
+void ProvidersSectionControl::SubAgentGroupMembersListView_SelectionChanged(
+    Windows::Foundation::IInspectable const&,
+    SelectionChangedEventArgs const&) {
+    if (!suspendDirtyTracking_) {
+        subAgentGroupDirty_ = true;
+        UpdateEditorState();
+    }
+}
+
 void ProvidersSectionControl::ProviderAssignmentTargetSelector_SelectionChanged(
     Windows::Foundation::IInspectable const&,
     SelectionChangedEventArgs const&) {
@@ -280,6 +341,18 @@ void ProvidersSectionControl::SaveProviderCredentialsButton_Click(
     SaveProviderCredentialsAsync();
 }
 
+void ProvidersSectionControl::SaveSubAgentGroupButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    SaveSubAgentGroupAsync();
+}
+
+void ProvidersSectionControl::RemoveSubAgentGroupButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    RemoveSubAgentGroupAsync();
+}
+
 void ProvidersSectionControl::SaveProviderAssignmentButton_Click(
     Windows::Foundation::IInspectable const&,
     Microsoft::UI::Xaml::RoutedEventArgs const&) {
@@ -296,6 +369,17 @@ void ProvidersSectionControl::NewProviderButton_Click(
     ClearProviderEditor();
     ApplyCredentialFields();
     SetStatus(L"Staged a new provider route. Fill in the editor and save it.");
+    UpdateEditorState();
+}
+
+void ProvidersSectionControl::NewSubAgentGroupButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    selectedSubAgentGroupIndex_ = -1;
+    selectedSubAgentGroupId_.clear();
+    subAgentGroupDirty_ = true;
+    ClearSubAgentGroupEditor();
+    SubAgentGroupStatusText().Text(L"Staged a new sub-agent group. Select members and save it.");
     UpdateEditorState();
 }
 
@@ -359,6 +443,47 @@ void ProvidersSectionControl::ClearProviderEditor() {
     suspendDirtyTracking_ = false;
 }
 
+void ProvidersSectionControl::PopulateSubAgentGroupEditor(const size_t index) {
+    if (index >= subAgentGroups_.size()) {
+        ClearSubAgentGroupEditor();
+        return;
+    }
+
+    suspendDirtyTracking_ = true;
+    const auto& group = subAgentGroups_[index];
+    selectedSubAgentGroupIndex_ = static_cast<int>(index);
+    selectedSubAgentGroupId_ = group.groupId;
+
+    SubAgentGroupSelector().SelectedIndex(selectedSubAgentGroupIndex_);
+    SubAgentGroupIdTextBox().Text(winrt::hstring(group.groupId));
+    SubAgentGroupDisplayNameTextBox().Text(winrt::hstring(group.displayName));
+    SubAgentGroupDescriptionTextBox().Text(winrt::hstring(group.description));
+
+    for (uint32_t itemIndex = 0; itemIndex < SubAgentGroupMembersListView().Items().Size(); ++itemIndex) {
+        if (const auto item = SubAgentGroupMembersListView().Items().GetAt(itemIndex).try_as<ListViewItem>()) {
+            const auto targetId = std::wstring(unbox_value_or<winrt::hstring>(item.Tag(), winrt::hstring(L"")).c_str());
+            item.IsSelected(
+                std::find(group.memberTargetIds.begin(), group.memberTargetIds.end(), targetId) != group.memberTargetIds.end());
+        }
+    }
+
+    suspendDirtyTracking_ = false;
+}
+
+void ProvidersSectionControl::ClearSubAgentGroupEditor() {
+    suspendDirtyTracking_ = true;
+    SubAgentGroupSelector().SelectedIndex(-1);
+    SubAgentGroupIdTextBox().Text(L"");
+    SubAgentGroupDisplayNameTextBox().Text(L"");
+    SubAgentGroupDescriptionTextBox().Text(L"");
+    for (uint32_t itemIndex = 0; itemIndex < SubAgentGroupMembersListView().Items().Size(); ++itemIndex) {
+        if (const auto item = SubAgentGroupMembersListView().Items().GetAt(itemIndex).try_as<ListViewItem>()) {
+            item.IsSelected(false);
+        }
+    }
+    suspendDirtyTracking_ = false;
+}
+
 void ProvidersSectionControl::RefreshProviderSelector() {
     const auto previousSelection = selectedProviderId_;
     suspendDirtyTracking_ = true;
@@ -379,6 +504,45 @@ void ProvidersSectionControl::RefreshProviderSelector() {
                 break;
             }
         }
+    }
+    suspendDirtyTracking_ = false;
+}
+
+void ProvidersSectionControl::RefreshSubAgentGroupSelector() {
+    const auto previousSelection = selectedSubAgentGroupId_;
+    suspendDirtyTracking_ = true;
+    SubAgentGroupSelector().Items().Clear();
+    for (const auto& group : subAgentGroups_) {
+        std::wstring label = group.displayName.empty() ? group.groupId : group.displayName;
+        label += L"  |  ";
+        label += std::to_wstring(group.memberTargetIds.size());
+        label += L" members";
+        SubAgentGroupSelector().Items().Append(winrt::box_value(winrt::hstring(label)));
+    }
+
+    if (!previousSelection.empty()) {
+        for (size_t index = 0; index < subAgentGroups_.size(); ++index) {
+            if (subAgentGroups_[index].groupId == previousSelection) {
+                SubAgentGroupSelector().SelectedIndex(static_cast<int>(index));
+                break;
+            }
+        }
+    }
+    suspendDirtyTracking_ = false;
+}
+
+void ProvidersSectionControl::RefreshSubAgentMemberSelector() {
+    suspendDirtyTracking_ = true;
+    SubAgentGroupMembersListView().Items().Clear();
+    for (const auto& target : providerAssignmentTargets_) {
+        if (target.kind != L"sub_agent") {
+            continue;
+        }
+
+        ListViewItem item;
+        item.Content(winrt::box_value(winrt::hstring(target.displayName.empty() ? target.targetId : target.displayName)));
+        item.Tag(winrt::box_value(winrt::hstring(target.targetId)));
+        SubAgentGroupMembersListView().Items().Append(item);
     }
     suspendDirtyTracking_ = false;
 }
@@ -539,6 +703,8 @@ void ProvidersSectionControl::UpdateEditorState() {
     const bool hasRuntime = runtime_ != nullptr;
     SaveProviderButton().IsEnabled(hasRuntime && providerDirty_);
     SaveProviderCredentialsButton().IsEnabled(hasRuntime && !selectedProviderId_.empty() && providerCredentialsDirty_);
+    SaveSubAgentGroupButton().IsEnabled(hasRuntime && subAgentGroupDirty_);
+    RemoveSubAgentGroupButton().IsEnabled(hasRuntime && !selectedSubAgentGroupId_.empty());
     SaveProviderAssignmentButton().IsEnabled(
         hasRuntime &&
         selectedAssignmentTargetIndex_ >= 0 &&
@@ -579,6 +745,37 @@ std::optional<::MasterControlShell::ShellProviderConnection> ProvidersSectionCon
         ProviderEnabledToggle().IsOn(),
         ProviderAutonomousToggle().IsOn(),
         false
+    };
+}
+
+std::optional<::MasterControlShell::ShellSubAgentGroupDefinition> ProvidersSectionControl::BuildSubAgentGroupFromEditor() {
+    const auto groupId = std::wstring(SubAgentGroupIdTextBox().Text().c_str());
+    const auto displayName = std::wstring(SubAgentGroupDisplayNameTextBox().Text().c_str());
+    const auto description = std::wstring(SubAgentGroupDescriptionTextBox().Text().c_str());
+    if (groupId.empty() || displayName.empty()) {
+        return std::nullopt;
+    }
+
+    std::vector<std::wstring> memberTargetIds;
+    for (uint32_t itemIndex = 0; itemIndex < SubAgentGroupMembersListView().SelectedItems().Size(); ++itemIndex) {
+        if (const auto item = SubAgentGroupMembersListView().SelectedItems().GetAt(itemIndex).try_as<ListViewItem>()) {
+            const auto targetId = std::wstring(unbox_value_or<winrt::hstring>(item.Tag(), winrt::hstring(L"")).c_str());
+            if (!targetId.empty()) {
+                memberTargetIds.push_back(targetId);
+            }
+        }
+    }
+
+    if (memberTargetIds.empty()) {
+        return std::nullopt;
+    }
+
+    return ::MasterControlShell::ShellSubAgentGroupDefinition{
+        groupId,
+        displayName,
+        description,
+        memberTargetIds,
+        L""
     };
 }
 
@@ -653,6 +850,66 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::SaveProviderCr
         providerCredentialsDirty_ = false;
         ProviderCredentialFieldOneValueBox().Password(L"");
         ProviderCredentialFieldTwoValueBox().Password(L"");
+        if (refreshRequested_) {
+            refreshRequested_();
+        }
+    }
+    UpdateEditorState();
+}
+
+winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::SaveSubAgentGroupAsync() {
+    if (runtime_ == nullptr) {
+        SubAgentGroupStatusText().Text(L"Sub-agent group editing is unavailable until the shell runtime is attached.");
+        co_return;
+    }
+
+    const auto group = BuildSubAgentGroupFromEditor();
+    if (!group.has_value()) {
+        SubAgentGroupStatusText().Text(L"Group ID, display name, and at least one member are required.");
+        co_return;
+    }
+
+    SaveSubAgentGroupButton().IsEnabled(false);
+    winrt::apartment_context uiThread;
+    const auto groupValue = *group;
+    co_await winrt::resume_background();
+    const auto result = runtime_->UpsertSubAgentGroup(groupValue);
+    co_await uiThread;
+
+    SubAgentGroupStatusText().Text(winrt::hstring(result.message));
+    if (result.succeeded) {
+        subAgentGroupDirty_ = false;
+        selectedSubAgentGroupId_ = groupValue.groupId;
+        if (refreshRequested_) {
+            refreshRequested_();
+        }
+    }
+    UpdateEditorState();
+}
+
+winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RemoveSubAgentGroupAsync() {
+    if (runtime_ == nullptr) {
+        SubAgentGroupStatusText().Text(L"Sub-agent group removal is unavailable until the shell runtime is attached.");
+        co_return;
+    }
+    if (selectedSubAgentGroupId_.empty()) {
+        SubAgentGroupStatusText().Text(L"Select a saved sub-agent group before removing it.");
+        co_return;
+    }
+
+    RemoveSubAgentGroupButton().IsEnabled(false);
+    winrt::apartment_context uiThread;
+    const auto groupId = selectedSubAgentGroupId_;
+    co_await winrt::resume_background();
+    const auto result = runtime_->RemoveSubAgentGroup(groupId);
+    co_await uiThread;
+
+    SubAgentGroupStatusText().Text(winrt::hstring(result.message));
+    if (result.succeeded) {
+        subAgentGroupDirty_ = false;
+        selectedSubAgentGroupId_.clear();
+        selectedSubAgentGroupIndex_ = -1;
+        ClearSubAgentGroupEditor();
         if (refreshRequested_) {
             refreshRequested_();
         }

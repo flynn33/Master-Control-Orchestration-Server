@@ -30,6 +30,8 @@ public:
                                            bool confirmUnsafeChanges);
     OperationResult upsertProviderJson(const std::string& requestBody);
     OperationResult upsertProviderCredentialsJson(const std::string& requestBody);
+    OperationResult upsertSubAgentGroupJson(const std::string& requestBody);
+    OperationResult removeSubAgentGroupJson(const std::string& requestBody);
     OperationResult upsertProviderAssignmentJson(const std::string& requestBody);
     ProviderExecutionRecord executeProviderTaskJson(const std::string& requestBody);
     OperationResult installPackageJson(const std::string& requestBody);

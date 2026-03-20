@@ -182,6 +182,18 @@ struct ProviderCredentialUpdate final {
     std::map<std::string, std::string> values;
 };
 
+struct SubAgentGroupDefinition final {
+    std::string groupId;
+    std::string displayName;
+    std::string description;
+    std::vector<std::string> memberTargetIds;
+    std::string updatedAtUtc;
+};
+
+struct SubAgentGroupRemovalRequest final {
+    std::string groupId;
+};
+
 struct ProviderAssignmentTarget final {
     std::string targetId;
     ProviderAssignmentTargetKind kind = ProviderAssignmentTargetKind::Role;
@@ -195,6 +207,7 @@ struct ProviderAssignment final {
     ProviderAssignmentTargetKind kind = ProviderAssignmentTargetKind::Role;
     std::string providerId;
     std::string updatedAtUtc;
+    std::string sourceGroupId;
 };
 
 struct ProviderExecutionRegistration final {
@@ -378,6 +391,7 @@ struct DashboardSnapshot final {
     std::vector<ProviderConnection> providers;
     std::vector<ProviderCapabilityDescriptor> providerCapabilities;
     std::vector<ProviderCredentialStatus> providerCredentialStatuses;
+    std::vector<SubAgentGroupDefinition> subAgentGroups;
     std::vector<ProviderAssignmentTarget> providerAssignmentTargets;
     std::vector<ProviderAssignment> providerAssignments;
     std::vector<ProviderExecutionRegistration> providerExecutionRegistrations;
@@ -401,6 +415,7 @@ struct AppConfiguration final {
     SecuritySettings security;
     ResourceAllocationProfile resourceAllocation;
     std::vector<ProviderConnection> providers;
+    std::vector<SubAgentGroupDefinition> subAgentGroups;
     std::vector<ProviderAssignment> providerAssignments;
     ManagedNodeProfile activeProfile;
 };
@@ -560,6 +575,18 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     values)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    SubAgentGroupDefinition,
+    groupId,
+    displayName,
+    description,
+    memberTargetIds,
+    updatedAtUtc)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    SubAgentGroupRemovalRequest,
+    groupId)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ProviderAssignmentTarget,
     targetId,
     kind,
@@ -572,7 +599,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     targetId,
     kind,
     providerId,
-    updatedAtUtc)
+    updatedAtUtc,
+    sourceGroupId)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ProviderExecutionRegistration,
@@ -756,6 +784,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     providers,
     providerCapabilities,
     providerCredentialStatuses,
+    subAgentGroups,
     providerAssignmentTargets,
     providerAssignments,
     providerExecutionRegistrations,
@@ -779,6 +808,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     security,
     resourceAllocation,
     providers,
+    subAgentGroups,
     providerAssignments,
     activeProfile)
 

@@ -449,6 +449,16 @@ ShellProviderCredentialStatus providerCredentialStatusFromJson(const JsonObject&
     return status;
 }
 
+ShellSubAgentGroupDefinition subAgentGroupFromJson(const JsonObject& object) {
+    ShellSubAgentGroupDefinition group;
+    group.groupId = wideFromUtf8(jsonStringOr(object, L"groupId", ""));
+    group.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
+    group.description = wideFromUtf8(jsonStringOr(object, L"description", ""));
+    group.memberTargetIds = jsonStringArrayOr(object, L"memberTargetIds");
+    group.updatedAtUtc = wideFromUtf8(jsonStringOr(object, L"updatedAtUtc", ""));
+    return group;
+}
+
 ShellProviderAssignmentTarget providerAssignmentTargetFromJson(const JsonObject& object) {
     ShellProviderAssignmentTarget target;
     target.targetId = wideFromUtf8(jsonStringOr(object, L"targetId", ""));
@@ -540,6 +550,19 @@ JsonObject providerCredentialsToJson(const std::wstring& providerId,
         credentialValues.SetNamedValue(fieldId, JsonValue::CreateStringValue(value));
     }
     object.SetNamedValue(L"values", credentialValues);
+    return object;
+}
+
+JsonObject subAgentGroupToJson(const ShellSubAgentGroupDefinition& group) {
+    JsonObject object;
+    JsonArray members;
+    object.SetNamedValue(L"groupId", JsonValue::CreateStringValue(group.groupId));
+    object.SetNamedValue(L"displayName", JsonValue::CreateStringValue(group.displayName));
+    object.SetNamedValue(L"description", JsonValue::CreateStringValue(group.description));
+    for (const auto& memberTargetId : group.memberTargetIds) {
+        members.Append(JsonValue::CreateStringValue(memberTargetId));
+    }
+    object.SetNamedValue(L"memberTargetIds", members);
     return object;
 }
 
@@ -1129,6 +1152,7 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     std::vector<ShellProviderConnection> providers;
     std::vector<ShellProviderCapability> providerCapabilities;
     std::vector<ShellProviderCredentialStatus> providerCredentialStatuses;
+    std::vector<ShellSubAgentGroupDefinition> subAgentGroups;
     std::vector<ShellProviderAssignmentTarget> providerAssignmentTargets;
     std::vector<ShellProviderAssignment> providerAssignments;
     std::vector<ShellProviderExecutionRegistration> providerExecutionRegistrations;
@@ -1172,6 +1196,14 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                 for (const auto& value : configuration->GetNamedArray(L"providers", JsonArray())) {
                     if (value.ValueType() == JsonValueType::Object) {
                         providers.push_back(providerFromJson(value.GetObject()));
+                    }
+                }
+            }
+
+            if (configuration->HasKey(L"subAgentGroups")) {
+                for (const auto& value : configuration->GetNamedArray(L"subAgentGroups", JsonArray())) {
+                    if (value.ValueType() == JsonValueType::Object) {
+                        subAgentGroups.push_back(subAgentGroupFromJson(value.GetObject()));
                     }
                 }
             }
@@ -1258,6 +1290,11 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                 for (const auto& value : dashboardJson->GetNamedArray(L"providerCredentialStatuses", JsonArray())) {
                     if (value.ValueType() == JsonValueType::Object) {
                         providerCredentialStatuses.push_back(providerCredentialStatusFromJson(value.GetObject()));
+                    }
+                }
+                for (const auto& value : dashboardJson->GetNamedArray(L"subAgentGroups", JsonArray())) {
+                    if (value.ValueType() == JsonValueType::Object) {
+                        subAgentGroups.push_back(subAgentGroupFromJson(value.GetObject()));
                     }
                 }
                 for (const auto& value : dashboardJson->GetNamedArray(L"providerAssignmentTargets", JsonArray())) {
@@ -1514,6 +1551,7 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.providers = std::move(providers);
     snapshot.providerCapabilities = std::move(providerCapabilities);
     snapshot.providerCredentialStatuses = std::move(providerCredentialStatuses);
+    snapshot.subAgentGroups = std::move(subAgentGroups);
     snapshot.providerAssignmentTargets = std::move(providerAssignmentTargets);
     snapshot.providerAssignments = std::move(providerAssignments);
     snapshot.providerExecutionRegistrations = std::move(providerExecutionRegistrations);
@@ -1623,6 +1661,31 @@ ShellOperationResult ShellRuntime::UpsertProviderCredentials(
         L"/api/providers/credentials",
         providerCredentialsToJson(providerId, values),
         L"Unable to update provider credentials through the local admin API.");
+}
+
+ShellOperationResult ShellRuntime::UpsertSubAgentGroup(const ShellSubAgentGroupDefinition& group) const {
+    if (group.groupId.empty()) {
+        return ShellOperationResult{ false, false, L"Enter a group ID before saving the sub-agent group." };
+    }
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/providers/groups",
+        subAgentGroupToJson(group),
+        L"Unable to update the sub-agent group through the local admin API.");
+}
+
+ShellOperationResult ShellRuntime::RemoveSubAgentGroup(const std::wstring& groupId) const {
+    if (groupId.empty()) {
+        return ShellOperationResult{ false, false, L"Select a sub-agent group before removing it." };
+    }
+
+    JsonObject payload;
+    payload.SetNamedValue(L"groupId", JsonValue::CreateStringValue(groupId));
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/providers/groups/remove",
+        payload,
+        L"Unable to remove the sub-agent group through the local admin API.");
 }
 
 ShellOperationResult ShellRuntime::UpsertProviderAssignment(const ShellProviderAssignment& assignment) const {

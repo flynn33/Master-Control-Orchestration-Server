@@ -471,6 +471,19 @@ std::optional<MasterControl::ProviderAssignment> findAssignment(
     return *iterator;
 }
 
+std::optional<MasterControl::SubAgentGroupDefinition> findSubAgentGroup(
+    const std::vector<MasterControl::SubAgentGroupDefinition>& groups,
+    const std::string& groupId) {
+    const auto iterator = std::find_if(
+        groups.begin(),
+        groups.end(),
+        [&groupId](const MasterControl::SubAgentGroupDefinition& group) { return group.groupId == groupId; });
+    if (iterator == groups.end()) {
+        return std::nullopt;
+    }
+    return *iterator;
+}
+
 std::optional<MasterControl::ProviderConnection> findProvider(
     const std::vector<MasterControl::ProviderConnection>& providers,
     const std::string& id) {
@@ -923,6 +936,59 @@ int main() {
         }.dump());
         success &= expect(groupAssignmentResult.succeeded, "Sub-agent group ownership assignment should fan out successfully.");
 
+        const auto customGroupResult = application.upsertSubAgentGroupJson(nlohmann::json{
+            { "groupId", "swift-specialists" },
+            { "displayName", "Swift Specialists" },
+            { "description", "Apple-platform coding specialists." },
+            { "memberTargetIds", nlohmann::json::array({ "sentinel", "forge" }) }
+        }.dump());
+        success &= expect(customGroupResult.succeeded, "Custom sub-agent group creation should succeed.");
+
+        const auto reviewProviderResult = application.upsertProviderJson(nlohmann::json{
+            { "id", "review-provider" },
+            { "kind", "codex" },
+            { "displayName", "Review Provider" },
+            { "baseUrl", "https://api.openai.example/v1" },
+            { "modelId", "gpt-5.4" },
+            { "enabled", true },
+            { "allowAutonomousControl", false }
+        }.dump());
+        success &= expect(reviewProviderResult.succeeded, "A second provider route should save for override testing.");
+
+        snapshot = application.snapshot();
+        success &= expect(
+            findSubAgentGroup(snapshot.subAgentGroups, "swift-specialists").has_value(),
+            "Custom sub-agent groups should be reflected in the runtime snapshot.");
+        success &= expect(
+            hasAssignmentTarget(snapshot.providerAssignmentTargets, "swift-specialists"),
+            "Custom sub-agent groups should be published as provider assignment targets.");
+
+        const auto customGroupAssignmentResult = application.upsertProviderAssignmentJson(nlohmann::json{
+            { "targetId", "swift-specialists" },
+            { "kind", "sub_agent_group" },
+            { "providerId", "ops-provider" }
+        }.dump());
+        success &= expect(customGroupAssignmentResult.succeeded, "Custom sub-agent groups should support provider ownership fan-out.");
+
+        snapshot = application.snapshot();
+        success &= expect(
+            findAssignment(snapshot.providerAssignments, "swift-specialists").has_value(),
+            "Custom sub-agent group ownership should persist as an explicit group assignment.");
+
+        const auto sentinelOverrideResult = application.upsertProviderAssignmentJson(nlohmann::json{
+            { "targetId", "sentinel" },
+            { "kind", "sub_agent" },
+            { "providerId", "review-provider" }
+        }.dump());
+        success &= expect(sentinelOverrideResult.succeeded, "Individual sub-agent ownership should override a group baseline.");
+
+        const auto clearCustomGroupResult = application.upsertProviderAssignmentJson(nlohmann::json{
+            { "targetId", "swift-specialists" },
+            { "kind", "sub_agent_group" },
+            { "providerId", "" }
+        }.dump());
+        success &= expect(clearCustomGroupResult.succeeded, "Clearing a custom group ownership assignment should succeed.");
+
         snapshot = application.snapshot();
         const auto credentialStatus = findCredentialStatus(snapshot.providerCredentialStatuses, "ops-provider");
         success &= expect(
@@ -934,6 +1000,16 @@ int main() {
         success &= expect(
             findAssignment(snapshot.providerAssignments, "sentinel").has_value(),
             "Sub-agent group ownership should fan out to the live sub-agent pool.");
+        const auto sentinelAssignment = findAssignment(snapshot.providerAssignments, "sentinel");
+        success &= expect(
+            sentinelAssignment.has_value() && sentinelAssignment->providerId == "review-provider",
+            "Clearing a custom group should preserve a later explicit sub-agent override.");
+        success &= expect(
+            !findAssignment(snapshot.providerAssignments, "swift-specialists").has_value(),
+            "Clearing a custom group should remove the explicit group ownership record.");
+        success &= expect(
+            !findAssignment(snapshot.providerAssignments, "forge").has_value(),
+            "Clearing a custom group should remove remaining group-fanout ownership for untouched members.");
         success &= expect(hasExport(snapshot.exports, "master-control-gateway-profile.json"), "Exports should include the gateway profile");
         success &= expect(
             hasProviderExecutionRegistration(snapshot.providerExecutionRegistrations, "codex") &&

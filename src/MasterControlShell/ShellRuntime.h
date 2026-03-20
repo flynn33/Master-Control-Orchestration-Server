@@ -70,6 +70,14 @@ struct ShellProviderCredentialStatus final {
     std::wstring message;
 };
 
+struct ShellSubAgentGroupDefinition final {
+    std::wstring groupId;
+    std::wstring displayName;
+    std::wstring description;
+    std::vector<std::wstring> memberTargetIds;
+    std::wstring updatedAtUtc;
+};
+
 struct ShellProviderAssignmentTarget final {
     std::wstring targetId;
     std::wstring kind;
@@ -260,6 +268,7 @@ struct ShellSnapshot final {
     std::vector<ShellProviderConnection> providers;
     std::vector<ShellProviderCapability> providerCapabilities;
     std::vector<ShellProviderCredentialStatus> providerCredentialStatuses;
+    std::vector<ShellSubAgentGroupDefinition> subAgentGroups;
     std::vector<ShellProviderAssignmentTarget> providerAssignmentTargets;
     std::vector<ShellProviderAssignment> providerAssignments;
     std::vector<ShellProviderExecutionRegistration> providerExecutionRegistrations;
@@ -293,6 +302,8 @@ public:
     [[nodiscard]] ShellOperationResult UpsertProviderCredentials(
         const std::wstring& providerId,
         const std::vector<std::pair<std::wstring, std::wstring>>& values) const;
+    [[nodiscard]] ShellOperationResult UpsertSubAgentGroup(const ShellSubAgentGroupDefinition& group) const;
+    [[nodiscard]] ShellOperationResult RemoveSubAgentGroup(const std::wstring& groupId) const;
     [[nodiscard]] ShellOperationResult UpsertProviderAssignment(const ShellProviderAssignment& assignment) const;
     [[nodiscard]] ShellProviderExecutionRecord ExecuteProviderTask(const ShellProviderExecutionRequest& request) const;
     [[nodiscard]] ShellOperationResult UpdateAiAutonomyEnabled(bool enabled) const;

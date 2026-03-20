@@ -27,6 +27,12 @@ struct ProvidersSectionControl : ProvidersSectionControlT<ProvidersSectionContro
                                 Microsoft::UI::Xaml::RoutedEventArgs const&);
     void ProviderCredentialEditor_PasswordChanged(Windows::Foundation::IInspectable const&,
                                                   Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void SubAgentGroupSelector_SelectionChanged(Windows::Foundation::IInspectable const&,
+                                                Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
+    void SubAgentGroupEditor_TextChanged(Windows::Foundation::IInspectable const&,
+                                         Microsoft::UI::Xaml::Controls::TextChangedEventArgs const&);
+    void SubAgentGroupMembersListView_SelectionChanged(Windows::Foundation::IInspectable const&,
+                                                       Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
     void ProviderAssignmentTargetSelector_SelectionChanged(Windows::Foundation::IInspectable const&,
                                                            Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
     void ProviderAssignmentProviderSelector_SelectionChanged(Windows::Foundation::IInspectable const&,
@@ -43,10 +49,16 @@ struct ProvidersSectionControl : ProvidersSectionControlT<ProvidersSectionContro
                                   Microsoft::UI::Xaml::RoutedEventArgs const&);
     void SaveProviderCredentialsButton_Click(Windows::Foundation::IInspectable const&,
                                              Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void SaveSubAgentGroupButton_Click(Windows::Foundation::IInspectable const&,
+                                       Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void RemoveSubAgentGroupButton_Click(Windows::Foundation::IInspectable const&,
+                                         Microsoft::UI::Xaml::RoutedEventArgs const&);
     void SaveProviderAssignmentButton_Click(Windows::Foundation::IInspectable const&,
                                             Microsoft::UI::Xaml::RoutedEventArgs const&);
     void NewProviderButton_Click(Windows::Foundation::IInspectable const&,
                                  Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void NewSubAgentGroupButton_Click(Windows::Foundation::IInspectable const&,
+                                      Microsoft::UI::Xaml::RoutedEventArgs const&);
     void ExecuteProviderTaskButton_Click(Windows::Foundation::IInspectable const&,
                                          Microsoft::UI::Xaml::RoutedEventArgs const&);
     void SaveAiAutonomyButton_Click(Windows::Foundation::IInspectable const&,
@@ -56,14 +68,21 @@ private:
     void PopulateProviderEditor(size_t index);
     void ClearProviderEditor();
     void RefreshProviderSelector();
+    void PopulateSubAgentGroupEditor(size_t index);
+    void ClearSubAgentGroupEditor();
+    void RefreshSubAgentGroupSelector();
+    void RefreshSubAgentMemberSelector();
     void RefreshAssignmentSelectors();
     void RefreshExecutionTargetSelector();
     void ApplyCredentialFields();
     void UpdateEditorState();
     void SetStatus(winrt::hstring const& message);
     std::optional<::MasterControlShell::ShellProviderConnection> BuildProviderFromEditor();
+    std::optional<::MasterControlShell::ShellSubAgentGroupDefinition> BuildSubAgentGroupFromEditor();
     winrt::Windows::Foundation::IAsyncAction SaveProviderAsync();
     winrt::Windows::Foundation::IAsyncAction SaveProviderCredentialsAsync();
+    winrt::Windows::Foundation::IAsyncAction SaveSubAgentGroupAsync();
+    winrt::Windows::Foundation::IAsyncAction RemoveSubAgentGroupAsync();
     winrt::Windows::Foundation::IAsyncAction SaveProviderAssignmentAsync();
     winrt::Windows::Foundation::IAsyncAction ExecuteProviderTaskAsync();
     winrt::Windows::Foundation::IAsyncAction SaveAiAutonomyAsync();
@@ -73,6 +92,7 @@ private:
     std::vector<::MasterControlShell::ShellProviderConnection> providers_;
     std::vector<::MasterControlShell::ShellProviderCapability> providerCapabilities_;
     std::vector<::MasterControlShell::ShellProviderCredentialStatus> providerCredentialStatuses_;
+    std::vector<::MasterControlShell::ShellSubAgentGroupDefinition> subAgentGroups_;
     std::vector<::MasterControlShell::ShellProviderAssignmentTarget> providerAssignmentTargets_;
     std::vector<::MasterControlShell::ShellProviderAssignment> providerAssignments_;
     std::vector<::MasterControlShell::ShellProviderExecutionRegistration> providerExecutionRegistrations_;
@@ -80,12 +100,15 @@ private:
     bool aiAutonomyEnabled_ = false;
     bool providerDirty_ = false;
     bool providerCredentialsDirty_ = false;
+    bool subAgentGroupDirty_ = false;
     bool providerAssignmentDirty_ = false;
     bool providerExecutionDirty_ = false;
     bool autonomyDirty_ = false;
     bool suspendDirtyTracking_ = false;
     int selectedProviderIndex_ = -1;
     std::wstring selectedProviderId_;
+    int selectedSubAgentGroupIndex_ = -1;
+    std::wstring selectedSubAgentGroupId_;
     int selectedAssignmentTargetIndex_ = -1;
     int selectedExecutionTargetIndex_ = -1;
 };

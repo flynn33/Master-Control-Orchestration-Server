@@ -138,6 +138,47 @@
 
                 <Border Style="{StaticResource ShellCardStyle}">
                     <StackPanel Spacing="14">
+                        <TextBlock Text="Sub-Agent Groups" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock Text="Create reusable specialist groups so one provider can own a focused lane of sub-agents while other providers control different lanes." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
+
+                        <TextBlock Text="Group" Style="{StaticResource ShellLabelTextStyle}" />
+                        <ComboBox x:Name="SubAgentGroupSelector" SelectionChanged="SubAgentGroupSelector_SelectionChanged" PlaceholderText="Choose a saved group" />
+
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="1.2*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Group ID" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="SubAgentGroupIdTextBox" TextChanged="SubAgentGroupEditor_TextChanged" PlaceholderText="swift-specialists" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Spacing="8">
+                                <TextBlock Text="Display Name" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="SubAgentGroupDisplayNameTextBox" TextChanged="SubAgentGroupEditor_TextChanged" PlaceholderText="Swift Specialists" />
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="Description" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBox x:Name="SubAgentGroupDescriptionTextBox" TextChanged="SubAgentGroupEditor_TextChanged" AcceptsReturn="True" Height="72" TextWrapping="Wrap" PlaceholderText="Optional notes about the specialty lane or operating doctrine." />
+
+                        <TextBlock Text="Members" Style="{StaticResource ShellLabelTextStyle}" />
+                        <ListView x:Name="SubAgentGroupMembersListView" SelectionMode="Multiple" SelectionChanged="SubAgentGroupMembersListView_SelectionChanged" MaxHeight="220" Style="{StaticResource ShellListViewStyle}" />
+
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <Button x:Name="SaveSubAgentGroupButton" Click="SaveSubAgentGroupButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Group" />
+                            <Button x:Name="NewSubAgentGroupButton" Click="NewSubAgentGroupButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Group" />
+                            <Button x:Name="RemoveSubAgentGroupButton" Click="RemoveSubAgentGroupButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Remove Group" />
+                        </StackPanel>
+
+                        <TextBlock x:Name="SubAgentGroupStatusText" Style="{StaticResource ShellDataTextStyle}" Text="No custom sub-agent groups are staged." TextWrapping="WrapWholeWords" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="14">
                         <TextBlock Text="Ownership Routing" Style="{StaticResource ShellSectionTitleTextStyle}" />
                         <TextBlock Text="One provider owns each orchestration role or sub-agent at a time. Group assignments fan out to the current specialist pool." Style="{StaticResource ShellBodyTextStyle}" />
 
