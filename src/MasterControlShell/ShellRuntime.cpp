@@ -561,7 +561,9 @@ JsonObject runtimeEndpointToJson(const ShellRuntimeEndpoint& endpoint) {
     JsonObject object;
     object.SetNamedValue(L"id", JsonValue::CreateStringValue(endpoint.id));
     object.SetNamedValue(L"displayName", JsonValue::CreateStringValue(endpoint.displayName));
-    object.SetNamedValue(L"kind", JsonValue::CreateStringValue(L"sub_agent"));
+    object.SetNamedValue(
+        L"kind",
+        JsonValue::CreateStringValue(endpoint.kind.empty() ? std::wstring(L"mcp_server") : endpoint.kind));
     object.SetNamedValue(L"host", JsonValue::CreateStringValue(endpoint.host));
     object.SetNamedValue(L"port", JsonValue::CreateNumberValue(endpoint.port));
     object.SetNamedValue(L"protocol", JsonValue::CreateStringValue(endpoint.protocol));
@@ -1718,6 +1720,46 @@ ShellOperationResult ShellRuntime::UpsertSubAgent(const ShellRuntimeEndpoint& su
         L"/api/runtime/subagents",
         runtimeEndpointToJson(subAgent),
         L"Unable to save custom sub-agent settings through the local admin API.");
+}
+
+ShellOperationResult ShellRuntime::UpsertMcpServer(const ShellRuntimeEndpoint& mcpServer) const {
+    if (mcpServer.id.empty()) {
+        return ShellOperationResult{ false, false, L"MCP server ID is required." };
+    }
+    if (mcpServer.displayName.empty()) {
+        return ShellOperationResult{ false, false, L"MCP server display name is required." };
+    }
+    if (mcpServer.port == 0) {
+        return ShellOperationResult{ false, false, L"MCP servers require a listening port." };
+    }
+
+    ShellRuntimeEndpoint normalized = mcpServer;
+    if (normalized.kind.empty()) {
+        normalized.kind = L"mcp_server";
+    }
+    if (normalized.protocol.empty()) {
+        normalized.protocol = L"http";
+    }
+
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/runtime/mcp-servers",
+        runtimeEndpointToJson(normalized),
+        L"Unable to save custom MCP server settings through the local admin API.");
+}
+
+ShellOperationResult ShellRuntime::RemoveMcpServer(const std::wstring& mcpServerId) const {
+    if (mcpServerId.empty()) {
+        return ShellOperationResult{ false, false, L"Select a custom MCP server before removing it." };
+    }
+
+    JsonObject payload;
+    payload.SetNamedValue(L"mcpServerId", JsonValue::CreateStringValue(mcpServerId));
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/runtime/mcp-servers/remove",
+        payload,
+        L"Unable to remove the selected custom MCP server through the local admin API.");
 }
 
 ShellOperationResult ShellRuntime::RemoveSubAgent(const std::wstring& subAgentId) const {

@@ -105,6 +105,14 @@ public:
     virtual ~ISubAgentCatalogService() = default;
 };
 
+class IMcpServerCatalogService {
+public:
+    virtual std::vector<RuntimeEndpoint> listCustomMcpServers() const = 0;
+    virtual OperationResult upsertMcpServer(const RuntimeEndpoint& mcpServer) = 0;
+    virtual OperationResult removeMcpServer(const std::string& mcpServerId) = 0;
+    virtual ~IMcpServerCatalogService() = default;
+};
+
 class IProviderAssignmentService {
 public:
     virtual std::vector<ProviderAssignmentTarget> listTargets() const = 0;
@@ -175,6 +183,8 @@ public:
                                                    bool confirmUnsafeChanges) = 0;
     virtual OperationResult upsertProviderJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertProviderCredentialsJson(const std::string& requestBody) = 0;
+    virtual OperationResult upsertMcpServerJson(const std::string& requestBody) = 0;
+    virtual OperationResult removeMcpServerJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertSubAgentJson(const std::string& requestBody) = 0;
     virtual OperationResult removeSubAgentJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertSubAgentGroupJson(const std::string& requestBody) = 0;

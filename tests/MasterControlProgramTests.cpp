@@ -922,6 +922,32 @@ int main() {
         }.dump());
         success &= expect(providerCredentialsResult.succeeded, "Provider credentials should save through the secure store.");
 
+        const auto customMcpServerResult = application.upsertMcpServerJson(nlohmann::json{
+            { "id", "swift-tools-mcp" },
+            { "displayName", "Swift Tools MCP" },
+            { "kind", "mcp_server" },
+            { "host", "127.0.0.1" },
+            { "port", 7440 },
+            { "protocol", "http" },
+            { "routePath", "/mcp" },
+            { "description", "Custom shared Swift MCP tool lane." },
+            { "specialization", "" },
+            { "userDefined", true }
+        }.dump());
+        success &= expect(customMcpServerResult.succeeded, "Custom MCP server creation should succeed.");
+
+        snapshot = application.snapshot();
+        const auto swiftToolsMcpEndpoint = findEndpoint(snapshot.endpoints, "swift-tools-mcp");
+        success &= expect(swiftToolsMcpEndpoint.has_value(), "Custom MCP servers should be reflected in the runtime snapshot.");
+        success &= expect(
+            swiftToolsMcpEndpoint.has_value() &&
+                swiftToolsMcpEndpoint->kind == MasterControl::EndpointKind::MCPServer &&
+                swiftToolsMcpEndpoint->userDefined,
+            "Custom MCP servers should be marked as user-defined shared runtime endpoints.");
+        success &= expect(
+            !hasAssignmentTarget(snapshot.providerAssignmentTargets, "swift-tools-mcp"),
+            "Custom MCP servers should remain shared infrastructure, not provider ownership targets.");
+
         const auto customSubAgentResult = application.upsertSubAgentJson(nlohmann::json{
             { "id", "swift-agent" },
             { "displayName", "Swift Agent" },
@@ -1160,6 +1186,12 @@ int main() {
             success &= expect(
                 !executionRecord.referencedMcpServerIds.empty(),
                 "OpenAI-compatible provider execution should receive the shared MCP endpoint set.");
+            success &= expect(
+                std::find(
+                    executionRecord.referencedMcpServerIds.begin(),
+                    executionRecord.referencedMcpServerIds.end(),
+                    "swift-tools-mcp") != executionRecord.referencedMcpServerIds.end(),
+                "OpenAI-compatible provider execution should include custom shared MCP servers in the shared endpoint set.");
 
             const auto providerRequests = providerServer.requests();
             success &= expect(providerRequests.size() == 2, "OpenAI-compatible execution should complete a tool-call round trip.");
@@ -1190,6 +1222,16 @@ int main() {
                 !snapshot.providerExecutionHistory.empty() &&
                     snapshot.providerExecutionHistory.front().executionId == executionRecord.executionId,
                 "Successful provider execution should be persisted to runtime history.");
+
+            const auto removeCustomMcpServerResult = application.removeMcpServerJson(nlohmann::json{
+                { "mcpServerId", "swift-tools-mcp" }
+            }.dump());
+            success &= expect(removeCustomMcpServerResult.succeeded, "Custom MCP servers should be removable.");
+
+            snapshot = application.snapshot();
+            success &= expect(
+                !findEndpoint(snapshot.endpoints, "swift-tools-mcp").has_value(),
+                "Removing a custom MCP server should remove it from the runtime snapshot.");
         }
 
         {

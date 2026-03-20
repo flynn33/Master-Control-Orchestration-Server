@@ -1756,6 +1756,123 @@ private:
     std::shared_ptr<IRuntimeInventoryService> inventoryService_;
 };
 
+class McpServerCatalogService final : public IMcpServerCatalogService {
+public:
+    McpServerCatalogService(std::shared_ptr<SharedState> state,
+                            std::filesystem::path configurationFile,
+                            std::shared_ptr<IRuntimeInventoryService> inventoryService)
+        : state_(std::move(state))
+        , configurationFile_(std::move(configurationFile))
+        , inventoryService_(std::move(inventoryService)) {}
+
+    std::vector<RuntimeEndpoint> listCustomMcpServers() const override {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        std::vector<RuntimeEndpoint> mcpServers;
+        for (const auto& endpoint : state_->configuration.activeProfile.seededEndpoints) {
+            if (endpoint.kind == EndpointKind::MCPServer && endpoint.userDefined) {
+                mcpServers.push_back(endpoint);
+            }
+        }
+
+        std::sort(
+            mcpServers.begin(),
+            mcpServers.end(),
+            [](const RuntimeEndpoint& left, const RuntimeEndpoint& right) {
+                return std::tie(left.displayName, left.id) < std::tie(right.displayName, right.id);
+            });
+        return mcpServers;
+    }
+
+    OperationResult upsertMcpServer(const RuntimeEndpoint& mcpServer) override {
+        if (mcpServer.id.empty() || isBlank(mcpServer.id)) {
+            return OperationResult{ false, false, "MCP server ID is required." };
+        }
+        if (mcpServer.displayName.empty() || isBlank(mcpServer.displayName)) {
+            return OperationResult{ false, false, "MCP server display name is required." };
+        }
+        if (mcpServer.port == 0) {
+            return OperationResult{ false, false, "MCP servers require a listening port." };
+        }
+
+        RuntimeEndpoint normalized = mcpServer;
+        normalized.kind = EndpointKind::MCPServer;
+        normalized.userDefined = true;
+        normalized.id = trimCopy(normalized.id);
+        normalized.displayName = trimCopy(normalized.displayName);
+        normalized.host = trimCopy(normalized.host);
+        normalized.protocol = trimCopy(normalized.protocol);
+        normalized.description = trimCopy(normalized.description);
+        normalized.routePath = trimCopy(normalized.routePath);
+        normalized.specialization.clear();
+        normalized.status = EndpointStatus::Unknown;
+        normalized.lastCheckedUtc = timestampNowUtc();
+        if (normalized.host.empty()) {
+            normalized.host = state_->configuration.activeProfile.preferredBindAddress;
+        }
+        if (normalized.protocol.empty()) {
+            normalized.protocol = "http";
+        }
+        if (normalized.description.empty()) {
+            normalized.description = "Custom MCP server lane.";
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            auto& endpoints = state_->configuration.activeProfile.seededEndpoints;
+            const auto endpointIterator = std::find_if(
+                endpoints.begin(),
+                endpoints.end(),
+                [&normalized](const RuntimeEndpoint& endpoint) { return endpoint.id == normalized.id; });
+            if (endpointIterator != endpoints.end() && !endpointIterator->userDefined) {
+                return OperationResult{ false, false, "The requested MCP server ID is already owned by a seeded or imported runtime endpoint." };
+            }
+
+            if (endpointIterator == endpoints.end()) {
+                endpoints.push_back(normalized);
+            } else {
+                *endpointIterator = normalized;
+            }
+
+            writeJsonFile(configurationFile_, state_->configuration);
+        }
+        inventoryService_->refresh();
+        return OperationResult{ true, false, "Custom MCP server settings updated." };
+    }
+
+    OperationResult removeMcpServer(const std::string& mcpServerId) override {
+        if (mcpServerId.empty() || isBlank(mcpServerId)) {
+            return OperationResult{ false, false, "A custom MCP server ID is required." };
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            auto& endpoints = state_->configuration.activeProfile.seededEndpoints;
+            const auto iterator = std::find_if(
+                endpoints.begin(),
+                endpoints.end(),
+                [&mcpServerId](const RuntimeEndpoint& endpoint) {
+                    return endpoint.id == mcpServerId && endpoint.kind == EndpointKind::MCPServer;
+                });
+            if (iterator == endpoints.end()) {
+                return OperationResult{ false, false, "The requested MCP server was not found." };
+            }
+            if (!iterator->userDefined) {
+                return OperationResult{ false, false, "Only user-defined MCP servers can be removed." };
+            }
+
+            endpoints.erase(iterator);
+            writeJsonFile(configurationFile_, state_->configuration);
+        }
+        inventoryService_->refresh();
+        return OperationResult{ true, false, "Custom MCP server removed." };
+    }
+
+private:
+    std::shared_ptr<SharedState> state_;
+    std::filesystem::path configurationFile_;
+    std::shared_ptr<IRuntimeInventoryService> inventoryService_;
+};
+
 class SubAgentGroupService final : public ISubAgentGroupService {
 public:
     SubAgentGroupService(std::shared_ptr<SharedState> state,
@@ -3565,6 +3682,7 @@ public:
                     std::shared_ptr<IProviderRegistry> providerRegistry,
                     std::shared_ptr<IProviderCatalogService> providerCatalogService,
                     std::shared_ptr<IProviderCredentialStore> providerCredentialStore,
+                    std::shared_ptr<IMcpServerCatalogService> mcpServerCatalogService,
                     std::shared_ptr<ISubAgentCatalogService> subAgentCatalogService,
                     std::shared_ptr<ISubAgentGroupService> subAgentGroupService,
                     std::shared_ptr<IProviderAssignmentService> providerAssignmentService,
@@ -3582,6 +3700,7 @@ public:
         , providerRegistry_(std::move(providerRegistry))
         , providerCatalogService_(std::move(providerCatalogService))
         , providerCredentialStore_(std::move(providerCredentialStore))
+        , mcpServerCatalogService_(std::move(mcpServerCatalogService))
         , subAgentCatalogService_(std::move(subAgentCatalogService))
         , subAgentGroupService_(std::move(subAgentGroupService))
         , providerAssignmentService_(std::move(providerAssignmentService))
@@ -3643,6 +3762,15 @@ public:
         return providerCredentialStore_->upsertCredentials(nlohmann::json::parse(requestBody).get<ProviderCredentialUpdate>());
     }
 
+    OperationResult upsertMcpServerJson(const std::string& requestBody) override {
+        return mcpServerCatalogService_->upsertMcpServer(nlohmann::json::parse(requestBody).get<RuntimeEndpoint>());
+    }
+
+    OperationResult removeMcpServerJson(const std::string& requestBody) override {
+        return mcpServerCatalogService_->removeMcpServer(
+            nlohmann::json::parse(requestBody).get<McpServerRemovalRequest>().mcpServerId);
+    }
+
     OperationResult upsertSubAgentJson(const std::string& requestBody) override {
         return subAgentCatalogService_->upsertSubAgent(nlohmann::json::parse(requestBody).get<RuntimeEndpoint>());
     }
@@ -3688,6 +3816,7 @@ private:
     std::shared_ptr<IProviderRegistry> providerRegistry_;
     std::shared_ptr<IProviderCatalogService> providerCatalogService_;
     std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
+    std::shared_ptr<IMcpServerCatalogService> mcpServerCatalogService_;
     std::shared_ptr<ISubAgentCatalogService> subAgentCatalogService_;
     std::shared_ptr<ISubAgentGroupService> subAgentGroupService_;
     std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
@@ -3929,6 +4058,8 @@ public:
     OperationResult applyConfigurationJson(const std::string& requestBody, bool confirmUnsafeChanges) { return adminApiService_->applyConfigurationJson(requestBody, confirmUnsafeChanges); }
     OperationResult upsertProviderJson(const std::string& requestBody) { return adminApiService_->upsertProviderJson(requestBody); }
     OperationResult upsertProviderCredentialsJson(const std::string& requestBody) { return adminApiService_->upsertProviderCredentialsJson(requestBody); }
+    OperationResult upsertMcpServerJson(const std::string& requestBody) { return adminApiService_->upsertMcpServerJson(requestBody); }
+    OperationResult removeMcpServerJson(const std::string& requestBody) { return adminApiService_->removeMcpServerJson(requestBody); }
     OperationResult upsertSubAgentJson(const std::string& requestBody) { return adminApiService_->upsertSubAgentJson(requestBody); }
     OperationResult removeSubAgentJson(const std::string& requestBody) { return adminApiService_->removeSubAgentJson(requestBody); }
     OperationResult upsertSubAgentGroupJson(const std::string& requestBody) { return adminApiService_->upsertSubAgentGroupJson(requestBody); }
@@ -3964,6 +4095,7 @@ private:
     std::shared_ptr<IProviderRegistry> providerRegistry_;
     std::shared_ptr<IProviderCatalogService> providerCatalogService_;
     std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
+    std::shared_ptr<IMcpServerCatalogService> mcpServerCatalogService_;
     std::shared_ptr<ISubAgentCatalogService> subAgentCatalogService_;
     std::shared_ptr<ISubAgentGroupService> subAgentGroupService_;
     std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
@@ -3993,6 +4125,7 @@ bool MasterControlApplication::Impl::initialize() {
     providerCatalogService_ = std::make_shared<ProviderCatalogService>();
     providerRegistry_ = std::make_shared<ProviderRegistryService>(state_, paths_.configurationFile, providerCatalogService_);
     providerCredentialStore_ = std::make_shared<ProviderCredentialStore>(paths_.providerCredentialsFile, providerRegistry_, providerCatalogService_);
+    mcpServerCatalogService_ = std::make_shared<McpServerCatalogService>(state_, paths_.configurationFile, inventoryService_);
     subAgentCatalogService_ = std::make_shared<SubAgentCatalogService>(state_, paths_.configurationFile, inventoryService_);
     subAgentGroupService_ = std::make_shared<SubAgentGroupService>(state_, paths_.configurationFile, inventoryService_);
     providerAssignmentService_ = std::make_shared<ProviderAssignmentService>(
@@ -4029,6 +4162,7 @@ bool MasterControlApplication::Impl::initialize() {
         providerRegistry_,
         providerCatalogService_,
         providerCredentialStore_,
+        mcpServerCatalogService_,
         subAgentCatalogService_,
         subAgentGroupService_,
         providerAssignmentService_,
@@ -4119,6 +4253,7 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
     services->registerService<IProviderRegistry>(providerRegistry_);
     services->registerService<IProviderCatalogService>(providerCatalogService_);
     services->registerService<IProviderCredentialStore>(providerCredentialStore_);
+    services->registerService<IMcpServerCatalogService>(mcpServerCatalogService_);
     services->registerService<ISubAgentCatalogService>(subAgentCatalogService_);
     services->registerService<ISubAgentGroupService>(subAgentGroupService_);
     services->registerService<IProviderAssignmentService>(providerAssignmentService_);
@@ -4233,6 +4368,14 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const auto result = adminApiService_->upsertProviderCredentialsJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
+        if (request.method == "POST" && request.path == "/api/runtime/mcp-servers") {
+            const auto result = adminApiService_->upsertMcpServerJson(request.body);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
+        if (request.method == "POST" && request.path == "/api/runtime/mcp-servers/remove") {
+            const auto result = adminApiService_->removeMcpServerJson(request.body);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
         if (request.method == "POST" && request.path == "/api/runtime/subagents") {
             const auto result = adminApiService_->upsertSubAgentJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
@@ -4333,6 +4476,14 @@ OperationResult MasterControlApplication::upsertProviderJson(const std::string& 
 
 OperationResult MasterControlApplication::upsertProviderCredentialsJson(const std::string& requestBody) {
     return impl_->upsertProviderCredentialsJson(requestBody);
+}
+
+OperationResult MasterControlApplication::upsertMcpServerJson(const std::string& requestBody) {
+    return impl_->upsertMcpServerJson(requestBody);
+}
+
+OperationResult MasterControlApplication::removeMcpServerJson(const std::string& requestBody) {
+    return impl_->removeMcpServerJson(requestBody);
 }
 
 OperationResult MasterControlApplication::upsertSubAgentJson(const std::string& requestBody) {

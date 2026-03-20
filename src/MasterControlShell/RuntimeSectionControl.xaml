@@ -28,6 +28,70 @@
 
             <Border Style="{StaticResource ShellCardStyle}">
                 <StackPanel Spacing="14">
+                    <TextBlock Text="Custom MCP Servers" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock Text="Define user-managed MCP server endpoints here so every provider can share the same tool plane without importing a package first." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
+
+                    <TextBlock Text="MCP Server" Style="{StaticResource ShellLabelTextStyle}" />
+                    <ComboBox x:Name="CustomMcpServerSelector" SelectionChanged="CustomMcpServerSelector_SelectionChanged" PlaceholderText="Choose a saved MCP server" />
+
+                    <Grid ColumnSpacing="14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="1.2*" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Server ID" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="CustomMcpServerIdTextBox" TextChanged="CustomMcpServerEditor_TextChanged" PlaceholderText="swift-tools-mcp" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Spacing="8">
+                            <TextBlock Text="Display Name" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="CustomMcpServerDisplayNameTextBox" TextChanged="CustomMcpServerEditor_TextChanged" PlaceholderText="Swift Tools MCP" />
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid ColumnSpacing="14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="160" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Host" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="CustomMcpServerHostTextBox" TextChanged="CustomMcpServerEditor_TextChanged" PlaceholderText="127.0.0.1 or LAN host" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Spacing="8">
+                            <TextBlock Text="Port" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="CustomMcpServerPortTextBox" TextChanged="CustomMcpServerEditor_TextChanged" PlaceholderText="7302" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2" Spacing="8">
+                            <TextBlock Text="Protocol" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="CustomMcpServerProtocolTextBox" TextChanged="CustomMcpServerEditor_TextChanged" PlaceholderText="http or https" />
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Text="Route Path" Style="{StaticResource ShellLabelTextStyle}" />
+                    <TextBox x:Name="CustomMcpServerRoutePathTextBox" TextChanged="CustomMcpServerEditor_TextChanged" PlaceholderText="/mcp or /status" />
+
+                    <TextBlock Text="Description" Style="{StaticResource ShellLabelTextStyle}" />
+                    <TextBox x:Name="CustomMcpServerDescriptionTextBox" TextChanged="CustomMcpServerEditor_TextChanged" AcceptsReturn="True" Height="72" TextWrapping="Wrap" PlaceholderText="Optional notes about this MCP server, toolset, or intended lane." />
+
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <Button x:Name="SaveCustomMcpServerButton" Click="SaveCustomMcpServerButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save MCP Server" />
+                        <Button x:Name="NewCustomMcpServerButton" Click="NewCustomMcpServerButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New MCP Server" />
+                        <Button x:Name="RemoveCustomMcpServerButton" Click="RemoveCustomMcpServerButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Remove MCP Server" />
+                    </StackPanel>
+
+                    <TextBlock x:Name="CustomMcpServerStatusText" Style="{StaticResource ShellDataTextStyle}" Text="No custom MCP server changes are staged." TextWrapping="WrapWholeWords" />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="14">
                     <TextBlock Text="Custom Sub-Agents" Style="{StaticResource ShellSectionTitleTextStyle}" />
                     <TextBlock Text="Define specialist lanes here so the runtime can route providers to user-created sub-agents just like imported or seeded agents." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
 

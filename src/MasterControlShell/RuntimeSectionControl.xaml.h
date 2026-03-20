@@ -17,6 +17,16 @@ struct RuntimeSectionControl : RuntimeSectionControlT<RuntimeSectionControl> {
     void AttachRuntime(::MasterControlShell::ShellRuntime* runtime,
                        std::function<void()> refreshRequested);
     void ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void CustomMcpServerSelector_SelectionChanged(Windows::Foundation::IInspectable const&,
+                                                  Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
+    void CustomMcpServerEditor_TextChanged(Windows::Foundation::IInspectable const&,
+                                           Microsoft::UI::Xaml::Controls::TextChangedEventArgs const&);
+    void SaveCustomMcpServerButton_Click(Windows::Foundation::IInspectable const&,
+                                         Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void NewCustomMcpServerButton_Click(Windows::Foundation::IInspectable const&,
+                                        Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void RemoveCustomMcpServerButton_Click(Windows::Foundation::IInspectable const&,
+                                           Microsoft::UI::Xaml::RoutedEventArgs const&);
     void CustomSubAgentSelector_SelectionChanged(Windows::Foundation::IInspectable const&,
                                                  Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
     void CustomSubAgentEditor_TextChanged(Windows::Foundation::IInspectable const&,
@@ -29,6 +39,12 @@ struct RuntimeSectionControl : RuntimeSectionControlT<RuntimeSectionControl> {
                                           Microsoft::UI::Xaml::RoutedEventArgs const&);
 
 private:
+    void PopulateCustomMcpServerEditor(size_t index);
+    void ClearCustomMcpServerEditor();
+    void RefreshCustomMcpServerSelector();
+    std::optional<::MasterControlShell::ShellRuntimeEndpoint> BuildCustomMcpServerFromEditor();
+    winrt::Windows::Foundation::IAsyncAction SaveCustomMcpServerAsync();
+    winrt::Windows::Foundation::IAsyncAction RemoveCustomMcpServerAsync();
     void PopulateCustomSubAgentEditor(size_t index);
     void ClearCustomSubAgentEditor();
     void RefreshCustomSubAgentSelector();
@@ -39,9 +55,13 @@ private:
 
     ::MasterControlShell::ShellRuntime* runtime_ = nullptr;
     std::function<void()> refreshRequested_;
+    std::vector<::MasterControlShell::ShellRuntimeEndpoint> customMcpServers_;
     std::vector<::MasterControlShell::ShellRuntimeEndpoint> customSubAgents_;
+    bool customMcpServerDirty_ = false;
     bool customSubAgentDirty_ = false;
     bool suspendDirtyTracking_ = false;
+    int selectedCustomMcpServerIndex_ = -1;
+    std::wstring selectedCustomMcpServerId_;
     int selectedCustomSubAgentIndex_ = -1;
     std::wstring selectedCustomSubAgentId_;
 };

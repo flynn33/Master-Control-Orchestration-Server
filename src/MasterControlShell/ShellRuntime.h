@@ -313,6 +313,8 @@ public:
     [[nodiscard]] ShellSnapshot CaptureSnapshot() const;
     [[nodiscard]] bool StartService(std::wstring& message) const;
     [[nodiscard]] bool StopService(std::wstring& message) const;
+    [[nodiscard]] ShellOperationResult UpsertMcpServer(const ShellRuntimeEndpoint& mcpServer) const;
+    [[nodiscard]] ShellOperationResult RemoveMcpServer(const std::wstring& mcpServerId) const;
     [[nodiscard]] ShellOperationResult UpsertSubAgent(const ShellRuntimeEndpoint& subAgent) const;
     [[nodiscard]] ShellOperationResult RemoveSubAgent(const std::wstring& subAgentId) const;
     [[nodiscard]] ShellOperationResult UpsertProvider(const ShellProviderConnection& provider) const;

@@ -196,6 +196,10 @@ struct SubAgentRemovalRequest final {
     std::string subAgentId;
 };
 
+struct McpServerRemovalRequest final {
+    std::string mcpServerId;
+};
+
 struct SubAgentGroupRemovalRequest final {
     std::string groupId;
 };
@@ -593,6 +597,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     SubAgentRemovalRequest,
     subAgentId)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    McpServerRemovalRequest,
+    mcpServerId)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     SubAgentGroupRemovalRequest,
