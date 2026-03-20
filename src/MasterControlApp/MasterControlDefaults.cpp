@@ -301,6 +301,7 @@ AppPaths resolveAppPaths() {
         : programDataDirectory() / "MasterControlProgram";
     const auto installHistoryFile = dataDirectory / "state" / "install-history.json";
     const auto entitlementsFile = dataDirectory / "state" / "entitlements.json";
+    const auto providerCredentialsFile = dataDirectory / "state" / "provider-credentials.json";
     const auto configurationFile = dataDirectory / "config" / "master-control-program.json";
     const auto workDirectory = dataDirectory / "work";
 
@@ -338,6 +339,7 @@ std::filesystem::path cluProfileFile;
         configurationFile,
         installHistoryFile,
         entitlementsFile,
+        providerCredentialsFile,
         manifestsDirectory,
         webRootDirectory,
         cluProfileFile,
@@ -351,10 +353,9 @@ std::vector<RuntimeEndpoint> buildBladeCompatibilityEndpoints() {
 
 std::vector<ProviderConnection> buildDefaultProviders() {
     return {
-        ProviderConnection{ "codex", ProviderKind::Codex, "Codex", "https://api.openai.com/v1", true, false },
-        ProviderConnection{ "claude-code", ProviderKind::ClaudeCode, "Claude Code", "https://api.anthropic.com", true, false },
-        ProviderConnection{ "openai-chatgpt", ProviderKind::OpenAI, "OpenAI / ChatGPT", "https://api.openai.com/v1", true, false },
-        ProviderConnection{ "xai-grok", ProviderKind::XAI, "xAI / Grok", "https://api.x.ai/v1", true, false }
+        ProviderConnection{ "codex", ProviderKind::Codex, "Codex", "https://api.openai.com/v1", "gpt-5.4", true, false, false },
+        ProviderConnection{ "claude-code", ProviderKind::ClaudeCode, "Claude Code", "https://api.anthropic.com", "", true, false, false },
+        ProviderConnection{ "xai-grok", ProviderKind::XAI, "xAI / Grok", "https://api.x.ai/v1", "grok-code-fast-1", true, false, false }
     };
 }
 

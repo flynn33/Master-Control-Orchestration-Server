@@ -173,7 +173,7 @@ std::vector<ModuleControlSurfaceRequest> makeProviderIntegrationControlSurfaceRe
         ModuleControlSurfaceRequest{
             "com.mastercontrol.provider-integration",
             "provider-integration",
-            "Providers",
+            "AI Integrations",
             "providers",
             "ProvidersSection",
             "plug",
@@ -183,6 +183,63 @@ std::vector<ModuleControlSurfaceRequest> makeProviderIntegrationControlSurfaceRe
             false,
             true,
             40
+        }
+    };
+}
+
+std::vector<ModuleControlSurfaceRequest> makeCodexProviderControlSurfaceRequests() {
+    return {
+        ModuleControlSurfaceRequest{
+            "com.mastercontrol.provider-codex",
+            "provider-codex",
+            "Codex",
+            "providers",
+            "ProvidersSection",
+            "plug",
+            {},
+            ControlSurfaceToolbarAction::Navigate,
+            Forsetti::OverlayPresentation::Sheet,
+            false,
+            false,
+            41
+        }
+    };
+}
+
+std::vector<ModuleControlSurfaceRequest> makeClaudeCodeProviderControlSurfaceRequests() {
+    return {
+        ModuleControlSurfaceRequest{
+            "com.mastercontrol.provider-claude-code",
+            "provider-claude-code",
+            "Claude Code",
+            "providers",
+            "ProvidersSection",
+            "plug",
+            {},
+            ControlSurfaceToolbarAction::Navigate,
+            Forsetti::OverlayPresentation::Sheet,
+            false,
+            false,
+            42
+        }
+    };
+}
+
+std::vector<ModuleControlSurfaceRequest> makeXAIProviderControlSurfaceRequests() {
+    return {
+        ModuleControlSurfaceRequest{
+            "com.mastercontrol.provider-xai",
+            "provider-xai",
+            "xAI",
+            "providers",
+            "ProvidersSection",
+            "plug",
+            {},
+            ControlSurfaceToolbarAction::Navigate,
+            Forsetti::OverlayPresentation::Sheet,
+            false,
+            false,
+            43
         }
     };
 }
@@ -281,6 +338,167 @@ void unregisterControlSurfaceRequests(Forsetti::ForsettiContext& context,
         },
         moduleId
     });
+}
+
+void registerProviderCapability(Forsetti::ForsettiContext& context,
+                                const ProviderCapabilityDescriptor& capability) {
+    const auto providerCatalogService = context.services()->resolve<IProviderCatalogService>();
+    if (!providerCatalogService) {
+        return;
+    }
+
+    providerCatalogService->upsertCapability(capability);
+    context.publishFrameworkEvent(Forsetti::ForsettiEvent{
+        "mastercontrol.provider.catalog.changed",
+        {
+            { "moduleID", capability.moduleId },
+            { "providerID", capability.providerId },
+            { "action", "upsert" }
+        },
+        capability.moduleId
+    });
+}
+
+void unregisterProviderCapability(Forsetti::ForsettiContext& context,
+                                  const std::string& moduleId,
+                                  const std::string& providerId) {
+    const auto providerCatalogService = context.services()->resolve<IProviderCatalogService>();
+    if (!providerCatalogService) {
+        return;
+    }
+
+    providerCatalogService->removeCapability(providerId);
+    context.publishFrameworkEvent(Forsetti::ForsettiEvent{
+        "mastercontrol.provider.catalog.changed",
+        {
+            { "moduleID", moduleId },
+            { "providerID", providerId },
+            { "action", "remove" }
+        },
+        moduleId
+    });
+}
+
+ProviderCapabilityDescriptor makeCodexProviderCapability() {
+    return ProviderCapabilityDescriptor{
+        "com.mastercontrol.provider-codex",
+        "codex",
+        ProviderKind::Codex,
+        "Codex",
+        "OpenAI Codex routing for planner, architect, and coding specialist control lanes.",
+        "https://api.openai.com/v1",
+        "gpt-5.4",
+        {
+            ProviderCredentialFieldDescriptor{
+                "openai_api_key",
+                "OpenAI API Key",
+                ProviderCredentialFieldKind::ApiKey,
+                "Bearer key used for OpenAI Responses API and Codex-backed control calls.",
+                "sk-...",
+                "OPENAI_API_KEY",
+                "",
+                true,
+                true
+            }
+        },
+        {
+            "OpenAI Responses API access",
+            "Codex-compatible model access",
+            "Supports shared MCP server and tool access"
+        },
+        {
+            "planner",
+            "architect",
+            "coding-specialists"
+        },
+        true,
+        true
+    };
+}
+
+ProviderCapabilityDescriptor makeClaudeCodeProviderCapability() {
+    return ProviderCapabilityDescriptor{
+        "com.mastercontrol.provider-claude-code",
+        "claude-code",
+        ProviderKind::ClaudeCode,
+        "Claude Code",
+        "Claude Code routing for architecture and specialist coding execution on Windows hosts.",
+        "https://api.anthropic.com",
+        "",
+        {
+            ProviderCredentialFieldDescriptor{
+                "anthropic_api_key",
+                "Anthropic API Key",
+                ProviderCredentialFieldKind::ApiKey,
+                "Use an API key for hosted Claude execution.",
+                "sk-ant-...",
+                "ANTHROPIC_API_KEY",
+                "anthropic_auth",
+                true,
+                false
+            },
+            ProviderCredentialFieldDescriptor{
+                "anthropic_auth_token",
+                "Claude Auth Token",
+                ProviderCredentialFieldKind::AuthToken,
+                "Alternative Claude Code or Agent SDK token when an API key is not used.",
+                "token...",
+                "ANTHROPIC_AUTH_TOKEN",
+                "anthropic_auth",
+                true,
+                false
+            }
+        },
+        {
+            "Windows 10 1809+ or Windows Server 2019+",
+            "Git for Windows or WSL available on the host",
+            "At least 4 GB RAM and internet access"
+        },
+        {
+            "planner",
+            "architect",
+            "coding-specialists"
+        },
+        true,
+        true
+    };
+}
+
+ProviderCapabilityDescriptor makeXAIProviderCapability() {
+    return ProviderCapabilityDescriptor{
+        "com.mastercontrol.provider-xai",
+        "xai-grok",
+        ProviderKind::XAI,
+        "xAI",
+        "xAI Grok coding and orchestration routing with shared MCP tool access.",
+        "https://api.x.ai/v1",
+        "grok-code-fast-1",
+        {
+            ProviderCredentialFieldDescriptor{
+                "xai_api_key",
+                "xAI API Key",
+                ProviderCredentialFieldKind::ApiKey,
+                "Bearer key used for the xAI OpenAI-compatible inference API.",
+                "xai-...",
+                "XAI_API_KEY",
+                "",
+                true,
+                true
+            }
+        },
+        {
+            "OpenAI-compatible REST inference endpoint",
+            "Function calling supported",
+            "Supports shared MCP server and tool access"
+        },
+        {
+            "planner",
+            "architect",
+            "coding-specialists"
+        },
+        true,
+        true
+    };
 }
 
 std::string viewIdForSurfaceTemplate(const std::string& surfaceTemplateId) {
@@ -592,6 +810,84 @@ void ProviderIntegrationModule::stop(Forsetti::ForsettiContext& context) {
     publishLifecycleEvent(context, "mastercontrol.providers.stopped", descriptor().moduleID);
 }
 
+Forsetti::ModuleDescriptor CodexProviderModule::descriptor() const {
+    return makeDescriptor("com.mastercontrol.provider-codex", "Codex Provider", Forsetti::ModuleType::Service);
+}
+
+Forsetti::ModuleManifest CodexProviderModule::manifest() const {
+    return makeManifest(
+        "com.mastercontrol.provider-codex",
+        "Codex Provider",
+        Forsetti::ModuleType::Service,
+        { Forsetti::Capability::Networking, Forsetti::Capability::SecureStorage, Forsetti::Capability::EventPublishing },
+        std::nullopt,
+        "CodexProviderModule");
+}
+
+void CodexProviderModule::start(Forsetti::ForsettiContext& context) {
+    registerControlSurfaceRequests(context, makeCodexProviderControlSurfaceRequests());
+    registerProviderCapability(context, makeCodexProviderCapability());
+    publishLifecycleEvent(context, "mastercontrol.provider.codex.started", descriptor().moduleID);
+}
+
+void CodexProviderModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterProviderCapability(context, descriptor().moduleID, "codex");
+    unregisterControlSurfaceRequests(context, descriptor().moduleID);
+    publishLifecycleEvent(context, "mastercontrol.provider.codex.stopped", descriptor().moduleID);
+}
+
+Forsetti::ModuleDescriptor ClaudeCodeProviderModule::descriptor() const {
+    return makeDescriptor("com.mastercontrol.provider-claude-code", "Claude Code Provider", Forsetti::ModuleType::Service);
+}
+
+Forsetti::ModuleManifest ClaudeCodeProviderModule::manifest() const {
+    return makeManifest(
+        "com.mastercontrol.provider-claude-code",
+        "Claude Code Provider",
+        Forsetti::ModuleType::Service,
+        { Forsetti::Capability::Networking, Forsetti::Capability::SecureStorage, Forsetti::Capability::EventPublishing },
+        std::nullopt,
+        "ClaudeCodeProviderModule");
+}
+
+void ClaudeCodeProviderModule::start(Forsetti::ForsettiContext& context) {
+    registerControlSurfaceRequests(context, makeClaudeCodeProviderControlSurfaceRequests());
+    registerProviderCapability(context, makeClaudeCodeProviderCapability());
+    publishLifecycleEvent(context, "mastercontrol.provider.claude-code.started", descriptor().moduleID);
+}
+
+void ClaudeCodeProviderModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterProviderCapability(context, descriptor().moduleID, "claude-code");
+    unregisterControlSurfaceRequests(context, descriptor().moduleID);
+    publishLifecycleEvent(context, "mastercontrol.provider.claude-code.stopped", descriptor().moduleID);
+}
+
+Forsetti::ModuleDescriptor XAIProviderModule::descriptor() const {
+    return makeDescriptor("com.mastercontrol.provider-xai", "xAI Provider", Forsetti::ModuleType::Service);
+}
+
+Forsetti::ModuleManifest XAIProviderModule::manifest() const {
+    return makeManifest(
+        "com.mastercontrol.provider-xai",
+        "xAI Provider",
+        Forsetti::ModuleType::Service,
+        { Forsetti::Capability::Networking, Forsetti::Capability::SecureStorage, Forsetti::Capability::EventPublishing },
+        std::nullopt,
+        "XAIProviderModule");
+}
+
+void XAIProviderModule::start(Forsetti::ForsettiContext& context) {
+    registerControlSurfaceRequests(context, makeXAIProviderControlSurfaceRequests());
+    registerProviderCapability(context, makeXAIProviderCapability());
+    publishLifecycleEvent(context, "mastercontrol.provider.xai.started", descriptor().moduleID);
+}
+
+void XAIProviderModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterProviderCapability(context, descriptor().moduleID, "xai-grok");
+    unregisterControlSurfaceRequests(context, descriptor().moduleID);
+    publishLifecycleEvent(context, "mastercontrol.provider.xai.stopped", descriptor().moduleID);
+}
+
 Forsetti::ModuleDescriptor ExportModule::descriptor() const {
     return makeDescriptor("com.mastercontrol.export", "Export", Forsetti::ModuleType::Service);
 }
@@ -735,6 +1031,15 @@ void registerMasterControlModules(Forsetti::ModuleRegistry& registry) {
     });
     registry.registerModule("ProviderIntegrationModule", []() -> std::unique_ptr<Forsetti::IForsettiModule> {
         return std::make_unique<ProviderIntegrationModule>();
+    });
+    registry.registerModule("CodexProviderModule", []() -> std::unique_ptr<Forsetti::IForsettiModule> {
+        return std::make_unique<CodexProviderModule>();
+    });
+    registry.registerModule("ClaudeCodeProviderModule", []() -> std::unique_ptr<Forsetti::IForsettiModule> {
+        return std::make_unique<ClaudeCodeProviderModule>();
+    });
+    registry.registerModule("XAIProviderModule", []() -> std::unique_ptr<Forsetti::IForsettiModule> {
+        return std::make_unique<XAIProviderModule>();
     });
     registry.registerModule("ExportModule", []() -> std::unique_ptr<Forsetti::IForsettiModule> {
         return std::make_unique<ExportModule>();

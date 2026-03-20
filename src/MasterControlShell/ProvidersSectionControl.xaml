@@ -41,7 +41,6 @@
                                 <ComboBox x:Name="ProviderKindComboBox" SelectionChanged="ProviderKind_SelectionChanged">
                                     <ComboBoxItem Content="Codex" Tag="codex" />
                                     <ComboBoxItem Content="Claude Code" Tag="claude_code" />
-                                    <ComboBoxItem Content="OpenAI / ChatGPT" Tag="openai" />
                                     <ComboBoxItem Content="xAI / Grok" Tag="xai" />
                                     <ComboBoxItem Content="Generic" Tag="generic" />
                                 </ComboBox>
@@ -54,6 +53,9 @@
                         <TextBlock Text="Base URL" Style="{StaticResource ShellLabelTextStyle}" />
                         <TextBox x:Name="ProviderBaseUrlTextBox" TextChanged="ProviderEditor_TextChanged" PlaceholderText="https://api.example.com/v1" />
 
+                        <TextBlock Text="Model ID" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBox x:Name="ProviderModelIdTextBox" TextChanged="ProviderEditor_TextChanged" PlaceholderText="Provider recommended model or deployment name" />
+
                         <StackPanel Orientation="Horizontal" Spacing="18">
                             <ToggleSwitch x:Name="ProviderEnabledToggle" Header="Enabled" Toggled="ProviderToggle_Toggled" />
                             <ToggleSwitch x:Name="ProviderAutonomousToggle" Header="Allow autonomous control" Toggled="ProviderToggle_Toggled" />
@@ -65,6 +67,28 @@
                         </StackPanel>
 
                         <TextBlock x:Name="ProviderEditorStatusText" Style="{StaticResource ShellDataTextStyle}" Text="Provider changes are saved through the local admin API." />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="Credentials" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock Text="Credential requirements come from the active provider module through the framework. Secrets stay in the local secure store." Style="{StaticResource ShellBodyTextStyle}" />
+                        <TextBlock x:Name="ProviderCredentialStatusText" Style="{StaticResource ShellDataTextStyle}" Text="Save a provider route to configure credentials." />
+
+                        <StackPanel x:Name="ProviderCredentialFieldOnePanel" Spacing="8">
+                            <TextBlock x:Name="ProviderCredentialFieldOneLabel" Text="Credential Field" Style="{StaticResource ShellLabelTextStyle}" />
+                            <PasswordBox x:Name="ProviderCredentialFieldOneValueBox" PasswordChanged="ProviderCredentialEditor_PasswordChanged" PlaceholderText="Credential value" />
+                            <TextBlock x:Name="ProviderCredentialFieldOneHint" Style="{StaticResource ShellDataTextStyle}" Text="" TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <StackPanel x:Name="ProviderCredentialFieldTwoPanel" Spacing="8">
+                            <TextBlock x:Name="ProviderCredentialFieldTwoLabel" Text="Credential Field" Style="{StaticResource ShellLabelTextStyle}" />
+                            <PasswordBox x:Name="ProviderCredentialFieldTwoValueBox" PasswordChanged="ProviderCredentialEditor_PasswordChanged" PlaceholderText="Credential value" />
+                            <TextBlock x:Name="ProviderCredentialFieldTwoHint" Style="{StaticResource ShellDataTextStyle}" Text="" TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <Button x:Name="SaveProviderCredentialsButton" Click="SaveProviderCredentialsButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Credentials" />
                     </StackPanel>
                 </Border>
 
@@ -102,6 +126,31 @@
                     <StackPanel Spacing="16">
                         <TextBlock Text="Provider Connections" Style="{StaticResource ShellSectionTitleTextStyle}" />
                         <ListView x:Name="ProvidersListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="680" Style="{StaticResource ShellListViewStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="Provider Modules" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <ListView x:Name="ProviderCapabilitiesListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="260" Style="{StaticResource ShellListViewStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="Ownership Routing" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock Text="One provider owns each orchestration role or sub-agent at a time. Group assignments fan out to the current specialist pool." Style="{StaticResource ShellBodyTextStyle}" />
+
+                        <TextBlock Text="Target" Style="{StaticResource ShellLabelTextStyle}" />
+                        <ComboBox x:Name="ProviderAssignmentTargetSelector" SelectionChanged="ProviderAssignmentTargetSelector_SelectionChanged" PlaceholderText="Choose a role or sub-agent" />
+
+                        <TextBlock Text="Owner" Style="{StaticResource ShellLabelTextStyle}" />
+                        <ComboBox x:Name="ProviderAssignmentProviderSelector" SelectionChanged="ProviderAssignmentProviderSelector_SelectionChanged" PlaceholderText="Choose the owning provider" />
+
+                        <Button x:Name="SaveProviderAssignmentButton" Click="SaveProviderAssignmentButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Ownership" />
+
+                        <TextBlock x:Name="ProviderAssignmentStatusText" Style="{StaticResource ShellDataTextStyle}" Text="No orchestration ownership changes are staged." />
+                        <ListView x:Name="ProviderAssignmentsListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="360" Style="{StaticResource ShellListViewStyle}" />
                     </StackPanel>
                 </Border>
             </StackPanel>

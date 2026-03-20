@@ -72,6 +72,23 @@ std::string to_string(ProviderKind value) {
     });
 }
 
+std::string to_string(ProviderCredentialFieldKind value) {
+    return enumToString(value, {
+        { ProviderCredentialFieldKind::ApiKey, "api_key" },
+        { ProviderCredentialFieldKind::AuthToken, "auth_token" },
+        { ProviderCredentialFieldKind::Model, "model" },
+        { ProviderCredentialFieldKind::Text, "text" }
+    });
+}
+
+std::string to_string(ProviderAssignmentTargetKind value) {
+    return enumToString(value, {
+        { ProviderAssignmentTargetKind::Role, "role" },
+        { ProviderAssignmentTargetKind::SubAgentGroup, "sub_agent_group" },
+        { ProviderAssignmentTargetKind::SubAgent, "sub_agent" }
+    });
+}
+
 std::string to_string(InstallerKind value) {
     return enumToString(value, {
         { InstallerKind::Msi, "msi" },
@@ -119,6 +136,23 @@ ProviderKind providerKindFromString(const std::string& value) {
     });
 }
 
+ProviderCredentialFieldKind providerCredentialFieldKindFromString(const std::string& value) {
+    return enumFromString<ProviderCredentialFieldKind>(value, {
+        { ProviderCredentialFieldKind::ApiKey, "api_key" },
+        { ProviderCredentialFieldKind::AuthToken, "auth_token" },
+        { ProviderCredentialFieldKind::Model, "model" },
+        { ProviderCredentialFieldKind::Text, "text" }
+    });
+}
+
+ProviderAssignmentTargetKind providerAssignmentTargetKindFromString(const std::string& value) {
+    return enumFromString<ProviderAssignmentTargetKind>(value, {
+        { ProviderAssignmentTargetKind::Role, "role" },
+        { ProviderAssignmentTargetKind::SubAgentGroup, "sub_agent_group" },
+        { ProviderAssignmentTargetKind::SubAgent, "sub_agent" }
+    });
+}
+
 InstallerKind installerKindFromString(const std::string& value) {
     return enumFromString<InstallerKind>(value, {
         { InstallerKind::Msi, "msi" },
@@ -158,6 +192,22 @@ void to_json(nlohmann::json& json, ProviderKind value) {
 
 void from_json(const nlohmann::json& json, ProviderKind& value) {
     value = providerKindFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, ProviderCredentialFieldKind value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, ProviderCredentialFieldKind& value) {
+    value = providerCredentialFieldKindFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, ProviderAssignmentTargetKind value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, ProviderAssignmentTargetKind& value) {
+    value = providerAssignmentTargetKindFromString(json.get<std::string>());
 }
 
 void to_json(nlohmann::json& json, InstallerKind value) {

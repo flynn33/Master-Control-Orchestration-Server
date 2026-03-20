@@ -22,6 +22,7 @@ target_link_libraries(MasterControlApp PUBLIC
     iphlpapi
     urlmon
     advapi32
+    crypt32
     shlwapi
     shell32
 )

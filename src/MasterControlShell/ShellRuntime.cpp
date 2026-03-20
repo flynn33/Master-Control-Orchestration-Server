@@ -397,9 +397,75 @@ ShellProviderConnection providerFromJson(const JsonObject& object) {
     provider.kind = wideFromUtf8(jsonStringOr(object, L"kind", "generic"));
     provider.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
     provider.baseUrl = wideFromUtf8(jsonStringOr(object, L"baseUrl", ""));
+    provider.modelId = wideFromUtf8(jsonStringOr(object, L"modelId", ""));
     provider.enabled = jsonBoolOr(object, L"enabled", true);
     provider.allowAutonomousControl = jsonBoolOr(object, L"allowAutonomousControl", false);
+    provider.credentialsConfigured = jsonBoolOr(object, L"credentialsConfigured", false);
     return provider;
+}
+
+ShellProviderCredentialField credentialFieldFromJson(const JsonObject& object) {
+    ShellProviderCredentialField field;
+    field.fieldId = wideFromUtf8(jsonStringOr(object, L"fieldId", ""));
+    field.label = wideFromUtf8(jsonStringOr(object, L"label", ""));
+    field.kind = wideFromUtf8(jsonStringOr(object, L"kind", "text"));
+    field.helpText = wideFromUtf8(jsonStringOr(object, L"helpText", ""));
+    field.placeholder = wideFromUtf8(jsonStringOr(object, L"placeholder", ""));
+    field.environmentVariableHint = wideFromUtf8(jsonStringOr(object, L"environmentVariableHint", ""));
+    field.requirementGroup = wideFromUtf8(jsonStringOr(object, L"requirementGroup", ""));
+    field.secret = jsonBoolOr(object, L"secret", false);
+    field.required = jsonBoolOr(object, L"required", false);
+    return field;
+}
+
+ShellProviderCapability providerCapabilityFromJson(const JsonObject& object) {
+    ShellProviderCapability capability;
+    capability.moduleId = wideFromUtf8(jsonStringOr(object, L"moduleId", ""));
+    capability.providerId = wideFromUtf8(jsonStringOr(object, L"providerId", ""));
+    capability.kind = wideFromUtf8(jsonStringOr(object, L"kind", "generic"));
+    capability.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
+    capability.description = wideFromUtf8(jsonStringOr(object, L"description", ""));
+    capability.defaultBaseUrl = wideFromUtf8(jsonStringOr(object, L"defaultBaseUrl", ""));
+    capability.recommendedModel = wideFromUtf8(jsonStringOr(object, L"recommendedModel", ""));
+    capability.runtimeRequirements = jsonStringArrayOr(object, L"runtimeRequirements");
+    capability.supportedTargets = jsonStringArrayOr(object, L"supportedTargets");
+    capability.supportsSharedMcpAccess = jsonBoolOr(object, L"supportsSharedMcpAccess", true);
+    capability.supportsAutonomousControl = jsonBoolOr(object, L"supportsAutonomousControl", true);
+    for (const auto& value : object.GetNamedArray(L"credentialFields", JsonArray())) {
+        if (value.ValueType() == JsonValueType::Object) {
+            capability.credentialFields.push_back(credentialFieldFromJson(value.GetObject()));
+        }
+    }
+    return capability;
+}
+
+ShellProviderCredentialStatus providerCredentialStatusFromJson(const JsonObject& object) {
+    ShellProviderCredentialStatus status;
+    status.providerId = wideFromUtf8(jsonStringOr(object, L"providerId", ""));
+    status.configured = jsonBoolOr(object, L"configured", false);
+    status.configuredFieldIds = jsonStringArrayOr(object, L"configuredFieldIds");
+    status.updatedAtUtc = wideFromUtf8(jsonStringOr(object, L"updatedAtUtc", ""));
+    status.message = wideFromUtf8(jsonStringOr(object, L"message", ""));
+    return status;
+}
+
+ShellProviderAssignmentTarget providerAssignmentTargetFromJson(const JsonObject& object) {
+    ShellProviderAssignmentTarget target;
+    target.targetId = wideFromUtf8(jsonStringOr(object, L"targetId", ""));
+    target.kind = wideFromUtf8(jsonStringOr(object, L"kind", "role"));
+    target.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
+    target.description = wideFromUtf8(jsonStringOr(object, L"description", ""));
+    target.memberTargetIds = jsonStringArrayOr(object, L"memberTargetIds");
+    return target;
+}
+
+ShellProviderAssignment providerAssignmentFromJson(const JsonObject& object) {
+    ShellProviderAssignment assignment;
+    assignment.targetId = wideFromUtf8(jsonStringOr(object, L"targetId", ""));
+    assignment.kind = wideFromUtf8(jsonStringOr(object, L"kind", "role"));
+    assignment.providerId = wideFromUtf8(jsonStringOr(object, L"providerId", ""));
+    assignment.updatedAtUtc = wideFromUtf8(jsonStringOr(object, L"updatedAtUtc", ""));
+    return assignment;
 }
 
 ShellSecuritySettings securityFromJson(const JsonObject& object) {
@@ -428,8 +494,29 @@ JsonObject providerToJson(const ShellProviderConnection& provider) {
     object.SetNamedValue(L"kind", JsonValue::CreateStringValue(provider.kind));
     object.SetNamedValue(L"displayName", JsonValue::CreateStringValue(provider.displayName));
     object.SetNamedValue(L"baseUrl", JsonValue::CreateStringValue(provider.baseUrl));
+    object.SetNamedValue(L"modelId", JsonValue::CreateStringValue(provider.modelId));
     object.SetNamedValue(L"enabled", JsonValue::CreateBooleanValue(provider.enabled));
     object.SetNamedValue(L"allowAutonomousControl", JsonValue::CreateBooleanValue(provider.allowAutonomousControl));
+    return object;
+}
+
+JsonObject providerCredentialsToJson(const std::wstring& providerId,
+                                     const std::vector<std::pair<std::wstring, std::wstring>>& values) {
+    JsonObject object;
+    JsonObject credentialValues;
+    object.SetNamedValue(L"providerId", JsonValue::CreateStringValue(providerId));
+    for (const auto& [fieldId, value] : values) {
+        credentialValues.SetNamedValue(fieldId, JsonValue::CreateStringValue(value));
+    }
+    object.SetNamedValue(L"values", credentialValues);
+    return object;
+}
+
+JsonObject providerAssignmentToJson(const ShellProviderAssignment& assignment) {
+    JsonObject object;
+    object.SetNamedValue(L"targetId", JsonValue::CreateStringValue(assignment.targetId));
+    object.SetNamedValue(L"kind", JsonValue::CreateStringValue(assignment.kind));
+    object.SetNamedValue(L"providerId", JsonValue::CreateStringValue(assignment.providerId));
     return object;
 }
 
@@ -624,8 +711,12 @@ std::wstring providerRow(const JsonObject& object) {
     stream << wideFromUtf8(jsonStringOr(object, L"displayName", "provider"))
            << L"  |  "
            << wideFromUtf8(jsonStringOr(object, L"baseUrl", ""))
+           << L"  |  model="
+           << wideFromUtf8(jsonStringOr(object, L"modelId", "default"))
            << L"  |  autonomous="
-           << boolLabel(jsonBoolOr(object, L"allowAutonomousControl"));
+           << boolLabel(jsonBoolOr(object, L"allowAutonomousControl"))
+           << L"  |  credentials="
+           << boolLabel(jsonBoolOr(object, L"credentialsConfigured"));
     return stream.str();
 }
 
@@ -634,8 +725,43 @@ std::wstring providerConnectionRow(const ShellProviderConnection& provider) {
     stream << (provider.displayName.empty() ? provider.id : provider.displayName)
            << L"  |  "
            << provider.baseUrl
+           << L"  |  model="
+           << (provider.modelId.empty() ? L"default" : provider.modelId)
            << L"  |  autonomous="
-           << boolLabel(provider.allowAutonomousControl);
+           << boolLabel(provider.allowAutonomousControl)
+           << L"  |  credentials="
+           << boolLabel(provider.credentialsConfigured);
+    return stream.str();
+}
+
+std::wstring providerCapabilityRow(const ShellProviderCapability& capability) {
+    std::wostringstream stream;
+    stream << capability.displayName
+           << L"  |  targets="
+           << (capability.supportedTargets.empty() ? L"none" : std::to_wstring(capability.supportedTargets.size()))
+           << L"  |  model="
+           << (capability.recommendedModel.empty() ? L"optional" : capability.recommendedModel);
+    return stream.str();
+}
+
+std::wstring providerAssignmentRow(const ShellProviderAssignment& assignment,
+                                   const std::vector<ShellProviderAssignmentTarget>& targets,
+                                   const std::vector<ShellProviderConnection>& providers) {
+    const auto targetIterator = std::find_if(
+        targets.begin(),
+        targets.end(),
+        [&assignment](const ShellProviderAssignmentTarget& target) { return target.targetId == assignment.targetId; });
+    const auto providerIterator = std::find_if(
+        providers.begin(),
+        providers.end(),
+        [&assignment](const ShellProviderConnection& provider) { return provider.id == assignment.providerId; });
+
+    std::wostringstream stream;
+    stream << (targetIterator == targets.end() ? assignment.targetId : targetIterator->displayName)
+           << L"  |  "
+           << (providerIterator == providers.end() ? assignment.providerId : providerIterator->displayName)
+           << L"  |  "
+           << assignment.updatedAtUtc;
     return stream.str();
 }
 
@@ -898,6 +1024,10 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     bool openLanAccess = true;
     ShellSecuritySettings securitySettings;
     std::vector<ShellProviderConnection> providers;
+    std::vector<ShellProviderCapability> providerCapabilities;
+    std::vector<ShellProviderCredentialStatus> providerCredentialStatuses;
+    std::vector<ShellProviderAssignmentTarget> providerAssignmentTargets;
+    std::vector<ShellProviderAssignment> providerAssignments;
     int cpuPercent = 50;
     int memoryPercent = 50;
     int bandwidthPercent = 50;
@@ -955,6 +1085,8 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     std::map<std::wstring, std::vector<ShellViewInjection>> viewInjectionsBySlot;
     std::vector<std::wstring> endpointRows;
     std::vector<std::wstring> providerRows;
+    std::vector<std::wstring> providerCapabilityRows;
+    std::vector<std::wstring> providerAssignmentRows;
     std::vector<std::wstring> installRows;
     std::vector<std::wstring> exportRows;
     std::wstring governancePosture = L"Pending";
@@ -1006,6 +1138,31 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                     dashboardJson->GetNamedArray(L"providers", JsonArray()),
                     providerRow,
                     providerRows);
+                for (const auto& value : dashboardJson->GetNamedArray(L"providers", JsonArray())) {
+                    if (value.ValueType() == JsonValueType::Object) {
+                        providers.push_back(providerFromJson(value.GetObject()));
+                    }
+                }
+                for (const auto& value : dashboardJson->GetNamedArray(L"providerCapabilities", JsonArray())) {
+                    if (value.ValueType() == JsonValueType::Object) {
+                        providerCapabilities.push_back(providerCapabilityFromJson(value.GetObject()));
+                    }
+                }
+                for (const auto& value : dashboardJson->GetNamedArray(L"providerCredentialStatuses", JsonArray())) {
+                    if (value.ValueType() == JsonValueType::Object) {
+                        providerCredentialStatuses.push_back(providerCredentialStatusFromJson(value.GetObject()));
+                    }
+                }
+                for (const auto& value : dashboardJson->GetNamedArray(L"providerAssignmentTargets", JsonArray())) {
+                    if (value.ValueType() == JsonValueType::Object) {
+                        providerAssignmentTargets.push_back(providerAssignmentTargetFromJson(value.GetObject()));
+                    }
+                }
+                for (const auto& value : dashboardJson->GetNamedArray(L"providerAssignments", JsonArray())) {
+                    if (value.ValueType() == JsonValueType::Object) {
+                        providerAssignments.push_back(providerAssignmentFromJson(value.GetObject()));
+                    }
+                }
                 appendJsonArrayRows(
                     dashboardJson->GetNamedArray(L"installHistory", JsonArray()),
                     installRow,
@@ -1103,6 +1260,16 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
             providerRows.push_back(providerConnectionRow(provider));
         }
     }
+    if (providerCapabilityRows.empty() && !providerCapabilities.empty()) {
+        for (const auto& capability : providerCapabilities) {
+            providerCapabilityRows.push_back(providerCapabilityRow(capability));
+        }
+    }
+    if (providerAssignmentRows.empty() && !providerAssignments.empty()) {
+        for (const auto& assignment : providerAssignments) {
+            providerAssignmentRows.push_back(providerAssignmentRow(assignment, providerAssignmentTargets, providers));
+        }
+    }
 
     snapshot.endpointCount = endpointRows.size();
     snapshot.providerCount = providers.empty() ? providerRows.size() : providers.size();
@@ -1118,6 +1285,12 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     }
     if (providerRows.empty()) {
         providerRows.push_back(L"No provider connections have been loaded yet.");
+    }
+    if (providerCapabilityRows.empty()) {
+        providerCapabilityRows.push_back(L"No provider modules have published capability descriptors yet.");
+    }
+    if (providerAssignmentRows.empty()) {
+        providerAssignmentRows.push_back(L"No orchestration roles or sub-agents have provider ownership yet.");
     }
     if (installRows.empty()) {
         installRows.push_back(L"No installer provenance has been recorded yet.");
@@ -1206,12 +1379,18 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.primaryMacAddress = wideFromUtf8(macAddress);
     snapshot.bindAddress = wideFromUtf8(bindAddress);
     snapshot.providers = std::move(providers);
+    snapshot.providerCapabilities = std::move(providerCapabilities);
+    snapshot.providerCredentialStatuses = std::move(providerCredentialStatuses);
+    snapshot.providerAssignmentTargets = std::move(providerAssignmentTargets);
+    snapshot.providerAssignments = std::move(providerAssignments);
     snapshot.navigationPointers = std::move(navigationPointers);
     snapshot.toolbarItems = std::move(toolbarItems);
     snapshot.overlayRoutes = std::move(overlayRoutes);
     snapshot.viewInjectionsBySlot = std::move(viewInjectionsBySlot);
     snapshot.endpointRows = std::move(endpointRows);
     snapshot.providerRows = std::move(providerRows);
+    snapshot.providerCapabilityRows = std::move(providerCapabilityRows);
+    snapshot.providerAssignmentRows = std::move(providerAssignmentRows);
     snapshot.installRows = std::move(installRows);
     snapshot.exportRows = std::move(exportRows);
     snapshot.governanceFindingRows = std::move(governanceFindingRows);
@@ -1295,6 +1474,32 @@ ShellOperationResult ShellRuntime::UpsertProvider(const ShellProviderConnection&
     }
 
     return postProviderToAdminApi(ResolveConfigurationFile(), provider);
+}
+
+ShellOperationResult ShellRuntime::UpsertProviderCredentials(
+    const std::wstring& providerId,
+    const std::vector<std::pair<std::wstring, std::wstring>>& values) const {
+    if (providerId.empty()) {
+        return ShellOperationResult{ false, false, L"Select a provider route before saving credentials." };
+    }
+
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/providers/credentials",
+        providerCredentialsToJson(providerId, values),
+        L"Unable to update provider credentials through the local admin API.");
+}
+
+ShellOperationResult ShellRuntime::UpsertProviderAssignment(const ShellProviderAssignment& assignment) const {
+    if (assignment.targetId.empty()) {
+        return ShellOperationResult{ false, false, L"Select an orchestration target before saving provider ownership." };
+    }
+
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/providers/assignments",
+        providerAssignmentToJson(assignment),
+        L"Unable to update provider ownership through the local admin API.");
 }
 
 ShellOperationResult ShellRuntime::UpdateAiAutonomyEnabled(const bool enabled) const {

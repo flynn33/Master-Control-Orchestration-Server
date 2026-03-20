@@ -29,8 +29,60 @@ struct ShellProviderConnection final {
     std::wstring kind;
     std::wstring displayName;
     std::wstring baseUrl;
+    std::wstring modelId;
     bool enabled = true;
     bool allowAutonomousControl = false;
+    bool credentialsConfigured = false;
+};
+
+struct ShellProviderCredentialField final {
+    std::wstring fieldId;
+    std::wstring label;
+    std::wstring kind;
+    std::wstring helpText;
+    std::wstring placeholder;
+    std::wstring environmentVariableHint;
+    std::wstring requirementGroup;
+    bool secret = false;
+    bool required = false;
+};
+
+struct ShellProviderCapability final {
+    std::wstring moduleId;
+    std::wstring providerId;
+    std::wstring kind;
+    std::wstring displayName;
+    std::wstring description;
+    std::wstring defaultBaseUrl;
+    std::wstring recommendedModel;
+    std::vector<ShellProviderCredentialField> credentialFields;
+    std::vector<std::wstring> runtimeRequirements;
+    std::vector<std::wstring> supportedTargets;
+    bool supportsSharedMcpAccess = true;
+    bool supportsAutonomousControl = true;
+};
+
+struct ShellProviderCredentialStatus final {
+    std::wstring providerId;
+    bool configured = false;
+    std::vector<std::wstring> configuredFieldIds;
+    std::wstring updatedAtUtc;
+    std::wstring message;
+};
+
+struct ShellProviderAssignmentTarget final {
+    std::wstring targetId;
+    std::wstring kind;
+    std::wstring displayName;
+    std::wstring description;
+    std::vector<std::wstring> memberTargetIds;
+};
+
+struct ShellProviderAssignment final {
+    std::wstring targetId;
+    std::wstring kind;
+    std::wstring providerId;
+    std::wstring updatedAtUtc;
 };
 
 struct ShellSecuritySettings final {
@@ -172,12 +224,18 @@ struct ShellSnapshot final {
     std::wstring governanceLastEvaluatedUtc;
     ShellSecuritySettings securitySettings;
     std::vector<ShellProviderConnection> providers;
+    std::vector<ShellProviderCapability> providerCapabilities;
+    std::vector<ShellProviderCredentialStatus> providerCredentialStatuses;
+    std::vector<ShellProviderAssignmentTarget> providerAssignmentTargets;
+    std::vector<ShellProviderAssignment> providerAssignments;
     std::vector<ShellNavigationPointer> navigationPointers;
     std::vector<ShellToolbarItem> toolbarItems;
     std::vector<ShellOverlayRoute> overlayRoutes;
     std::map<std::wstring, std::vector<ShellViewInjection>> viewInjectionsBySlot;
     std::vector<std::wstring> endpointRows;
     std::vector<std::wstring> providerRows;
+    std::vector<std::wstring> providerCapabilityRows;
+    std::vector<std::wstring> providerAssignmentRows;
     std::vector<std::wstring> installRows;
     std::vector<std::wstring> exportRows;
     std::vector<std::wstring> governanceFindingRows;
@@ -196,6 +254,10 @@ public:
     [[nodiscard]] bool StartService(std::wstring& message) const;
     [[nodiscard]] bool StopService(std::wstring& message) const;
     [[nodiscard]] ShellOperationResult UpsertProvider(const ShellProviderConnection& provider) const;
+    [[nodiscard]] ShellOperationResult UpsertProviderCredentials(
+        const std::wstring& providerId,
+        const std::vector<std::pair<std::wstring, std::wstring>>& values) const;
+    [[nodiscard]] ShellOperationResult UpsertProviderAssignment(const ShellProviderAssignment& assignment) const;
     [[nodiscard]] ShellOperationResult UpdateAiAutonomyEnabled(bool enabled) const;
     [[nodiscard]] ShellOperationResult UpdateSecuritySettings(const ShellSecuritySettings& settings,
                                                              bool confirmUnsafeChanges) const;

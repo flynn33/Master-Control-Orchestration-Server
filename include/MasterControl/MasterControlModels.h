@@ -40,6 +40,19 @@ enum class ProviderKind {
     Generic
 };
 
+enum class ProviderCredentialFieldKind {
+    ApiKey,
+    AuthToken,
+    Model,
+    Text
+};
+
+enum class ProviderAssignmentTargetKind {
+    Role,
+    SubAgentGroup,
+    SubAgent
+};
+
 enum class InstallerKind {
     Msi,
     Exe,
@@ -111,8 +124,65 @@ struct ProviderConnection final {
     ProviderKind kind = ProviderKind::Generic;
     std::string displayName;
     std::string baseUrl;
+    std::string modelId;
     bool enabled = true;
     bool allowAutonomousControl = false;
+    bool credentialsConfigured = false;
+};
+
+struct ProviderCredentialFieldDescriptor final {
+    std::string fieldId;
+    std::string label;
+    ProviderCredentialFieldKind kind = ProviderCredentialFieldKind::Text;
+    std::string helpText;
+    std::string placeholder;
+    std::string environmentVariableHint;
+    std::string requirementGroup;
+    bool secret = false;
+    bool required = false;
+};
+
+struct ProviderCapabilityDescriptor final {
+    std::string moduleId;
+    std::string providerId;
+    ProviderKind kind = ProviderKind::Generic;
+    std::string displayName;
+    std::string description;
+    std::string defaultBaseUrl;
+    std::string recommendedModel;
+    std::vector<ProviderCredentialFieldDescriptor> credentialFields;
+    std::vector<std::string> runtimeRequirements;
+    std::vector<std::string> supportedTargets;
+    bool supportsSharedMcpAccess = true;
+    bool supportsAutonomousControl = true;
+};
+
+struct ProviderCredentialStatus final {
+    std::string providerId;
+    bool configured = false;
+    std::vector<std::string> configuredFieldIds;
+    std::string updatedAtUtc;
+    std::string message;
+};
+
+struct ProviderCredentialUpdate final {
+    std::string providerId;
+    std::map<std::string, std::string> values;
+};
+
+struct ProviderAssignmentTarget final {
+    std::string targetId;
+    ProviderAssignmentTargetKind kind = ProviderAssignmentTargetKind::Role;
+    std::string displayName;
+    std::string description;
+    std::vector<std::string> memberTargetIds;
+};
+
+struct ProviderAssignment final {
+    std::string targetId;
+    ProviderAssignmentTargetKind kind = ProviderAssignmentTargetKind::Role;
+    std::string providerId;
+    std::string updatedAtUtc;
 };
 
 struct InstallerPackageSpec final {
@@ -257,6 +327,10 @@ struct DashboardSnapshot final {
     HostTelemetrySnapshot telemetry;
     std::vector<RuntimeEndpoint> endpoints;
     std::vector<ProviderConnection> providers;
+    std::vector<ProviderCapabilityDescriptor> providerCapabilities;
+    std::vector<ProviderCredentialStatus> providerCredentialStatuses;
+    std::vector<ProviderAssignmentTarget> providerAssignmentTargets;
+    std::vector<ProviderAssignment> providerAssignments;
     ResourceAllocationProfile resourceAllocation;
     SecuritySettings security;
     std::vector<InstallProvenance> installHistory;
@@ -276,18 +350,23 @@ struct AppConfiguration final {
     SecuritySettings security;
     ResourceAllocationProfile resourceAllocation;
     std::vector<ProviderConnection> providers;
+    std::vector<ProviderAssignment> providerAssignments;
     ManagedNodeProfile activeProfile;
 };
 
 std::string to_string(EndpointKind value);
 std::string to_string(EndpointStatus value);
 std::string to_string(ProviderKind value);
+std::string to_string(ProviderCredentialFieldKind value);
+std::string to_string(ProviderAssignmentTargetKind value);
 std::string to_string(InstallerKind value);
 std::string to_string(ControlSurfaceToolbarAction value);
 
 EndpointKind endpointKindFromString(const std::string& value);
 EndpointStatus endpointStatusFromString(const std::string& value);
 ProviderKind providerKindFromString(const std::string& value);
+ProviderCredentialFieldKind providerCredentialFieldKindFromString(const std::string& value);
+ProviderAssignmentTargetKind providerAssignmentTargetKindFromString(const std::string& value);
 InstallerKind installerKindFromString(const std::string& value);
 ControlSurfaceToolbarAction controlSurfaceToolbarActionFromString(const std::string& value);
 
@@ -299,6 +378,12 @@ void from_json(const nlohmann::json& json, EndpointStatus& value);
 
 void to_json(nlohmann::json& json, ProviderKind value);
 void from_json(const nlohmann::json& json, ProviderKind& value);
+
+void to_json(nlohmann::json& json, ProviderCredentialFieldKind value);
+void from_json(const nlohmann::json& json, ProviderCredentialFieldKind& value);
+
+void to_json(nlohmann::json& json, ProviderAssignmentTargetKind value);
+void from_json(const nlohmann::json& json, ProviderAssignmentTargetKind& value);
 
 void to_json(nlohmann::json& json, InstallerKind value);
 void from_json(const nlohmann::json& json, InstallerKind& value);
@@ -368,8 +453,65 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     kind,
     displayName,
     baseUrl,
+    modelId,
     enabled,
-    allowAutonomousControl)
+    allowAutonomousControl,
+    credentialsConfigured)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ProviderCredentialFieldDescriptor,
+    fieldId,
+    label,
+    kind,
+    helpText,
+    placeholder,
+    environmentVariableHint,
+    requirementGroup,
+    secret,
+    required)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ProviderCapabilityDescriptor,
+    moduleId,
+    providerId,
+    kind,
+    displayName,
+    description,
+    defaultBaseUrl,
+    recommendedModel,
+    credentialFields,
+    runtimeRequirements,
+    supportedTargets,
+    supportsSharedMcpAccess,
+    supportsAutonomousControl)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ProviderCredentialStatus,
+    providerId,
+    configured,
+    configuredFieldIds,
+    updatedAtUtc,
+    message)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ProviderCredentialUpdate,
+    providerId,
+    values)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ProviderAssignmentTarget,
+    targetId,
+    kind,
+    displayName,
+    description,
+    memberTargetIds)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ProviderAssignment,
+    targetId,
+    kind,
+    providerId,
+    updatedAtUtc)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     InstallerPackageSpec,
@@ -514,6 +656,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     telemetry,
     endpoints,
     providers,
+    providerCapabilities,
+    providerCredentialStatuses,
+    providerAssignmentTargets,
+    providerAssignments,
     resourceAllocation,
     security,
     installHistory,
@@ -533,6 +679,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     security,
     resourceAllocation,
     providers,
+    providerAssignments,
     activeProfile)
 
 } // namespace MasterControl

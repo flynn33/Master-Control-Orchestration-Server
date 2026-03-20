@@ -72,6 +72,29 @@ public:
     virtual ~IProviderRegistry() = default;
 };
 
+class IProviderCatalogService {
+public:
+    virtual std::vector<ProviderCapabilityDescriptor> listCapabilities() const = 0;
+    virtual void upsertCapability(const ProviderCapabilityDescriptor& capability) = 0;
+    virtual void removeCapability(const std::string& providerId) = 0;
+    virtual ~IProviderCatalogService() = default;
+};
+
+class IProviderCredentialStore {
+public:
+    virtual std::vector<ProviderCredentialStatus> listStatuses() const = 0;
+    virtual OperationResult upsertCredentials(const ProviderCredentialUpdate& update) = 0;
+    virtual ~IProviderCredentialStore() = default;
+};
+
+class IProviderAssignmentService {
+public:
+    virtual std::vector<ProviderAssignmentTarget> listTargets() const = 0;
+    virtual std::vector<ProviderAssignment> listAssignments() const = 0;
+    virtual OperationResult upsertAssignment(const ProviderAssignment& assignment) = 0;
+    virtual ~IProviderAssignmentService() = default;
+};
+
 class IExportService {
 public:
     virtual std::vector<ExportArtifact> generateExports() const = 0;
@@ -118,6 +141,8 @@ public:
     virtual OperationResult applyConfigurationJson(const std::string& requestBody,
                                                    bool confirmUnsafeChanges) = 0;
     virtual OperationResult upsertProviderJson(const std::string& requestBody) = 0;
+    virtual OperationResult upsertProviderCredentialsJson(const std::string& requestBody) = 0;
+    virtual OperationResult upsertProviderAssignmentJson(const std::string& requestBody) = 0;
     virtual OperationResult installPackageJson(const std::string& requestBody) = 0;
     virtual OperationResult installRepoJson(const std::string& requestBody) = 0;
     virtual OperationResult installZipJson(const std::string& requestBody) = 0;

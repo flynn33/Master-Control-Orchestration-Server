@@ -61,6 +61,30 @@ public:
     void stop(Forsetti::ForsettiContext& context) override;
 };
 
+class CodexProviderModule final : public Forsetti::IForsettiModule {
+public:
+    Forsetti::ModuleDescriptor descriptor() const override;
+    Forsetti::ModuleManifest manifest() const override;
+    void start(Forsetti::ForsettiContext& context) override;
+    void stop(Forsetti::ForsettiContext& context) override;
+};
+
+class ClaudeCodeProviderModule final : public Forsetti::IForsettiModule {
+public:
+    Forsetti::ModuleDescriptor descriptor() const override;
+    Forsetti::ModuleManifest manifest() const override;
+    void start(Forsetti::ForsettiContext& context) override;
+    void stop(Forsetti::ForsettiContext& context) override;
+};
+
+class XAIProviderModule final : public Forsetti::IForsettiModule {
+public:
+    Forsetti::ModuleDescriptor descriptor() const override;
+    Forsetti::ModuleManifest manifest() const override;
+    void start(Forsetti::ForsettiContext& context) override;
+    void stop(Forsetti::ForsettiContext& context) override;
+};
+
 class ExportModule final : public Forsetti::IForsettiModule {
 public:
     Forsetti::ModuleDescriptor descriptor() const override;

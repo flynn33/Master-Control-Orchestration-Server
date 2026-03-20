@@ -25,6 +25,7 @@
 #include <Windows.h>
 #include <iphlpapi.h>
 #include <urlmon.h>
+#include <wincrypt.h>
 
 #include <algorithm>
 #include <array>
@@ -131,6 +132,95 @@ std::string readTextFile(const std::filesystem::path& filePath) {
     return output.str();
 }
 
+std::string encodeBase64(const std::string& bytes) {
+    if (bytes.empty()) {
+        return {};
+    }
+
+    DWORD required = 0;
+    CryptBinaryToStringA(
+        reinterpret_cast<const BYTE*>(bytes.data()),
+        static_cast<DWORD>(bytes.size()),
+        CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF,
+        nullptr,
+        &required);
+
+    std::string encoded(static_cast<size_t>(required), '\0');
+    CryptBinaryToStringA(
+        reinterpret_cast<const BYTE*>(bytes.data()),
+        static_cast<DWORD>(bytes.size()),
+        CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF,
+        encoded.data(),
+        &required);
+
+    if (!encoded.empty() && encoded.back() == '\0') {
+        encoded.pop_back();
+    }
+    return encoded;
+}
+
+std::string decodeBase64(const std::string& text) {
+    if (text.empty()) {
+        return {};
+    }
+
+    DWORD required = 0;
+    CryptStringToBinaryA(
+        text.c_str(),
+        static_cast<DWORD>(text.size()),
+        CRYPT_STRING_BASE64,
+        nullptr,
+        &required,
+        nullptr,
+        nullptr);
+
+    std::string bytes(static_cast<size_t>(required), '\0');
+    CryptStringToBinaryA(
+        text.c_str(),
+        static_cast<DWORD>(text.size()),
+        CRYPT_STRING_BASE64,
+        reinterpret_cast<BYTE*>(bytes.data()),
+        &required,
+        nullptr,
+        nullptr);
+    return bytes;
+}
+
+std::string protectSecretPayload(const std::string& plainText) {
+    DATA_BLOB inputBlob{};
+    inputBlob.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(plainText.data()));
+    inputBlob.cbData = static_cast<DWORD>(plainText.size());
+
+    DATA_BLOB outputBlob{};
+    if (CryptProtectData(&inputBlob, L"MasterControlProviderCredentials", nullptr, nullptr, nullptr, 0, &outputBlob) == 0) {
+        throw std::runtime_error("Unable to protect provider credential payload.");
+    }
+
+    std::string protectedBytes(reinterpret_cast<const char*>(outputBlob.pbData), outputBlob.cbData);
+    LocalFree(outputBlob.pbData);
+    return encodeBase64(protectedBytes);
+}
+
+std::string unprotectSecretPayload(const std::string& protectedText) {
+    if (protectedText.empty()) {
+        return {};
+    }
+
+    const auto protectedBytes = decodeBase64(protectedText);
+    DATA_BLOB inputBlob{};
+    inputBlob.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(protectedBytes.data()));
+    inputBlob.cbData = static_cast<DWORD>(protectedBytes.size());
+
+    DATA_BLOB outputBlob{};
+    if (CryptUnprotectData(&inputBlob, nullptr, nullptr, nullptr, nullptr, 0, &outputBlob) == 0) {
+        throw std::runtime_error("Unable to unprotect provider credential payload.");
+    }
+
+    std::string plainText(reinterpret_cast<const char*>(outputBlob.pbData), outputBlob.cbData);
+    LocalFree(outputBlob.pbData);
+    return plainText;
+}
+
 std::string lowercase(std::string value) {
     std::transform(
         value.begin(),
@@ -209,6 +299,16 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     unlockedModuleIDs,
     unlockedProductIDs)
 
+struct ProviderCredentialsDocument final {
+    std::map<std::string, std::string> protectedPayloadsByProviderId;
+    std::map<std::string, std::string> updatedAtUtcByProviderId;
+};
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ProviderCredentialsDocument,
+    protectedPayloadsByProviderId,
+    updatedAtUtcByProviderId)
+
 EntitlementStateDocument buildDefaultEntitlementStateDocument() {
     return EntitlementStateDocument{
         {
@@ -216,6 +316,9 @@ EntitlementStateDocument buildDefaultEntitlementStateDocument() {
             "com.mastercontrol.host-telemetry",
             "com.mastercontrol.runtime-inventory",
             "com.mastercontrol.configuration",
+            "com.mastercontrol.provider-codex",
+            "com.mastercontrol.provider-claude-code",
+            "com.mastercontrol.provider-xai",
             "com.mastercontrol.dashboard-ui"
         },
         {
@@ -798,11 +901,48 @@ private:
     std::shared_ptr<SharedState> state_;
 };
 
+class ProviderCatalogService final : public IProviderCatalogService {
+public:
+    std::vector<ProviderCapabilityDescriptor> listCapabilities() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<ProviderCapabilityDescriptor> capabilities;
+        capabilities.reserve(capabilitiesById_.size());
+        for (const auto& [providerId, capability] : capabilitiesById_) {
+            capabilities.push_back(capability);
+        }
+
+        std::sort(
+            capabilities.begin(),
+            capabilities.end(),
+            [](const ProviderCapabilityDescriptor& left, const ProviderCapabilityDescriptor& right) {
+                return std::tie(left.displayName, left.providerId) < std::tie(right.displayName, right.providerId);
+            });
+        return capabilities;
+    }
+
+    void upsertCapability(const ProviderCapabilityDescriptor& capability) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        capabilitiesById_[capability.providerId] = capability;
+    }
+
+    void removeCapability(const std::string& providerId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        capabilitiesById_.erase(providerId);
+    }
+
+private:
+    mutable std::mutex mutex_;
+    std::map<std::string, ProviderCapabilityDescriptor> capabilitiesById_;
+};
+
 class ProviderRegistryService final : public IProviderRegistry {
 public:
-    ProviderRegistryService(std::shared_ptr<SharedState> state, std::filesystem::path configurationFile)
+    ProviderRegistryService(std::shared_ptr<SharedState> state,
+                            std::filesystem::path configurationFile,
+                            std::shared_ptr<IProviderCatalogService> providerCatalogService)
         : state_(std::move(state))
-        , configurationFile_(std::move(configurationFile)) {}
+        , configurationFile_(std::move(configurationFile))
+        , providerCatalogService_(std::move(providerCatalogService)) {}
 
     std::vector<ProviderConnection> listProviders() const override {
         std::lock_guard<std::mutex> lock(state_->mutex);
@@ -819,18 +959,31 @@ public:
         if (provider.baseUrl.empty() || isBlank(provider.baseUrl)) {
             return OperationResult{ false, false, "Provider base URL is required." };
         }
+        const auto capabilities = providerCatalogService_->listCapabilities();
+        const auto capabilityIterator = std::find_if(
+            capabilities.begin(),
+            capabilities.end(),
+            [&provider](const ProviderCapabilityDescriptor& capability) { return capability.kind == provider.kind; });
+        if (capabilityIterator == capabilities.end()) {
+            return OperationResult{ false, false, "The selected provider kind is not currently supported by an active provider module." };
+        }
 
         std::lock_guard<std::mutex> lock(state_->mutex);
         auto& providers = state_->configuration.providers;
+        ProviderConnection normalizedProvider = provider;
+        if (normalizedProvider.modelId.empty()) {
+            normalizedProvider.modelId = capabilityIterator->recommendedModel;
+        }
         const auto iterator = std::find_if(
             providers.begin(),
             providers.end(),
             [&provider](const ProviderConnection& candidate) { return candidate.id == provider.id; });
 
         if (iterator == providers.end()) {
-            providers.push_back(provider);
+            providers.push_back(normalizedProvider);
         } else {
-            *iterator = provider;
+            normalizedProvider.credentialsConfigured = iterator->credentialsConfigured;
+            *iterator = normalizedProvider;
         }
 
         writeJsonFile(configurationFile_, state_->configuration);
@@ -840,6 +993,296 @@ public:
 private:
     std::shared_ptr<SharedState> state_;
     std::filesystem::path configurationFile_;
+    std::shared_ptr<IProviderCatalogService> providerCatalogService_;
+};
+
+class ProviderCredentialStore final : public IProviderCredentialStore {
+public:
+    ProviderCredentialStore(std::filesystem::path filePath,
+                            std::shared_ptr<IProviderRegistry> providerRegistry,
+                            std::shared_ptr<IProviderCatalogService> providerCatalogService)
+        : filePath_(std::move(filePath))
+        , providerRegistry_(std::move(providerRegistry))
+        , providerCatalogService_(std::move(providerCatalogService)) {
+        if (!std::filesystem::exists(filePath_)) {
+            writeJsonFile(filePath_, ProviderCredentialsDocument{});
+        }
+    }
+
+    std::vector<ProviderCredentialStatus> listStatuses() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return loadStatusesLocked();
+    }
+
+    OperationResult upsertCredentials(const ProviderCredentialUpdate& update) override {
+        if (update.providerId.empty() || isBlank(update.providerId)) {
+            return OperationResult{ false, false, "Provider credentials must target a provider route." };
+        }
+
+        const auto providers = providerRegistry_->listProviders();
+        const auto providerIterator = std::find_if(
+            providers.begin(),
+            providers.end(),
+            [&update](const ProviderConnection& provider) { return provider.id == update.providerId; });
+        if (providerIterator == providers.end()) {
+            return OperationResult{ false, false, "Provider route was not found." };
+        }
+
+        const auto capabilities = providerCatalogService_->listCapabilities();
+        const auto capabilityIterator = std::find_if(
+            capabilities.begin(),
+            capabilities.end(),
+            [providerKind = providerIterator->kind](const ProviderCapabilityDescriptor& capability) {
+                return capability.kind == providerKind;
+            });
+        if (capabilityIterator == capabilities.end()) {
+            return OperationResult{ false, false, "Provider module metadata is not available for the selected route." };
+        }
+
+        for (const auto& field : capabilityIterator->credentialFields) {
+            if (field.required && field.requirementGroup.empty()) {
+                const auto iterator = update.values.find(field.fieldId);
+                if (iterator == update.values.end() || iterator->second.empty() || isBlank(iterator->second)) {
+                    return OperationResult{ false, false, field.label + " is required." };
+                }
+            }
+        }
+
+        std::set<std::string> requirementGroups;
+        for (const auto& field : capabilityIterator->credentialFields) {
+            if (!field.requirementGroup.empty()) {
+                requirementGroups.insert(field.requirementGroup);
+            }
+        }
+        for (const auto& requirementGroup : requirementGroups) {
+            bool satisfied = false;
+            for (const auto& field : capabilityIterator->credentialFields) {
+                if (field.requirementGroup != requirementGroup) {
+                    continue;
+                }
+
+                const auto iterator = update.values.find(field.fieldId);
+                if (iterator != update.values.end() && !iterator->second.empty() && !isBlank(iterator->second)) {
+                    satisfied = true;
+                    break;
+                }
+            }
+            if (!satisfied) {
+                return OperationResult{ false, false, "One of the required " + requirementGroup + " credentials must be provided." };
+            }
+        }
+
+        nlohmann::json payload = nlohmann::json::object();
+        for (const auto& [fieldId, value] : update.values) {
+            if (!value.empty() && !isBlank(value)) {
+                payload[fieldId] = value;
+            }
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto document = loadDocumentLocked();
+        document.protectedPayloadsByProviderId[update.providerId] = protectSecretPayload(payload.dump());
+        document.updatedAtUtcByProviderId[update.providerId] = timestampNowUtc();
+        writeJsonFile(filePath_, document);
+        return OperationResult{ true, false, "Provider credentials were saved to the local secure store." };
+    }
+
+private:
+    ProviderCredentialsDocument loadDocumentLocked() const {
+        const auto json = readJsonFile(filePath_);
+        if (json.is_null() || json.empty()) {
+            return {};
+        }
+        return json.get<ProviderCredentialsDocument>();
+    }
+
+    std::vector<ProviderCredentialStatus> loadStatusesLocked() const {
+        std::vector<ProviderCredentialStatus> statuses;
+        const auto document = loadDocumentLocked();
+        for (const auto& [providerId, protectedPayload] : document.protectedPayloadsByProviderId) {
+            ProviderCredentialStatus status;
+            status.providerId = providerId;
+            if (const auto updatedAtIterator = document.updatedAtUtcByProviderId.find(providerId);
+                updatedAtIterator != document.updatedAtUtcByProviderId.end()) {
+                status.updatedAtUtc = updatedAtIterator->second;
+            }
+
+            try {
+                const auto payload = nlohmann::json::parse(unprotectSecretPayload(protectedPayload));
+                status.configured = !payload.empty();
+                for (const auto& [fieldId, value] : payload.items()) {
+                    if (value.is_string() && !value.get<std::string>().empty()) {
+                        status.configuredFieldIds.push_back(fieldId);
+                    }
+                }
+                status.message = status.configured
+                    ? "Credentials are present in secure storage."
+                    : "No provider credentials are currently configured.";
+            } catch (...) {
+                status.configured = false;
+                status.message = "Stored credentials could not be read.";
+            }
+
+            statuses.push_back(std::move(status));
+        }
+        return statuses;
+    }
+
+    std::filesystem::path filePath_;
+    std::shared_ptr<IProviderRegistry> providerRegistry_;
+    std::shared_ptr<IProviderCatalogService> providerCatalogService_;
+    mutable std::mutex mutex_;
+};
+
+class ProviderAssignmentService final : public IProviderAssignmentService {
+public:
+    ProviderAssignmentService(std::shared_ptr<SharedState> state,
+                              std::filesystem::path configurationFile,
+                              std::shared_ptr<IRuntimeInventoryService> inventoryService,
+                              std::shared_ptr<IProviderRegistry> providerRegistry)
+        : state_(std::move(state))
+        , configurationFile_(std::move(configurationFile))
+        , inventoryService_(std::move(inventoryService))
+        , providerRegistry_(std::move(providerRegistry)) {}
+
+    std::vector<ProviderAssignmentTarget> listTargets() const override {
+        auto endpoints = inventoryService_->listEndpoints();
+        std::vector<ProviderAssignmentTarget> targets{
+            ProviderAssignmentTarget{
+                "planner",
+                ProviderAssignmentTargetKind::Role,
+                "Planner",
+                "Owns global planning and delivery sequencing.",
+                {}
+            },
+            ProviderAssignmentTarget{
+                "architect",
+                ProviderAssignmentTargetKind::Role,
+                "Architect",
+                "Owns solution architecture and design decisions.",
+                {}
+            }
+        };
+
+        ProviderAssignmentTarget specialistGroup;
+        specialistGroup.targetId = "coding-specialists";
+        specialistGroup.kind = ProviderAssignmentTargetKind::SubAgentGroup;
+        specialistGroup.displayName = "Coding Specialists";
+        specialistGroup.description = "Assign one provider across the current sub-agent specialist pool.";
+
+        for (const auto& endpoint : endpoints) {
+            if (endpoint.kind != EndpointKind::SubAgent) {
+                continue;
+            }
+
+            specialistGroup.memberTargetIds.push_back(endpoint.id);
+            targets.push_back(ProviderAssignmentTarget{
+                endpoint.id,
+                ProviderAssignmentTargetKind::SubAgent,
+                endpoint.displayName,
+                endpoint.description.empty() ? "Sub-agent route" : endpoint.description,
+                {}
+            });
+        }
+
+        if (!specialistGroup.memberTargetIds.empty()) {
+            targets.push_back(std::move(specialistGroup));
+        }
+
+        std::sort(
+            targets.begin(),
+            targets.end(),
+            [](const ProviderAssignmentTarget& left, const ProviderAssignmentTarget& right) {
+                return std::tie(left.kind, left.displayName, left.targetId) < std::tie(right.kind, right.displayName, right.targetId);
+            });
+        return targets;
+    }
+
+    std::vector<ProviderAssignment> listAssignments() const override {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        return state_->configuration.providerAssignments;
+    }
+
+    OperationResult upsertAssignment(const ProviderAssignment& assignment) override {
+        const auto targets = listTargets();
+        const auto targetIterator = std::find_if(
+            targets.begin(),
+            targets.end(),
+            [&assignment](const ProviderAssignmentTarget& target) { return target.targetId == assignment.targetId; });
+        if (targetIterator == targets.end()) {
+            return OperationResult{ false, false, "The requested orchestration target is not available." };
+        }
+
+        if (!assignment.providerId.empty()) {
+            const auto providers = providerRegistry_->listProviders();
+            const auto providerIterator = std::find_if(
+                providers.begin(),
+                providers.end(),
+                [&assignment](const ProviderConnection& provider) { return provider.id == assignment.providerId; });
+            if (providerIterator == providers.end()) {
+                return OperationResult{ false, false, "The selected provider route does not exist." };
+            }
+        }
+
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        auto& assignments = state_->configuration.providerAssignments;
+
+        auto clearTarget = [&assignments](const std::string& targetId) {
+            assignments.erase(
+                std::remove_if(
+                    assignments.begin(),
+                    assignments.end(),
+                    [&targetId](const ProviderAssignment& candidate) { return candidate.targetId == targetId; }),
+                assignments.end());
+        };
+
+        if (targetIterator->kind == ProviderAssignmentTargetKind::SubAgentGroup) {
+            for (const auto& memberTargetId : targetIterator->memberTargetIds) {
+                clearTarget(memberTargetId);
+                if (!assignment.providerId.empty()) {
+                    assignments.push_back(ProviderAssignment{
+                        memberTargetId,
+                        ProviderAssignmentTargetKind::SubAgent,
+                        assignment.providerId,
+                        timestampNowUtc()
+                    });
+                }
+            }
+
+            writeJsonFile(configurationFile_, state_->configuration);
+            const std::string verb = assignment.providerId.empty() ? "Cleared" : "Assigned";
+            return OperationResult{
+                true,
+                false,
+                verb + " " + std::to_string(targetIterator->memberTargetIds.size()) + " sub-agent routes for " + targetIterator->displayName + "."
+            };
+        }
+
+        clearTarget(assignment.targetId);
+        if (!assignment.providerId.empty()) {
+            assignments.push_back(ProviderAssignment{
+                assignment.targetId,
+                targetIterator->kind,
+                assignment.providerId,
+                timestampNowUtc()
+            });
+        }
+
+        writeJsonFile(configurationFile_, state_->configuration);
+        return OperationResult{
+            true,
+            false,
+            assignment.providerId.empty()
+                ? "Provider ownership was cleared."
+                : "Provider ownership was updated."
+        };
+    }
+
+private:
+    std::shared_ptr<SharedState> state_;
+    std::filesystem::path configurationFile_;
+    std::shared_ptr<IRuntimeInventoryService> inventoryService_;
+    std::shared_ptr<IProviderRegistry> providerRegistry_;
 };
 
 class InstallerOrchestrator final : public IInstallerOrchestrator, public IBootstrapRepoService, public IZipBundleService {
@@ -1367,11 +1810,13 @@ public:
     CommandLogicUnitService(std::filesystem::path profileFile,
                             std::shared_ptr<IConfigurationService> configurationService,
                             std::shared_ptr<IProviderRegistry> providerRegistry,
+                            std::shared_ptr<IProviderAssignmentService> providerAssignmentService,
                             std::shared_ptr<IInstallerOrchestrator> installerOrchestrator,
                             std::shared_ptr<IExportService> exportService)
         : profile_(loadProfile(std::move(profileFile)))
         , configurationService_(std::move(configurationService))
         , providerRegistry_(std::move(providerRegistry))
+        , providerAssignmentService_(std::move(providerAssignmentService))
         , installerOrchestrator_(std::move(installerOrchestrator))
         , exportService_(std::move(exportService)) {}
 
@@ -1388,6 +1833,7 @@ public:
 
         const auto configuration = configurationService_->current();
         const auto providers = providerRegistry_->listProviders();
+        const auto assignments = providerAssignmentService_->listAssignments();
         const auto installHistory = installerOrchestrator_->history();
         const auto exports = exportService_->generateExports();
 
@@ -1463,6 +1909,14 @@ public:
             snapshot.recommendedActions.push_back("Enable at least one provider route before expecting CLU-managed agent workflows to run.");
         }
 
+        if (!providers.empty() && assignments.empty()) {
+            appendFinding(
+                "CLU-C004",
+                "warning",
+                "Provider routes are configured, but no orchestration roles or sub-agents have been assigned to a provider owner yet.");
+            snapshot.recommendedActions.push_back("Assign planner, architect, or sub-agent ownership before expecting governed provider execution.");
+        }
+
         if (std::any_of(installHistory.begin(), installHistory.end(), [](const InstallProvenance& entry) { return !entry.trusted; })) {
             appendFinding(
                 "CLU-C005",
@@ -1524,6 +1978,7 @@ private:
     GovernanceProfile profile_;
     std::shared_ptr<IConfigurationService> configurationService_;
     std::shared_ptr<IProviderRegistry> providerRegistry_;
+    std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
     std::shared_ptr<IInstallerOrchestrator> installerOrchestrator_;
     std::shared_ptr<IExportService> exportService_;
 };
@@ -1714,6 +2169,9 @@ public:
                     std::shared_ptr<IRuntimeInventoryService> inventoryService,
                     std::shared_ptr<IConfigurationService> configurationService,
                     std::shared_ptr<IProviderRegistry> providerRegistry,
+                    std::shared_ptr<IProviderCatalogService> providerCatalogService,
+                    std::shared_ptr<IProviderCredentialStore> providerCredentialStore,
+                    std::shared_ptr<IProviderAssignmentService> providerAssignmentService,
                     std::shared_ptr<IInstallerOrchestrator> installerOrchestrator,
                     std::shared_ptr<IBootstrapRepoService> bootstrapRepoService,
                     std::shared_ptr<IZipBundleService> zipBundleService,
@@ -1724,6 +2182,9 @@ public:
         , inventoryService_(std::move(inventoryService))
         , configurationService_(std::move(configurationService))
         , providerRegistry_(std::move(providerRegistry))
+        , providerCatalogService_(std::move(providerCatalogService))
+        , providerCredentialStore_(std::move(providerCredentialStore))
+        , providerAssignmentService_(std::move(providerAssignmentService))
         , installerOrchestrator_(std::move(installerOrchestrator))
         , bootstrapRepoService_(std::move(bootstrapRepoService))
         , zipBundleService_(std::move(zipBundleService))
@@ -1738,6 +2199,18 @@ public:
         snapshot.telemetry = telemetryService_->captureSnapshot();
         snapshot.endpoints = inventoryService_->listEndpoints();
         snapshot.providers = providerRegistry_->listProviders();
+        snapshot.providerCapabilities = providerCatalogService_->listCapabilities();
+        snapshot.providerCredentialStatuses = providerCredentialStore_->listStatuses();
+        snapshot.providerAssignmentTargets = providerAssignmentService_->listTargets();
+        snapshot.providerAssignments = providerAssignmentService_->listAssignments();
+        for (auto& provider : snapshot.providers) {
+            const auto statusIterator = std::find_if(
+                snapshot.providerCredentialStatuses.begin(),
+                snapshot.providerCredentialStatuses.end(),
+                [&provider](const ProviderCredentialStatus& status) { return status.providerId == provider.id; });
+            provider.credentialsConfigured = statusIterator != snapshot.providerCredentialStatuses.end() &&
+                statusIterator->configured;
+        }
         snapshot.installHistory = installerOrchestrator_->history();
         snapshot.exports = exportService_->generateExports();
         const auto configuration = configurationService_->current();
@@ -1761,6 +2234,14 @@ public:
         return providerRegistry_->upsertProvider(nlohmann::json::parse(requestBody).get<ProviderConnection>());
     }
 
+    OperationResult upsertProviderCredentialsJson(const std::string& requestBody) override {
+        return providerCredentialStore_->upsertCredentials(nlohmann::json::parse(requestBody).get<ProviderCredentialUpdate>());
+    }
+
+    OperationResult upsertProviderAssignmentJson(const std::string& requestBody) override {
+        return providerAssignmentService_->upsertAssignment(nlohmann::json::parse(requestBody).get<ProviderAssignment>());
+    }
+
     OperationResult installPackageJson(const std::string& requestBody) override {
         return installerOrchestrator_->installPackage(nlohmann::json::parse(requestBody).get<InstallerPackageSpec>());
     }
@@ -1778,6 +2259,9 @@ private:
     std::shared_ptr<IRuntimeInventoryService> inventoryService_;
     std::shared_ptr<IConfigurationService> configurationService_;
     std::shared_ptr<IProviderRegistry> providerRegistry_;
+    std::shared_ptr<IProviderCatalogService> providerCatalogService_;
+    std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
+    std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
     std::shared_ptr<IInstallerOrchestrator> installerOrchestrator_;
     std::shared_ptr<IBootstrapRepoService> bootstrapRepoService_;
     std::shared_ptr<IZipBundleService> zipBundleService_;
@@ -2013,6 +2497,8 @@ public:
     DashboardSnapshot snapshot() { return adminApiService_->snapshot(); }
     OperationResult applyConfigurationJson(const std::string& requestBody, bool confirmUnsafeChanges) { return adminApiService_->applyConfigurationJson(requestBody, confirmUnsafeChanges); }
     OperationResult upsertProviderJson(const std::string& requestBody) { return adminApiService_->upsertProviderJson(requestBody); }
+    OperationResult upsertProviderCredentialsJson(const std::string& requestBody) { return adminApiService_->upsertProviderCredentialsJson(requestBody); }
+    OperationResult upsertProviderAssignmentJson(const std::string& requestBody) { return adminApiService_->upsertProviderAssignmentJson(requestBody); }
     OperationResult installPackageJson(const std::string& requestBody) { return adminApiService_->installPackageJson(requestBody); }
     OperationResult installRepoJson(const std::string& requestBody) { return adminApiService_->installRepoJson(requestBody); }
     OperationResult installZipJson(const std::string& requestBody) { return adminApiService_->installZipJson(requestBody); }
@@ -2040,6 +2526,9 @@ private:
     std::shared_ptr<IPackageTrustEvaluator> trustEvaluator_;
     std::shared_ptr<InstallerOrchestrator> installerOrchestrator_;
     std::shared_ptr<IProviderRegistry> providerRegistry_;
+    std::shared_ptr<IProviderCatalogService> providerCatalogService_;
+    std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
+    std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
     std::shared_ptr<IExportService> exportService_;
     std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService_;
     std::shared_ptr<IModuleControlSurfaceService> controlSurfaceService_;
@@ -2061,12 +2550,16 @@ bool MasterControlApplication::Impl::initialize() {
     inventoryService_ = std::make_shared<RuntimeInventoryService>(state_);
     trustEvaluator_ = std::make_shared<PackageTrustEvaluator>(state_);
     installerOrchestrator_ = std::make_shared<InstallerOrchestrator>(state_, trustEvaluator_, paths_);
-    providerRegistry_ = std::make_shared<ProviderRegistryService>(state_, paths_.configurationFile);
+    providerCatalogService_ = std::make_shared<ProviderCatalogService>();
+    providerRegistry_ = std::make_shared<ProviderRegistryService>(state_, paths_.configurationFile, providerCatalogService_);
+    providerCredentialStore_ = std::make_shared<ProviderCredentialStore>(paths_.providerCredentialsFile, providerRegistry_, providerCatalogService_);
+    providerAssignmentService_ = std::make_shared<ProviderAssignmentService>(state_, paths_.configurationFile, inventoryService_, providerRegistry_);
     exportService_ = std::make_shared<ExportService>(inventoryService_, configurationService_);
     commandLogicUnitService_ = std::make_shared<CommandLogicUnitService>(
         paths_.cluProfileFile,
         configurationService_,
         providerRegistry_,
+        providerAssignmentService_,
         installerOrchestrator_,
         exportService_);
     controlSurfaceService_ = std::make_shared<ModuleControlSurfaceService>();
@@ -2079,6 +2572,9 @@ bool MasterControlApplication::Impl::initialize() {
         inventoryService_,
         configurationService_,
         providerRegistry_,
+        providerCatalogService_,
+        providerCredentialStore_,
+        providerAssignmentService_,
         installerOrchestrator_,
         installerOrchestrator_,
         installerOrchestrator_,
@@ -2162,6 +2658,9 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
     services->registerService<IBootstrapRepoService>(installerOrchestrator_);
     services->registerService<IZipBundleService>(installerOrchestrator_);
     services->registerService<IProviderRegistry>(providerRegistry_);
+    services->registerService<IProviderCatalogService>(providerCatalogService_);
+    services->registerService<IProviderCredentialStore>(providerCredentialStore_);
+    services->registerService<IProviderAssignmentService>(providerAssignmentService_);
     services->registerService<IExportService>(exportService_);
     services->registerService<ICommandLogicUnitService>(commandLogicUnitService_);
     services->registerService<IModuleControlSurfaceService>(controlSurfaceService_);
@@ -2202,13 +2701,16 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
 }
 
 void MasterControlApplication::Impl::activateDefaultModules() {
-    static const std::array<const char*, 10> moduleIds = {
+    static const std::array<const char*, 13> moduleIds = {
         "com.mastercontrol.environment-discovery",
         "com.mastercontrol.host-telemetry",
         "com.mastercontrol.runtime-inventory",
         "com.mastercontrol.configuration",
         "com.mastercontrol.installer-import",
         "com.mastercontrol.provider-integration",
+        "com.mastercontrol.provider-codex",
+        "com.mastercontrol.provider-claude-code",
+        "com.mastercontrol.provider-xai",
         "com.mastercontrol.export",
         "com.mastercontrol.command-logic-unit",
         "com.mastercontrol.beacon-gateway",
@@ -2262,6 +2764,14 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "POST" && request.path == "/api/providers") {
             const auto result = adminApiService_->upsertProviderJson(request.body);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
+        if (request.method == "POST" && request.path == "/api/providers/credentials") {
+            const auto result = adminApiService_->upsertProviderCredentialsJson(request.body);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
+        if (request.method == "POST" && request.path == "/api/providers/assignments") {
+            const auto result = adminApiService_->upsertProviderAssignmentJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         if (request.method == "POST" && request.path == "/api/install/package") {
@@ -2336,6 +2846,14 @@ OperationResult MasterControlApplication::applyConfigurationJson(const std::stri
 
 OperationResult MasterControlApplication::upsertProviderJson(const std::string& requestBody) {
     return impl_->upsertProviderJson(requestBody);
+}
+
+OperationResult MasterControlApplication::upsertProviderCredentialsJson(const std::string& requestBody) {
+    return impl_->upsertProviderCredentialsJson(requestBody);
+}
+
+OperationResult MasterControlApplication::upsertProviderAssignmentJson(const std::string& requestBody) {
+    return impl_->upsertProviderAssignmentJson(requestBody);
 }
 
 OperationResult MasterControlApplication::installPackageJson(const std::string& requestBody) {

@@ -29,6 +29,8 @@ public:
     OperationResult applyConfigurationJson(const std::string& requestBody,
                                            bool confirmUnsafeChanges);
     OperationResult upsertProviderJson(const std::string& requestBody);
+    OperationResult upsertProviderCredentialsJson(const std::string& requestBody);
+    OperationResult upsertProviderAssignmentJson(const std::string& requestBody);
     OperationResult installPackageJson(const std::string& requestBody);
     OperationResult installRepoJson(const std::string& requestBody);
     OperationResult installZipJson(const std::string& requestBody);

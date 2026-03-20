@@ -130,6 +130,50 @@ bool hasProvider(const std::vector<MasterControl::ProviderConnection>& providers
         [&id](const MasterControl::ProviderConnection& provider) { return provider.id == id; });
 }
 
+bool hasProviderCapability(const std::vector<MasterControl::ProviderCapabilityDescriptor>& capabilities,
+                          const std::string& providerId) {
+    return std::any_of(
+        capabilities.begin(),
+        capabilities.end(),
+        [&providerId](const MasterControl::ProviderCapabilityDescriptor& capability) {
+            return capability.providerId == providerId;
+        });
+}
+
+std::optional<MasterControl::ProviderCredentialStatus> findCredentialStatus(
+    const std::vector<MasterControl::ProviderCredentialStatus>& statuses,
+    const std::string& providerId) {
+    const auto iterator = std::find_if(
+        statuses.begin(),
+        statuses.end(),
+        [&providerId](const MasterControl::ProviderCredentialStatus& status) { return status.providerId == providerId; });
+    if (iterator == statuses.end()) {
+        return std::nullopt;
+    }
+    return *iterator;
+}
+
+bool hasAssignmentTarget(const std::vector<MasterControl::ProviderAssignmentTarget>& targets,
+                         const std::string& targetId) {
+    return std::any_of(
+        targets.begin(),
+        targets.end(),
+        [&targetId](const MasterControl::ProviderAssignmentTarget& target) { return target.targetId == targetId; });
+}
+
+std::optional<MasterControl::ProviderAssignment> findAssignment(
+    const std::vector<MasterControl::ProviderAssignment>& assignments,
+    const std::string& targetId) {
+    const auto iterator = std::find_if(
+        assignments.begin(),
+        assignments.end(),
+        [&targetId](const MasterControl::ProviderAssignment& assignment) { return assignment.targetId == targetId; });
+    if (iterator == assignments.end()) {
+        return std::nullopt;
+    }
+    return *iterator;
+}
+
 std::optional<MasterControl::ProviderConnection> findProvider(
     const std::vector<MasterControl::ProviderConnection>& providers,
     const std::string& id) {
@@ -316,7 +360,7 @@ int main() {
     success &= expect(configuration.browserPort == 7300, "Default browser port should be 7300");
     success &= expect(configuration.activeProfile.preferredBindAddress == environment.preferredBindAddress, "Default profile should honor the detected bind address");
     success &= expect(!configuration.activeProfile.environmentName.empty(), "Default profile should describe the detected environment");
-    success &= expect(configuration.providers.size() >= 4, "Default providers should include named adapters");
+    success &= expect(configuration.providers.size() >= 3, "Default providers should include the supported named adapters");
 
     const auto gatewayEndpoint = findEndpoint(configuration.activeProfile.seededEndpoints, "aggregator-gateway");
     success &= expect(gatewayEndpoint.has_value(), "BLADE profile should include the aggregator gateway");
@@ -342,6 +386,9 @@ int main() {
             "com.mastercontrol.configuration",
             "com.mastercontrol.installer-import",
             "com.mastercontrol.provider-integration",
+            "com.mastercontrol.provider-codex",
+            "com.mastercontrol.provider-claude-code",
+            "com.mastercontrol.provider-xai",
             "com.mastercontrol.export",
             "com.mastercontrol.command-logic-unit",
             "com.mastercontrol.beacon-gateway"
@@ -376,6 +423,12 @@ int main() {
                 !snapshot.surface.viewInjectionsBySlot.at("overview").empty() &&
                 snapshot.surface.viewInjectionsBySlot.at("overview").front().viewID == "OverviewSectionView",
             "Forsetti overview slot should resolve to the overview section view");
+        success &= expect(hasProviderCapability(snapshot.providerCapabilities, "codex"), "Codex provider module should publish a capability descriptor.");
+        success &= expect(hasProviderCapability(snapshot.providerCapabilities, "claude-code"), "Claude Code provider module should publish a capability descriptor.");
+        success &= expect(hasProviderCapability(snapshot.providerCapabilities, "xai-grok"), "xAI provider module should publish a capability descriptor.");
+        success &= expect(hasAssignmentTarget(snapshot.providerAssignmentTargets, "planner"), "Provider assignment targets should include planner ownership.");
+        success &= expect(hasAssignmentTarget(snapshot.providerAssignmentTargets, "architect"), "Provider assignment targets should include architect ownership.");
+        success &= expect(hasAssignmentTarget(snapshot.providerAssignmentTargets, "coding-specialists"), "Provider assignment targets should include the coding specialist group.");
         success &= expect(
             hasNavigationDestination(snapshot.surface.overlaySchema, "clu"),
             "Forsetti overlay metadata should publish CLU navigation through the framework surface");
@@ -406,6 +459,9 @@ int main() {
                     "com.mastercontrol.host-telemetry",
                     "com.mastercontrol.runtime-inventory",
                     "com.mastercontrol.configuration",
+                    "com.mastercontrol.provider-codex",
+                    "com.mastercontrol.provider-claude-code",
+                    "com.mastercontrol.provider-xai",
                     "com.mastercontrol.dashboard-ui"
                 }) },
                 { "unlockedProductIDs", nlohmann::json::array({
@@ -439,6 +495,9 @@ int main() {
                     "com.mastercontrol.host-telemetry",
                     "com.mastercontrol.runtime-inventory",
                     "com.mastercontrol.configuration",
+                    "com.mastercontrol.provider-codex",
+                    "com.mastercontrol.provider-claude-code",
+                    "com.mastercontrol.provider-xai",
                     "com.mastercontrol.dashboard-ui"
                 }) },
                 { "unlockedProductIDs", nlohmann::json::array({
@@ -508,9 +567,10 @@ int main() {
 
         const auto providerUpsertResult = application.upsertProviderJson(nlohmann::json{
             { "id", "ops-provider" },
-            { "kind", "openai" },
+            { "kind", "xai" },
             { "displayName", "Operations Provider" },
             { "baseUrl", "https://ops.example.test/v1" },
+            { "modelId", "grok-code-fast-1" },
             { "enabled", true },
             { "allowAutonomousControl", true }
         }.dump());
@@ -525,7 +585,43 @@ int main() {
         success &= expect(
             upsertedProvider.has_value() && upsertedProvider->baseUrl == "https://ops.example.test/v1",
             "Provider upsert should persist the provider base URL");
-        success &= expect(snapshot.providers.size() >= 5, "Provider upsert should extend the provider registry");
+        success &= expect(
+            upsertedProvider.has_value() && upsertedProvider->modelId == "grok-code-fast-1",
+            "Provider upsert should persist the provider model selection");
+        success &= expect(snapshot.providers.size() >= 4, "Provider upsert should extend the provider registry");
+        const auto providerCredentialsResult = application.upsertProviderCredentialsJson(nlohmann::json{
+            { "providerId", "ops-provider" },
+            { "values", nlohmann::json{
+                { "xai_api_key", "test-xai-key" }
+            } }
+        }.dump());
+        success &= expect(providerCredentialsResult.succeeded, "Provider credentials should save through the secure store.");
+
+        const auto plannerAssignmentResult = application.upsertProviderAssignmentJson(nlohmann::json{
+            { "targetId", "planner" },
+            { "kind", "role" },
+            { "providerId", "ops-provider" }
+        }.dump());
+        success &= expect(plannerAssignmentResult.succeeded, "Planner ownership assignment should succeed.");
+
+        const auto groupAssignmentResult = application.upsertProviderAssignmentJson(nlohmann::json{
+            { "targetId", "coding-specialists" },
+            { "kind", "sub_agent_group" },
+            { "providerId", "ops-provider" }
+        }.dump());
+        success &= expect(groupAssignmentResult.succeeded, "Sub-agent group ownership assignment should fan out successfully.");
+
+        snapshot = application.snapshot();
+        const auto credentialStatus = findCredentialStatus(snapshot.providerCredentialStatuses, "ops-provider");
+        success &= expect(
+            credentialStatus.has_value() && credentialStatus->configured,
+            "Provider credential status should reflect the secure store update.");
+        success &= expect(
+            findAssignment(snapshot.providerAssignments, "planner").has_value(),
+            "Provider ownership assignments should be reflected in the runtime snapshot.");
+        success &= expect(
+            findAssignment(snapshot.providerAssignments, "sentinel").has_value(),
+            "Sub-agent group ownership should fan out to the live sub-agent pool.");
         success &= expect(hasExport(snapshot.exports, "master-control-gateway-profile.json"), "Exports should include the gateway profile");
 
         if (toolExists(L"pwsh.exe")) {

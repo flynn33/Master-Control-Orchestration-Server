@@ -15,6 +15,9 @@ $requiredModuleIDs = @(
     "com.mastercontrol.configuration",
     "com.mastercontrol.installer-import",
     "com.mastercontrol.provider-integration",
+    "com.mastercontrol.provider-codex",
+    "com.mastercontrol.provider-claude-code",
+    "com.mastercontrol.provider-xai",
     "com.mastercontrol.export",
     "com.mastercontrol.command-logic-unit",
     "com.mastercontrol.beacon-gateway",
@@ -116,6 +119,9 @@ if (-not (Test-Path $contractsPath)) {
     Assert-Contains $contracts 'IModuleControlSurfaceService' "MasterControlContracts.h must define a framework control-surface registry service."
     Assert-Contains $contracts 'upsertControlSurfaceRequest' "MasterControlContracts.h must let modules publish control-surface requests through the framework."
     Assert-Contains $contracts 'removeControlSurfaceRequestsForModule' "MasterControlContracts.h must let the framework remove all control requests for a module during lifecycle changes."
+    Assert-Contains $contracts 'IProviderCatalogService' "MasterControlContracts.h must define a provider capability catalog service."
+    Assert-Contains $contracts 'IProviderCredentialStore' "MasterControlContracts.h must define a provider credential store service."
+    Assert-Contains $contracts 'IProviderAssignmentService' "MasterControlContracts.h must define a provider ownership assignment service."
 }
 
 if (-not (Test-Path $modelsPath)) {
@@ -125,6 +131,8 @@ if (-not (Test-Path $modelsPath)) {
     Assert-Contains $models 'overlayRouteId' "MasterControlModels.h must let modules describe overlay routing requirements through the framework control contract."
     Assert-Contains $models 'registeredControlSurfaceRequests' "MasterControlModels.h must expose registered control-surface requests in the runtime surface snapshot."
     Assert-Contains $models 'publishedByModuleId' "MasterControlModels.h must expose which UI module registered the composed framework surface."
+    Assert-Contains $models 'ProviderCapabilityDescriptor' "MasterControlModels.h must expose provider capability descriptors through the framework data model."
+    Assert-Contains $models 'ProviderAssignment' "MasterControlModels.h must expose provider ownership assignments through the shared data model."
 }
 
 if (-not (Test-Path $webIndexPath)) {
@@ -168,6 +176,10 @@ if (-not (Test-Path $modulesCppPath)) {
     Assert-Contains $modulesCpp 'makeConfigurationControlSurfaceRequests' "ConfigurationModule must register its control-surface needs through the framework."
     Assert-Contains $modulesCpp 'makeInstallerImportControlSurfaceRequests' "InstallerImportModule must register its control-surface needs through the framework."
     Assert-Contains $modulesCpp 'makeProviderIntegrationControlSurfaceRequests' "ProviderIntegrationModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeCodexProviderControlSurfaceRequests' "CodexProviderModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeClaudeCodeProviderControlSurfaceRequests' "ClaudeCodeProviderModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeXAIProviderControlSurfaceRequests' "XAIProviderModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'registerProviderCapability' "Provider modules must publish their capability descriptors through the framework."
     Assert-Contains $modulesCpp 'makeExportControlSurfaceRequests' "ExportModule must register its control-surface needs through the framework."
     Assert-Contains $modulesCpp 'makeBeaconGatewayControlSurfaceRequests' "BeaconGatewayModule must register its control-surface needs through the framework."
     Assert-Contains $modulesCpp 'return Forsetti::UIContributions{};' "DashboardUIModule must bootstrap from framework control requests instead of shipping hardcoded UI contributions."
@@ -182,6 +194,10 @@ if (-not (Test-Path $runtimePath)) {
     Assert-Contains $runtime 'class FileBackedEntitlementProvider' "MasterControlRuntime.cpp must use a reconciled entitlement provider."
     Assert-Contains $runtime 'buildDefaultEntitlementStateDocument' "MasterControlRuntime.cpp must seed entitlement state for runtime reconciliation."
     Assert-Contains $runtime 'paths_.entitlementsFile' "MasterControlRuntime.cpp must use the app entitlement state file."
+    Assert-Contains $runtime 'paths_.providerCredentialsFile' "MasterControlRuntime.cpp must use the app provider credential state file."
+    Assert-Contains $runtime 'ProviderCatalogService' "MasterControlRuntime.cpp must host a provider capability catalog."
+    Assert-Contains $runtime 'ProviderCredentialStore' "MasterControlRuntime.cpp must host a secure provider credential store."
+    Assert-Contains $runtime 'ProviderAssignmentService' "MasterControlRuntime.cpp must host provider ownership assignment logic."
     Assert-NotContains $runtime 'AllowAllEntitlementProvider' "MasterControlRuntime.cpp must not bypass Forsetti entitlement gating with AllowAllEntitlementProvider."
 }
 

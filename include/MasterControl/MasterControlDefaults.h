@@ -25,6 +25,7 @@ struct AppPaths final {
     std::filesystem::path configurationFile;
     std::filesystem::path installHistoryFile;
     std::filesystem::path entitlementsFile;
+    std::filesystem::path providerCredentialsFile;
     std::filesystem::path manifestsDirectory;
     std::filesystem::path webRootDirectory;
     std::filesystem::path cluProfileFile;

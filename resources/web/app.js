@@ -130,6 +130,7 @@ function defaultProviderDraft() {
     id: '',
     displayName: '',
     baseUrl: '',
+    modelId: '',
     kind: 'generic',
     enabled: true,
     allowAutonomousControl: false
@@ -328,6 +329,10 @@ function dashboardSnapshot() {
     telemetry: state.dashboard?.telemetry || {},
     endpoints: safeArray(state.dashboard?.endpoints),
     providers: safeArray(state.dashboard?.providers),
+    providerCapabilities: safeArray(state.dashboard?.providerCapabilities),
+    providerCredentialStatuses: safeArray(state.dashboard?.providerCredentialStatuses),
+    providerAssignmentTargets: safeArray(state.dashboard?.providerAssignmentTargets),
+    providerAssignments: safeArray(state.dashboard?.providerAssignments),
     installHistory: safeArray(state.dashboard?.installHistory),
     exports: safeArray(state.dashboard?.exports)
   };
@@ -461,12 +466,35 @@ function providerKindOptions(selectedKind) {
   return [
     ['codex', 'Codex'],
     ['claude_code', 'Claude Code'],
-    ['openai', 'OpenAI / ChatGPT'],
     ['xai', 'xAI / Grok'],
     ['generic', 'Generic']
   ].map(([value, label]) => `
     <option value="${escapeHtml(value)}"${selectedAttr(value === selectedKind)}>${escapeHtml(label)}</option>
   `).join('');
+}
+
+function selectedProviderCapability() {
+  const snapshot = dashboardSnapshot();
+  const draft = state.providerDraft;
+  const provider = snapshot.providers.find((candidate) => candidate.id === draft.id);
+  const kind = provider?.kind || draft.kind;
+  return snapshot.providerCapabilities.find((capability) => capability.kind === kind) || null;
+}
+
+function selectedProviderCredentialStatus() {
+  const draft = state.providerDraft;
+  if (!draft.id) {
+    return null;
+  }
+  return dashboardSnapshot().providerCredentialStatuses.find((status) => status.providerId === draft.id) || null;
+}
+
+function providerDisplayNameById(providerId) {
+  return dashboardSnapshot().providers.find((provider) => provider.id === providerId)?.displayName || providerId;
+}
+
+function assignmentTargetLabel(targetId) {
+  return dashboardSnapshot().providerAssignmentTargets.find((target) => target.targetId === targetId)?.displayName || targetId;
 }
 
 function packageKindOptions(selectedKind) {
@@ -797,6 +825,9 @@ function renderProvidersView() {
   const config = currentConfig();
   const snapshot = dashboardSnapshot();
   const draft = state.providerDraft;
+  const capability = selectedProviderCapability();
+  const credentialStatus = selectedProviderCredentialStatus();
+  const credentialFields = capability?.credentialFields || [];
   const providersMarkup = snapshot.providers.length ? `
     <div class="provider-list">
       ${snapshot.providers.map((provider) => `
@@ -806,18 +837,74 @@ function renderProvidersView() {
           data-provider-id="${escapeHtml(provider.id)}">
           <strong>${escapeHtml(provider.displayName)}</strong>
           <div>${escapeHtml(provider.baseUrl)}</div>
-          <div>${escapeHtml(provider.kind)} | ${provider.enabled ? 'enabled' : 'disabled'} | autonomy ${provider.allowAutonomousControl ? 'on' : 'off'}</div>
+          <div>${escapeHtml(provider.kind)} | ${provider.enabled ? 'enabled' : 'disabled'} | autonomy ${provider.allowAutonomousControl ? 'on' : 'off'} | credentials ${provider.credentialsConfigured ? 'ready' : 'missing'}</div>
         </button>
       `).join('')}
     </div>
   ` : emptyState('No providers configured', 'Save a provider connection below to start routing AI services through the dashboard.');
+
+  const capabilitiesMarkup = snapshot.providerCapabilities.length ? `
+    <div class="history-list">
+      ${snapshot.providerCapabilities.map((item) => `
+        <article class="history-item">
+          <strong>${escapeHtml(item.displayName)}</strong>
+          <div>${escapeHtml(item.description || item.providerId)}</div>
+          <div>${escapeHtml(item.recommendedModel || 'model optional')} | ${escapeHtml((item.supportedTargets || []).join(', ') || 'no targets')}</div>
+        </article>
+      `).join('')}
+    </div>
+  ` : emptyState('No provider modules', 'Provider capabilities will appear here when Forsetti provider modules are active.');
+
+  const assignmentsMarkup = snapshot.providerAssignments.length ? `
+    <div class="history-list">
+      ${snapshot.providerAssignments.map((assignment) => `
+        <article class="history-item">
+          <strong>${escapeHtml(assignmentTargetLabel(assignment.targetId))}</strong>
+          <div>${escapeHtml(providerDisplayNameById(assignment.providerId))}</div>
+          <div>${escapeHtml(assignment.updatedAtUtc || 'pending')}</div>
+        </article>
+      `).join('')}
+    </div>
+  ` : emptyState('No provider ownership', 'Assign planner, architect, groups, or individual sub-agents to a provider owner.');
+
+  const assignmentTargetOptions = snapshot.providerAssignmentTargets.map((target) => `
+    <option value="${escapeHtml(target.targetId)}" data-kind="${escapeHtml(target.kind)}">
+      ${escapeHtml(target.displayName)}${target.kind === 'sub_agent_group' ? ` (${target.memberTargetIds.length} members)` : ''}
+    </option>
+  `).join('');
+
+  const assignmentProviderOptions = `
+    <option value="">(Unassigned)</option>
+    ${snapshot.providers.map((provider) => `
+      <option value="${escapeHtml(provider.id)}">${escapeHtml(provider.displayName)}</option>
+    `).join('')}
+  `;
+
+  const credentialFormMarkup = draft.id ? `
+    <form class="surface-form panel-block" data-form-kind="provider-credentials">
+      <p class="eyebrow">Secure Credentials</p>
+      <h3>${escapeHtml(draft.displayName || draft.id)}</h3>
+      <p class="narrative-copy">${escapeHtml(credentialStatus?.message || 'No credentials are stored yet for this route.')}</p>
+      ${credentialFields.length ? credentialFields.slice(0, 2).map((field) => `
+        <label>${escapeHtml(field.label)}
+          <input
+            name="credential:${escapeHtml(field.fieldId)}"
+            type="password"
+            placeholder="${escapeHtml(field.placeholder || 'Credential value')}">
+        </label>
+        <p class="form-help">${escapeHtml([field.helpText, field.environmentVariableHint ? `Env: ${field.environmentVariableHint}` : ''].filter(Boolean).join(' '))}</p>
+      `).join('') : '<p class="narrative-copy">The selected provider kind has no published credential requirements.</p>'}
+      <button type="submit"${credentialFields.length ? '' : ' disabled'}>Save Credentials</button>
+    </form>
+  ` : emptyState('Select a provider route', 'Save or select a provider route before entering credentials.');
 
   return `
     <section class="section-shell">
       <div class="card-grid">
         ${metricCard('Configured Providers', formatCount(snapshot.providers.length), 'service registry')}
         ${metricCard('Enabled Providers', formatCount(snapshot.providers.filter((provider) => provider.enabled).length), 'active routes')}
-        ${metricCard('Autonomous Providers', formatCount(snapshot.providers.filter((provider) => provider.allowAutonomousControl).length), 'self-configurable')}
+        ${metricCard('Credentialed Routes', formatCount(snapshot.providers.filter((provider) => provider.credentialsConfigured).length), 'secure store ready')}
+        ${metricCard('Owned Targets', formatCount(snapshot.providerAssignments.length), 'roles and sub-agents')}
         ${metricCard('Global AI Autonomy', config.aiAutonomyEnabled ? 'On' : 'Off', 'instance-wide switch')}
       </div>
 
@@ -848,6 +935,7 @@ function renderProvidersView() {
               <label>Provider ID<input name="id" value="${escapeHtml(draft.id)}" required></label>
               <label>Display Name<input name="displayName" value="${escapeHtml(draft.displayName)}" required></label>
               <label>Base URL<input name="baseUrl" value="${escapeHtml(draft.baseUrl)}" required></label>
+              <label>Model ID<input name="modelId" value="${escapeHtml(draft.modelId || '')}" placeholder="Recommended model or deployment name"></label>
               <label>Kind
                 <select name="kind">${providerKindOptions(draft.kind)}</select>
               </label>
@@ -865,7 +953,34 @@ function renderProvidersView() {
               <button type="button" class="route-button" data-action="reset-provider-draft">Clear Editor</button>
             </div>
           </form>
+
+          ${credentialFormMarkup}
+
+          <form class="surface-form panel-block" data-form-kind="provider-assignment">
+            <p class="eyebrow">Ownership Routing</p>
+            <h3>Role And Sub-Agent Ownership</h3>
+            <label>Target
+              <select name="targetId">${assignmentTargetOptions}</select>
+            </label>
+            <label>Owning Provider
+              <select name="providerId">${assignmentProviderOptions}</select>
+            </label>
+            <button type="submit">Save Ownership</button>
+          </form>
         </div>
+      </div>
+
+      <div class="split-grid">
+        <article class="panel-block">
+          <p class="eyebrow">Provider Modules</p>
+          <h3>Framework-Published Capabilities</h3>
+          ${capabilitiesMarkup}
+        </article>
+        <article class="panel-block">
+          <p class="eyebrow">Current Ownership</p>
+          <h3>Exclusive Control Map</h3>
+          ${assignmentsMarkup}
+        </article>
       </div>
     </section>
   `;
@@ -1269,6 +1384,7 @@ function applyProviderDraft(providerId) {
     id: provider.id,
     displayName: provider.displayName,
     baseUrl: provider.baseUrl,
+    modelId: provider.modelId || '',
     kind: provider.kind,
     enabled: provider.enabled,
     allowAutonomousControl: provider.allowAutonomousControl
@@ -1398,6 +1514,7 @@ async function submitProviderForm(form) {
         id: form.elements.id.value,
         displayName: form.elements.displayName.value,
         baseUrl: form.elements.baseUrl.value,
+        modelId: form.elements.modelId.value,
         kind: form.elements.kind.value,
         enabled: form.elements.enabled.checked,
         allowAutonomousControl: form.elements.allowAutonomousControl.checked
@@ -1405,6 +1522,53 @@ async function submitProviderForm(form) {
     });
     state.providerStatus = makeStatus(result.message, 'success');
     state.providerDraft = defaultProviderDraft();
+    await refreshDashboard({ preserveDynamicContent: false });
+  } catch (error) {
+    state.providerStatus = makeStatus(error.message, 'error');
+    renderShell();
+  }
+}
+
+async function submitProviderCredentialsForm(form) {
+  try {
+    const values = {};
+    for (const element of Array.from(form.elements)) {
+      if (!element?.name || !element.name.startsWith('credential:')) {
+        continue;
+      }
+      values[element.name.slice('credential:'.length)] = element.value;
+    }
+
+    const result = await loadJson('/api/providers/credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providerId: state.providerDraft.id,
+        values
+      })
+    });
+    state.providerStatus = makeStatus(result.message, 'success');
+    await refreshDashboard({ preserveDynamicContent: false });
+  } catch (error) {
+    state.providerStatus = makeStatus(error.message, 'error');
+    renderShell();
+  }
+}
+
+async function submitProviderAssignmentForm(form) {
+  try {
+    const targetSelect = form.elements.targetId;
+    const selectedOption = targetSelect.options[targetSelect.selectedIndex];
+    const result = await loadJson('/api/providers/assignments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetId: targetSelect.value,
+        kind: selectedOption?.dataset.kind || 'role',
+        providerId: form.elements.providerId.value
+      })
+    });
+    state.providerStatus = makeStatus(result.message, 'success');
     await refreshDashboard({ preserveDynamicContent: false });
   } catch (error) {
     state.providerStatus = makeStatus(error.message, 'error');
@@ -1543,6 +1707,14 @@ async function handleFormSubmit(event) {
   }
   if (kind === 'provider') {
     await submitProviderForm(form);
+    return;
+  }
+  if (kind === 'provider-credentials') {
+    await submitProviderCredentialsForm(form);
+    return;
+  }
+  if (kind === 'provider-assignment') {
+    await submitProviderAssignmentForm(form);
     return;
   }
   if (kind === 'package-install') {

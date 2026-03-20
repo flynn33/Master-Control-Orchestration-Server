@@ -25,10 +25,20 @@ struct ProvidersSectionControl : ProvidersSectionControlT<ProvidersSectionContro
                                        Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
     void ProviderToggle_Toggled(Windows::Foundation::IInspectable const&,
                                 Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void ProviderCredentialEditor_PasswordChanged(Windows::Foundation::IInspectable const&,
+                                                  Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void ProviderAssignmentTargetSelector_SelectionChanged(Windows::Foundation::IInspectable const&,
+                                                           Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
+    void ProviderAssignmentProviderSelector_SelectionChanged(Windows::Foundation::IInspectable const&,
+                                                             Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
     void AiAutonomyToggle_Toggled(Windows::Foundation::IInspectable const&,
                                   Microsoft::UI::Xaml::RoutedEventArgs const&);
     void SaveProviderButton_Click(Windows::Foundation::IInspectable const&,
                                   Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void SaveProviderCredentialsButton_Click(Windows::Foundation::IInspectable const&,
+                                             Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void SaveProviderAssignmentButton_Click(Windows::Foundation::IInspectable const&,
+                                            Microsoft::UI::Xaml::RoutedEventArgs const&);
     void NewProviderButton_Click(Windows::Foundation::IInspectable const&,
                                  Microsoft::UI::Xaml::RoutedEventArgs const&);
     void SaveAiAutonomyButton_Click(Windows::Foundation::IInspectable const&,
@@ -38,21 +48,32 @@ private:
     void PopulateProviderEditor(size_t index);
     void ClearProviderEditor();
     void RefreshProviderSelector();
+    void RefreshAssignmentSelectors();
+    void ApplyCredentialFields();
     void UpdateEditorState();
     void SetStatus(winrt::hstring const& message);
     std::optional<::MasterControlShell::ShellProviderConnection> BuildProviderFromEditor();
     winrt::Windows::Foundation::IAsyncAction SaveProviderAsync();
+    winrt::Windows::Foundation::IAsyncAction SaveProviderCredentialsAsync();
+    winrt::Windows::Foundation::IAsyncAction SaveProviderAssignmentAsync();
     winrt::Windows::Foundation::IAsyncAction SaveAiAutonomyAsync();
 
     ::MasterControlShell::ShellRuntime* runtime_ = nullptr;
     std::function<void()> refreshRequested_;
     std::vector<::MasterControlShell::ShellProviderConnection> providers_;
+    std::vector<::MasterControlShell::ShellProviderCapability> providerCapabilities_;
+    std::vector<::MasterControlShell::ShellProviderCredentialStatus> providerCredentialStatuses_;
+    std::vector<::MasterControlShell::ShellProviderAssignmentTarget> providerAssignmentTargets_;
+    std::vector<::MasterControlShell::ShellProviderAssignment> providerAssignments_;
     bool aiAutonomyEnabled_ = false;
     bool providerDirty_ = false;
+    bool providerCredentialsDirty_ = false;
+    bool providerAssignmentDirty_ = false;
     bool autonomyDirty_ = false;
     bool suspendDirtyTracking_ = false;
     int selectedProviderIndex_ = -1;
     std::wstring selectedProviderId_;
+    int selectedAssignmentTargetIndex_ = -1;
 };
 
 } // namespace winrt::MasterControlShell::implementation
