@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.9",
-  "current_tag": "v0.1.9",
+  "current_version": "0.1.10",
+  "current_tag": "v0.1.10",
   "released_at": "2026-03-20",
-  "last_release_commit": "3f37114808f9055f479d868cc176c6a3e6eaf1c5",
+  "last_release_commit": "a15cf77da38a268075bed9b53495f67b89c08f49",
   "history": [
+    {
+      "version": "0.1.10",
+      "tag": "v0.1.10",
+      "released_at": "2026-03-20",
+      "commit": "a15cf77da38a268075bed9b53495f67b89c08f49",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add custom MCP server authoring workflows (flynn33)"
+      ]
+    },
     {
       "version": "0.1.9",
       "tag": "v0.1.9",

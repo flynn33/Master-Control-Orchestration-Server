@@ -1,6 +1,6 @@
 # Master Control Program Versions
 
-- Current release: `v0.1.9`
+- Current release: `v0.1.10`
 - Release date: `2026-03-20`
 - Summary: Automated patch release for Master Control Program.
 

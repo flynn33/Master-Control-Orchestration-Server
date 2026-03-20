@@ -5,6 +5,13 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.1.10] - 2026-03-20
+### Summary
+Automated patch release for Master Control Program.
+
+### Included Changes
+- Add custom MCP server authoring workflows (flynn33)
+
 ## [0.1.9] - 2026-03-20
 ### Summary
 Automated patch release for Master Control Program.
