@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.8",
-  "current_tag": "v0.1.8",
+  "current_version": "0.1.9",
+  "current_tag": "v0.1.9",
   "released_at": "2026-03-20",
-  "last_release_commit": "57db0cb27708ba767f57191a6739c974c15eb8a6",
+  "last_release_commit": "3f37114808f9055f479d868cc176c6a3e6eaf1c5",
   "history": [
+    {
+      "version": "0.1.9",
+      "tag": "v0.1.9",
+      "released_at": "2026-03-20",
+      "commit": "3f37114808f9055f479d868cc176c6a3e6eaf1c5",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add custom sub-agent authoring workflows (flynn33)"
+      ]
+    },
     {
       "version": "0.1.8",
       "tag": "v0.1.8",
