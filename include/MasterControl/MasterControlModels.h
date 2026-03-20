@@ -78,6 +78,13 @@ enum class ControlSurfaceToolbarAction {
     OpenOverlay
 };
 
+enum class PlatformTarget {
+    Windows,
+    MacOS,
+    IOS,
+    Unknown
+};
+
 struct HostTelemetrySnapshot final {
     double cpuPercent = 0.0;
     double memoryPercent = 0.0;
@@ -333,6 +340,35 @@ struct GovernanceProfile final {
     std::vector<std::string> operatorChecklist;
 };
 
+struct PlatformGatewayDescriptor final {
+    std::string moduleId;
+    std::string serviceId;
+    PlatformTarget platform = PlatformTarget::Unknown;
+    std::string displayName;
+    std::string serviceType;
+    std::string instanceLabel;
+    std::string hostName;
+    std::string ipAddress;
+    uint16_t port = 0;
+    std::string gatewayPath;
+    std::string configPath;
+    std::map<std::string, std::string> properties;
+    std::string status = "unknown";
+    bool lanAdvertisementEnabled = true;
+};
+
+struct GovernanceServerDescriptor final {
+    std::string moduleId;
+    std::string serviceId;
+    PlatformTarget platform = PlatformTarget::Unknown;
+    std::string displayName;
+    std::string gatewayServiceId;
+    std::string routePath;
+    std::vector<std::string> toolIds;
+    bool requiresRemoteToolchain = false;
+    std::string status = "unknown";
+};
+
 struct GovernanceSnapshot final {
     std::string unitName;
     std::string posture;
@@ -344,6 +380,8 @@ struct GovernanceSnapshot final {
     std::vector<GovernanceFinding> findings;
     std::vector<std::string> operatorChecklist;
     std::vector<std::string> recommendedActions;
+    std::vector<PlatformGatewayDescriptor> platformGateways;
+    std::vector<GovernanceServerDescriptor> governanceServers;
 };
 
 struct ModuleControlSurfaceRequest final {
@@ -393,6 +431,7 @@ struct BeaconAdvertisement final {
     uint16_t browserPort = 0;
     uint16_t gatewayPort = 0;
     std::string status = "online";
+    std::vector<PlatformGatewayDescriptor> platformGateways;
 };
 
 struct DashboardSnapshot final {
@@ -411,6 +450,8 @@ struct DashboardSnapshot final {
     std::vector<InstallProvenance> installHistory;
     std::vector<ExportArtifact> exports;
     GovernanceSnapshot governance;
+    std::vector<PlatformGatewayDescriptor> platformGateways;
+    std::vector<GovernanceServerDescriptor> governanceServers;
     ForsettiSurfaceSnapshot surface;
 };
 
@@ -439,6 +480,7 @@ std::string to_string(ProviderExecutionStatus value);
 std::string to_string(ProviderExecutionTransport value);
 std::string to_string(InstallerKind value);
 std::string to_string(ControlSurfaceToolbarAction value);
+std::string to_string(PlatformTarget value);
 
 EndpointKind endpointKindFromString(const std::string& value);
 EndpointStatus endpointStatusFromString(const std::string& value);
@@ -449,6 +491,7 @@ ProviderExecutionStatus providerExecutionStatusFromString(const std::string& val
 ProviderExecutionTransport providerExecutionTransportFromString(const std::string& value);
 InstallerKind installerKindFromString(const std::string& value);
 ControlSurfaceToolbarAction controlSurfaceToolbarActionFromString(const std::string& value);
+PlatformTarget platformTargetFromString(const std::string& value);
 
 void to_json(nlohmann::json& json, EndpointKind value);
 void from_json(const nlohmann::json& json, EndpointKind& value);
@@ -476,6 +519,9 @@ void from_json(const nlohmann::json& json, InstallerKind& value);
 
 void to_json(nlohmann::json& json, ControlSurfaceToolbarAction value);
 void from_json(const nlohmann::json& json, ControlSurfaceToolbarAction& value);
+
+void to_json(nlohmann::json& json, PlatformTarget value);
+void from_json(const nlohmann::json& json, PlatformTarget& value);
 
 std::string toPrettyJson(const nlohmann::json& json);
 std::string timestampNowUtc();
@@ -746,7 +792,38 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     rules,
     findings,
     operatorChecklist,
-    recommendedActions)
+    recommendedActions,
+    platformGateways,
+    governanceServers)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    PlatformGatewayDescriptor,
+    moduleId,
+    serviceId,
+    platform,
+    displayName,
+    serviceType,
+    instanceLabel,
+    hostName,
+    ipAddress,
+    port,
+    gatewayPath,
+    configPath,
+    properties,
+    status,
+    lanAdvertisementEnabled)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceServerDescriptor,
+    moduleId,
+    serviceId,
+    platform,
+    displayName,
+    gatewayServiceId,
+    routePath,
+    toolIds,
+    requiresRemoteToolchain,
+    status)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ModuleControlSurfaceRequest,
@@ -795,7 +872,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ipAddress,
     browserPort,
     gatewayPort,
-    status)
+    status,
+    platformGateways)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     DashboardSnapshot,
@@ -814,6 +892,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     installHistory,
     exports,
     governance,
+    platformGateways,
+    governanceServers,
     surface)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(

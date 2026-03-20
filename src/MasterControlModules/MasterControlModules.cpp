@@ -301,6 +301,120 @@ std::vector<ModuleControlSurfaceRequest> makeBeaconGatewayControlSurfaceRequests
     };
 }
 
+std::vector<ModuleControlSurfaceRequest> makeWindowsGatewayControlSurfaceRequests() {
+    return {
+        ModuleControlSurfaceRequest{
+            "com.mastercontrol.gateway-windows",
+            "windows-gateway-runtime",
+            "Windows Gateway",
+            "runtime",
+            "RuntimeSection",
+            "antenna.radiowaves.left.and.right",
+            {},
+            ControlSurfaceToolbarAction::Navigate,
+            Forsetti::OverlayPresentation::Sheet,
+            false,
+            false,
+            34
+        }
+    };
+}
+
+std::vector<ModuleControlSurfaceRequest> makeMacGatewayControlSurfaceRequests() {
+    return {
+        ModuleControlSurfaceRequest{
+            "com.mastercontrol.gateway-macos",
+            "mac-gateway-runtime",
+            "Mac Gateway",
+            "runtime",
+            "RuntimeSection",
+            "antenna.radiowaves.left.and.right",
+            {},
+            ControlSurfaceToolbarAction::Navigate,
+            Forsetti::OverlayPresentation::Sheet,
+            false,
+            false,
+            35
+        }
+    };
+}
+
+std::vector<ModuleControlSurfaceRequest> makeIOSGatewayControlSurfaceRequests() {
+    return {
+        ModuleControlSurfaceRequest{
+            "com.mastercontrol.gateway-ios",
+            "ios-gateway-runtime",
+            "iOS Gateway",
+            "runtime",
+            "RuntimeSection",
+            "antenna.radiowaves.left.and.right",
+            {},
+            ControlSurfaceToolbarAction::Navigate,
+            Forsetti::OverlayPresentation::Sheet,
+            false,
+            false,
+            36
+        }
+    };
+}
+
+std::vector<ModuleControlSurfaceRequest> makeWindowsGovernanceControlSurfaceRequests() {
+    return {
+        ModuleControlSurfaceRequest{
+            "com.mastercontrol.governance-windows",
+            "windows-governance-clu",
+            "Windows Governance",
+            "clu",
+            "GovernanceSection",
+            "shield",
+            {},
+            ControlSurfaceToolbarAction::Navigate,
+            Forsetti::OverlayPresentation::Sheet,
+            false,
+            false,
+            91
+        }
+    };
+}
+
+std::vector<ModuleControlSurfaceRequest> makeMacGovernanceControlSurfaceRequests() {
+    return {
+        ModuleControlSurfaceRequest{
+            "com.mastercontrol.governance-macos",
+            "mac-governance-clu",
+            "Mac Governance",
+            "clu",
+            "GovernanceSection",
+            "shield",
+            {},
+            ControlSurfaceToolbarAction::Navigate,
+            Forsetti::OverlayPresentation::Sheet,
+            false,
+            false,
+            92
+        }
+    };
+}
+
+std::vector<ModuleControlSurfaceRequest> makeIOSGovernanceControlSurfaceRequests() {
+    return {
+        ModuleControlSurfaceRequest{
+            "com.mastercontrol.governance-ios",
+            "ios-governance-clu",
+            "iOS Governance",
+            "clu",
+            "GovernanceSection",
+            "shield",
+            {},
+            ControlSurfaceToolbarAction::Navigate,
+            Forsetti::OverlayPresentation::Sheet,
+            false,
+            false,
+            93
+        }
+    };
+}
+
 void registerControlSurfaceRequests(Forsetti::ForsettiContext& context,
                                     const std::vector<ModuleControlSurfaceRequest>& requests) {
     const auto controlSurfaceService = context.services()->resolve<IModuleControlSurfaceService>();
@@ -412,6 +526,84 @@ void unregisterProviderExecution(Forsetti::ForsettiContext& context,
         {
             { "moduleID", moduleId },
             { "providerID", providerId },
+            { "action", "remove" }
+        },
+        moduleId
+    });
+}
+
+void registerPlatformGateway(Forsetti::ForsettiContext& context,
+                             const PlatformGatewayDescriptor& descriptor) {
+    const auto catalog = context.services()->resolve<IPlatformServiceCatalogService>();
+    if (!catalog) {
+        return;
+    }
+
+    catalog->upsertGateway(descriptor);
+    context.publishFrameworkEvent(Forsetti::ForsettiEvent{
+        "mastercontrol.platform.gateway.changed",
+        {
+            { "moduleID", descriptor.moduleId },
+            { "serviceID", descriptor.serviceId },
+            { "action", "upsert" }
+        },
+        descriptor.moduleId
+    });
+}
+
+void unregisterPlatformGateway(Forsetti::ForsettiContext& context,
+                               const std::string& moduleId,
+                               const std::string& serviceId) {
+    const auto catalog = context.services()->resolve<IPlatformServiceCatalogService>();
+    if (!catalog) {
+        return;
+    }
+
+    catalog->removeGateway(moduleId);
+    context.publishFrameworkEvent(Forsetti::ForsettiEvent{
+        "mastercontrol.platform.gateway.changed",
+        {
+            { "moduleID", moduleId },
+            { "serviceID", serviceId },
+            { "action", "remove" }
+        },
+        moduleId
+    });
+}
+
+void registerGovernanceServer(Forsetti::ForsettiContext& context,
+                              const GovernanceServerDescriptor& descriptor) {
+    const auto catalog = context.services()->resolve<IPlatformServiceCatalogService>();
+    if (!catalog) {
+        return;
+    }
+
+    catalog->upsertGovernanceServer(descriptor);
+    context.publishFrameworkEvent(Forsetti::ForsettiEvent{
+        "mastercontrol.platform.governance.changed",
+        {
+            { "moduleID", descriptor.moduleId },
+            { "serviceID", descriptor.serviceId },
+            { "action", "upsert" }
+        },
+        descriptor.moduleId
+    });
+}
+
+void unregisterGovernanceServer(Forsetti::ForsettiContext& context,
+                                const std::string& moduleId,
+                                const std::string& serviceId) {
+    const auto catalog = context.services()->resolve<IPlatformServiceCatalogService>();
+    if (!catalog) {
+        return;
+    }
+
+    catalog->removeGovernanceServer(moduleId);
+    context.publishFrameworkEvent(Forsetti::ForsettiEvent{
+        "mastercontrol.platform.governance.changed",
+        {
+            { "moduleID", moduleId },
+            { "serviceID", serviceId },
             { "action", "remove" }
         },
         moduleId
@@ -573,6 +765,132 @@ ProviderExecutionRegistration makeXAIProviderExecutionRegistration() {
         ProviderExecutionTransport::OpenAICompatibleChat,
         true,
         false
+    };
+}
+
+PlatformGatewayDescriptor makeWindowsGatewayDescriptor() {
+    return PlatformGatewayDescriptor{
+        "com.mastercontrol.gateway-windows",
+        "windows-gateway",
+        PlatformTarget::Windows,
+        "Windows Gateway",
+        "_mastercontrol-windows._tcp.local",
+        "Master Control Windows Gateway",
+        "",
+        "",
+        0,
+        "/mcp/gateway/windows",
+        "/api/platform-services/config/windows",
+        {
+            { "platform", "windows" },
+            { "config_path", "/api/platform-services/config/windows" },
+            { "gateway_path", "/mcp/gateway/windows" }
+        },
+        "starting",
+        true
+    };
+}
+
+PlatformGatewayDescriptor makeMacGatewayDescriptor() {
+    return PlatformGatewayDescriptor{
+        "com.mastercontrol.gateway-macos",
+        "mac-gateway",
+        PlatformTarget::MacOS,
+        "Mac Gateway",
+        "_mastercontrol-macos._tcp.local",
+        "Master Control Mac Gateway",
+        "",
+        "",
+        0,
+        "/mcp/gateway/macos",
+        "/api/platform-services/config/macos",
+        {
+            { "platform", "macos" },
+            { "config_path", "/api/platform-services/config/macos" },
+            { "gateway_path", "/mcp/gateway/macos" }
+        },
+        "starting",
+        true
+    };
+}
+
+PlatformGatewayDescriptor makeIOSGatewayDescriptor() {
+    return PlatformGatewayDescriptor{
+        "com.mastercontrol.gateway-ios",
+        "ios-gateway",
+        PlatformTarget::IOS,
+        "iOS Gateway",
+        "_mastercontrol-ios._tcp.local",
+        "Master Control iOS Gateway",
+        "",
+        "",
+        0,
+        "/mcp/gateway/ios",
+        "/api/platform-services/config/ios",
+        {
+            { "platform", "ios" },
+            { "config_path", "/api/platform-services/config/ios" },
+            { "gateway_path", "/mcp/gateway/ios" }
+        },
+        "starting",
+        true
+    };
+}
+
+GovernanceServerDescriptor makeWindowsGovernanceServerDescriptor() {
+    return GovernanceServerDescriptor{
+        "com.mastercontrol.governance-windows",
+        "windows-governance",
+        PlatformTarget::Windows,
+        "Windows Governance MCP Server",
+        "windows-gateway",
+        "/mcp/governance/windows",
+        {
+            "forsetti.windows.manifest.validate",
+            "forsetti.windows.architecture.validate",
+            "forsetti.windows.module-boundary.inspect",
+            "forsetti.windows.package.validate"
+        },
+        false,
+        "online"
+    };
+}
+
+GovernanceServerDescriptor makeMacGovernanceServerDescriptor() {
+    return GovernanceServerDescriptor{
+        "com.mastercontrol.governance-macos",
+        "mac-governance",
+        PlatformTarget::MacOS,
+        "Mac Governance MCP Server",
+        "mac-gateway",
+        "/mcp/governance/macos",
+        {
+            "forsetti.macos.manifest.validate",
+            "forsetti.macos.project-layout.inspect",
+            "forsetti.macos.toolchain.route",
+            "forsetti.macos.remote-build.validate"
+        },
+        true,
+        "online"
+    };
+}
+
+GovernanceServerDescriptor makeIOSGovernanceServerDescriptor() {
+    return GovernanceServerDescriptor{
+        "com.mastercontrol.governance-ios",
+        "ios-governance",
+        PlatformTarget::IOS,
+        "iOS Governance MCP Server",
+        "ios-gateway",
+        "/mcp/governance/ios",
+        {
+            "forsetti.ios.manifest.validate",
+            "forsetti.ios.project-layout.inspect",
+            "forsetti.ios.signing.route",
+            "forsetti.ios.remote-build.validate"
+        },
+        true,
+        "online"
     };
 }
 
@@ -1029,6 +1347,162 @@ void CommandLogicUnitModule::stop(Forsetti::ForsettiContext& context) {
     publishLifecycleEvent(context, "mastercontrol.clu.stopped", descriptor().moduleID);
 }
 
+Forsetti::ModuleDescriptor WindowsGatewayModule::descriptor() const {
+    return makeDescriptor("com.mastercontrol.gateway-windows", "Windows Gateway", Forsetti::ModuleType::Service);
+}
+
+Forsetti::ModuleManifest WindowsGatewayModule::manifest() const {
+    return makeManifest(
+        "com.mastercontrol.gateway-windows",
+        "Windows Gateway",
+        Forsetti::ModuleType::Service,
+        { Forsetti::Capability::Networking, Forsetti::Capability::EventPublishing },
+        "mastercontrol.iap.gateway-windows",
+        "WindowsGatewayModule");
+}
+
+void WindowsGatewayModule::start(Forsetti::ForsettiContext& context) {
+    registerControlSurfaceRequests(context, makeWindowsGatewayControlSurfaceRequests());
+    registerPlatformGateway(context, makeWindowsGatewayDescriptor());
+    publishLifecycleEvent(context, "mastercontrol.gateway.windows.started", descriptor().moduleID);
+}
+
+void WindowsGatewayModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterPlatformGateway(context, descriptor().moduleID, "windows-gateway");
+    unregisterControlSurfaceRequests(context, descriptor().moduleID);
+    publishLifecycleEvent(context, "mastercontrol.gateway.windows.stopped", descriptor().moduleID);
+}
+
+Forsetti::ModuleDescriptor MacGatewayModule::descriptor() const {
+    return makeDescriptor("com.mastercontrol.gateway-macos", "Mac Gateway", Forsetti::ModuleType::Service);
+}
+
+Forsetti::ModuleManifest MacGatewayModule::manifest() const {
+    return makeManifest(
+        "com.mastercontrol.gateway-macos",
+        "Mac Gateway",
+        Forsetti::ModuleType::Service,
+        { Forsetti::Capability::Networking, Forsetti::Capability::EventPublishing },
+        "mastercontrol.iap.gateway-macos",
+        "MacGatewayModule");
+}
+
+void MacGatewayModule::start(Forsetti::ForsettiContext& context) {
+    registerControlSurfaceRequests(context, makeMacGatewayControlSurfaceRequests());
+    registerPlatformGateway(context, makeMacGatewayDescriptor());
+    publishLifecycleEvent(context, "mastercontrol.gateway.macos.started", descriptor().moduleID);
+}
+
+void MacGatewayModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterPlatformGateway(context, descriptor().moduleID, "mac-gateway");
+    unregisterControlSurfaceRequests(context, descriptor().moduleID);
+    publishLifecycleEvent(context, "mastercontrol.gateway.macos.stopped", descriptor().moduleID);
+}
+
+Forsetti::ModuleDescriptor IOSGatewayModule::descriptor() const {
+    return makeDescriptor("com.mastercontrol.gateway-ios", "iOS Gateway", Forsetti::ModuleType::Service);
+}
+
+Forsetti::ModuleManifest IOSGatewayModule::manifest() const {
+    return makeManifest(
+        "com.mastercontrol.gateway-ios",
+        "iOS Gateway",
+        Forsetti::ModuleType::Service,
+        { Forsetti::Capability::Networking, Forsetti::Capability::EventPublishing },
+        "mastercontrol.iap.gateway-ios",
+        "IOSGatewayModule");
+}
+
+void IOSGatewayModule::start(Forsetti::ForsettiContext& context) {
+    registerControlSurfaceRequests(context, makeIOSGatewayControlSurfaceRequests());
+    registerPlatformGateway(context, makeIOSGatewayDescriptor());
+    publishLifecycleEvent(context, "mastercontrol.gateway.ios.started", descriptor().moduleID);
+}
+
+void IOSGatewayModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterPlatformGateway(context, descriptor().moduleID, "ios-gateway");
+    unregisterControlSurfaceRequests(context, descriptor().moduleID);
+    publishLifecycleEvent(context, "mastercontrol.gateway.ios.stopped", descriptor().moduleID);
+}
+
+Forsetti::ModuleDescriptor WindowsGovernanceMcpServerModule::descriptor() const {
+    return makeDescriptor("com.mastercontrol.governance-windows", "Windows Governance MCP Server", Forsetti::ModuleType::Service);
+}
+
+Forsetti::ModuleManifest WindowsGovernanceMcpServerModule::manifest() const {
+    return makeManifest(
+        "com.mastercontrol.governance-windows",
+        "Windows Governance MCP Server",
+        Forsetti::ModuleType::Service,
+        { Forsetti::Capability::Networking, Forsetti::Capability::Telemetry, Forsetti::Capability::EventPublishing },
+        "mastercontrol.iap.governance-windows",
+        "WindowsGovernanceMcpServerModule");
+}
+
+void WindowsGovernanceMcpServerModule::start(Forsetti::ForsettiContext& context) {
+    registerControlSurfaceRequests(context, makeWindowsGovernanceControlSurfaceRequests());
+    registerGovernanceServer(context, makeWindowsGovernanceServerDescriptor());
+    publishLifecycleEvent(context, "mastercontrol.governance.windows.started", descriptor().moduleID);
+}
+
+void WindowsGovernanceMcpServerModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterGovernanceServer(context, descriptor().moduleID, "windows-governance");
+    unregisterControlSurfaceRequests(context, descriptor().moduleID);
+    publishLifecycleEvent(context, "mastercontrol.governance.windows.stopped", descriptor().moduleID);
+}
+
+Forsetti::ModuleDescriptor MacGovernanceMcpServerModule::descriptor() const {
+    return makeDescriptor("com.mastercontrol.governance-macos", "Mac Governance MCP Server", Forsetti::ModuleType::Service);
+}
+
+Forsetti::ModuleManifest MacGovernanceMcpServerModule::manifest() const {
+    return makeManifest(
+        "com.mastercontrol.governance-macos",
+        "Mac Governance MCP Server",
+        Forsetti::ModuleType::Service,
+        { Forsetti::Capability::Networking, Forsetti::Capability::SecureStorage, Forsetti::Capability::EventPublishing },
+        "mastercontrol.iap.governance-macos",
+        "MacGovernanceMcpServerModule");
+}
+
+void MacGovernanceMcpServerModule::start(Forsetti::ForsettiContext& context) {
+    registerControlSurfaceRequests(context, makeMacGovernanceControlSurfaceRequests());
+    registerGovernanceServer(context, makeMacGovernanceServerDescriptor());
+    publishLifecycleEvent(context, "mastercontrol.governance.macos.started", descriptor().moduleID);
+}
+
+void MacGovernanceMcpServerModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterGovernanceServer(context, descriptor().moduleID, "mac-governance");
+    unregisterControlSurfaceRequests(context, descriptor().moduleID);
+    publishLifecycleEvent(context, "mastercontrol.governance.macos.stopped", descriptor().moduleID);
+}
+
+Forsetti::ModuleDescriptor IOSGovernanceMcpServerModule::descriptor() const {
+    return makeDescriptor("com.mastercontrol.governance-ios", "iOS Governance MCP Server", Forsetti::ModuleType::Service);
+}
+
+Forsetti::ModuleManifest IOSGovernanceMcpServerModule::manifest() const {
+    return makeManifest(
+        "com.mastercontrol.governance-ios",
+        "iOS Governance MCP Server",
+        Forsetti::ModuleType::Service,
+        { Forsetti::Capability::Networking, Forsetti::Capability::SecureStorage, Forsetti::Capability::EventPublishing },
+        "mastercontrol.iap.governance-ios",
+        "IOSGovernanceMcpServerModule");
+}
+
+void IOSGovernanceMcpServerModule::start(Forsetti::ForsettiContext& context) {
+    registerControlSurfaceRequests(context, makeIOSGovernanceControlSurfaceRequests());
+    registerGovernanceServer(context, makeIOSGovernanceServerDescriptor());
+    publishLifecycleEvent(context, "mastercontrol.governance.ios.started", descriptor().moduleID);
+}
+
+void IOSGovernanceMcpServerModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterGovernanceServer(context, descriptor().moduleID, "ios-governance");
+    unregisterControlSurfaceRequests(context, descriptor().moduleID);
+    publishLifecycleEvent(context, "mastercontrol.governance.ios.stopped", descriptor().moduleID);
+}
+
 Forsetti::ModuleDescriptor BeaconGatewayModule::descriptor() const {
     return makeDescriptor("com.mastercontrol.beacon-gateway", "Beacon Gateway", Forsetti::ModuleType::Service);
 }
@@ -1127,6 +1601,24 @@ void registerMasterControlModules(Forsetti::ModuleRegistry& registry) {
     });
     registry.registerModule("CommandLogicUnitModule", []() -> std::unique_ptr<Forsetti::IForsettiModule> {
         return std::make_unique<CommandLogicUnitModule>();
+    });
+    registry.registerModule("WindowsGatewayModule", []() -> std::unique_ptr<Forsetti::IForsettiModule> {
+        return std::make_unique<WindowsGatewayModule>();
+    });
+    registry.registerModule("MacGatewayModule", []() -> std::unique_ptr<Forsetti::IForsettiModule> {
+        return std::make_unique<MacGatewayModule>();
+    });
+    registry.registerModule("IOSGatewayModule", []() -> std::unique_ptr<Forsetti::IForsettiModule> {
+        return std::make_unique<IOSGatewayModule>();
+    });
+    registry.registerModule("WindowsGovernanceMcpServerModule", []() -> std::unique_ptr<Forsetti::IForsettiModule> {
+        return std::make_unique<WindowsGovernanceMcpServerModule>();
+    });
+    registry.registerModule("MacGovernanceMcpServerModule", []() -> std::unique_ptr<Forsetti::IForsettiModule> {
+        return std::make_unique<MacGovernanceMcpServerModule>();
+    });
+    registry.registerModule("IOSGovernanceMcpServerModule", []() -> std::unique_ptr<Forsetti::IForsettiModule> {
+        return std::make_unique<IOSGovernanceMcpServerModule>();
     });
     registry.registerModule("BeaconGatewayModule", []() -> std::unique_ptr<Forsetti::IForsettiModule> {
         return std::make_unique<BeaconGatewayModule>();

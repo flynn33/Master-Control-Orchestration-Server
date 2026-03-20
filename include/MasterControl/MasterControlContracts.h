@@ -175,6 +175,17 @@ public:
     virtual ~IBeaconService() = default;
 };
 
+class IPlatformServiceCatalogService {
+public:
+    virtual void upsertGateway(const PlatformGatewayDescriptor& descriptor) = 0;
+    virtual void removeGateway(const std::string& moduleId) = 0;
+    virtual std::vector<PlatformGatewayDescriptor> listGateways() const = 0;
+    virtual void upsertGovernanceServer(const GovernanceServerDescriptor& descriptor) = 0;
+    virtual void removeGovernanceServer(const std::string& moduleId) = 0;
+    virtual std::vector<GovernanceServerDescriptor> listGovernanceServers() const = 0;
+    virtual ~IPlatformServiceCatalogService() = default;
+};
+
 class IAdminApiService {
 public:
     virtual DashboardSnapshot snapshot() = 0;

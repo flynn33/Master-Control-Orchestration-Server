@@ -24,6 +24,7 @@ target_link_libraries(MasterControlApp PUBLIC
     advapi32
     crypt32
     winhttp
+    dnsapi
     shlwapi
     shell32
 )

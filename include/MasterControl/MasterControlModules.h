@@ -101,6 +101,54 @@ public:
     void stop(Forsetti::ForsettiContext& context) override;
 };
 
+class WindowsGatewayModule final : public Forsetti::IForsettiModule {
+public:
+    Forsetti::ModuleDescriptor descriptor() const override;
+    Forsetti::ModuleManifest manifest() const override;
+    void start(Forsetti::ForsettiContext& context) override;
+    void stop(Forsetti::ForsettiContext& context) override;
+};
+
+class MacGatewayModule final : public Forsetti::IForsettiModule {
+public:
+    Forsetti::ModuleDescriptor descriptor() const override;
+    Forsetti::ModuleManifest manifest() const override;
+    void start(Forsetti::ForsettiContext& context) override;
+    void stop(Forsetti::ForsettiContext& context) override;
+};
+
+class IOSGatewayModule final : public Forsetti::IForsettiModule {
+public:
+    Forsetti::ModuleDescriptor descriptor() const override;
+    Forsetti::ModuleManifest manifest() const override;
+    void start(Forsetti::ForsettiContext& context) override;
+    void stop(Forsetti::ForsettiContext& context) override;
+};
+
+class WindowsGovernanceMcpServerModule final : public Forsetti::IForsettiModule {
+public:
+    Forsetti::ModuleDescriptor descriptor() const override;
+    Forsetti::ModuleManifest manifest() const override;
+    void start(Forsetti::ForsettiContext& context) override;
+    void stop(Forsetti::ForsettiContext& context) override;
+};
+
+class MacGovernanceMcpServerModule final : public Forsetti::IForsettiModule {
+public:
+    Forsetti::ModuleDescriptor descriptor() const override;
+    Forsetti::ModuleManifest manifest() const override;
+    void start(Forsetti::ForsettiContext& context) override;
+    void stop(Forsetti::ForsettiContext& context) override;
+};
+
+class IOSGovernanceMcpServerModule final : public Forsetti::IForsettiModule {
+public:
+    Forsetti::ModuleDescriptor descriptor() const override;
+    Forsetti::ModuleManifest manifest() const override;
+    void start(Forsetti::ForsettiContext& context) override;
+    void stop(Forsetti::ForsettiContext& context) override;
+};
+
 class BeaconGatewayModule final : public Forsetti::IForsettiModule {
 public:
     Forsetti::ModuleDescriptor descriptor() const override;

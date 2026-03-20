@@ -151,6 +151,106 @@ std::string httpStatusReason(const int statusCode) {
     }
 }
 
+struct ParsedHttpUrl final {
+    std::string host;
+    uint16_t port = 80;
+    std::string path = "/";
+};
+
+std::optional<ParsedHttpUrl> parseHttpUrl(const std::string& url) {
+    const std::string scheme = "http://";
+    if (url.rfind(scheme, 0) != 0) {
+        return std::nullopt;
+    }
+
+    const auto hostStart = scheme.size();
+    const auto pathStart = url.find('/', hostStart);
+    const auto authority = pathStart == std::string::npos
+        ? url.substr(hostStart)
+        : url.substr(hostStart, pathStart - hostStart);
+
+    ParsedHttpUrl parsed;
+    parsed.path = pathStart == std::string::npos ? "/" : url.substr(pathStart);
+
+    const auto colon = authority.rfind(':');
+    if (colon == std::string::npos) {
+        parsed.host = authority;
+    } else {
+        parsed.host = authority.substr(0, colon);
+        parsed.port = static_cast<uint16_t>(std::stoi(authority.substr(colon + 1)));
+    }
+
+    if (parsed.host.empty()) {
+        return std::nullopt;
+    }
+    return parsed;
+}
+
+std::optional<nlohmann::json> httpGetJson(const std::string& url) {
+    const auto parsed = parseHttpUrl(url);
+    if (!parsed.has_value()) {
+        return std::nullopt;
+    }
+
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    addrinfo* results = nullptr;
+    if (getaddrinfo(parsed->host.c_str(), std::to_string(parsed->port).c_str(), &hints, &results) != 0) {
+        return std::nullopt;
+    }
+
+    SOCKET socketHandle = INVALID_SOCKET;
+    for (auto* candidate = results; candidate != nullptr; candidate = candidate->ai_next) {
+        socketHandle = socket(candidate->ai_family, candidate->ai_socktype, candidate->ai_protocol);
+        if (socketHandle == INVALID_SOCKET) {
+            continue;
+        }
+        if (connect(socketHandle, candidate->ai_addr, static_cast<int>(candidate->ai_addrlen)) == 0) {
+            break;
+        }
+        closesocket(socketHandle);
+        socketHandle = INVALID_SOCKET;
+    }
+    freeaddrinfo(results);
+
+    if (socketHandle == INVALID_SOCKET) {
+        return std::nullopt;
+    }
+
+    std::ostringstream requestStream;
+    requestStream << "GET " << parsed->path << " HTTP/1.1\r\n"
+                  << "Host: " << parsed->host << ':' << parsed->port << "\r\n"
+                  << "Connection: close\r\n\r\n";
+    const auto requestText = requestStream.str();
+    if (send(socketHandle, requestText.data(), static_cast<int>(requestText.size()), 0) == SOCKET_ERROR) {
+        closesocket(socketHandle);
+        return std::nullopt;
+    }
+
+    std::string response;
+    char buffer[4096]{};
+    int bytesReceived = 0;
+    while ((bytesReceived = recv(socketHandle, buffer, sizeof(buffer), 0)) > 0) {
+        response.append(buffer, static_cast<size_t>(bytesReceived));
+    }
+    closesocket(socketHandle);
+
+    const auto headerEnd = response.find("\r\n\r\n");
+    if (headerEnd == std::string::npos) {
+        return std::nullopt;
+    }
+
+    const auto body = response.substr(headerEnd + 4);
+    try {
+        return nlohmann::json::parse(body);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
 class SimpleHttpServer final {
 public:
     using Handler = std::function<TestHttpResponse(const TestHttpRequest&)>;
@@ -425,6 +525,32 @@ bool hasProvider(const std::vector<MasterControl::ProviderConnection>& providers
         providers.begin(),
         providers.end(),
         [&id](const MasterControl::ProviderConnection& provider) { return provider.id == id; });
+}
+
+std::optional<MasterControl::PlatformGatewayDescriptor> findPlatformGateway(
+    const std::vector<MasterControl::PlatformGatewayDescriptor>& gateways,
+    MasterControl::PlatformTarget platform) {
+    const auto iterator = std::find_if(
+        gateways.begin(),
+        gateways.end(),
+        [platform](const MasterControl::PlatformGatewayDescriptor& gateway) { return gateway.platform == platform; });
+    if (iterator == gateways.end()) {
+        return std::nullopt;
+    }
+    return *iterator;
+}
+
+std::optional<MasterControl::GovernanceServerDescriptor> findGovernanceServer(
+    const std::vector<MasterControl::GovernanceServerDescriptor>& governanceServers,
+    MasterControl::PlatformTarget platform) {
+    const auto iterator = std::find_if(
+        governanceServers.begin(),
+        governanceServers.end(),
+        [platform](const MasterControl::GovernanceServerDescriptor& descriptor) { return descriptor.platform == platform; });
+    if (iterator == governanceServers.end()) {
+        return std::nullopt;
+    }
+    return *iterator;
 }
 
 bool hasProviderCapability(const std::vector<MasterControl::ProviderCapabilityDescriptor>& capabilities,
@@ -716,6 +842,12 @@ int main() {
             "com.mastercontrol.provider-xai",
             "com.mastercontrol.export",
             "com.mastercontrol.command-logic-unit",
+            "com.mastercontrol.gateway-windows",
+            "com.mastercontrol.gateway-macos",
+            "com.mastercontrol.gateway-ios",
+            "com.mastercontrol.governance-windows",
+            "com.mastercontrol.governance-macos",
+            "com.mastercontrol.governance-ios",
             "com.mastercontrol.beacon-gateway"
         };
         success &= expect(!snapshot.endpoints.empty(), "Snapshot should include endpoints");
@@ -737,6 +869,32 @@ int main() {
         success &= expect(
             hasControlRequestsForModules(snapshot.surface.registeredControlSurfaceRequests, controlSurfaceModuleIds),
             "Every service module should register its control-surface needs with the framework");
+        success &= expect(snapshot.platformGateways.size() == 3, "Snapshot should publish three platform gateway services.");
+        success &= expect(snapshot.governanceServers.size() == 3, "Snapshot should publish three platform governance services.");
+        success &= expect(
+            findPlatformGateway(snapshot.platformGateways, MasterControl::PlatformTarget::Windows).has_value() &&
+                findPlatformGateway(snapshot.platformGateways, MasterControl::PlatformTarget::Windows)->serviceType == "_mastercontrol-windows._tcp.local",
+            "Windows clients should have a distinct DNS-SD gateway service.");
+        success &= expect(
+            findPlatformGateway(snapshot.platformGateways, MasterControl::PlatformTarget::MacOS).has_value() &&
+                findPlatformGateway(snapshot.platformGateways, MasterControl::PlatformTarget::MacOS)->serviceType == "_mastercontrol-macos._tcp.local",
+            "Mac clients should have a distinct DNS-SD gateway service.");
+        success &= expect(
+            findPlatformGateway(snapshot.platformGateways, MasterControl::PlatformTarget::IOS).has_value() &&
+                findPlatformGateway(snapshot.platformGateways, MasterControl::PlatformTarget::IOS)->serviceType == "_mastercontrol-ios._tcp.local",
+            "iOS clients should have a distinct DNS-SD gateway service.");
+        success &= expect(
+            findGovernanceServer(snapshot.governanceServers, MasterControl::PlatformTarget::Windows).has_value() &&
+                !findGovernanceServer(snapshot.governanceServers, MasterControl::PlatformTarget::Windows)->requiresRemoteToolchain,
+            "Windows governance should run locally without a remote Apple toolchain dependency.");
+        success &= expect(
+            findGovernanceServer(snapshot.governanceServers, MasterControl::PlatformTarget::MacOS).has_value() &&
+                findGovernanceServer(snapshot.governanceServers, MasterControl::PlatformTarget::MacOS)->requiresRemoteToolchain,
+            "Mac governance should declare its remote Apple toolchain dependency.");
+        success &= expect(
+            findGovernanceServer(snapshot.governanceServers, MasterControl::PlatformTarget::IOS).has_value() &&
+                findGovernanceServer(snapshot.governanceServers, MasterControl::PlatformTarget::IOS)->requiresRemoteToolchain,
+            "iOS governance should declare its remote Apple toolchain dependency.");
         success &= expect(
             snapshot.surface.publishedByModuleId == "com.mastercontrol.dashboard-ui",
             "The dashboard UI module should publish the composed framework surface");
@@ -774,6 +932,38 @@ int main() {
         success &= expect(
             hasOverlayRouteId(snapshot.surface.overlaySchema, "exports-overlay"),
             "Forsetti overlay metadata should publish the exports overlay route");
+        success &= expect(
+            snapshot.governance.platformGateways.size() == 3 && snapshot.governance.governanceServers.size() == 3,
+            "CLU should be aware of all platform gateway and governance server lanes.");
+
+        const auto platformServicesDocument = httpGetJson(application.browserUrl() + "api/platform-services");
+        success &= expect(platformServicesDocument.has_value(), "The browser admin server should expose platform service inventory.");
+        success &= expect(
+            platformServicesDocument.has_value() &&
+                platformServicesDocument->contains("gateways") &&
+                (*platformServicesDocument)["gateways"].is_array() &&
+                (*platformServicesDocument)["gateways"].size() == 3,
+            "Platform service inventory should enumerate the three gateway services.");
+        const auto windowsConfigDocument = httpGetJson(application.browserUrl() + "api/platform-services/config/windows");
+        success &= expect(windowsConfigDocument.has_value(), "Windows platform config should be reachable from the browser admin server.");
+        success &= expect(
+            windowsConfigDocument.has_value() &&
+                (*windowsConfigDocument).value("platform", "") == "windows" &&
+                (*windowsConfigDocument).value("serviceId", "") == "windows-gateway",
+            "Windows platform config should describe the Windows gateway.");
+        const auto macGatewayDocument = httpGetJson(application.browserUrl() + "mcp/gateway/macos");
+        success &= expect(macGatewayDocument.has_value(), "Mac gateway lane should be reachable from the browser admin server.");
+        success &= expect(
+            macGatewayDocument.has_value() &&
+                (*macGatewayDocument).value("service", "") == "platform-gateway" &&
+                (*macGatewayDocument).contains("configuration"),
+            "Mac gateway route should return gateway metadata and client configuration.");
+        const auto iosGovernanceDocument = httpGetJson(application.browserUrl() + "mcp/governance/ios");
+        success &= expect(iosGovernanceDocument.has_value(), "iOS governance lane should be reachable from the browser admin server.");
+        success &= expect(
+            iosGovernanceDocument.has_value() &&
+                (*iosGovernanceDocument).value("requiresRemoteToolchain", false),
+            "iOS governance route should report that it depends on remote Apple infrastructure.");
 
         success &= expect(std::filesystem::exists(appPaths.entitlementsFile), "The runtime should seed an entitlement state file");
         writeTextFile(
@@ -793,6 +983,12 @@ int main() {
                     "mastercontrol.iap.installer-import",
                     "mastercontrol.iap.provider-integration",
                     "mastercontrol.iap.export",
+                    "mastercontrol.iap.gateway-windows",
+                    "mastercontrol.iap.gateway-macos",
+                    "mastercontrol.iap.gateway-ios",
+                    "mastercontrol.iap.governance-windows",
+                    "mastercontrol.iap.governance-macos",
+                    "mastercontrol.iap.governance-ios",
                     "mastercontrol.iap.beacon-gateway"
                 }) }
             }.dump(2));
@@ -830,6 +1026,12 @@ int main() {
                     "mastercontrol.iap.provider-integration",
                     "mastercontrol.iap.export",
                     "mastercontrol.iap.command-logic-unit",
+                    "mastercontrol.iap.gateway-windows",
+                    "mastercontrol.iap.gateway-macos",
+                    "mastercontrol.iap.gateway-ios",
+                    "mastercontrol.iap.governance-windows",
+                    "mastercontrol.iap.governance-macos",
+                    "mastercontrol.iap.governance-ios",
                     "mastercontrol.iap.beacon-gateway"
                 }) }
             }.dump(2));

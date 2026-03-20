@@ -27,6 +27,7 @@
 #include <urlmon.h>
 #include <wincrypt.h>
 #include <winhttp.h>
+#include <windns.h>
 
 #include <algorithm>
 #include <array>
@@ -696,6 +697,65 @@ struct SharedState final {
     std::vector<ProviderExecutionRecord> providerExecutionHistory;
 };
 
+std::string platformKey(const PlatformTarget platform) {
+    switch (platform) {
+        case PlatformTarget::Windows: return "windows";
+        case PlatformTarget::MacOS: return "macos";
+        case PlatformTarget::IOS: return "ios";
+        case PlatformTarget::Unknown: break;
+    }
+    return "unknown";
+}
+
+std::string dotLocalHostName(std::string hostName) {
+    hostName = trimCopy(std::move(hostName));
+    if (hostName.empty()) {
+        return "localhost.local";
+    }
+    if (hostName.find('.') == std::string::npos) {
+        hostName += ".local";
+    }
+    return hostName;
+}
+
+std::string platformGatewayConfigPath(const PlatformTarget platform) {
+    return "/api/platform-services/config/" + platformKey(platform);
+}
+
+std::string platformGatewayRoutePath(const PlatformTarget platform) {
+    return "/mcp/gateway/" + platformKey(platform);
+}
+
+std::string governanceRoutePath(const PlatformTarget platform) {
+    return "/mcp/governance/" + platformKey(platform);
+}
+
+PlatformTarget platformFromKey(const std::string& value) {
+    if (startsWithInsensitive(value, "windows")) {
+        return PlatformTarget::Windows;
+    }
+    if (startsWithInsensitive(value, "macos") || startsWithInsensitive(value, "mac")) {
+        return PlatformTarget::MacOS;
+    }
+    if (startsWithInsensitive(value, "ios")) {
+        return PlatformTarget::IOS;
+    }
+    return PlatformTarget::Unknown;
+}
+
+EndpointStatus endpointStatusFromServiceState(const std::string& value) {
+    if (value == "online" || value == "advertised") {
+        return EndpointStatus::Online;
+    }
+    if (value == "configured" || value == "disabled") {
+        return EndpointStatus::Degraded;
+    }
+    if (value == "offline") {
+        return EndpointStatus::Offline;
+    }
+    return EndpointStatus::Unknown;
+}
+
 struct BootstrapManifestContract final {
     std::string version = "1.0.0";
     std::string bootstrapScript;
@@ -754,6 +814,12 @@ EntitlementStateDocument buildDefaultEntitlementStateDocument() {
             "mastercontrol.iap.provider-integration",
             "mastercontrol.iap.export",
             "mastercontrol.iap.command-logic-unit",
+            "mastercontrol.iap.gateway-windows",
+            "mastercontrol.iap.gateway-macos",
+            "mastercontrol.iap.gateway-ios",
+            "mastercontrol.iap.governance-windows",
+            "mastercontrol.iap.governance-macos",
+            "mastercontrol.iap.governance-ios",
             "mastercontrol.iap.beacon-gateway"
         }
     };
@@ -3323,13 +3389,15 @@ public:
                             std::shared_ptr<IProviderRegistry> providerRegistry,
                             std::shared_ptr<IProviderAssignmentService> providerAssignmentService,
                             std::shared_ptr<IInstallerOrchestrator> installerOrchestrator,
-                            std::shared_ptr<IExportService> exportService)
+                            std::shared_ptr<IExportService> exportService,
+                            std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService)
         : profile_(loadProfile(std::move(profileFile)))
         , configurationService_(std::move(configurationService))
         , providerRegistry_(std::move(providerRegistry))
         , providerAssignmentService_(std::move(providerAssignmentService))
         , installerOrchestrator_(std::move(installerOrchestrator))
-        , exportService_(std::move(exportService)) {}
+        , exportService_(std::move(exportService))
+        , platformServiceCatalogService_(std::move(platformServiceCatalogService)) {}
 
     GovernanceSnapshot currentGovernance() const override {
         GovernanceSnapshot snapshot;
@@ -3347,6 +3415,10 @@ public:
         const auto assignments = providerAssignmentService_->listAssignments();
         const auto installHistory = installerOrchestrator_->history();
         const auto exports = exportService_->generateExports();
+        snapshot.platformGateways = platformServiceCatalogService_ ? platformServiceCatalogService_->listGateways() : std::vector<PlatformGatewayDescriptor>{};
+        snapshot.governanceServers = platformServiceCatalogService_
+            ? platformServiceCatalogService_->listGovernanceServers()
+            : std::vector<GovernanceServerDescriptor>{};
 
         auto appendFinding = [&](const std::string& ruleId,
                                  const std::string& status,
@@ -3457,6 +3529,31 @@ public:
             snapshot.recommendedActions.push_back("Refresh exports and verify the gateway, Codex, and Claude handoff artifacts are still being generated.");
         }
 
+        for (const auto platform : { PlatformTarget::Windows, PlatformTarget::MacOS, PlatformTarget::IOS }) {
+            const auto platformName = platformKey(platform);
+            const bool hasGateway = std::any_of(
+                snapshot.platformGateways.begin(),
+                snapshot.platformGateways.end(),
+                [platform](const PlatformGatewayDescriptor& descriptor) {
+                    return descriptor.platform == platform && descriptor.lanAdvertisementEnabled;
+                });
+            const bool hasGovernanceServer = std::any_of(
+                snapshot.governanceServers.begin(),
+                snapshot.governanceServers.end(),
+                [platform](const GovernanceServerDescriptor& descriptor) {
+                    return descriptor.platform == platform;
+                });
+
+            if (!hasGateway || !hasGovernanceServer) {
+                appendFinding(
+                    "CLU-C006",
+                    "warning",
+                    "The " + platformName + " governance lane is incomplete. Both the platform gateway module and governance MCP server module must be active.");
+                snapshot.recommendedActions.push_back(
+                    "Activate the " + platformName + " gateway and governance MCP server modules before advertising that lane to LAN clients.");
+            }
+        }
+
         if (snapshot.findings.empty()) {
             snapshot.recommendedActions.push_back("Current runtime posture is aligned with the CLU governance profile.");
         }
@@ -3492,6 +3589,7 @@ private:
     std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
     std::shared_ptr<IInstallerOrchestrator> installerOrchestrator_;
     std::shared_ptr<IExportService> exportService_;
+    std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService_;
 };
 
 class ForsettiSurfaceService final : public IForsettiSurfaceService {
@@ -3598,12 +3696,228 @@ private:
     std::map<std::string, ModuleControlSurfaceRequest> requestsByKey_;
 };
 
+class PlatformServiceCatalogService final : public IPlatformServiceCatalogService {
+public:
+    PlatformServiceCatalogService(std::shared_ptr<IConfigurationService> configurationService,
+                                  std::shared_ptr<ITelemetryService> telemetryService)
+        : configurationService_(std::move(configurationService))
+        , telemetryService_(std::move(telemetryService)) {}
+
+    ~PlatformServiceCatalogService() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& [key, registration] : gatewaysByModuleId_) {
+            deregisterGatewayLocked(registration);
+        }
+    }
+
+    void upsertGateway(const PlatformGatewayDescriptor& descriptor) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto normalized = normalizeGatewayDescriptor(descriptor);
+        auto& registration = gatewaysByModuleId_[normalized.moduleId];
+        deregisterGatewayLocked(registration);
+        registration.descriptor = std::move(normalized);
+        registerGatewayLocked(registration);
+    }
+
+    void removeGateway(const std::string& moduleId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto iterator = gatewaysByModuleId_.find(moduleId);
+        if (iterator == gatewaysByModuleId_.end()) {
+            return;
+        }
+        deregisterGatewayLocked(iterator->second);
+        gatewaysByModuleId_.erase(iterator);
+    }
+
+    std::vector<PlatformGatewayDescriptor> listGateways() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<PlatformGatewayDescriptor> descriptors;
+        descriptors.reserve(gatewaysByModuleId_.size());
+        for (const auto& [key, registration] : gatewaysByModuleId_) {
+            descriptors.push_back(registration.descriptor);
+        }
+        std::sort(
+            descriptors.begin(),
+            descriptors.end(),
+            [](const PlatformGatewayDescriptor& left, const PlatformGatewayDescriptor& right) {
+                return std::tie(left.platform, left.displayName, left.serviceId) <
+                    std::tie(right.platform, right.displayName, right.serviceId);
+            });
+        return descriptors;
+    }
+
+    void upsertGovernanceServer(const GovernanceServerDescriptor& descriptor) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        governanceByModuleId_[descriptor.moduleId] = descriptor;
+    }
+
+    void removeGovernanceServer(const std::string& moduleId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        governanceByModuleId_.erase(moduleId);
+    }
+
+    std::vector<GovernanceServerDescriptor> listGovernanceServers() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<GovernanceServerDescriptor> descriptors;
+        descriptors.reserve(governanceByModuleId_.size());
+        for (const auto& [key, descriptor] : governanceByModuleId_) {
+            descriptors.push_back(descriptor);
+        }
+        std::sort(
+            descriptors.begin(),
+            descriptors.end(),
+            [](const GovernanceServerDescriptor& left, const GovernanceServerDescriptor& right) {
+                return std::tie(left.platform, left.displayName, left.serviceId) <
+                    std::tie(right.platform, right.displayName, right.serviceId);
+            });
+        return descriptors;
+    }
+
+private:
+    struct GatewayRegistration final {
+        PlatformGatewayDescriptor descriptor;
+        DNS_SERVICE_REGISTER_REQUEST request{};
+        PDNS_SERVICE_INSTANCE instance = nullptr;
+        bool registered = false;
+    };
+
+    PlatformGatewayDescriptor normalizeGatewayDescriptor(PlatformGatewayDescriptor descriptor) const {
+        const auto configuration = configurationService_->current();
+        const auto snapshot = telemetryService_->captureSnapshot();
+
+        if (descriptor.displayName.empty()) {
+            descriptor.displayName = "Platform Gateway";
+        }
+        if (descriptor.instanceLabel.empty()) {
+            descriptor.instanceLabel = configuration.instanceName + " " + descriptor.displayName;
+        }
+        if (descriptor.hostName.empty()) {
+            descriptor.hostName = snapshot.hostName;
+        }
+        descriptor.hostName = dotLocalHostName(descriptor.hostName);
+
+        if (descriptor.ipAddress.empty() || descriptor.ipAddress == "0.0.0.0") {
+            descriptor.ipAddress = snapshot.primaryIpAddress.empty() ? configuration.bindAddress : snapshot.primaryIpAddress;
+        }
+        if (descriptor.ipAddress.empty() || descriptor.ipAddress == "0.0.0.0") {
+            descriptor.ipAddress = "127.0.0.1";
+        }
+        if (descriptor.port == 0) {
+            descriptor.port = configuration.browserPort;
+        }
+        if (descriptor.gatewayPath.empty()) {
+            descriptor.gatewayPath = platformGatewayRoutePath(descriptor.platform);
+        }
+        if (descriptor.configPath.empty()) {
+            descriptor.configPath = platformGatewayConfigPath(descriptor.platform);
+        }
+        descriptor.properties["platform"] = platformKey(descriptor.platform);
+        descriptor.properties["config_path"] = descriptor.configPath;
+        descriptor.properties["gateway_path"] = descriptor.gatewayPath;
+        descriptor.properties["service_id"] = descriptor.serviceId;
+        if (descriptor.status.empty() || descriptor.status == "starting") {
+            descriptor.status = "configured";
+        }
+        return descriptor;
+    }
+
+    void registerGatewayLocked(GatewayRegistration& registration) {
+        const auto& descriptor = registration.descriptor;
+        if (!descriptor.lanAdvertisementEnabled || descriptor.serviceType.empty() || descriptor.port == 0) {
+            registration.descriptor.status = "disabled";
+            return;
+        }
+
+        std::vector<std::wstring> keysWide;
+        std::vector<std::wstring> valuesWide;
+        keysWide.reserve(descriptor.properties.size());
+        valuesWide.reserve(descriptor.properties.size());
+        for (const auto& [key, value] : descriptor.properties) {
+            keysWide.push_back(wideFromUtf8(key));
+            valuesWide.push_back(wideFromUtf8(value));
+        }
+
+        std::vector<PCWSTR> keyPointers;
+        std::vector<PCWSTR> valuePointers;
+        keyPointers.reserve(keysWide.size());
+        valuePointers.reserve(valuesWide.size());
+        for (size_t index = 0; index < keysWide.size(); ++index) {
+            keyPointers.push_back(keysWide[index].c_str());
+            valuePointers.push_back(valuesWide[index].c_str());
+        }
+
+        const auto instanceName = wideFromUtf8(descriptor.instanceLabel + "." + descriptor.serviceType);
+        const auto hostName = wideFromUtf8(descriptor.hostName);
+
+        IP4_ADDRESS ipv4Address = 0;
+        PIP4_ADDRESS ipv4Pointer = nullptr;
+        IN_ADDR parsedAddress{};
+        if (InetPtonW(AF_INET, wideFromUtf8(descriptor.ipAddress).c_str(), &parsedAddress) == 1) {
+            ipv4Address = parsedAddress.S_un.S_addr;
+            ipv4Pointer = &ipv4Address;
+        }
+
+        registration.instance = DnsServiceConstructInstance(
+            instanceName.c_str(),
+            hostName.c_str(),
+            ipv4Pointer,
+            nullptr,
+            descriptor.port,
+            0,
+            0,
+            static_cast<DWORD>(keyPointers.size()),
+            keyPointers.empty() ? nullptr : keyPointers.data(),
+            valuePointers.empty() ? nullptr : valuePointers.data());
+
+        if (registration.instance == nullptr) {
+            registration.descriptor.status = "registration_failed";
+            return;
+        }
+
+        DNS_SERVICE_REGISTER_REQUEST request{};
+        request.Version = 1;
+        request.InterfaceIndex = 0;
+        request.pServiceInstance = registration.instance;
+        request.pRegisterCompletionCallback = nullptr;
+        request.pQueryContext = nullptr;
+        request.hCredentials = nullptr;
+        request.unicastEnabled = FALSE;
+
+        const auto status = DnsServiceRegister(&request, nullptr);
+        registration.request = request;
+        registration.registered = status == ERROR_SUCCESS;
+        registration.descriptor.status = registration.registered ? "advertised" : "registration_failed";
+    }
+
+    void deregisterGatewayLocked(GatewayRegistration& registration) {
+        if (registration.instance == nullptr) {
+            return;
+        }
+
+        if (registration.registered) {
+            DnsServiceDeRegister(&registration.request, nullptr);
+            registration.registered = false;
+        }
+
+        DnsServiceFreeInstance(registration.instance);
+        registration.instance = nullptr;
+    }
+
+    std::shared_ptr<IConfigurationService> configurationService_;
+    std::shared_ptr<ITelemetryService> telemetryService_;
+    mutable std::mutex mutex_;
+    std::map<std::string, GatewayRegistration> gatewaysByModuleId_;
+    std::map<std::string, GovernanceServerDescriptor> governanceByModuleId_;
+};
+
 class BeaconService final : public IBeaconService {
 public:
     BeaconService(std::shared_ptr<IConfigurationService> configurationService,
-                  std::shared_ptr<ITelemetryService> telemetryService)
+                  std::shared_ptr<ITelemetryService> telemetryService,
+                  std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService)
         : configurationService_(std::move(configurationService))
-        , telemetryService_(std::move(telemetryService)) {}
+        , telemetryService_(std::move(telemetryService))
+        , platformServiceCatalogService_(std::move(platformServiceCatalogService)) {}
 
     BeaconAdvertisement currentAdvertisement() const override {
         const auto configuration = configurationService_->current();
@@ -3613,8 +3927,9 @@ public:
             snapshot.hostName,
             snapshot.primaryIpAddress.empty() ? configuration.bindAddress : snapshot.primaryIpAddress,
             configuration.browserPort,
-            7200,
-            "online"
+            configuration.browserPort,
+            "online",
+            platformServiceCatalogService_ ? platformServiceCatalogService_->listGateways() : std::vector<PlatformGatewayDescriptor>{}
         };
     }
 
@@ -3627,6 +3942,7 @@ public:
 private:
     std::shared_ptr<IConfigurationService> configurationService_;
     std::shared_ptr<ITelemetryService> telemetryService_;
+    std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService_;
     std::atomic<bool> running_{ false };
     std::thread worker_;
 };
@@ -3679,6 +3995,7 @@ public:
     AdminApiService(std::shared_ptr<ITelemetryService> telemetryService,
                     std::shared_ptr<IRuntimeInventoryService> inventoryService,
                     std::shared_ptr<IConfigurationService> configurationService,
+                    std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService,
                     std::shared_ptr<IProviderRegistry> providerRegistry,
                     std::shared_ptr<IProviderCatalogService> providerCatalogService,
                     std::shared_ptr<IProviderCredentialStore> providerCredentialStore,
@@ -3697,6 +4014,7 @@ public:
         : telemetryService_(std::move(telemetryService))
         , inventoryService_(std::move(inventoryService))
         , configurationService_(std::move(configurationService))
+        , platformServiceCatalogService_(std::move(platformServiceCatalogService))
         , providerRegistry_(std::move(providerRegistry))
         , providerCatalogService_(std::move(providerCatalogService))
         , providerCredentialStore_(std::move(providerCredentialStore))
@@ -3741,7 +4059,51 @@ public:
         snapshot.resourceAllocation = configuration.resourceAllocation;
         snapshot.security = configuration.security;
         snapshot.governance = commandLogicUnitService_->currentGovernance();
+        snapshot.platformGateways = platformServiceCatalogService_
+            ? platformServiceCatalogService_->listGateways()
+            : std::vector<PlatformGatewayDescriptor>{};
+        snapshot.governanceServers = platformServiceCatalogService_
+            ? platformServiceCatalogService_->listGovernanceServers()
+            : std::vector<GovernanceServerDescriptor>{};
         snapshot.surface = surfaceService_->currentSurface();
+        for (const auto& gateway : snapshot.platformGateways) {
+            snapshot.endpoints.push_back(RuntimeEndpoint{
+                gateway.serviceId,
+                gateway.displayName,
+                EndpointKind::Gateway,
+                gateway.ipAddress,
+                gateway.port,
+                "http",
+                endpointStatusFromServiceState(gateway.status),
+                "Forsetti platform gateway for " + platformKey(gateway.platform) + " clients.",
+                timestampNowUtc(),
+                gateway.gatewayPath,
+                {},
+                false
+            });
+        }
+        for (const auto& governance : snapshot.governanceServers) {
+            const auto gatewayIterator = std::find_if(
+                snapshot.platformGateways.begin(),
+                snapshot.platformGateways.end(),
+                [&governance](const PlatformGatewayDescriptor& gateway) {
+                    return gateway.serviceId == governance.gatewayServiceId;
+                });
+            snapshot.endpoints.push_back(RuntimeEndpoint{
+                governance.serviceId,
+                governance.displayName,
+                EndpointKind::MCPServer,
+                gatewayIterator != snapshot.platformGateways.end() ? gatewayIterator->ipAddress : std::string(),
+                gatewayIterator != snapshot.platformGateways.end() ? gatewayIterator->port : configuration.browserPort,
+                "http",
+                endpointStatusFromServiceState(governance.status),
+                "Governance MCP server lane for " + platformKey(governance.platform) + " enforcement.",
+                timestampNowUtc(),
+                governance.routePath,
+                platformKey(governance.platform),
+                false
+            });
+        }
         return snapshot;
     }
 
@@ -3813,6 +4175,7 @@ private:
     std::shared_ptr<ITelemetryService> telemetryService_;
     std::shared_ptr<IRuntimeInventoryService> inventoryService_;
     std::shared_ptr<IConfigurationService> configurationService_;
+    std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService_;
     std::shared_ptr<IProviderRegistry> providerRegistry_;
     std::shared_ptr<IProviderCatalogService> providerCatalogService_;
     std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
@@ -4090,6 +4453,7 @@ private:
     std::shared_ptr<IResourceAllocationService> resourceAllocationService_;
     std::shared_ptr<ITelemetryService> telemetryService_;
     std::shared_ptr<IRuntimeInventoryService> inventoryService_;
+    std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService_;
     std::shared_ptr<IPackageTrustEvaluator> trustEvaluator_;
     std::shared_ptr<InstallerOrchestrator> installerOrchestrator_;
     std::shared_ptr<IProviderRegistry> providerRegistry_;
@@ -4143,15 +4507,17 @@ bool MasterControlApplication::Impl::initialize() {
         inventoryService_,
         providerExecutionCatalogService_);
     exportService_ = std::make_shared<ExportService>(inventoryService_, configurationService_);
+    platformServiceCatalogService_ = std::make_shared<PlatformServiceCatalogService>(configurationService_, telemetryService_);
     commandLogicUnitService_ = std::make_shared<CommandLogicUnitService>(
         paths_.cluProfileFile,
         configurationService_,
         providerRegistry_,
         providerAssignmentService_,
         installerOrchestrator_,
-        exportService_);
+        exportService_,
+        platformServiceCatalogService_);
     controlSurfaceService_ = std::make_shared<ModuleControlSurfaceService>();
-    beaconService_ = std::make_shared<BeaconService>(configurationService_, telemetryService_);
+    beaconService_ = std::make_shared<BeaconService>(configurationService_, telemetryService_, platformServiceCatalogService_);
     registerConfigurationDefaults();
     createForsettiRuntime();
 
@@ -4159,6 +4525,7 @@ bool MasterControlApplication::Impl::initialize() {
         telemetryService_,
         inventoryService_,
         configurationService_,
+        platformServiceCatalogService_,
         providerRegistry_,
         providerCatalogService_,
         providerCredentialStore_,
@@ -4246,6 +4613,7 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
     services->registerService<IResourceAllocationService>(resourceAllocationService_);
     services->registerService<ITelemetryService>(telemetryService_);
     services->registerService<IRuntimeInventoryService>(inventoryService_);
+    services->registerService<IPlatformServiceCatalogService>(platformServiceCatalogService_);
     services->registerService<IPackageTrustEvaluator>(trustEvaluator_);
     services->registerService<IInstallerOrchestrator>(installerOrchestrator_);
     services->registerService<IBootstrapRepoService>(installerOrchestrator_);
@@ -4299,7 +4667,7 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
 }
 
 void MasterControlApplication::Impl::activateDefaultModules() {
-    static const std::array<const char*, 13> moduleIds = {
+    static const std::array<const char*, 19> moduleIds = {
         "com.mastercontrol.environment-discovery",
         "com.mastercontrol.host-telemetry",
         "com.mastercontrol.runtime-inventory",
@@ -4311,6 +4679,12 @@ void MasterControlApplication::Impl::activateDefaultModules() {
         "com.mastercontrol.provider-xai",
         "com.mastercontrol.export",
         "com.mastercontrol.command-logic-unit",
+        "com.mastercontrol.gateway-windows",
+        "com.mastercontrol.gateway-macos",
+        "com.mastercontrol.gateway-ios",
+        "com.mastercontrol.governance-windows",
+        "com.mastercontrol.governance-macos",
+        "com.mastercontrol.governance-ios",
         "com.mastercontrol.beacon-gateway",
         "com.mastercontrol.dashboard-ui"
     };
@@ -4327,6 +4701,108 @@ void MasterControlApplication::Impl::activateDefaultModules() {
 
 HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest& request) {
     try {
+        const auto gateways = platformServiceCatalogService_
+            ? platformServiceCatalogService_->listGateways()
+            : std::vector<PlatformGatewayDescriptor>{};
+        const auto governanceServers = platformServiceCatalogService_
+            ? platformServiceCatalogService_->listGovernanceServers()
+            : std::vector<GovernanceServerDescriptor>{};
+        const auto findGateway = [&gateways](const PlatformTarget platform) -> std::optional<PlatformGatewayDescriptor> {
+            const auto iterator = std::find_if(
+                gateways.begin(),
+                gateways.end(),
+                [platform](const PlatformGatewayDescriptor& descriptor) { return descriptor.platform == platform; });
+            if (iterator == gateways.end()) {
+                return std::nullopt;
+            }
+            return *iterator;
+        };
+        const auto findGovernanceServer =
+            [&governanceServers](const PlatformTarget platform) -> std::optional<GovernanceServerDescriptor> {
+            const auto iterator = std::find_if(
+                governanceServers.begin(),
+                governanceServers.end(),
+                [platform](const GovernanceServerDescriptor& descriptor) { return descriptor.platform == platform; });
+            if (iterator == governanceServers.end()) {
+                return std::nullopt;
+            }
+            return *iterator;
+        };
+        const auto makeBaseUrl = [this]() {
+            const auto configuration = configurationService_->current();
+            const auto telemetry = telemetryService_->captureSnapshot();
+            std::string host = configuration.bindAddress;
+            if (host.empty() || host == "0.0.0.0") {
+                host = telemetry.primaryIpAddress.empty() ? std::string("127.0.0.1") : telemetry.primaryIpAddress;
+            }
+            return std::string("http://") + host + ":" + std::to_string(configuration.browserPort);
+        };
+        const auto makePlatformConfigDocument = [&, this](const PlatformTarget platform) {
+            const auto gateway = findGateway(platform);
+            const auto governance = findGovernanceServer(platform);
+            if (!gateway.has_value() || !governance.has_value()) {
+                return nlohmann::json{};
+            }
+
+            const auto baseUrl = makeBaseUrl();
+            const auto gatewayUrl = baseUrl + gateway->gatewayPath;
+            const auto configUrl = baseUrl + gateway->configPath;
+            const auto governanceUrl = baseUrl + governance->routePath;
+
+            return nlohmann::json{
+                { "platform", platformKey(platform) },
+                { "serviceId", gateway->serviceId },
+                { "displayName", gateway->displayName },
+                { "serviceType", gateway->serviceType },
+                { "browserUrl", browserUrl() },
+                { "gatewayUrl", gatewayUrl },
+                { "governanceUrl", governanceUrl },
+                { "configUrl", configUrl },
+                { "lanServiceDiscovery", {
+                    { "mode", "dns-sd" },
+                    { "serviceType", gateway->serviceType },
+                    { "instanceLabel", gateway->instanceLabel },
+                    { "hostName", gateway->hostName },
+                    { "port", gateway->port }
+                } },
+                { "clientSelectionRule", "Clients should discover and connect to the service that matches their platform OS." },
+                { "governanceTools", governance->toolIds },
+                { "agentConfigurations", nlohmann::json::array({
+                    {
+                        { "provider", "codex" },
+                        { "credentialFields", nlohmann::json::array({ "OPENAI_API_KEY" }) },
+                        { "recommendedModel", "gpt-5.4" },
+                        { "mcp", {
+                            { "name", gateway->serviceId },
+                            { "transport", "http" },
+                            { "url", gatewayUrl }
+                        } }
+                    },
+                    {
+                        { "provider", "claude-code" },
+                        { "credentialFields", nlohmann::json::array({ "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN" }) },
+                        { "mcp", {
+                            { "mcpServers", {
+                                { gateway->serviceId, {
+                                    { "type", "http" },
+                                    { "url", gatewayUrl }
+                                } }
+                            } }
+                        } }
+                    },
+                    {
+                        { "provider", "xai" },
+                        { "credentialFields", nlohmann::json::array({ "XAI_API_KEY" }) },
+                        { "recommendedModel", "grok-code-fast-1" },
+                        { "mcp", {
+                            { "gateway", gatewayUrl },
+                            { "provider", "xai" },
+                            { "recommendedModel", "grok-code-fast-1" }
+                        } }
+                    }
+                }) }
+            };
+        };
         if (request.method == "GET" && request.path == "/api/health") {
             return jsonResponse(nlohmann::json{ { "status", "ok" }, { "time", timestampNowUtc() } });
         }
@@ -4353,6 +4829,57 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "GET" && request.path == "/api/beacon") {
             return jsonResponse(beaconService_->currentAdvertisement());
+        }
+        if (request.method == "GET" && request.path == "/api/platform-services") {
+            return jsonResponse(nlohmann::json{
+                { "gateways", gateways },
+                { "governanceServers", governanceServers }
+            });
+        }
+        if (request.method == "GET" && request.path == "/api/platform-services/gateways") {
+            return jsonResponse(gateways);
+        }
+        if (request.method == "GET" && request.path == "/api/platform-services/governance") {
+            return jsonResponse(governanceServers);
+        }
+        if (request.method == "GET" && startsWith(request.path, "/api/platform-services/config/")) {
+            const auto platform = platformFromKey(request.path.substr(std::string("/api/platform-services/config/").size()));
+            const auto document = makePlatformConfigDocument(platform);
+            if (platform == PlatformTarget::Unknown || document.empty()) {
+                return jsonResponse(nlohmann::json{ { "message", "Platform service config not found." } }, 404);
+            }
+            return jsonResponse(document);
+        }
+        if (request.method == "GET" && startsWith(request.path, "/mcp/gateway/")) {
+            const auto platform = platformFromKey(request.path.substr(std::string("/mcp/gateway/").size()));
+            const auto gateway = findGateway(platform);
+            const auto governance = findGovernanceServer(platform);
+            if (!gateway.has_value() || !governance.has_value()) {
+                return jsonResponse(nlohmann::json{ { "message", "Gateway service not found." } }, 404);
+            }
+            return jsonResponse(nlohmann::json{
+                { "service", "platform-gateway" },
+                { "platform", platformKey(platform) },
+                { "gateway", *gateway },
+                { "governanceServer", *governance },
+                { "configuration", makePlatformConfigDocument(platform) }
+            });
+        }
+        if (request.method == "GET" && startsWith(request.path, "/mcp/governance/")) {
+            const auto platform = platformFromKey(request.path.substr(std::string("/mcp/governance/").size()));
+            const auto governance = findGovernanceServer(platform);
+            const auto gateway = findGateway(platform);
+            if (!gateway.has_value() || !governance.has_value()) {
+                return jsonResponse(nlohmann::json{ { "message", "Governance service not found." } }, 404);
+            }
+            return jsonResponse(nlohmann::json{
+                { "service", "governance-mcp-server" },
+                { "platform", platformKey(platform) },
+                { "gateway", *gateway },
+                { "governanceServer", *governance },
+                { "toolIds", governance->toolIds },
+                { "requiresRemoteToolchain", governance->requiresRemoteToolchain }
+            });
         }
         if (request.method == "POST" && request.path == "/api/config") {
             const bool confirmUnsafeChanges = request.headers.contains("X-Confirm-Unsafe") &&

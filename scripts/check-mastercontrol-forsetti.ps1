@@ -20,6 +20,12 @@ $requiredModuleIDs = @(
     "com.mastercontrol.provider-xai",
     "com.mastercontrol.export",
     "com.mastercontrol.command-logic-unit",
+    "com.mastercontrol.gateway-windows",
+    "com.mastercontrol.gateway-macos",
+    "com.mastercontrol.gateway-ios",
+    "com.mastercontrol.governance-windows",
+    "com.mastercontrol.governance-macos",
+    "com.mastercontrol.governance-ios",
     "com.mastercontrol.beacon-gateway",
     "com.mastercontrol.dashboard-ui"
 )
@@ -122,6 +128,7 @@ if (-not (Test-Path $contractsPath)) {
     Assert-Contains $contracts 'IProviderCatalogService' "MasterControlContracts.h must define a provider capability catalog service."
     Assert-Contains $contracts 'IProviderCredentialStore' "MasterControlContracts.h must define a provider credential store service."
     Assert-Contains $contracts 'IProviderAssignmentService' "MasterControlContracts.h must define a provider ownership assignment service."
+    Assert-Contains $contracts 'IPlatformServiceCatalogService' "MasterControlContracts.h must define a platform gateway and governance catalog service."
 }
 
 if (-not (Test-Path $modelsPath)) {
@@ -133,6 +140,8 @@ if (-not (Test-Path $modelsPath)) {
     Assert-Contains $models 'publishedByModuleId' "MasterControlModels.h must expose which UI module registered the composed framework surface."
     Assert-Contains $models 'ProviderCapabilityDescriptor' "MasterControlModels.h must expose provider capability descriptors through the framework data model."
     Assert-Contains $models 'ProviderAssignment' "MasterControlModels.h must expose provider ownership assignments through the shared data model."
+    Assert-Contains $models 'PlatformGatewayDescriptor' "MasterControlModels.h must expose platform gateway descriptors through the shared data model."
+    Assert-Contains $models 'GovernanceServerDescriptor' "MasterControlModels.h must expose platform governance server descriptors through the shared data model."
 }
 
 if (-not (Test-Path $webIndexPath)) {
@@ -181,6 +190,14 @@ if (-not (Test-Path $modulesCppPath)) {
     Assert-Contains $modulesCpp 'makeXAIProviderControlSurfaceRequests' "XAIProviderModule must register its control-surface needs through the framework."
     Assert-Contains $modulesCpp 'registerProviderCapability' "Provider modules must publish their capability descriptors through the framework."
     Assert-Contains $modulesCpp 'makeExportControlSurfaceRequests' "ExportModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeWindowsGatewayControlSurfaceRequests' "WindowsGatewayModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeMacGatewayControlSurfaceRequests' "MacGatewayModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeIOSGatewayControlSurfaceRequests' "IOSGatewayModule must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeWindowsGovernanceControlSurfaceRequests' "Windows governance module must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeMacGovernanceControlSurfaceRequests' "Mac governance module must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'makeIOSGovernanceControlSurfaceRequests' "iOS governance module must register its control-surface needs through the framework."
+    Assert-Contains $modulesCpp 'registerPlatformGateway' "Platform gateway modules must publish their LAN service descriptors through the framework."
+    Assert-Contains $modulesCpp 'registerGovernanceServer' "Governance server modules must publish their MCP server descriptors through the framework."
     Assert-Contains $modulesCpp 'makeBeaconGatewayControlSurfaceRequests' "BeaconGatewayModule must register its control-surface needs through the framework."
     Assert-Contains $modulesCpp 'return Forsetti::UIContributions{};' "DashboardUIModule must bootstrap from framework control requests instead of shipping hardcoded UI contributions."
     Assert-Contains $modulesCpp 'mastercontrol.dashboard.surface.registered' "DashboardUIModule must publish startup surface registration metadata."
@@ -198,6 +215,11 @@ if (-not (Test-Path $runtimePath)) {
     Assert-Contains $runtime 'ProviderCatalogService' "MasterControlRuntime.cpp must host a provider capability catalog."
     Assert-Contains $runtime 'ProviderCredentialStore' "MasterControlRuntime.cpp must host a secure provider credential store."
     Assert-Contains $runtime 'ProviderAssignmentService' "MasterControlRuntime.cpp must host provider ownership assignment logic."
+    Assert-Contains $runtime 'PlatformServiceCatalogService' "MasterControlRuntime.cpp must host the platform gateway and governance catalog."
+    Assert-Contains $runtime 'DnsServiceRegister' "MasterControlRuntime.cpp must advertise platform gateway services on the LAN."
+    Assert-Contains $runtime '/api/platform-services/config/' "MasterControlRuntime.cpp must expose platform-specific client configuration endpoints."
+    Assert-Contains $runtime '/mcp/gateway/' "MasterControlRuntime.cpp must expose platform-specific gateway routes."
+    Assert-Contains $runtime '/mcp/governance/' "MasterControlRuntime.cpp must expose platform-specific governance MCP routes."
     Assert-NotContains $runtime 'AllowAllEntitlementProvider' "MasterControlRuntime.cpp must not bypass Forsetti entitlement gating with AllowAllEntitlementProvider."
 }
 
@@ -218,6 +240,12 @@ $requiredIapProductIDs = @{
     "com.mastercontrol.provider-integration" = "mastercontrol.iap.provider-integration"
     "com.mastercontrol.export" = "mastercontrol.iap.export"
     "com.mastercontrol.command-logic-unit" = "mastercontrol.iap.command-logic-unit"
+    "com.mastercontrol.gateway-windows" = "mastercontrol.iap.gateway-windows"
+    "com.mastercontrol.gateway-macos" = "mastercontrol.iap.gateway-macos"
+    "com.mastercontrol.gateway-ios" = "mastercontrol.iap.gateway-ios"
+    "com.mastercontrol.governance-windows" = "mastercontrol.iap.governance-windows"
+    "com.mastercontrol.governance-macos" = "mastercontrol.iap.governance-macos"
+    "com.mastercontrol.governance-ios" = "mastercontrol.iap.governance-ios"
     "com.mastercontrol.beacon-gateway" = "mastercontrol.iap.beacon-gateway"
 }
 
