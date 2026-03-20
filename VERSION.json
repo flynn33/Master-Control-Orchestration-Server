@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.7",
-  "current_tag": "v0.1.7",
+  "current_version": "0.1.8",
+  "current_tag": "v0.1.8",
   "released_at": "2026-03-20",
-  "last_release_commit": "d56c4c855a4ecaefef301ada52bd7d5c0a94f3aa",
+  "last_release_commit": "57db0cb27708ba767f57191a6739c974c15eb8a6",
   "history": [
+    {
+      "version": "0.1.8",
+      "tag": "v0.1.8",
+      "released_at": "2026-03-20",
+      "commit": "57db0cb27708ba767f57191a6739c974c15eb8a6",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add group-based provider routing for sub-agents (flynn33)"
+      ]
+    },
     {
       "version": "0.1.7",
       "tag": "v0.1.7",
