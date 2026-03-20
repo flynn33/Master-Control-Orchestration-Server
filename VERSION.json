@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.6",
-  "current_tag": "v0.1.6",
+  "current_version": "0.1.7",
+  "current_tag": "v0.1.7",
   "released_at": "2026-03-20",
-  "last_release_commit": "fb11fc97a007c2d672596cebb24a7a540539d112",
+  "last_release_commit": "d56c4c855a4ecaefef301ada52bd7d5c0a94f3aa",
   "history": [
+    {
+      "version": "0.1.7",
+      "tag": "v0.1.7",
+      "released_at": "2026-03-20",
+      "commit": "d56c4c855a4ecaefef301ada52bd7d5c0a94f3aa",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Implement provider execution adapters and consoles (flynn33)"
+      ]
+    },
     {
       "version": "0.1.6",
       "tag": "v0.1.6",
