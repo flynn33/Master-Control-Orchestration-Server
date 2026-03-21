@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.15",
-  "current_tag": "v0.1.15",
+  "current_version": "0.1.16",
+  "current_tag": "v0.1.16",
   "released_at": "2026-03-21",
-  "last_release_commit": "59fdc7ea846d5516c3cf233ab77f6dc515aa529c",
+  "last_release_commit": "49615b335c337353e96ca1a575b730bd13cf556c",
   "history": [
+    {
+      "version": "0.1.16",
+      "tag": "v0.1.16",
+      "released_at": "2026-03-21",
+      "commit": "49615b335c337353e96ca1a575b730bd13cf556c",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add macOS signing and notarization tooling (flynn33)"
+      ]
+    },
     {
       "version": "0.1.15",
       "tag": "v0.1.15",
