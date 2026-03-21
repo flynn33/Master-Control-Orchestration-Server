@@ -4178,6 +4178,9 @@ private:
         host.companionHealthPath = trimCopy(host.companionHealthPath);
         host.companionExecutePath = trimCopy(host.companionExecutePath);
         host.preferredDeveloperDirectory = trimCopy(host.preferredDeveloperDirectory);
+        host.defaultSigningIdentity = trimCopy(host.defaultSigningIdentity);
+        host.defaultNotaryKeychainProfile = trimCopy(host.defaultNotaryKeychainProfile);
+        host.defaultNotaryTeamId = trimCopy(host.defaultNotaryTeamId);
 
         if (host.displayName.empty()) {
             host.displayName = host.hostId;
@@ -5033,17 +5036,27 @@ private:
         const auto deviceId = optionValue(request, { "deviceId", "device", "deviceIdentifier" });
         const auto appPath = optionValue(request, { "appPath", "applicationPath", "bundlePath" });
         const auto bundlePath = optionValue(request, { "bundlePath", "appPath", "targetBundlePath" });
-        const auto signingIdentity = optionValue(request, { "signingIdentity", "identity" });
+        const auto signingIdentity = [&]() {
+            const auto explicitIdentity = optionValue(request, { "signingIdentity", "identity" });
+            return explicitIdentity.empty() ? host.defaultSigningIdentity : explicitIdentity;
+        }();
         const auto entitlementsPath = optionValue(request, { "entitlementsPath" });
         const auto notarizationArtifactPath = optionValue(
             request,
             { "artifactPath", "submissionPath", "packagePath", "bundlePath" });
-        const auto keychainProfile = optionValue(request, { "keychainProfile", "notaryKeychainProfile" });
+        const auto staplePath = optionValue(request, { "artifactPath", "bundlePath", "staplePath", "targetPath" });
+        const auto keychainProfile = [&]() {
+            const auto explicitProfile = optionValue(request, { "keychainProfile", "notaryKeychainProfile" });
+            return explicitProfile.empty() ? host.defaultNotaryKeychainProfile : explicitProfile;
+        }();
         const auto appleId = optionValue(request, { "appleId", "notaryAppleId" });
         const auto appleIdPassword = optionValue(
             request,
             { "appSpecificPassword", "appleIdPassword", "notaryPassword", "password" });
-        const auto teamId = optionValue(request, { "teamId", "notaryTeamId" });
+        const auto teamId = [&]() {
+            const auto explicitTeamId = optionValue(request, { "teamId", "notaryTeamId" });
+            return explicitTeamId.empty() ? host.defaultNotaryTeamId : explicitTeamId;
+        }();
         const auto timeoutText = optionValue(request, { "timeoutSeconds" });
         const auto parseBoolOption = [&](std::initializer_list<const char*> keys, const bool defaultValue) {
             auto value = optionValue(request, keys);
@@ -5171,6 +5184,25 @@ private:
                 command.arguments.push_back(teamId);
             }
             command.timeoutSeconds = (std::max)(command.timeoutSeconds, 3600);
+            return command;
+        }
+
+        if (descriptor.toolId == "forsetti.macos.staple") {
+            if (staplePath.empty()) {
+                result.status = GovernanceToolStatus::Warning;
+                result.summary = "macOS stapling requires an artifactPath or bundlePath option.";
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    "high",
+                    "blocked",
+                    "Provide request.options.artifactPath or request.options.bundlePath before invoking macOS stapling."));
+                return std::nullopt;
+            }
+
+            command.executable = "xcrun";
+            command.arguments = { "stapler", "staple", staplePath };
+            command.timeoutSeconds = (std::max)(command.timeoutSeconds, 900);
             return command;
         }
 
@@ -5634,6 +5666,7 @@ private:
             descriptor.toolId == "forsetti.macos.archive" ||
             descriptor.toolId == "forsetti.macos.sign" ||
             descriptor.toolId == "forsetti.macos.notarize" ||
+            descriptor.toolId == "forsetti.macos.staple" ||
             descriptor.toolId == "forsetti.ios.simulator.list" ||
             descriptor.toolId == "forsetti.ios.build" ||
             descriptor.toolId == "forsetti.ios.test" ||

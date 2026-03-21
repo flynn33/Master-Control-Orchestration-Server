@@ -389,6 +389,9 @@ struct AppleRemoteHost final {
     std::string companionHealthPath = "/healthz";
     std::string companionExecutePath = "/execute";
     std::string preferredDeveloperDirectory;
+    std::string defaultSigningIdentity;
+    std::string defaultNotaryKeychainProfile;
+    std::string defaultNotaryTeamId;
     bool enabled = true;
     AppleToolchainState toolchain;
     AppleSigningState signing;
@@ -941,6 +944,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     companionHealthPath,
     companionExecutePath,
     preferredDeveloperDirectory,
+    defaultSigningIdentity,
+    defaultNotaryKeychainProfile,
+    defaultNotaryTeamId,
     enabled,
     toolchain,
     signing)

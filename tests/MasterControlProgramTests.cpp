@@ -978,6 +978,12 @@ int main() {
         success &= expect(
             findGovernanceTool(
                 snapshot.governance.availableTools,
+                MasterControl::PlatformTarget::MacOS,
+                "forsetti.macos.staple").has_value(),
+            "Mac governance tools should register stapling execution.");
+        success &= expect(
+            findGovernanceTool(
+                snapshot.governance.availableTools,
                 MasterControl::PlatformTarget::IOS,
                 "forsetti.ios.remote-build.validate").has_value() &&
                 findGovernanceTool(
@@ -1172,6 +1178,22 @@ int main() {
                 }
 
                 if (executable == "xcrun" &&
+                    arguments.size() >= 3 &&
+                    arguments[0] == "stapler" &&
+                    arguments[1] == "staple") {
+                    return TestHttpResponse{
+                        200,
+                        "application/json",
+                        nlohmann::json{
+                            { "launched", true },
+                            { "succeeded", true },
+                            { "exitCode", 0 },
+                            { "stdout", "Staple Succeeded\n" }
+                        }.dump()
+                    };
+                }
+
+                if (executable == "xcrun" &&
                     arguments.size() >= 6 &&
                     arguments[0] == "devicectl" &&
                     arguments[1] == "device" &&
@@ -1250,6 +1272,9 @@ int main() {
             { "port", appleCompanionServer.port() },
             { "companionHealthPath", "/healthz" },
             { "companionExecutePath", "/execute" },
+            { "defaultSigningIdentity", "Developer ID Application: Master Control" },
+            { "defaultNotaryKeychainProfile", "mastercontrol-notary" },
+            { "defaultNotaryTeamId", "TEAM12345" },
             { "enabled", true }
         }.dump());
         success &= expect(appleHostUpsert.succeeded, "Apple remote host upsert should succeed.");
@@ -1356,8 +1381,7 @@ int main() {
             { "toolId", "forsetti.macos.sign" },
             { "options", nlohmann::json{
                 { "remoteWorkingDirectory", "/Volumes/Builds/MasterControl" },
-                { "bundlePath", "/Volumes/Builds/MasterControl/build/MasterControlShell.app" },
-                { "signingIdentity", "Developer ID Application: Master Control" }
+                { "bundlePath", "/Volumes/Builds/MasterControl/build/MasterControlShell.app" }
             } }
         }.dump());
         success &= expect(
@@ -1370,14 +1394,26 @@ int main() {
             { "toolId", "forsetti.macos.notarize" },
             { "options", nlohmann::json{
                 { "remoteWorkingDirectory", "/Volumes/Builds/MasterControl" },
-                { "artifactPath", "/Volumes/Builds/MasterControl/build/MasterControlShell.zip" },
-                { "keychainProfile", "mastercontrol-notary" }
+                { "artifactPath", "/Volumes/Builds/MasterControl/build/MasterControlShell.zip" }
             } }
         }.dump());
         success &= expect(
             macNotarizeExecution.succeeded &&
                 macNotarizeExecution.status == MasterControl::GovernanceToolStatus::Passed,
             "Mac notarization governance execution should run through the Apple companion service.");
+
+        const auto macStapleExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "macos" },
+            { "toolId", "forsetti.macos.staple" },
+            { "options", nlohmann::json{
+                { "remoteWorkingDirectory", "/Volumes/Builds/MasterControl" },
+                { "artifactPath", "/Volumes/Builds/MasterControl/build/MasterControlShell.zip" }
+            } }
+        }.dump());
+        success &= expect(
+            macStapleExecution.succeeded &&
+                macStapleExecution.status == MasterControl::GovernanceToolStatus::Passed,
+            "Mac stapling governance execution should run through the Apple companion service.");
 
         const auto iosSimulatorExecution = application.executeGovernanceToolJson(nlohmann::json{
             { "platform", "ios" },
@@ -1502,6 +1538,17 @@ int main() {
                         request.body.find("mastercontrol-notary") != std::string::npos;
                 }),
             "Apple companion service should receive notarytool submit payloads.");
+        success &= expect(
+            std::any_of(
+                companionRequests.begin(),
+                companionRequests.end(),
+                [](const TestHttpRequest& request) {
+                    return request.method == "POST" &&
+                        request.path == "/execute" &&
+                        request.body.find("stapler") != std::string::npos &&
+                        request.body.find("MasterControlShell.zip") != std::string::npos;
+                }),
+            "Apple companion service should receive stapler payloads.");
         success &= expect(
             std::any_of(
                 companionRequests.begin(),

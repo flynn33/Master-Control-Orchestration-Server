@@ -918,7 +918,8 @@ GovernanceServerDescriptor makeMacGovernanceServerDescriptor() {
             "forsetti.macos.test",
             "forsetti.macos.archive",
             "forsetti.macos.sign",
-            "forsetti.macos.notarize"
+            "forsetti.macos.notarize",
+            "forsetti.macos.staple"
         },
         true,
         "online"
@@ -1072,6 +1073,15 @@ std::vector<GovernanceToolDescriptor> makeMacGovernanceToolDescriptors() {
             "forsetti.macos.notarize",
             "Notarize macOS Artifact",
             "Submit a remote macOS artifact for notarization through the selected Apple host.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-macos",
+            "mac-governance",
+            PlatformTarget::MacOS,
+            "forsetti.macos.staple",
+            "Staple macOS Artifact",
+            "Staple a notarization ticket to a remote macOS artifact through the selected Apple host.",
             true
         }
     };
