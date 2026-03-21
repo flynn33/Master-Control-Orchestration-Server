@@ -3488,6 +3488,9 @@ public:
         snapshot.recentExecutions = platformGovernanceToolService_
             ? platformGovernanceToolService_->recentExecutions()
             : std::vector<GovernanceToolResult>{};
+        snapshot.appleOperations = platformGovernanceToolService_
+            ? platformGovernanceToolService_->recentAppleOperations()
+            : std::vector<AppleOperationRecord>{};
 
         auto appendFinding = [&](const std::string& ruleId,
                                  const std::string& status,
@@ -4791,6 +4794,11 @@ public:
         return recentExecutions_;
     }
 
+    std::vector<AppleOperationRecord> recentAppleOperations() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return recentAppleOperations_;
+    }
+
     GovernanceToolResult execute(const GovernanceToolRequest& request) override {
         GovernanceToolResult result;
         result.platform = request.platform;
@@ -4808,10 +4816,14 @@ public:
         }
 
         result.displayName = descriptor->displayName;
+        std::optional<AppleOperationRecord> appleOperation;
+        if (descriptor->requiresRemoteToolchain) {
+            appleOperation = queueAppleOperation(*descriptor, request);
+        }
 
         try {
             if (descriptor->requiresRemoteToolchain) {
-                executeAppleRemoteTool(*descriptor, request, result);
+                executeAppleRemoteTool(*descriptor, request, result, appleOperation ? &*appleOperation : nullptr);
             } else {
                 switch (request.platform) {
                     case PlatformTarget::Windows:
@@ -4834,6 +4846,9 @@ public:
         }
 
         result.completedAtUtc = timestampNowUtc();
+        if (appleOperation.has_value()) {
+            completeAppleOperation(*appleOperation, result);
+        }
         recordExecution(result);
         return result;
     }
@@ -4887,6 +4902,117 @@ private:
         recentExecutions_.insert(recentExecutions_.begin(), result);
         if (recentExecutions_.size() > 20) {
             recentExecutions_.resize(20);
+        }
+    }
+
+    static std::string findAppleArtifactPath(const GovernanceToolDescriptor& descriptor,
+                                             const GovernanceToolRequest& request) {
+        std::vector<const char*> keys;
+        if (descriptor.toolId == "forsetti.ios.export") {
+            keys = { "exportPath", "outputPath", "outputDirectory", "artifactPath", "archivePath" };
+        } else if (descriptor.toolId == "forsetti.ios.device.install") {
+            keys = { "appPath", "applicationPath", "bundlePath", "artifactPath" };
+        } else if (descriptor.toolId == "forsetti.macos.sign") {
+            keys = { "bundlePath", "appPath", "targetBundlePath", "artifactPath" };
+        } else if (descriptor.toolId == "forsetti.macos.notarize" ||
+                   descriptor.toolId == "forsetti.macos.staple") {
+            keys = { "artifactPath", "bundlePath", "staplePath", "targetPath" };
+        } else if (descriptor.toolId == "forsetti.macos.archive" ||
+                   descriptor.toolId == "forsetti.ios.archive") {
+            keys = { "archivePath", "artifactPath" };
+        } else {
+            keys = { "artifactPath", "bundlePath", "appPath", "archivePath", "exportPath", "outputPath", "outputDirectory" };
+        }
+
+        for (const auto* key : keys) {
+            const auto iterator = request.options.find(key);
+            if (iterator == request.options.end()) {
+                continue;
+            }
+            const auto value = trimCopy(iterator->second);
+            if (!value.empty()) {
+                return value;
+            }
+        }
+        return {};
+    }
+
+    AppleOperationRecord queueAppleOperation(const GovernanceToolDescriptor& descriptor,
+                                             const GovernanceToolRequest& request) {
+        AppleOperationRecord record;
+        record.operationId = generateExecutionId();
+        record.platform = request.platform;
+        record.toolId = request.toolId;
+        record.displayName = descriptor.displayName;
+        record.status = AppleOperationStatus::Queued;
+        record.queuedAtUtc = timestampNowUtc();
+        record.workingDirectory = resolveAppleWorkingDirectory(request);
+        record.artifactPath = findAppleArtifactPath(descriptor, request);
+        record.targetPath = request.targetPath;
+        record.summary = "Queued Apple governance operation.";
+        persistAppleOperation(record);
+        return record;
+    }
+
+    void markAppleOperationRunning(AppleOperationRecord& record,
+                                   const AppleRemoteHost& host) {
+        record.hostId = host.hostId;
+        record.hostDisplayName = host.displayName;
+        record.transport = host.transport;
+        record.status = AppleOperationStatus::Running;
+        record.startedAtUtc = timestampNowUtc();
+        record.summary = "Running on Apple host '" + host.displayName + "' via " + to_string(host.transport) + ".";
+        persistAppleOperation(record);
+    }
+
+    void completeAppleOperation(AppleOperationRecord& record,
+                                const GovernanceToolResult& result) {
+        if (record.startedAtUtc.empty()) {
+            record.startedAtUtc = result.startedAtUtc;
+        }
+        record.completedAtUtc = result.completedAtUtc.empty() ? timestampNowUtc() : result.completedAtUtc;
+        record.status = mapAppleOperationStatus(result);
+        record.summary = result.summary;
+        record.rawOutput = result.rawOutput;
+        if (!result.succeeded && !result.findings.empty()) {
+            record.errorMessage = result.findings.front().message;
+        }
+        if (!result.succeeded && record.errorMessage.empty()) {
+            record.errorMessage = result.summary;
+        }
+        persistAppleOperation(record);
+    }
+
+    static AppleOperationStatus mapAppleOperationStatus(const GovernanceToolResult& result) {
+        if (result.succeeded) {
+            return AppleOperationStatus::Succeeded;
+        }
+        switch (result.status) {
+            case GovernanceToolStatus::Warning:
+            case GovernanceToolStatus::Unsupported:
+                return AppleOperationStatus::Blocked;
+            case GovernanceToolStatus::Passed:
+                return AppleOperationStatus::Succeeded;
+            case GovernanceToolStatus::Failed:
+            default:
+                return AppleOperationStatus::Failed;
+        }
+    }
+
+    void persistAppleOperation(const AppleOperationRecord& record) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto iterator = std::find_if(
+            recentAppleOperations_.begin(),
+            recentAppleOperations_.end(),
+            [&record](const AppleOperationRecord& candidate) { return candidate.operationId == record.operationId; });
+        if (iterator == recentAppleOperations_.end()) {
+            recentAppleOperations_.insert(recentAppleOperations_.begin(), record);
+        } else {
+            *iterator = record;
+            std::rotate(recentAppleOperations_.begin(), iterator, iterator + 1);
+        }
+        if (recentAppleOperations_.size() > 30) {
+            recentAppleOperations_.resize(30);
         }
     }
 
@@ -5574,7 +5700,8 @@ private:
 
     void executeAppleRemoteTool(const GovernanceToolDescriptor& descriptor,
                                 const GovernanceToolRequest& request,
-                                GovernanceToolResult& result) const {
+                                GovernanceToolResult& result,
+                                AppleOperationRecord* appleOperation) {
         if (!appleRemoteHostService_) {
             result.status = GovernanceToolStatus::Failed;
             result.summary = "Apple remote host service is unavailable.";
@@ -5584,6 +5711,10 @@ private:
                 "high",
                 "blocked",
                 "The Apple remote host registry service is not available in the Forsetti runtime."));
+            if (appleOperation != nullptr) {
+                appleOperation->summary = result.summary;
+                appleOperation->errorMessage = result.summary;
+            }
             return;
         }
 
@@ -5598,7 +5729,15 @@ private:
                 "high",
                 "blocked",
                 "Configure an Apple remote host with either ssh or companion_service transport before using this governance lane."));
+            if (appleOperation != nullptr) {
+                appleOperation->summary = result.summary;
+                appleOperation->errorMessage = "No eligible Apple host is configured.";
+            }
             return;
+        }
+
+        if (appleOperation != nullptr) {
+            markAppleOperationRunning(*appleOperation, *host);
         }
 
         const bool readyForPlatform =
@@ -5658,6 +5797,9 @@ private:
                 ? "Governance routed to Apple host '" + host->displayName + "' via " + to_string(host->transport) + "."
                 : "Apple host '" + host->displayName + "' is configured, but not ready for " +
                     platformKey(request.platform) + " governance execution.";
+            if (appleOperation != nullptr && !readyForPlatform) {
+                appleOperation->errorMessage = "The selected Apple host is not ready for the requested platform.";
+            }
             return;
         }
 
@@ -5679,6 +5821,10 @@ private:
                 if (result.summary.empty()) {
                     result.status = GovernanceToolStatus::Warning;
                     result.summary = "Apple governance tool options are incomplete.";
+                }
+                if (appleOperation != nullptr) {
+                    appleOperation->summary = result.summary;
+                    appleOperation->errorMessage = result.summary;
                 }
                 return;
             }
@@ -5708,6 +5854,9 @@ private:
                         "medium",
                         "warning",
                         execution.errorMessage));
+                    if (appleOperation != nullptr) {
+                        appleOperation->errorMessage = execution.errorMessage;
+                    }
                 }
                 return;
             }
@@ -5724,6 +5873,9 @@ private:
                     execution.succeeded ? "low" : "high",
                     execution.succeeded ? "pass" : "blocked",
                     execution.errorMessage));
+                if (appleOperation != nullptr) {
+                    appleOperation->errorMessage = execution.errorMessage;
+                }
             }
             return;
         }
@@ -5746,6 +5898,7 @@ private:
     mutable std::mutex mutex_;
     std::map<std::string, GovernanceToolDescriptor> toolsByKey_;
     std::vector<GovernanceToolResult> recentExecutions_;
+    std::vector<AppleOperationRecord> recentAppleOperations_;
 };
 
 class BeaconService final : public IBeaconService {
@@ -6728,6 +6881,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "GET" && request.path == "/api/clu/tools") {
             return jsonResponse(commandLogicUnitService_->currentGovernance().availableTools);
         }
+        if (request.method == "GET" && request.path == "/api/clu/apple-operations") {
+            return jsonResponse(commandLogicUnitService_->currentGovernance().appleOperations);
+        }
         if (request.method == "GET" && request.path == "/api/forsetti/surface") {
             return jsonResponse(surfaceService_->currentSurface());
         }
@@ -6792,6 +6948,12 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     platformTools.push_back(tool);
                 }
             }
+            nlohmann::json platformOperations = nlohmann::json::array();
+            for (const auto& operation : governanceSnapshot.appleOperations) {
+                if (operation.platform == platform) {
+                    platformOperations.push_back(operation);
+                }
+            }
             return jsonResponse(nlohmann::json{
                 { "service", "governance-mcp-server" },
                 { "platform", platformKey(platform) },
@@ -6799,6 +6961,7 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 { "governanceServer", *governance },
                 { "toolIds", governance->toolIds },
                 { "tools", platformTools },
+                { "recentOperations", platformOperations },
                 { "requiresRemoteToolchain", governance->requiresRemoteToolchain },
                 { "selectedAppleHost", selectedAppleHost.has_value() ? nlohmann::json(*selectedAppleHost) : nlohmann::json() },
                 { "routeable", platform == PlatformTarget::Windows ||

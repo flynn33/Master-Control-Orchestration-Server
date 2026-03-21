@@ -602,6 +602,22 @@ std::optional<MasterControl::AppleRemoteHost> findAppleRemoteHost(
     return *iterator;
 }
 
+std::optional<MasterControl::AppleOperationRecord> findAppleOperation(
+    const std::vector<MasterControl::AppleOperationRecord>& operations,
+    MasterControl::PlatformTarget platform,
+    const std::string& toolId) {
+    const auto iterator = std::find_if(
+        operations.begin(),
+        operations.end(),
+        [platform, &toolId](const MasterControl::AppleOperationRecord& operation) {
+            return operation.platform == platform && operation.toolId == toolId;
+        });
+    if (iterator == operations.end()) {
+        return std::nullopt;
+    }
+    return *iterator;
+}
+
 bool hasProviderCapability(const std::vector<MasterControl::ProviderCapabilityDescriptor>& capabilities,
                           const std::string& providerId) {
     return std::any_of(
@@ -1486,6 +1502,46 @@ int main() {
                 iosDeviceInstallExecution.status == MasterControl::GovernanceToolStatus::Passed,
             "iOS device install governance execution should run through the Apple companion service.");
 
+        snapshot = application.snapshot();
+        const auto macStapleOperation = findAppleOperation(
+            snapshot.governance.appleOperations,
+            MasterControl::PlatformTarget::MacOS,
+            "forsetti.macos.staple");
+        success &= expect(
+            macStapleOperation.has_value(),
+            "CLU should publish recent Apple macOS distribution operations.");
+        success &= expect(
+            macStapleOperation.has_value() &&
+                macStapleOperation->status == MasterControl::AppleOperationStatus::Succeeded &&
+                macStapleOperation->hostId == "apple-host-01" &&
+                macStapleOperation->transport == MasterControl::AppleRemoteTransport::CompanionService &&
+                macStapleOperation->artifactPath.find("MasterControlShell.zip") != std::string::npos,
+            "Apple operation history should capture the selected host, transport, and macOS artifact path.");
+
+        const auto iosExportOperation = findAppleOperation(
+            snapshot.governance.appleOperations,
+            MasterControl::PlatformTarget::IOS,
+            "forsetti.ios.export");
+        success &= expect(
+            iosExportOperation.has_value() &&
+                iosExportOperation->status == MasterControl::AppleOperationStatus::Succeeded &&
+                iosExportOperation->artifactPath.find("ios-export") != std::string::npos,
+            "Apple operation history should capture iOS export operations and output paths.");
+
+        const auto appleOperationsDocument = httpGetJson(application.browserUrl() + "api/clu/apple-operations");
+        success &= expect(
+            appleOperationsDocument.has_value() &&
+                appleOperationsDocument->is_array() &&
+                !appleOperationsDocument->empty(),
+            "The admin API should expose recent Apple operations through the CLU route.");
+        const auto macGovernanceDocumentWithHistory = httpGetJson(application.browserUrl() + "mcp/governance/macos");
+        success &= expect(
+            macGovernanceDocumentWithHistory.has_value() &&
+                macGovernanceDocumentWithHistory->contains("recentOperations") &&
+                (*macGovernanceDocumentWithHistory)["recentOperations"].is_array() &&
+                !(*macGovernanceDocumentWithHistory)["recentOperations"].empty(),
+            "Platform governance routes should publish recent Apple operations for their platform.");
+
         const auto companionRequests = appleCompanionServer.requests();
         success &= expect(
             std::any_of(
@@ -1602,6 +1658,12 @@ int main() {
                 MasterControl::PlatformTarget::IOS,
                 "forsetti.ios.remote-build.validate").has_value(),
             "CLU should record recent Apple governance execution history.");
+        success &= expect(
+            findAppleOperation(
+                snapshot.governance.appleOperations,
+                MasterControl::PlatformTarget::MacOS,
+                "forsetti.macos.remote-build.validate").has_value(),
+            "CLU should record recent Apple operation history even when the selected host is not ready.");
 
         success &= expect(std::filesystem::exists(appPaths.entitlementsFile), "The runtime should seed an entitlement state file");
         writeTextFile(

@@ -98,6 +98,14 @@ enum class GovernanceToolStatus {
     Unsupported
 };
 
+enum class AppleOperationStatus {
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+    Blocked
+};
+
 struct HostTelemetrySnapshot final {
     double cpuPercent = 0.0;
     double memoryPercent = 0.0;
@@ -480,6 +488,26 @@ struct GovernanceToolResult final {
     std::string completedAtUtc;
 };
 
+struct AppleOperationRecord final {
+    std::string operationId;
+    PlatformTarget platform = PlatformTarget::Unknown;
+    std::string toolId;
+    std::string displayName;
+    std::string hostId;
+    std::string hostDisplayName;
+    AppleRemoteTransport transport = AppleRemoteTransport::Unknown;
+    AppleOperationStatus status = AppleOperationStatus::Queued;
+    std::string workingDirectory;
+    std::string artifactPath;
+    std::string targetPath;
+    std::string summary;
+    std::string rawOutput;
+    std::string errorMessage;
+    std::string queuedAtUtc;
+    std::string startedAtUtc;
+    std::string completedAtUtc;
+};
+
 struct GovernanceSnapshot final {
     std::string unitName;
     std::string posture;
@@ -496,6 +524,7 @@ struct GovernanceSnapshot final {
     std::vector<GovernanceServerDescriptor> governanceServers;
     std::vector<GovernanceToolDescriptor> availableTools;
     std::vector<GovernanceToolResult> recentExecutions;
+    std::vector<AppleOperationRecord> appleOperations;
 };
 
 struct ModuleControlSurfaceRequest final {
@@ -599,6 +628,7 @@ std::string to_string(ControlSurfaceToolbarAction value);
 std::string to_string(PlatformTarget value);
 std::string to_string(AppleRemoteTransport value);
 std::string to_string(GovernanceToolStatus value);
+std::string to_string(AppleOperationStatus value);
 
 EndpointKind endpointKindFromString(const std::string& value);
 EndpointStatus endpointStatusFromString(const std::string& value);
@@ -612,6 +642,7 @@ ControlSurfaceToolbarAction controlSurfaceToolbarActionFromString(const std::str
 PlatformTarget platformTargetFromString(const std::string& value);
 AppleRemoteTransport appleRemoteTransportFromString(const std::string& value);
 GovernanceToolStatus governanceToolStatusFromString(const std::string& value);
+AppleOperationStatus appleOperationStatusFromString(const std::string& value);
 
 void to_json(nlohmann::json& json, EndpointKind value);
 void from_json(const nlohmann::json& json, EndpointKind& value);
@@ -648,6 +679,9 @@ void from_json(const nlohmann::json& json, AppleRemoteTransport& value);
 
 void to_json(nlohmann::json& json, GovernanceToolStatus value);
 void from_json(const nlohmann::json& json, GovernanceToolStatus& value);
+
+void to_json(nlohmann::json& json, AppleOperationStatus value);
+void from_json(const nlohmann::json& json, AppleOperationStatus& value);
 
 std::string toPrettyJson(const nlohmann::json& json);
 std::string timestampNowUtc();
@@ -1006,6 +1040,26 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     completedAtUtc)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    AppleOperationRecord,
+    operationId,
+    platform,
+    toolId,
+    displayName,
+    hostId,
+    hostDisplayName,
+    transport,
+    status,
+    workingDirectory,
+    artifactPath,
+    targetPath,
+    summary,
+    rawOutput,
+    errorMessage,
+    queuedAtUtc,
+    startedAtUtc,
+    completedAtUtc)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GovernanceSnapshot,
     unitName,
     posture,
@@ -1021,7 +1075,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     platformGateways,
     governanceServers,
     availableTools,
-    recentExecutions)
+    recentExecutions,
+    appleOperations)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     PlatformGatewayDescriptor,

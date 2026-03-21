@@ -142,6 +142,7 @@ public:
     virtual void removeToolsForModule(const std::string& moduleId) = 0;
     virtual std::vector<GovernanceToolDescriptor> listTools() const = 0;
     virtual std::vector<GovernanceToolResult> recentExecutions() const = 0;
+    virtual std::vector<AppleOperationRecord> recentAppleOperations() const = 0;
     virtual GovernanceToolResult execute(const GovernanceToolRequest& request) = 0;
     virtual ~IPlatformGovernanceToolService() = default;
 };

@@ -148,6 +148,16 @@ std::string to_string(GovernanceToolStatus value) {
     });
 }
 
+std::string to_string(AppleOperationStatus value) {
+    return enumToString(value, {
+        { AppleOperationStatus::Queued, "queued" },
+        { AppleOperationStatus::Running, "running" },
+        { AppleOperationStatus::Succeeded, "succeeded" },
+        { AppleOperationStatus::Failed, "failed" },
+        { AppleOperationStatus::Blocked, "blocked" }
+    });
+}
+
 EndpointKind endpointKindFromString(const std::string& value) {
     return enumFromString<EndpointKind>(value, {
         { EndpointKind::Host, "host" },
@@ -254,6 +264,16 @@ GovernanceToolStatus governanceToolStatusFromString(const std::string& value) {
     });
 }
 
+AppleOperationStatus appleOperationStatusFromString(const std::string& value) {
+    return enumFromString<AppleOperationStatus>(value, {
+        { AppleOperationStatus::Queued, "queued" },
+        { AppleOperationStatus::Running, "running" },
+        { AppleOperationStatus::Succeeded, "succeeded" },
+        { AppleOperationStatus::Failed, "failed" },
+        { AppleOperationStatus::Blocked, "blocked" }
+    });
+}
+
 void to_json(nlohmann::json& json, EndpointKind value) {
     json = to_string(value);
 }
@@ -348,6 +368,14 @@ void to_json(nlohmann::json& json, GovernanceToolStatus value) {
 
 void from_json(const nlohmann::json& json, GovernanceToolStatus& value) {
     value = governanceToolStatusFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, AppleOperationStatus value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, AppleOperationStatus& value) {
+    value = appleOperationStatusFromString(json.get<std::string>());
 }
 
 std::string toPrettyJson(const nlohmann::json& json) {
