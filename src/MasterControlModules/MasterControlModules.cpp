@@ -610,6 +610,51 @@ void unregisterGovernanceServer(Forsetti::ForsettiContext& context,
     });
 }
 
+void registerGovernanceTools(Forsetti::ForsettiContext& context,
+                             const std::vector<GovernanceToolDescriptor>& descriptors) {
+    const auto toolService = context.services()->resolve<IPlatformGovernanceToolService>();
+    if (!toolService) {
+        return;
+    }
+
+    for (const auto& descriptor : descriptors) {
+        toolService->upsertTool(descriptor);
+    }
+
+    if (!descriptors.empty()) {
+        context.publishFrameworkEvent(Forsetti::ForsettiEvent{
+            "mastercontrol.platform.governance-tools.changed",
+            {
+                { "moduleID", descriptors.front().moduleId },
+                { "serviceID", descriptors.front().serviceId },
+                { "action", "upsert" },
+                { "toolCount", std::to_string(descriptors.size()) }
+            },
+            descriptors.front().moduleId
+        });
+    }
+}
+
+void unregisterGovernanceTools(Forsetti::ForsettiContext& context,
+                               const std::string& moduleId,
+                               const std::string& serviceId) {
+    const auto toolService = context.services()->resolve<IPlatformGovernanceToolService>();
+    if (!toolService) {
+        return;
+    }
+
+    toolService->removeToolsForModule(moduleId);
+    context.publishFrameworkEvent(Forsetti::ForsettiEvent{
+        "mastercontrol.platform.governance-tools.changed",
+        {
+            { "moduleID", moduleId },
+            { "serviceID", serviceId },
+            { "action", "remove" }
+        },
+        moduleId
+    });
+}
+
 ProviderCapabilityDescriptor makeCodexProviderCapability() {
     return ProviderCapabilityDescriptor{
         "com.mastercontrol.provider-codex",
@@ -891,6 +936,129 @@ GovernanceServerDescriptor makeIOSGovernanceServerDescriptor() {
         },
         true,
         "online"
+    };
+}
+
+std::vector<GovernanceToolDescriptor> makeWindowsGovernanceToolDescriptors() {
+    return {
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-windows",
+            "windows-governance",
+            PlatformTarget::Windows,
+            "forsetti.windows.manifest.validate",
+            "Validate Forsetti Compliance",
+            "Run the repo-owned Master Control Forsetti compliance guardrail script.",
+            false
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-windows",
+            "windows-governance",
+            PlatformTarget::Windows,
+            "forsetti.windows.architecture.validate",
+            "Validate Forsetti Architecture",
+            "Run the vendored Forsetti architecture and dependency validation scripts.",
+            false
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-windows",
+            "windows-governance",
+            PlatformTarget::Windows,
+            "forsetti.windows.module-boundary.inspect",
+            "Inspect Module Boundaries",
+            "Inspect the Core-only module boundary and manifest layout for Master Control.",
+            false
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-windows",
+            "windows-governance",
+            PlatformTarget::Windows,
+            "forsetti.windows.package.validate",
+            "Validate Staged Package",
+            "Validate the staged deployment payload for required Windows artifacts.",
+            false
+        }
+    };
+}
+
+std::vector<GovernanceToolDescriptor> makeMacGovernanceToolDescriptors() {
+    return {
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-macos",
+            "mac-governance",
+            PlatformTarget::MacOS,
+            "forsetti.macos.manifest.validate",
+            "Validate Mac Governance Manifests",
+            "Validate the Mac governance lane before routing work to remote Apple infrastructure.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-macos",
+            "mac-governance",
+            PlatformTarget::MacOS,
+            "forsetti.macos.project-layout.inspect",
+            "Inspect Mac Project Layout",
+            "Inspect the target Mac project layout and governance contract before remote execution.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-macos",
+            "mac-governance",
+            PlatformTarget::MacOS,
+            "forsetti.macos.toolchain.route",
+            "Route Mac Toolchain",
+            "Route governance execution to the configured remote Mac toolchain lane.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-macos",
+            "mac-governance",
+            PlatformTarget::MacOS,
+            "forsetti.macos.remote-build.validate",
+            "Validate Remote Mac Build",
+            "Validate remote Mac build infrastructure and governance prerequisites.",
+            true
+        }
+    };
+}
+
+std::vector<GovernanceToolDescriptor> makeIOSGovernanceToolDescriptors() {
+    return {
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-ios",
+            "ios-governance",
+            PlatformTarget::IOS,
+            "forsetti.ios.manifest.validate",
+            "Validate iOS Governance Manifests",
+            "Validate the iOS governance lane before routing work to remote Apple infrastructure.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-ios",
+            "ios-governance",
+            PlatformTarget::IOS,
+            "forsetti.ios.project-layout.inspect",
+            "Inspect iOS Project Layout",
+            "Inspect the target iOS project layout and governance contract before remote execution.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-ios",
+            "ios-governance",
+            PlatformTarget::IOS,
+            "forsetti.ios.signing.route",
+            "Route iOS Signing",
+            "Route governance execution to the configured remote iOS signing and toolchain lane.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-ios",
+            "ios-governance",
+            PlatformTarget::IOS,
+            "forsetti.ios.remote-build.validate",
+            "Validate Remote iOS Build",
+            "Validate remote iOS build infrastructure and governance prerequisites.",
+            true
+        }
     };
 }
 
@@ -1442,10 +1610,12 @@ Forsetti::ModuleManifest WindowsGovernanceMcpServerModule::manifest() const {
 void WindowsGovernanceMcpServerModule::start(Forsetti::ForsettiContext& context) {
     registerControlSurfaceRequests(context, makeWindowsGovernanceControlSurfaceRequests());
     registerGovernanceServer(context, makeWindowsGovernanceServerDescriptor());
+    registerGovernanceTools(context, makeWindowsGovernanceToolDescriptors());
     publishLifecycleEvent(context, "mastercontrol.governance.windows.started", descriptor().moduleID);
 }
 
 void WindowsGovernanceMcpServerModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterGovernanceTools(context, descriptor().moduleID, "windows-governance");
     unregisterGovernanceServer(context, descriptor().moduleID, "windows-governance");
     unregisterControlSurfaceRequests(context, descriptor().moduleID);
     publishLifecycleEvent(context, "mastercontrol.governance.windows.stopped", descriptor().moduleID);
@@ -1468,10 +1638,12 @@ Forsetti::ModuleManifest MacGovernanceMcpServerModule::manifest() const {
 void MacGovernanceMcpServerModule::start(Forsetti::ForsettiContext& context) {
     registerControlSurfaceRequests(context, makeMacGovernanceControlSurfaceRequests());
     registerGovernanceServer(context, makeMacGovernanceServerDescriptor());
+    registerGovernanceTools(context, makeMacGovernanceToolDescriptors());
     publishLifecycleEvent(context, "mastercontrol.governance.macos.started", descriptor().moduleID);
 }
 
 void MacGovernanceMcpServerModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterGovernanceTools(context, descriptor().moduleID, "mac-governance");
     unregisterGovernanceServer(context, descriptor().moduleID, "mac-governance");
     unregisterControlSurfaceRequests(context, descriptor().moduleID);
     publishLifecycleEvent(context, "mastercontrol.governance.macos.stopped", descriptor().moduleID);
@@ -1494,10 +1666,12 @@ Forsetti::ModuleManifest IOSGovernanceMcpServerModule::manifest() const {
 void IOSGovernanceMcpServerModule::start(Forsetti::ForsettiContext& context) {
     registerControlSurfaceRequests(context, makeIOSGovernanceControlSurfaceRequests());
     registerGovernanceServer(context, makeIOSGovernanceServerDescriptor());
+    registerGovernanceTools(context, makeIOSGovernanceToolDescriptors());
     publishLifecycleEvent(context, "mastercontrol.governance.ios.started", descriptor().moduleID);
 }
 
 void IOSGovernanceMcpServerModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterGovernanceTools(context, descriptor().moduleID, "ios-governance");
     unregisterGovernanceServer(context, descriptor().moduleID, "ios-governance");
     unregisterControlSurfaceRequests(context, descriptor().moduleID);
     publishLifecycleEvent(context, "mastercontrol.governance.ios.stopped", descriptor().moduleID);

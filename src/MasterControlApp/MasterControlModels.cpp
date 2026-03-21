@@ -131,6 +131,15 @@ std::string to_string(PlatformTarget value) {
     });
 }
 
+std::string to_string(GovernanceToolStatus value) {
+    return enumToString(value, {
+        { GovernanceToolStatus::Passed, "passed" },
+        { GovernanceToolStatus::Warning, "warning" },
+        { GovernanceToolStatus::Failed, "failed" },
+        { GovernanceToolStatus::Unsupported, "unsupported" }
+    });
+}
+
 EndpointKind endpointKindFromString(const std::string& value) {
     return enumFromString<EndpointKind>(value, {
         { EndpointKind::Host, "host" },
@@ -220,6 +229,15 @@ PlatformTarget platformTargetFromString(const std::string& value) {
     });
 }
 
+GovernanceToolStatus governanceToolStatusFromString(const std::string& value) {
+    return enumFromString<GovernanceToolStatus>(value, {
+        { GovernanceToolStatus::Passed, "passed" },
+        { GovernanceToolStatus::Warning, "warning" },
+        { GovernanceToolStatus::Failed, "failed" },
+        { GovernanceToolStatus::Unsupported, "unsupported" }
+    });
+}
+
 void to_json(nlohmann::json& json, EndpointKind value) {
     json = to_string(value);
 }
@@ -298,6 +316,14 @@ void to_json(nlohmann::json& json, PlatformTarget value) {
 
 void from_json(const nlohmann::json& json, PlatformTarget& value) {
     value = platformTargetFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, GovernanceToolStatus value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, GovernanceToolStatus& value) {
+    value = governanceToolStatusFromString(json.get<std::string>());
 }
 
 std::string toPrettyJson(const nlohmann::json& json) {

@@ -26,6 +26,7 @@ public:
 
     std::string browserUrl() const;
     DashboardSnapshot snapshot();
+    GovernanceToolResult executeGovernanceToolJson(const std::string& requestBody);
     OperationResult applyConfigurationJson(const std::string& requestBody,
                                            bool confirmUnsafeChanges);
     OperationResult upsertProviderJson(const std::string& requestBody);

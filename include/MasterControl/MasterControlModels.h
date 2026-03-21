@@ -85,6 +85,13 @@ enum class PlatformTarget {
     Unknown
 };
 
+enum class GovernanceToolStatus {
+    Passed,
+    Warning,
+    Failed,
+    Unsupported
+};
+
 struct HostTelemetrySnapshot final {
     double cpuPercent = 0.0;
     double memoryPercent = 0.0;
@@ -369,6 +376,36 @@ struct GovernanceServerDescriptor final {
     std::string status = "unknown";
 };
 
+struct GovernanceToolDescriptor final {
+    std::string moduleId;
+    std::string serviceId;
+    PlatformTarget platform = PlatformTarget::Unknown;
+    std::string toolId;
+    std::string displayName;
+    std::string description;
+    bool requiresRemoteToolchain = false;
+};
+
+struct GovernanceToolRequest final {
+    PlatformTarget platform = PlatformTarget::Unknown;
+    std::string toolId;
+    std::string targetPath;
+    std::map<std::string, std::string> options;
+};
+
+struct GovernanceToolResult final {
+    PlatformTarget platform = PlatformTarget::Unknown;
+    std::string toolId;
+    std::string displayName;
+    GovernanceToolStatus status = GovernanceToolStatus::Failed;
+    bool succeeded = false;
+    std::string summary;
+    std::vector<GovernanceFinding> findings;
+    std::string rawOutput;
+    std::string startedAtUtc;
+    std::string completedAtUtc;
+};
+
 struct GovernanceSnapshot final {
     std::string unitName;
     std::string posture;
@@ -382,6 +419,8 @@ struct GovernanceSnapshot final {
     std::vector<std::string> recommendedActions;
     std::vector<PlatformGatewayDescriptor> platformGateways;
     std::vector<GovernanceServerDescriptor> governanceServers;
+    std::vector<GovernanceToolDescriptor> availableTools;
+    std::vector<GovernanceToolResult> recentExecutions;
 };
 
 struct ModuleControlSurfaceRequest final {
@@ -481,6 +520,7 @@ std::string to_string(ProviderExecutionTransport value);
 std::string to_string(InstallerKind value);
 std::string to_string(ControlSurfaceToolbarAction value);
 std::string to_string(PlatformTarget value);
+std::string to_string(GovernanceToolStatus value);
 
 EndpointKind endpointKindFromString(const std::string& value);
 EndpointStatus endpointStatusFromString(const std::string& value);
@@ -492,6 +532,7 @@ ProviderExecutionTransport providerExecutionTransportFromString(const std::strin
 InstallerKind installerKindFromString(const std::string& value);
 ControlSurfaceToolbarAction controlSurfaceToolbarActionFromString(const std::string& value);
 PlatformTarget platformTargetFromString(const std::string& value);
+GovernanceToolStatus governanceToolStatusFromString(const std::string& value);
 
 void to_json(nlohmann::json& json, EndpointKind value);
 void from_json(const nlohmann::json& json, EndpointKind& value);
@@ -522,6 +563,9 @@ void from_json(const nlohmann::json& json, ControlSurfaceToolbarAction& value);
 
 void to_json(nlohmann::json& json, PlatformTarget value);
 void from_json(const nlohmann::json& json, PlatformTarget& value);
+
+void to_json(nlohmann::json& json, GovernanceToolStatus value);
+void from_json(const nlohmann::json& json, GovernanceToolStatus& value);
 
 std::string toPrettyJson(const nlohmann::json& json);
 std::string timestampNowUtc();
@@ -782,6 +826,36 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     operatorChecklist)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceToolDescriptor,
+    moduleId,
+    serviceId,
+    platform,
+    toolId,
+    displayName,
+    description,
+    requiresRemoteToolchain)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceToolRequest,
+    platform,
+    toolId,
+    targetPath,
+    options)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceToolResult,
+    platform,
+    toolId,
+    displayName,
+    status,
+    succeeded,
+    summary,
+    findings,
+    rawOutput,
+    startedAtUtc,
+    completedAtUtc)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GovernanceSnapshot,
     unitName,
     posture,
@@ -794,7 +868,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     operatorChecklist,
     recommendedActions,
     platformGateways,
-    governanceServers)
+    governanceServers,
+    availableTools,
+    recentExecutions)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     PlatformGatewayDescriptor,

@@ -72,6 +72,10 @@ void writeTextFile(const std::filesystem::path& filePath, const std::string& con
     output << contents;
 }
 
+std::filesystem::path sourceRepoRoot() {
+    return std::filesystem::path(__FILE__).parent_path().parent_path();
+}
+
 std::string utf8FromWide(const std::wstring& input) {
     if (input.empty()) {
         return {};
@@ -553,6 +557,38 @@ std::optional<MasterControl::GovernanceServerDescriptor> findGovernanceServer(
     return *iterator;
 }
 
+std::optional<MasterControl::GovernanceToolDescriptor> findGovernanceTool(
+    const std::vector<MasterControl::GovernanceToolDescriptor>& tools,
+    MasterControl::PlatformTarget platform,
+    const std::string& toolId) {
+    const auto iterator = std::find_if(
+        tools.begin(),
+        tools.end(),
+        [platform, &toolId](const MasterControl::GovernanceToolDescriptor& descriptor) {
+            return descriptor.platform == platform && descriptor.toolId == toolId;
+        });
+    if (iterator == tools.end()) {
+        return std::nullopt;
+    }
+    return *iterator;
+}
+
+std::optional<MasterControl::GovernanceToolResult> findGovernanceExecution(
+    const std::vector<MasterControl::GovernanceToolResult>& executions,
+    MasterControl::PlatformTarget platform,
+    const std::string& toolId) {
+    const auto iterator = std::find_if(
+        executions.begin(),
+        executions.end(),
+        [platform, &toolId](const MasterControl::GovernanceToolResult& result) {
+            return result.platform == platform && result.toolId == toolId;
+        });
+    if (iterator == executions.end()) {
+        return std::nullopt;
+    }
+    return *iterator;
+}
+
 bool hasProviderCapability(const std::vector<MasterControl::ProviderCapabilityDescriptor>& capabilities,
                           const std::string& providerId) {
     return std::any_of(
@@ -896,6 +932,35 @@ int main() {
                 findGovernanceServer(snapshot.governanceServers, MasterControl::PlatformTarget::IOS)->requiresRemoteToolchain,
             "iOS governance should declare its remote Apple toolchain dependency.");
         success &= expect(
+            !snapshot.governance.availableTools.empty(),
+            "CLU should publish the available governance tool catalog.");
+        success &= expect(
+            findGovernanceTool(
+                snapshot.governance.availableTools,
+                MasterControl::PlatformTarget::Windows,
+                "forsetti.windows.manifest.validate").has_value(),
+            "Windows governance tools should be registered through the framework.");
+        success &= expect(
+            findGovernanceTool(
+                snapshot.governance.availableTools,
+                MasterControl::PlatformTarget::MacOS,
+                "forsetti.macos.remote-build.validate").has_value() &&
+                findGovernanceTool(
+                    snapshot.governance.availableTools,
+                    MasterControl::PlatformTarget::MacOS,
+                    "forsetti.macos.remote-build.validate")->requiresRemoteToolchain,
+            "Mac governance tools should declare their remote toolchain dependency.");
+        success &= expect(
+            findGovernanceTool(
+                snapshot.governance.availableTools,
+                MasterControl::PlatformTarget::IOS,
+                "forsetti.ios.remote-build.validate").has_value() &&
+                findGovernanceTool(
+                    snapshot.governance.availableTools,
+                    MasterControl::PlatformTarget::IOS,
+                    "forsetti.ios.remote-build.validate")->requiresRemoteToolchain,
+            "iOS governance tools should declare their remote toolchain dependency.");
+        success &= expect(
             snapshot.surface.publishedByModuleId == "com.mastercontrol.dashboard-ui",
             "The dashboard UI module should publish the composed framework surface");
         success &= expect(
@@ -964,6 +1029,59 @@ int main() {
             iosGovernanceDocument.has_value() &&
                 (*iosGovernanceDocument).value("requiresRemoteToolchain", false),
             "iOS governance route should report that it depends on remote Apple infrastructure.");
+        const auto windowsGovernanceDocument = httpGetJson(application.browserUrl() + "mcp/governance/windows");
+        success &= expect(windowsGovernanceDocument.has_value(), "Windows governance lane should be reachable from the browser admin server.");
+        success &= expect(
+            windowsGovernanceDocument.has_value() &&
+                (*windowsGovernanceDocument).contains("tools") &&
+                (*windowsGovernanceDocument)["tools"].is_array() &&
+                !(*windowsGovernanceDocument)["tools"].empty(),
+            "Governance routes should publish the framework-registered tool descriptors.");
+
+        const auto repoRoot = sourceRepoRoot();
+        const auto manifestExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "windows" },
+            { "toolId", "forsetti.windows.manifest.validate" },
+            { "targetPath", repoRoot.string() }
+        }.dump());
+        success &= expect(
+            manifestExecution.succeeded &&
+                manifestExecution.status == MasterControl::GovernanceToolStatus::Passed,
+            "Windows manifest governance execution should pass against the repo root.");
+
+        const auto stagedPayloadRoot = tempRoot / "governance-payload";
+        writeTextFile(stagedPayloadRoot / "MasterControlServiceHost.exe", "");
+        writeTextFile(stagedPayloadRoot / "MasterControlShell.exe", "");
+        writeTextFile(stagedPayloadRoot / "MasterControlBootstrapper.exe", "");
+        writeTextFile(stagedPayloadRoot / "share" / "MasterControlProgram" / "web" / "index.html", "<html></html>");
+        writeTextFile(stagedPayloadRoot / "share" / "MasterControlProgram" / "ForsettiManifests" / "DashboardUIModule.json", "{}");
+
+        const auto packageExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "windows" },
+            { "toolId", "forsetti.windows.package.validate" },
+            { "targetPath", stagedPayloadRoot.string() }
+        }.dump());
+        success &= expect(
+            packageExecution.succeeded &&
+                packageExecution.status == MasterControl::GovernanceToolStatus::Passed,
+            "Windows package governance execution should validate a staged payload root.");
+
+        const auto macExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "macos" },
+            { "toolId", "forsetti.macos.remote-build.validate" },
+            { "targetPath", repoRoot.string() }
+        }.dump());
+        success &= expect(
+            macExecution.status == MasterControl::GovernanceToolStatus::Unsupported,
+            "Mac governance execution should report unsupported until remote Apple infrastructure is configured.");
+
+        snapshot = application.snapshot();
+        success &= expect(
+            findGovernanceExecution(
+                snapshot.governance.recentExecutions,
+                MasterControl::PlatformTarget::Windows,
+                "forsetti.windows.manifest.validate").has_value(),
+            "CLU should record recent governance execution history.");
 
         success &= expect(std::filesystem::exists(appPaths.entitlementsFile), "The runtime should seed an entitlement state file");
         writeTextFile(
@@ -1538,10 +1656,10 @@ int main() {
         }
 
         if (toolExists(L"git.exe")) {
-            const auto repoRoot = tempRoot / "repo-fixture";
-            success &= expect(createGitImportFixture(repoRoot), "Repository fixture should be created successfully");
+            const auto repoFixtureRoot = tempRoot / "repo-fixture";
+            success &= expect(createGitImportFixture(repoFixtureRoot), "Repository fixture should be created successfully");
             if (success) {
-                const auto repoSource = repoRoot.string();
+                const auto repoSource = repoFixtureRoot.string();
                 const auto repoResult = application.installRepoJson(nlohmann::json{
                     { "repositoryUrl", repoSource },
                     { "branch", "main" },

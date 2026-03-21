@@ -1289,10 +1289,14 @@ public:
 
 private:
     static EndpointStatus probeEndpoint(const std::string& host, uint16_t port);
+    static bool sameEndpointConfiguration(const std::vector<RuntimeEndpoint>& left,
+                                          const std::vector<RuntimeEndpoint>& right);
 
     std::shared_ptr<SharedState> state_;
     std::mutex mutex_;
     std::vector<RuntimeEndpoint> endpoints_;
+    std::chrono::steady_clock::time_point lastRefreshAt_{};
+    std::chrono::seconds refreshInterval_{ 15 };
 };
 
 void RuntimeInventoryService::refresh() {
@@ -1300,6 +1304,16 @@ void RuntimeInventoryService::refresh() {
     {
         std::lock_guard<std::mutex> lock(state_->mutex);
         endpoints = state_->configuration.activeProfile.seededEndpoints;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto now = std::chrono::steady_clock::now();
+        if (!endpoints_.empty() && lastRefreshAt_.time_since_epoch().count() != 0 &&
+            now - lastRefreshAt_ < refreshInterval_ &&
+            sameEndpointConfiguration(endpoints_, endpoints)) {
+            return;
+        }
     }
 
     for (auto& endpoint : endpoints) {
@@ -1314,6 +1328,28 @@ void RuntimeInventoryService::refresh() {
 
     std::lock_guard<std::mutex> lock(mutex_);
     endpoints_ = std::move(endpoints);
+    lastRefreshAt_ = std::chrono::steady_clock::now();
+}
+
+bool RuntimeInventoryService::sameEndpointConfiguration(const std::vector<RuntimeEndpoint>& left,
+                                                        const std::vector<RuntimeEndpoint>& right) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+
+    for (size_t index = 0; index < left.size(); ++index) {
+        if (left[index].id != right[index].id ||
+            left[index].host != right[index].host ||
+            left[index].port != right[index].port ||
+            left[index].protocol != right[index].protocol ||
+            left[index].routePath != right[index].routePath ||
+            left[index].kind != right[index].kind ||
+            left[index].userDefined != right[index].userDefined ||
+            left[index].specialization != right[index].specialization) {
+            return false;
+        }
+    }
+    return true;
 }
 
 EndpointStatus RuntimeInventoryService::probeEndpoint(const std::string& host, const uint16_t port) {
@@ -3390,14 +3426,16 @@ public:
                             std::shared_ptr<IProviderAssignmentService> providerAssignmentService,
                             std::shared_ptr<IInstallerOrchestrator> installerOrchestrator,
                             std::shared_ptr<IExportService> exportService,
-                            std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService)
+                            std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService,
+                            std::shared_ptr<IPlatformGovernanceToolService> platformGovernanceToolService)
         : profile_(loadProfile(std::move(profileFile)))
         , configurationService_(std::move(configurationService))
         , providerRegistry_(std::move(providerRegistry))
         , providerAssignmentService_(std::move(providerAssignmentService))
         , installerOrchestrator_(std::move(installerOrchestrator))
         , exportService_(std::move(exportService))
-        , platformServiceCatalogService_(std::move(platformServiceCatalogService)) {}
+        , platformServiceCatalogService_(std::move(platformServiceCatalogService))
+        , platformGovernanceToolService_(std::move(platformGovernanceToolService)) {}
 
     GovernanceSnapshot currentGovernance() const override {
         GovernanceSnapshot snapshot;
@@ -3419,6 +3457,12 @@ public:
         snapshot.governanceServers = platformServiceCatalogService_
             ? platformServiceCatalogService_->listGovernanceServers()
             : std::vector<GovernanceServerDescriptor>{};
+        snapshot.availableTools = platformGovernanceToolService_
+            ? platformGovernanceToolService_->listTools()
+            : std::vector<GovernanceToolDescriptor>{};
+        snapshot.recentExecutions = platformGovernanceToolService_
+            ? platformGovernanceToolService_->recentExecutions()
+            : std::vector<GovernanceToolResult>{};
 
         auto appendFinding = [&](const std::string& ruleId,
                                  const std::string& status,
@@ -3554,11 +3598,67 @@ public:
             }
         }
 
+        if (std::any_of(
+                snapshot.recentExecutions.begin(),
+                snapshot.recentExecutions.end(),
+                [](const GovernanceToolResult& result) { return result.status == GovernanceToolStatus::Failed; })) {
+            appendFinding(
+                "CLU-C007",
+                "warning",
+                "Recent governance tool execution failures were detected. Review the affected enforcement lanes before relying on autonomous governance.");
+            snapshot.recommendedActions.push_back("Review recent governance tool failures and repair the affected platform governance lane.");
+        }
+
         if (snapshot.findings.empty()) {
             snapshot.recommendedActions.push_back("Current runtime posture is aligned with the CLU governance profile.");
         }
 
         return snapshot;
+    }
+
+    GovernanceToolResult executeGovernanceTool(const GovernanceToolRequest& request) override {
+        GovernanceToolResult result;
+        result.platform = request.platform;
+        result.toolId = request.toolId;
+        result.startedAtUtc = timestampNowUtc();
+
+        if (request.platform == PlatformTarget::Unknown) {
+            result.status = GovernanceToolStatus::Failed;
+            result.summary = "Governance tool execution requires a target platform.";
+            result.completedAtUtc = timestampNowUtc();
+            return result;
+        }
+
+        const auto governanceServers = platformServiceCatalogService_
+            ? platformServiceCatalogService_->listGovernanceServers()
+            : std::vector<GovernanceServerDescriptor>{};
+        const auto serverIterator = std::find_if(
+            governanceServers.begin(),
+            governanceServers.end(),
+            [&request](const GovernanceServerDescriptor& descriptor) { return descriptor.platform == request.platform; });
+        if (serverIterator == governanceServers.end()) {
+            result.status = GovernanceToolStatus::Failed;
+            result.summary = "No governance server lane is active for platform " + platformKey(request.platform) + ".";
+            result.completedAtUtc = timestampNowUtc();
+            return result;
+        }
+
+        if (std::find(serverIterator->toolIds.begin(), serverIterator->toolIds.end(), request.toolId) == serverIterator->toolIds.end()) {
+            result.status = GovernanceToolStatus::Failed;
+            result.summary = "Governance tool '" + request.toolId + "' is not published by the active " +
+                serverIterator->displayName + " lane.";
+            result.completedAtUtc = timestampNowUtc();
+            return result;
+        }
+
+        if (!platformGovernanceToolService_) {
+            result.status = GovernanceToolStatus::Failed;
+            result.summary = "Governance tool service is unavailable.";
+            result.completedAtUtc = timestampNowUtc();
+            return result;
+        }
+
+        return platformGovernanceToolService_->execute(request);
     }
 
 private:
@@ -3590,6 +3690,7 @@ private:
     std::shared_ptr<IInstallerOrchestrator> installerOrchestrator_;
     std::shared_ptr<IExportService> exportService_;
     std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService_;
+    std::shared_ptr<IPlatformGovernanceToolService> platformGovernanceToolService_;
 };
 
 class ForsettiSurfaceService final : public IForsettiSurfaceService {
@@ -3910,6 +4011,409 @@ private:
     std::map<std::string, GovernanceServerDescriptor> governanceByModuleId_;
 };
 
+class PlatformGovernanceToolService final : public IPlatformGovernanceToolService {
+public:
+    explicit PlatformGovernanceToolService(AppPaths paths)
+        : paths_(std::move(paths)) {}
+
+    void upsertTool(const GovernanceToolDescriptor& descriptor) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        toolsByKey_[makeKey(descriptor.moduleId, descriptor.toolId)] = descriptor;
+    }
+
+    void removeToolsForModule(const std::string& moduleId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto iterator = toolsByKey_.begin(); iterator != toolsByKey_.end();) {
+            if (iterator->second.moduleId == moduleId) {
+                iterator = toolsByKey_.erase(iterator);
+            } else {
+                ++iterator;
+            }
+        }
+    }
+
+    std::vector<GovernanceToolDescriptor> listTools() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<GovernanceToolDescriptor> descriptors;
+        descriptors.reserve(toolsByKey_.size());
+        for (const auto& [key, descriptor] : toolsByKey_) {
+            descriptors.push_back(descriptor);
+        }
+        std::sort(
+            descriptors.begin(),
+            descriptors.end(),
+            [](const GovernanceToolDescriptor& left, const GovernanceToolDescriptor& right) {
+                return std::tie(left.platform, left.displayName, left.toolId) <
+                    std::tie(right.platform, right.displayName, right.toolId);
+            });
+        return descriptors;
+    }
+
+    std::vector<GovernanceToolResult> recentExecutions() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return recentExecutions_;
+    }
+
+    GovernanceToolResult execute(const GovernanceToolRequest& request) override {
+        GovernanceToolResult result;
+        result.platform = request.platform;
+        result.toolId = request.toolId;
+        result.startedAtUtc = timestampNowUtc();
+
+        const auto descriptor = findDescriptor(request.platform, request.toolId);
+        if (!descriptor.has_value()) {
+            result.status = GovernanceToolStatus::Failed;
+            result.summary = "Governance tool '" + request.toolId + "' is not registered for platform " +
+                platformKey(request.platform) + ".";
+            result.completedAtUtc = timestampNowUtc();
+            recordExecution(result);
+            return result;
+        }
+
+        result.displayName = descriptor->displayName;
+
+        if (descriptor->requiresRemoteToolchain) {
+            result.status = GovernanceToolStatus::Unsupported;
+            result.summary = "Remote Apple governance routing is declared, but a remote Apple toolchain endpoint is not configured yet.";
+            result.findings.push_back(makeFinding(
+                "governance.remote-toolchain",
+                descriptor->displayName,
+                "medium",
+                "warning",
+                "This governance lane requires a remote Apple toolchain or companion runtime before it can enforce Forsetti rules."));
+            result.completedAtUtc = timestampNowUtc();
+            recordExecution(result);
+            return result;
+        }
+
+        try {
+            switch (request.platform) {
+                case PlatformTarget::Windows:
+                    executeWindowsTool(*descriptor, request, result);
+                    break;
+                case PlatformTarget::MacOS:
+                case PlatformTarget::IOS:
+                    result.status = GovernanceToolStatus::Unsupported;
+                    result.summary = "Remote governance routing is declared but not yet configured for this platform.";
+                    break;
+                default:
+                    result.status = GovernanceToolStatus::Failed;
+                    result.summary = "Unknown governance platform.";
+                    break;
+            }
+        } catch (const std::exception& exception) {
+            result.status = GovernanceToolStatus::Failed;
+            result.summary = exception.what();
+        }
+
+        result.completedAtUtc = timestampNowUtc();
+        recordExecution(result);
+        return result;
+    }
+
+private:
+    static std::string makeKey(const std::string& moduleId, const std::string& toolId) {
+        return moduleId + "::" + toolId;
+    }
+
+    static GovernanceFinding makeFinding(const std::string& ruleId,
+                                         const std::string& title,
+                                         const std::string& severity,
+                                         const std::string& status,
+                                         const std::string& message) {
+        return GovernanceFinding{ ruleId, title, severity, status, message };
+    }
+
+    static void appendProcessFinding(std::vector<GovernanceFinding>& findings,
+                                     const std::string& ruleId,
+                                     const std::string& title,
+                                     const std::string& scriptName,
+                                     const ProcessCaptureResult& process) {
+        const bool passed = process.launched && process.exitCode == 0;
+        findings.push_back(makeFinding(
+            ruleId,
+            title,
+            passed ? "low" : "high",
+            passed ? "pass" : "blocked",
+            scriptName + (passed
+                    ? " completed successfully."
+                    : " failed with exit code " + std::to_string(process.exitCode) + ".")));
+    }
+
+    std::optional<GovernanceToolDescriptor> findDescriptor(const PlatformTarget platform,
+                                                           const std::string& toolId) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto iterator = std::find_if(
+            toolsByKey_.begin(),
+            toolsByKey_.end(),
+            [platform, &toolId](const auto& entry) {
+                return entry.second.platform == platform && entry.second.toolId == toolId;
+            });
+        if (iterator == toolsByKey_.end()) {
+            return std::nullopt;
+        }
+        return iterator->second;
+    }
+
+    void recordExecution(const GovernanceToolResult& result) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        recentExecutions_.insert(recentExecutions_.begin(), result);
+        if (recentExecutions_.size() > 20) {
+            recentExecutions_.resize(20);
+        }
+    }
+
+    std::filesystem::path resolveTargetRoot(const GovernanceToolRequest& request) const {
+        if (!trimCopy(request.targetPath).empty()) {
+            return std::filesystem::path(request.targetPath);
+        }
+        if (const auto iterator = request.options.find("targetRoot"); iterator != request.options.end() &&
+            !trimCopy(iterator->second).empty()) {
+            return std::filesystem::path(iterator->second);
+        }
+        return std::filesystem::current_path();
+    }
+
+    std::optional<std::filesystem::path> findVendoredForsettiScriptsRoot(const std::filesystem::path& targetRoot) const {
+        const std::array<std::filesystem::path, 3> candidates = {
+            targetRoot / "Forsetti-Framework-Windows-main" / "Forsetti-Framework-Windows-main" / "Scripts",
+            targetRoot / "Forsetti-Framework-Windows-main" / "Scripts",
+            std::filesystem::current_path() / "Forsetti-Framework-Windows-main" / "Forsetti-Framework-Windows-main" / "Scripts"
+        };
+
+        for (const auto& candidate : candidates) {
+            if (std::filesystem::exists(candidate / "check-architecture.ps1")) {
+                return candidate;
+            }
+        }
+        return std::nullopt;
+    }
+
+    std::vector<std::filesystem::path> candidatePayloadRoots(const std::filesystem::path& targetRoot) const {
+        std::vector<std::filesystem::path> candidates;
+        candidates.push_back(targetRoot);
+        const auto distRoot = targetRoot / "dist";
+        if (std::filesystem::exists(distRoot) && std::filesystem::is_directory(distRoot)) {
+            for (const auto& entry : std::filesystem::directory_iterator(distRoot)) {
+                if (entry.is_directory()) {
+                    candidates.push_back(entry.path());
+                }
+            }
+        }
+        return candidates;
+    }
+
+    static bool hasPayloadLayout(const std::filesystem::path& root) {
+        return std::filesystem::exists(root / "MasterControlServiceHost.exe") &&
+            std::filesystem::exists(root / "MasterControlShell.exe") &&
+            std::filesystem::exists(root / "MasterControlBootstrapper.exe") &&
+            std::filesystem::exists(root / "share" / "MasterControlProgram" / "web" / "index.html") &&
+            std::filesystem::exists(root / "share" / "MasterControlProgram" / "ForsettiManifests" / "DashboardUIModule.json");
+    }
+
+    ProcessCaptureResult runPowerShellScript(const std::filesystem::path& scriptPath,
+                                             const std::filesystem::path& workingDirectory) const {
+        const auto powershell = findCommandOnPath({ L"pwsh.exe", L"powershell.exe" });
+        if (!powershell.has_value()) {
+            return {};
+        }
+
+        const auto commandLine = joinCommandArguments({
+            powershell->wstring(),
+            L"-NoProfile",
+            L"-ExecutionPolicy",
+            L"Bypass",
+            L"-File",
+            scriptPath.wstring()
+        });
+        return runProcessCapture(commandLine, workingDirectory);
+    }
+
+    void executeWindowsTool(const GovernanceToolDescriptor& descriptor,
+                            const GovernanceToolRequest& request,
+                            GovernanceToolResult& result) const {
+        const auto targetRoot = resolveTargetRoot(request);
+
+        if (descriptor.toolId == "forsetti.windows.manifest.validate") {
+            const auto scriptPath = targetRoot / "scripts" / "check-mastercontrol-forsetti.ps1";
+            if (!std::filesystem::exists(scriptPath)) {
+                result.status = GovernanceToolStatus::Failed;
+                result.summary = "Master Control Forsetti compliance script was not found at " + scriptPath.string() + ".";
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    "high",
+                    "blocked",
+                    "The repo-owned Forsetti compliance script is missing."));
+                return;
+            }
+
+            const auto process = runPowerShellScript(scriptPath, targetRoot);
+            result.rawOutput = process.stdoutText + process.stderrText;
+            appendProcessFinding(result.findings, descriptor.toolId, descriptor.displayName, scriptPath.filename().string(), process);
+            result.succeeded = process.launched && process.exitCode == 0;
+            result.status = result.succeeded ? GovernanceToolStatus::Passed : GovernanceToolStatus::Failed;
+            result.summary = result.succeeded
+                ? "Repo-owned Forsetti compliance validation passed."
+                : "Repo-owned Forsetti compliance validation failed.";
+            return;
+        }
+
+        if (descriptor.toolId == "forsetti.windows.architecture.validate") {
+            const auto scriptsRoot = findVendoredForsettiScriptsRoot(targetRoot);
+            if (!scriptsRoot.has_value()) {
+                result.status = GovernanceToolStatus::Failed;
+                result.summary = "Vendored Forsetti architecture scripts were not found.";
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    "high",
+                    "blocked",
+                    "The vendored Forsetti Scripts directory could not be located for architecture validation."));
+                return;
+            }
+
+            bool allPassed = true;
+            std::ostringstream combinedOutput;
+            for (const auto& scriptName : { "check-architecture.ps1", "check-dependencies.ps1" }) {
+                const auto scriptPath = *scriptsRoot / scriptName;
+                if (!std::filesystem::exists(scriptPath)) {
+                    allPassed = false;
+                    result.findings.push_back(makeFinding(
+                        descriptor.toolId,
+                        descriptor.displayName,
+                        "high",
+                        "blocked",
+                        std::string(scriptName) + " is missing from the vendored Forsetti Scripts directory."));
+                    continue;
+                }
+
+                const auto process = runPowerShellScript(scriptPath, *scriptsRoot);
+                combinedOutput << process.stdoutText << process.stderrText;
+                appendProcessFinding(result.findings, descriptor.toolId, descriptor.displayName, scriptName, process);
+                allPassed = allPassed && process.launched && process.exitCode == 0;
+            }
+
+            result.rawOutput = combinedOutput.str();
+            result.succeeded = allPassed;
+            result.status = allPassed ? GovernanceToolStatus::Passed : GovernanceToolStatus::Failed;
+            result.summary = allPassed
+                ? "Vendored Forsetti architecture and dependency validation passed."
+                : "Vendored Forsetti architecture and dependency validation reported violations.";
+            return;
+        }
+
+        if (descriptor.toolId == "forsetti.windows.module-boundary.inspect") {
+            const auto modulesCMake = targetRoot / "src" / "MasterControlModules" / "CMakeLists.txt";
+            const auto appCMake = targetRoot / "src" / "MasterControlApp" / "CMakeLists.txt";
+            const auto manifestsRoot = targetRoot / "src" / "MasterControlModules" / "Resources" / "ForsettiManifests";
+            const auto modulesCMakeText = readTextFile(modulesCMake);
+            const auto appCMakeText = readTextFile(appCMake);
+
+            result.findings.push_back(makeFinding(
+                descriptor.toolId,
+                descriptor.displayName,
+                std::filesystem::exists(modulesCMake) ? "low" : "high",
+                std::filesystem::exists(modulesCMake) ? "pass" : "blocked",
+                std::filesystem::exists(modulesCMake)
+                    ? "MasterControlModules CMake target is present."
+                    : "MasterControlModules CMake target is missing."));
+            result.findings.push_back(makeFinding(
+                descriptor.toolId,
+                descriptor.displayName,
+                modulesCMakeText.find("ForsettiPlatform") == std::string::npos ? "low" : "high",
+                modulesCMakeText.find("ForsettiPlatform") == std::string::npos ? "pass" : "blocked",
+                modulesCMakeText.find("ForsettiPlatform") == std::string::npos
+                    ? "MasterControlModules stays Core-only and does not link ForsettiPlatform."
+                    : "MasterControlModules links ForsettiPlatform, which violates the Core-only module boundary."));
+            result.findings.push_back(makeFinding(
+                descriptor.toolId,
+                descriptor.displayName,
+                appCMakeText.find("MasterControlModules.cpp") == std::string::npos ? "low" : "high",
+                appCMakeText.find("MasterControlModules.cpp") == std::string::npos ? "pass" : "blocked",
+                appCMakeText.find("MasterControlModules.cpp") == std::string::npos
+                    ? "MasterControlApp does not compile MasterControlModules.cpp directly."
+                    : "MasterControlApp compiles MasterControlModules.cpp directly, breaking the module boundary."));
+            result.findings.push_back(makeFinding(
+                descriptor.toolId,
+                descriptor.displayName,
+                std::filesystem::exists(manifestsRoot) ? "low" : "high",
+                std::filesystem::exists(manifestsRoot) ? "pass" : "blocked",
+                std::filesystem::exists(manifestsRoot)
+                    ? "Forsetti manifests are staged from the module resource tree."
+                    : "Forsetti manifests are missing from src/MasterControlModules/Resources/ForsettiManifests."));
+
+            result.succeeded = std::all_of(
+                result.findings.begin(),
+                result.findings.end(),
+                [](const GovernanceFinding& finding) { return finding.status == "pass"; });
+            result.status = result.succeeded ? GovernanceToolStatus::Passed : GovernanceToolStatus::Failed;
+            result.summary = result.succeeded
+                ? "Module boundary inspection passed."
+                : "Module boundary inspection found one or more Forsetti violations.";
+            return;
+        }
+
+        if (descriptor.toolId == "forsetti.windows.package.validate") {
+            const auto candidates = candidatePayloadRoots(targetRoot);
+            const auto payloadIterator = std::find_if(candidates.begin(), candidates.end(), [](const auto& candidate) {
+                return hasPayloadLayout(candidate);
+            });
+
+            if (payloadIterator == candidates.end()) {
+                result.status = GovernanceToolStatus::Failed;
+                result.summary = "No staged Master Control payload root was found for package validation.";
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    "high",
+                    "blocked",
+                    "Expected executables and staged web/manifest payloads were not found under the target path or its dist/* children."));
+                return;
+            }
+
+            const auto& payloadRoot = *payloadIterator;
+            const std::array<std::pair<std::filesystem::path, std::string>, 5> requiredArtifacts = {{
+                { payloadRoot / "MasterControlServiceHost.exe", "Service host executable is staged." },
+                { payloadRoot / "MasterControlShell.exe", "Shell executable is staged." },
+                { payloadRoot / "MasterControlBootstrapper.exe", "Bootstrapper executable is staged." },
+                { payloadRoot / "share" / "MasterControlProgram" / "web" / "index.html", "Browser payload is staged." },
+                { payloadRoot / "share" / "MasterControlProgram" / "ForsettiManifests" / "DashboardUIModule.json", "Forsetti UI manifest is staged." }
+            }};
+
+            for (const auto& [artifactPath, message] : requiredArtifacts) {
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    std::filesystem::exists(artifactPath) ? "low" : "high",
+                    std::filesystem::exists(artifactPath) ? "pass" : "blocked",
+                    std::filesystem::exists(artifactPath)
+                        ? message
+                        : artifactPath.string() + " is missing from the staged payload."));
+            }
+
+            result.succeeded = std::all_of(
+                result.findings.begin(),
+                result.findings.end(),
+                [](const GovernanceFinding& finding) { return finding.status == "pass"; });
+            result.status = result.succeeded ? GovernanceToolStatus::Passed : GovernanceToolStatus::Failed;
+            result.summary = result.succeeded
+                ? "Staged payload validation passed."
+                : "Staged payload validation found missing deployment artifacts.";
+            result.rawOutput = payloadRoot.string();
+            return;
+        }
+
+        result.status = GovernanceToolStatus::Failed;
+        result.summary = "Unknown Windows governance tool ID '" + descriptor.toolId + "'.";
+    }
+
+    AppPaths paths_;
+    mutable std::mutex mutex_;
+    std::map<std::string, GovernanceToolDescriptor> toolsByKey_;
+    std::vector<GovernanceToolResult> recentExecutions_;
+};
+
 class BeaconService final : public IBeaconService {
 public:
     BeaconService(std::shared_ptr<IConfigurationService> configurationService,
@@ -4109,6 +4613,11 @@ public:
 
     GovernanceSnapshot governance() const override {
         return commandLogicUnitService_->currentGovernance();
+    }
+
+    GovernanceToolResult executeGovernanceToolJson(const std::string& requestBody) override {
+        return commandLogicUnitService_->executeGovernanceTool(
+            nlohmann::json::parse(requestBody).get<GovernanceToolRequest>());
     }
 
     OperationResult applyConfigurationJson(const std::string& requestBody,
@@ -4418,6 +4927,7 @@ public:
     int runInteractive();
     std::string browserUrl() const;
     DashboardSnapshot snapshot() { return adminApiService_->snapshot(); }
+    GovernanceToolResult executeGovernanceToolJson(const std::string& requestBody) { return adminApiService_->executeGovernanceToolJson(requestBody); }
     OperationResult applyConfigurationJson(const std::string& requestBody, bool confirmUnsafeChanges) { return adminApiService_->applyConfigurationJson(requestBody, confirmUnsafeChanges); }
     OperationResult upsertProviderJson(const std::string& requestBody) { return adminApiService_->upsertProviderJson(requestBody); }
     OperationResult upsertProviderCredentialsJson(const std::string& requestBody) { return adminApiService_->upsertProviderCredentialsJson(requestBody); }
@@ -4466,6 +4976,7 @@ private:
     std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService_;
     std::shared_ptr<IProviderExecutionService> providerExecutionService_;
     std::shared_ptr<IExportService> exportService_;
+    std::shared_ptr<IPlatformGovernanceToolService> platformGovernanceToolService_;
     std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService_;
     std::shared_ptr<IModuleControlSurfaceService> controlSurfaceService_;
     std::shared_ptr<IForsettiSurfaceService> surfaceService_;
@@ -4508,6 +5019,7 @@ bool MasterControlApplication::Impl::initialize() {
         providerExecutionCatalogService_);
     exportService_ = std::make_shared<ExportService>(inventoryService_, configurationService_);
     platformServiceCatalogService_ = std::make_shared<PlatformServiceCatalogService>(configurationService_, telemetryService_);
+    platformGovernanceToolService_ = std::make_shared<PlatformGovernanceToolService>(paths_);
     commandLogicUnitService_ = std::make_shared<CommandLogicUnitService>(
         paths_.cluProfileFile,
         configurationService_,
@@ -4515,7 +5027,8 @@ bool MasterControlApplication::Impl::initialize() {
         providerAssignmentService_,
         installerOrchestrator_,
         exportService_,
-        platformServiceCatalogService_);
+        platformServiceCatalogService_,
+        platformGovernanceToolService_);
     controlSurfaceService_ = std::make_shared<ModuleControlSurfaceService>();
     beaconService_ = std::make_shared<BeaconService>(configurationService_, telemetryService_, platformServiceCatalogService_);
     registerConfigurationDefaults();
@@ -4628,6 +5141,7 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
     services->registerService<IProviderExecutionCatalogService>(providerExecutionCatalogService_);
     services->registerService<IProviderExecutionService>(providerExecutionService_);
     services->registerService<IExportService>(exportService_);
+    services->registerService<IPlatformGovernanceToolService>(platformGovernanceToolService_);
     services->registerService<ICommandLogicUnitService>(commandLogicUnitService_);
     services->registerService<IModuleControlSurfaceService>(controlSurfaceService_);
     services->registerService<IBeaconService>(beaconService_);
@@ -4821,6 +5335,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "GET" && request.path == "/api/clu") {
             return jsonResponse(commandLogicUnitService_->currentGovernance());
         }
+        if (request.method == "GET" && request.path == "/api/clu/tools") {
+            return jsonResponse(commandLogicUnitService_->currentGovernance().availableTools);
+        }
         if (request.method == "GET" && request.path == "/api/forsetti/surface") {
             return jsonResponse(surfaceService_->currentSurface());
         }
@@ -4872,12 +5389,20 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             if (!gateway.has_value() || !governance.has_value()) {
                 return jsonResponse(nlohmann::json{ { "message", "Governance service not found." } }, 404);
             }
+            const auto governanceSnapshot = commandLogicUnitService_->currentGovernance();
+            nlohmann::json platformTools = nlohmann::json::array();
+            for (const auto& tool : governanceSnapshot.availableTools) {
+                if (tool.platform == platform) {
+                    platformTools.push_back(tool);
+                }
+            }
             return jsonResponse(nlohmann::json{
                 { "service", "governance-mcp-server" },
                 { "platform", platformKey(platform) },
                 { "gateway", *gateway },
                 { "governanceServer", *governance },
                 { "toolIds", governance->toolIds },
+                { "tools", platformTools },
                 { "requiresRemoteToolchain", governance->requiresRemoteToolchain }
             });
         }
@@ -4927,6 +5452,10 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const auto result = adminApiService_->executeProviderTaskJson(request.body);
             return jsonResponse(result, result.status == ProviderExecutionStatus::Succeeded ? 200 : 400);
         }
+        if (request.method == "POST" && request.path == "/api/clu/execute") {
+            const auto result = adminApiService_->executeGovernanceToolJson(request.body);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
         if (request.method == "POST" && request.path == "/api/install/package") {
             const auto result = adminApiService_->installPackageJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
@@ -4937,6 +5466,15 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "POST" && request.path == "/api/install/zip") {
             const auto result = adminApiService_->installZipJson(request.body);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
+        if (request.method == "POST" && startsWith(request.path, "/mcp/governance/")) {
+            const auto routePlatform = platformFromKey(request.path.substr(std::string("/mcp/governance/").size()));
+            auto payload = request.body.empty() ? nlohmann::json::object() : nlohmann::json::parse(request.body);
+            if (!payload.contains("platform") || platformFromKey(payload.value("platform", "")) == PlatformTarget::Unknown) {
+                payload["platform"] = platformKey(routePlatform);
+            }
+            const auto result = commandLogicUnitService_->executeGovernanceTool(payload.get<GovernanceToolRequest>());
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
 
@@ -4991,6 +5529,10 @@ std::string MasterControlApplication::browserUrl() const {
 
 DashboardSnapshot MasterControlApplication::snapshot() {
     return impl_->snapshot();
+}
+
+GovernanceToolResult MasterControlApplication::executeGovernanceToolJson(const std::string& requestBody) {
+    return impl_->executeGovernanceToolJson(requestBody);
 }
 
 OperationResult MasterControlApplication::applyConfigurationJson(const std::string& requestBody, bool confirmUnsafeChanges) {

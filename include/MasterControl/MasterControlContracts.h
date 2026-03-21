@@ -136,6 +136,16 @@ public:
     virtual ~IProviderExecutionService() = default;
 };
 
+class IPlatformGovernanceToolService {
+public:
+    virtual void upsertTool(const GovernanceToolDescriptor& descriptor) = 0;
+    virtual void removeToolsForModule(const std::string& moduleId) = 0;
+    virtual std::vector<GovernanceToolDescriptor> listTools() const = 0;
+    virtual std::vector<GovernanceToolResult> recentExecutions() const = 0;
+    virtual GovernanceToolResult execute(const GovernanceToolRequest& request) = 0;
+    virtual ~IPlatformGovernanceToolService() = default;
+};
+
 class IExportService {
 public:
     virtual std::vector<ExportArtifact> generateExports() const = 0;
@@ -145,6 +155,7 @@ public:
 class ICommandLogicUnitService {
 public:
     virtual GovernanceSnapshot currentGovernance() const = 0;
+    virtual GovernanceToolResult executeGovernanceTool(const GovernanceToolRequest& request) = 0;
     virtual ~ICommandLogicUnitService() = default;
 };
 
@@ -190,6 +201,7 @@ class IAdminApiService {
 public:
     virtual DashboardSnapshot snapshot() = 0;
     virtual GovernanceSnapshot governance() const = 0;
+    virtual GovernanceToolResult executeGovernanceToolJson(const std::string& requestBody) = 0;
     virtual OperationResult applyConfigurationJson(const std::string& requestBody,
                                                    bool confirmUnsafeChanges) = 0;
     virtual OperationResult upsertProviderJson(const std::string& requestBody) = 0;

@@ -129,6 +129,7 @@ if (-not (Test-Path $contractsPath)) {
     Assert-Contains $contracts 'IProviderCredentialStore' "MasterControlContracts.h must define a provider credential store service."
     Assert-Contains $contracts 'IProviderAssignmentService' "MasterControlContracts.h must define a provider ownership assignment service."
     Assert-Contains $contracts 'IPlatformServiceCatalogService' "MasterControlContracts.h must define a platform gateway and governance catalog service."
+    Assert-Contains $contracts 'IPlatformGovernanceToolService' "MasterControlContracts.h must define a platform governance tool catalog and execution service."
 }
 
 if (-not (Test-Path $modelsPath)) {
@@ -198,6 +199,7 @@ if (-not (Test-Path $modulesCppPath)) {
     Assert-Contains $modulesCpp 'makeIOSGovernanceControlSurfaceRequests' "iOS governance module must register its control-surface needs through the framework."
     Assert-Contains $modulesCpp 'registerPlatformGateway' "Platform gateway modules must publish their LAN service descriptors through the framework."
     Assert-Contains $modulesCpp 'registerGovernanceServer' "Governance server modules must publish their MCP server descriptors through the framework."
+    Assert-Contains $modulesCpp 'registerGovernanceTools' "Governance server modules must publish their governance tool descriptors through the framework."
     Assert-Contains $modulesCpp 'makeBeaconGatewayControlSurfaceRequests' "BeaconGatewayModule must register its control-surface needs through the framework."
     Assert-Contains $modulesCpp 'return Forsetti::UIContributions{};' "DashboardUIModule must bootstrap from framework control requests instead of shipping hardcoded UI contributions."
     Assert-Contains $modulesCpp 'mastercontrol.dashboard.surface.registered' "DashboardUIModule must publish startup surface registration metadata."
@@ -216,7 +218,10 @@ if (-not (Test-Path $runtimePath)) {
     Assert-Contains $runtime 'ProviderCredentialStore' "MasterControlRuntime.cpp must host a secure provider credential store."
     Assert-Contains $runtime 'ProviderAssignmentService' "MasterControlRuntime.cpp must host provider ownership assignment logic."
     Assert-Contains $runtime 'PlatformServiceCatalogService' "MasterControlRuntime.cpp must host the platform gateway and governance catalog."
+    Assert-Contains $runtime 'PlatformGovernanceToolService' "MasterControlRuntime.cpp must host the platform governance tool service."
     Assert-Contains $runtime 'DnsServiceRegister' "MasterControlRuntime.cpp must advertise platform gateway services on the LAN."
+    Assert-Contains $runtime '/api/clu/tools' "MasterControlRuntime.cpp must expose governance tool catalog endpoints."
+    Assert-Contains $runtime '/api/clu/execute' "MasterControlRuntime.cpp must expose governance tool execution endpoints."
     Assert-Contains $runtime '/api/platform-services/config/' "MasterControlRuntime.cpp must expose platform-specific client configuration endpoints."
     Assert-Contains $runtime '/mcp/gateway/' "MasterControlRuntime.cpp must expose platform-specific gateway routes."
     Assert-Contains $runtime '/mcp/governance/' "MasterControlRuntime.cpp must expose platform-specific governance MCP routes."
