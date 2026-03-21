@@ -34,3 +34,7 @@ target_compile_definitions(MasterControlApp PUBLIC
     MASTERCONTROL_SOURCE_WEB_RESOURCES_DIR="${CMAKE_SOURCE_DIR}/resources/web"
     MASTERCONTROL_SOURCE_CLU_RESOURCES_DIR="${CMAKE_SOURCE_DIR}/resources/clu"
 )
+
+if(MSVC)
+    target_compile_options(MasterControlApp PRIVATE /bigobj)
+endif()

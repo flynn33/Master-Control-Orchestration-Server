@@ -31,6 +31,8 @@ public:
                                            bool confirmUnsafeChanges);
     OperationResult upsertProviderJson(const std::string& requestBody);
     OperationResult upsertProviderCredentialsJson(const std::string& requestBody);
+    OperationResult upsertAppleRemoteHostJson(const std::string& requestBody);
+    OperationResult removeAppleRemoteHostJson(const std::string& requestBody);
     OperationResult upsertMcpServerJson(const std::string& requestBody);
     OperationResult removeMcpServerJson(const std::string& requestBody);
     OperationResult upsertSubAgentJson(const std::string& requestBody);

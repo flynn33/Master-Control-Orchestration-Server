@@ -131,6 +131,14 @@ std::string to_string(PlatformTarget value) {
     });
 }
 
+std::string to_string(AppleRemoteTransport value) {
+    return enumToString(value, {
+        { AppleRemoteTransport::Unknown, "unknown" },
+        { AppleRemoteTransport::Ssh, "ssh" },
+        { AppleRemoteTransport::CompanionService, "companion_service" }
+    });
+}
+
 std::string to_string(GovernanceToolStatus value) {
     return enumToString(value, {
         { GovernanceToolStatus::Passed, "passed" },
@@ -229,6 +237,14 @@ PlatformTarget platformTargetFromString(const std::string& value) {
     });
 }
 
+AppleRemoteTransport appleRemoteTransportFromString(const std::string& value) {
+    return enumFromString<AppleRemoteTransport>(value, {
+        { AppleRemoteTransport::Unknown, "unknown" },
+        { AppleRemoteTransport::Ssh, "ssh" },
+        { AppleRemoteTransport::CompanionService, "companion_service" }
+    });
+}
+
 GovernanceToolStatus governanceToolStatusFromString(const std::string& value) {
     return enumFromString<GovernanceToolStatus>(value, {
         { GovernanceToolStatus::Passed, "passed" },
@@ -316,6 +332,14 @@ void to_json(nlohmann::json& json, PlatformTarget value) {
 
 void from_json(const nlohmann::json& json, PlatformTarget& value) {
     value = platformTargetFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, AppleRemoteTransport value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, AppleRemoteTransport& value) {
+    value = appleRemoteTransportFromString(json.get<std::string>());
 }
 
 void to_json(nlohmann::json& json, GovernanceToolStatus value) {

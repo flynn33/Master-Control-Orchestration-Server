@@ -589,6 +589,19 @@ std::optional<MasterControl::GovernanceToolResult> findGovernanceExecution(
     return *iterator;
 }
 
+std::optional<MasterControl::AppleRemoteHost> findAppleRemoteHost(
+    const std::vector<MasterControl::AppleRemoteHost>& hosts,
+    const std::string& hostId) {
+    const auto iterator = std::find_if(
+        hosts.begin(),
+        hosts.end(),
+        [&hostId](const MasterControl::AppleRemoteHost& host) { return host.hostId == hostId; });
+    if (iterator == hosts.end()) {
+        return std::nullopt;
+    }
+    return *iterator;
+}
+
 bool hasProviderCapability(const std::vector<MasterControl::ProviderCapabilityDescriptor>& capabilities,
                           const std::string& providerId) {
     return std::any_of(
@@ -1029,6 +1042,10 @@ int main() {
             iosGovernanceDocument.has_value() &&
                 (*iosGovernanceDocument).value("requiresRemoteToolchain", false),
             "iOS governance route should report that it depends on remote Apple infrastructure.");
+        success &= expect(
+            iosGovernanceDocument.has_value() &&
+                !(*iosGovernanceDocument).value("routeable", true),
+            "iOS governance lane should not be routeable until an Apple host is configured.");
         const auto windowsGovernanceDocument = httpGetJson(application.browserUrl() + "mcp/governance/windows");
         success &= expect(windowsGovernanceDocument.has_value(), "Windows governance lane should be reachable from the browser admin server.");
         success &= expect(
@@ -1037,6 +1054,84 @@ int main() {
                 (*windowsGovernanceDocument)["tools"].is_array() &&
                 !(*windowsGovernanceDocument)["tools"].empty(),
             "Governance routes should publish the framework-registered tool descriptors.");
+
+        SimpleHttpServer appleCompanionServer([](const TestHttpRequest& request) -> TestHttpResponse {
+            if (request.path == "/healthz") {
+                return TestHttpResponse{
+                    200,
+                    "application/json",
+                    nlohmann::json{
+                        { "reachable", true },
+                        { "xcodeInstalled", true },
+                        { "xcodeVersion", "Xcode 16.3" },
+                        { "developerDirectory", "/Applications/Xcode.app/Contents/Developer" },
+                        { "macosSdkAvailable", true },
+                        { "iosSdkAvailable", true },
+                        { "simulatorControlAvailable", true },
+                        { "deviceControlAvailable", true },
+                        { "signingReady", true },
+                        { "developmentSigningReady", true },
+                        { "distributionSigningReady", true },
+                        { "availableTeams", nlohmann::json::array({ "TEAM12345" }) },
+                        { "simulatorRuntimes", nlohmann::json::array({ "iOS 18.0", "iOS 18.2" }) },
+                        { "status", "ready" },
+                        { "message", "Apple companion runtime is ready." }
+                    }.dump()
+                };
+            }
+
+            return TestHttpResponse{
+                404,
+                "application/json",
+                nlohmann::json{ { "message", "not found" } }.dump()
+            };
+        });
+
+        const auto appleHostUpsert = application.upsertAppleRemoteHostJson(nlohmann::json{
+            { "hostId", "apple-host-01" },
+            { "displayName", "Apple Host 01" },
+            { "transport", "companion_service" },
+            { "platforms", nlohmann::json::array({ "macos", "ios" }) },
+            { "address", "127.0.0.1" },
+            { "port", appleCompanionServer.port() },
+            { "companionHealthPath", "/healthz" },
+            { "enabled", true }
+        }.dump());
+        success &= expect(appleHostUpsert.succeeded, "Apple remote host upsert should succeed.");
+
+        snapshot = application.snapshot();
+        success &= expect(
+            findAppleRemoteHost(snapshot.appleRemoteHosts, "apple-host-01").has_value(),
+            "Snapshot should expose configured Apple remote hosts.");
+        success &= expect(
+            findAppleRemoteHost(snapshot.governance.appleRemoteHosts, "apple-host-01").has_value(),
+            "CLU governance snapshot should expose configured Apple remote hosts.");
+
+        const auto appleHostsDocument = httpGetJson(application.browserUrl() + "api/platform-services/apple-hosts");
+        success &= expect(appleHostsDocument.has_value(), "Apple host inventory should be reachable from the browser admin server.");
+        success &= expect(
+            appleHostsDocument.has_value() &&
+                appleHostsDocument->is_array() &&
+                !appleHostsDocument->empty() &&
+                (*appleHostsDocument)[0].value("hostId", "") == "apple-host-01",
+            "Apple host inventory should list the configured Apple companion host.");
+
+        const auto macConfigDocument = httpGetJson(application.browserUrl() + "api/platform-services/config/macos");
+        success &= expect(macConfigDocument.has_value(), "Mac platform config should be reachable from the browser admin server.");
+        success &= expect(
+            macConfigDocument.has_value() &&
+                (*macConfigDocument).value("routeable", false) &&
+                (*macConfigDocument).contains("selectedAppleHost") &&
+                (*macConfigDocument)["selectedAppleHost"].value("hostId", "") == "apple-host-01",
+            "Mac platform config should route through the selected Apple host when one is ready.");
+
+        const auto refreshedIosGovernanceDocument = httpGetJson(application.browserUrl() + "mcp/governance/ios");
+        success &= expect(
+            refreshedIosGovernanceDocument.has_value() &&
+                (*refreshedIosGovernanceDocument).value("routeable", false) &&
+                (*refreshedIosGovernanceDocument).contains("selectedAppleHost") &&
+                (*refreshedIosGovernanceDocument)["selectedAppleHost"].value("hostId", "") == "apple-host-01",
+            "iOS governance route should surface the selected Apple host once it is configured.");
 
         const auto repoRoot = sourceRepoRoot();
         const auto manifestExecution = application.executeGovernanceToolJson(nlohmann::json{
@@ -1072,8 +1167,46 @@ int main() {
             { "targetPath", repoRoot.string() }
         }.dump());
         success &= expect(
-            macExecution.status == MasterControl::GovernanceToolStatus::Unsupported,
-            "Mac governance execution should report unsupported until remote Apple infrastructure is configured.");
+            macExecution.succeeded &&
+                macExecution.status == MasterControl::GovernanceToolStatus::Passed,
+            "Mac governance execution should pass once a ready Apple host is configured.");
+
+        const auto iosExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "ios" },
+            { "toolId", "forsetti.ios.remote-build.validate" },
+            { "targetPath", repoRoot.string() }
+        }.dump());
+        success &= expect(
+            iosExecution.succeeded &&
+                iosExecution.status == MasterControl::GovernanceToolStatus::Passed,
+            "iOS governance execution should pass once a ready Apple host is configured.");
+
+        const auto appleHostRemoval = application.removeAppleRemoteHostJson(nlohmann::json{
+            { "hostId", "apple-host-01" }
+        }.dump());
+        success &= expect(appleHostRemoval.succeeded, "Apple remote host removal should succeed.");
+
+        const auto unreachableSshHost = application.upsertAppleRemoteHostJson(nlohmann::json{
+            { "hostId", "apple-host-ssh" },
+            { "displayName", "Apple SSH Host" },
+            { "transport", "ssh" },
+            { "platforms", nlohmann::json::array({ "macos" }) },
+            { "address", "192.0.2.55" },
+            { "port", 22 },
+            { "username", "builder" },
+            { "enabled", true }
+        }.dump());
+        success &= expect(unreachableSshHost.succeeded, "SSH Apple remote host upsert should succeed.");
+
+        const auto macUnreadyExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "macos" },
+            { "toolId", "forsetti.macos.remote-build.validate" },
+            { "targetPath", repoRoot.string() }
+        }.dump());
+        success &= expect(
+            !macUnreadyExecution.succeeded &&
+                macUnreadyExecution.status == MasterControl::GovernanceToolStatus::Warning,
+            "Mac governance execution should surface a warning when only an unreachable SSH host is configured.");
 
         snapshot = application.snapshot();
         success &= expect(
@@ -1082,6 +1215,12 @@ int main() {
                 MasterControl::PlatformTarget::Windows,
                 "forsetti.windows.manifest.validate").has_value(),
             "CLU should record recent governance execution history.");
+        success &= expect(
+            findGovernanceExecution(
+                snapshot.governance.recentExecutions,
+                MasterControl::PlatformTarget::IOS,
+                "forsetti.ios.remote-build.validate").has_value(),
+            "CLU should record recent Apple governance execution history.");
 
         success &= expect(std::filesystem::exists(appPaths.entitlementsFile), "The runtime should seed an entitlement state file");
         writeTextFile(

@@ -146,6 +146,16 @@ public:
     virtual ~IPlatformGovernanceToolService() = default;
 };
 
+class IAppleRemoteHostService {
+public:
+    virtual std::vector<AppleRemoteHost> listHosts() const = 0;
+    virtual OperationResult upsertHost(const AppleRemoteHost& host) = 0;
+    virtual OperationResult removeHost(const std::string& hostId) = 0;
+    virtual std::optional<AppleRemoteHost> inspectHost(const std::string& hostId) = 0;
+    virtual std::optional<AppleRemoteHost> selectHostForPlatform(PlatformTarget platform) = 0;
+    virtual ~IAppleRemoteHostService() = default;
+};
+
 class IExportService {
 public:
     virtual std::vector<ExportArtifact> generateExports() const = 0;
@@ -206,6 +216,8 @@ public:
                                                    bool confirmUnsafeChanges) = 0;
     virtual OperationResult upsertProviderJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertProviderCredentialsJson(const std::string& requestBody) = 0;
+    virtual OperationResult upsertAppleRemoteHostJson(const std::string& requestBody) = 0;
+    virtual OperationResult removeAppleRemoteHostJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertMcpServerJson(const std::string& requestBody) = 0;
     virtual OperationResult removeMcpServerJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertSubAgentJson(const std::string& requestBody) = 0;

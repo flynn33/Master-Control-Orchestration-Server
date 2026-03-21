@@ -39,6 +39,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <limits>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -3426,6 +3427,7 @@ public:
                             std::shared_ptr<IProviderAssignmentService> providerAssignmentService,
                             std::shared_ptr<IInstallerOrchestrator> installerOrchestrator,
                             std::shared_ptr<IExportService> exportService,
+                            std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService,
                             std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService,
                             std::shared_ptr<IPlatformGovernanceToolService> platformGovernanceToolService)
         : profile_(loadProfile(std::move(profileFile)))
@@ -3434,6 +3436,7 @@ public:
         , providerAssignmentService_(std::move(providerAssignmentService))
         , installerOrchestrator_(std::move(installerOrchestrator))
         , exportService_(std::move(exportService))
+        , appleRemoteHostService_(std::move(appleRemoteHostService))
         , platformServiceCatalogService_(std::move(platformServiceCatalogService))
         , platformGovernanceToolService_(std::move(platformGovernanceToolService)) {}
 
@@ -3453,6 +3456,9 @@ public:
         const auto assignments = providerAssignmentService_->listAssignments();
         const auto installHistory = installerOrchestrator_->history();
         const auto exports = exportService_->generateExports();
+        snapshot.appleRemoteHosts = appleRemoteHostService_
+            ? appleRemoteHostService_->listHosts()
+            : std::vector<AppleRemoteHost>{};
         snapshot.platformGateways = platformServiceCatalogService_ ? platformServiceCatalogService_->listGateways() : std::vector<PlatformGatewayDescriptor>{};
         snapshot.governanceServers = platformServiceCatalogService_
             ? platformServiceCatalogService_->listGovernanceServers()
@@ -3689,6 +3695,7 @@ private:
     std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
     std::shared_ptr<IInstallerOrchestrator> installerOrchestrator_;
     std::shared_ptr<IExportService> exportService_;
+    std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService_;
     std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService_;
     std::shared_ptr<IPlatformGovernanceToolService> platformGovernanceToolService_;
 };
@@ -4011,10 +4018,538 @@ private:
     std::map<std::string, GovernanceServerDescriptor> governanceByModuleId_;
 };
 
+class AppleRemoteHostService final : public IAppleRemoteHostService {
+public:
+    AppleRemoteHostService(std::shared_ptr<SharedState> state, std::filesystem::path filePath)
+        : state_(std::move(state))
+        , filePath_(std::move(filePath)) {}
+
+    std::vector<AppleRemoteHost> listHosts() const override {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        return state_->configuration.appleRemoteHosts;
+    }
+
+    OperationResult upsertHost(const AppleRemoteHost& host) override {
+        auto normalized = normalizeHost(host);
+        const auto validation = validateHost(normalized);
+        if (!validation.succeeded) {
+            return validation;
+        }
+
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        auto& hosts = state_->configuration.appleRemoteHosts;
+        const auto iterator = std::find_if(
+            hosts.begin(),
+            hosts.end(),
+            [&normalized](const AppleRemoteHost& candidate) { return candidate.hostId == normalized.hostId; });
+        if (iterator == hosts.end()) {
+            hosts.push_back(std::move(normalized));
+        } else {
+            *iterator = std::move(normalized);
+        }
+        persistLocked();
+        return OperationResult{ true, false, "Apple remote host updated." };
+    }
+
+    OperationResult removeHost(const std::string& hostId) override {
+        const auto trimmedHostId = trimCopy(hostId);
+        if (trimmedHostId.empty()) {
+            return OperationResult{ false, false, "Apple remote host removal requires a hostId." };
+        }
+
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        auto& hosts = state_->configuration.appleRemoteHosts;
+        const auto iterator = std::remove_if(
+            hosts.begin(),
+            hosts.end(),
+            [&trimmedHostId](const AppleRemoteHost& host) { return host.hostId == trimmedHostId; });
+        if (iterator == hosts.end()) {
+            return OperationResult{ false, false, "Apple remote host '" + trimmedHostId + "' was not found." };
+        }
+
+        hosts.erase(iterator, hosts.end());
+        persistLocked();
+        return OperationResult{ true, false, "Apple remote host removed." };
+    }
+
+    std::optional<AppleRemoteHost> inspectHost(const std::string& hostId) override {
+        AppleRemoteHost host;
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            const auto iterator = std::find_if(
+                state_->configuration.appleRemoteHosts.begin(),
+                state_->configuration.appleRemoteHosts.end(),
+                [&hostId](const AppleRemoteHost& candidate) { return candidate.hostId == hostId; });
+            if (iterator == state_->configuration.appleRemoteHosts.end()) {
+                return std::nullopt;
+            }
+            host = *iterator;
+        }
+
+        auto inspected = inspectHostState(host);
+        persistHost(inspected);
+        return inspected;
+    }
+
+    std::optional<AppleRemoteHost> selectHostForPlatform(const PlatformTarget platform) override {
+        auto hosts = listHosts();
+        std::optional<AppleRemoteHost> bestHost;
+        int bestScore = (std::numeric_limits<int>::min)();
+
+        for (const auto& configuredHost : hosts) {
+            if (!configuredHost.enabled || !supportsPlatform(configuredHost, platform)) {
+                continue;
+            }
+
+            auto inspected = inspectHostState(configuredHost);
+            persistHost(inspected);
+
+            const int score = scoreHost(inspected, platform);
+            if (!bestHost.has_value() || score > bestScore) {
+                bestScore = score;
+                bestHost = std::move(inspected);
+            }
+        }
+
+        return bestHost;
+    }
+
+private:
+    static AppleRemoteHost normalizeHost(AppleRemoteHost host) {
+        host.hostId = trimCopy(host.hostId);
+        host.displayName = trimCopy(host.displayName);
+        host.address = trimCopy(host.address);
+        host.username = trimCopy(host.username);
+        host.serviceBaseUrl = trimCopy(host.serviceBaseUrl);
+        host.companionHealthPath = trimCopy(host.companionHealthPath);
+        host.preferredDeveloperDirectory = trimCopy(host.preferredDeveloperDirectory);
+
+        if (host.displayName.empty()) {
+            host.displayName = host.hostId;
+        }
+        if (host.companionHealthPath.empty()) {
+            host.companionHealthPath = "/healthz";
+        }
+
+        host.platforms.erase(
+            std::remove(host.platforms.begin(), host.platforms.end(), PlatformTarget::Unknown),
+            host.platforms.end());
+        std::sort(host.platforms.begin(), host.platforms.end());
+        host.platforms.erase(std::unique(host.platforms.begin(), host.platforms.end()), host.platforms.end());
+
+        return host;
+    }
+
+    static OperationResult validateHost(const AppleRemoteHost& host) {
+        if (host.hostId.empty()) {
+            return OperationResult{ false, false, "Apple remote host requires a hostId." };
+        }
+        if (host.displayName.empty()) {
+            return OperationResult{ false, false, "Apple remote host requires a displayName." };
+        }
+        if (host.transport == AppleRemoteTransport::Unknown) {
+            return OperationResult{ false, false, "Apple remote host requires a supported transport." };
+        }
+        if (host.platforms.empty()) {
+            return OperationResult{ false, false, "Apple remote host must declare at least one target platform." };
+        }
+
+        if (host.transport == AppleRemoteTransport::Ssh) {
+            if (host.address.empty()) {
+                return OperationResult{ false, false, "SSH Apple remote hosts require an address or hostname." };
+            }
+        } else if (host.transport == AppleRemoteTransport::CompanionService) {
+            if (host.serviceBaseUrl.empty() && host.address.empty()) {
+                return OperationResult{
+                    false,
+                    false,
+                    "Companion-service Apple remote hosts require either a serviceBaseUrl or an address."
+                };
+            }
+            if (host.serviceBaseUrl.empty() && host.port == 0) {
+                return OperationResult{
+                    false,
+                    false,
+                    "Companion-service Apple remote hosts require a port when serviceBaseUrl is not provided."
+                };
+            }
+        }
+
+        return OperationResult{ true, false, "Apple remote host is valid." };
+    }
+
+    static bool supportsPlatform(const AppleRemoteHost& host, const PlatformTarget platform) {
+        return std::find(host.platforms.begin(), host.platforms.end(), platform) != host.platforms.end();
+    }
+
+    static bool isReadyForPlatform(const AppleRemoteHost& host, const PlatformTarget platform) {
+        if (!host.toolchain.reachable || !host.toolchain.xcodeInstalled) {
+            return false;
+        }
+
+        if (platform == PlatformTarget::MacOS) {
+            return host.toolchain.macosSdkAvailable;
+        }
+        if (platform == PlatformTarget::IOS) {
+            return host.toolchain.iosSdkAvailable &&
+                host.signing.signingReady &&
+                (host.toolchain.simulatorControlAvailable || host.toolchain.deviceControlAvailable);
+        }
+        return false;
+    }
+
+    static int scoreHost(const AppleRemoteHost& host, const PlatformTarget platform) {
+        int score = 0;
+        if (host.enabled) {
+            score += 50;
+        }
+        if (supportsPlatform(host, platform)) {
+            score += 50;
+        }
+        if (host.toolchain.reachable) {
+            score += 40;
+        }
+        if (host.toolchain.xcodeInstalled) {
+            score += 30;
+        }
+        if (platform == PlatformTarget::MacOS && host.toolchain.macosSdkAvailable) {
+            score += 20;
+        }
+        if (platform == PlatformTarget::IOS && host.toolchain.iosSdkAvailable) {
+            score += 20;
+        }
+        if (platform == PlatformTarget::IOS && host.signing.signingReady) {
+            score += 15;
+        }
+        if (platform == PlatformTarget::IOS && host.toolchain.simulatorControlAvailable) {
+            score += 10;
+        }
+        if (host.transport == AppleRemoteTransport::CompanionService) {
+            score += 2;
+        }
+        if (isReadyForPlatform(host, platform)) {
+            score += 100;
+        }
+        return score;
+    }
+
+    static std::string trimTrailingSlash(std::string value) {
+        while (!value.empty() && value.back() == '/') {
+            value.pop_back();
+        }
+        return value;
+    }
+
+    static std::string buildCompanionHealthUrl(const AppleRemoteHost& host) {
+        std::string path = trimCopy(host.companionHealthPath);
+        if (path.empty()) {
+            path = "/healthz";
+        }
+        if (startsWith(path, "http://") || startsWith(path, "https://")) {
+            return path;
+        }
+        if (!path.empty() && path.front() != '/') {
+            path.insert(path.begin(), '/');
+        }
+        if (!host.serviceBaseUrl.empty()) {
+            return trimTrailingSlash(host.serviceBaseUrl) + path;
+        }
+
+        const uint16_t port = host.port == 0 ? 80 : host.port;
+        return "http://" + host.address + ":" + std::to_string(port) + path;
+    }
+
+    static std::string deriveToolchainStatus(const AppleRemoteHost& host) {
+        if (!host.enabled) {
+            return "disabled";
+        }
+        if (!host.toolchain.reachable) {
+            return "offline";
+        }
+        if (host.toolchain.xcodeInstalled &&
+            (host.toolchain.macosSdkAvailable || host.toolchain.iosSdkAvailable)) {
+            return "ready";
+        }
+        return "degraded";
+    }
+
+    static std::string deriveSigningStatus(const AppleRemoteHost& host) {
+        return host.signing.signingReady ? "ready" : "not_ready";
+    }
+
+    static AppleRemoteHost applyCompanionPayload(AppleRemoteHost host, const nlohmann::json& payload) {
+        const auto checkedAtUtc = timestampNowUtc();
+        const auto toolchainPayload =
+            payload.contains("toolchain") && payload.at("toolchain").is_object() ? payload.at("toolchain") : payload;
+        const auto signingPayload =
+            payload.contains("signing") && payload.at("signing").is_object() ? payload.at("signing") : payload;
+
+        host.toolchain.reachable = toolchainPayload.value("reachable", true);
+        host.toolchain.xcodeVersion = trimCopy(toolchainPayload.value("xcodeVersion", std::string{}));
+        host.toolchain.xcodeInstalled = toolchainPayload.value(
+            "xcodeInstalled",
+            !host.toolchain.xcodeVersion.empty());
+        host.toolchain.developerDirectory = trimCopy(
+            toolchainPayload.value("developerDirectory", host.preferredDeveloperDirectory));
+        host.toolchain.macosSdkAvailable = toolchainPayload.value("macosSdkAvailable", false);
+        host.toolchain.iosSdkAvailable = toolchainPayload.value("iosSdkAvailable", false);
+        host.toolchain.simulatorControlAvailable = toolchainPayload.value("simulatorControlAvailable", false);
+        host.toolchain.deviceControlAvailable = toolchainPayload.value("deviceControlAvailable", false);
+        if (toolchainPayload.contains("simulatorRuntimes") && toolchainPayload.at("simulatorRuntimes").is_array()) {
+            host.toolchain.simulatorRuntimes.clear();
+            for (const auto& runtime : toolchainPayload.at("simulatorRuntimes")) {
+                if (runtime.is_string()) {
+                    host.toolchain.simulatorRuntimes.push_back(runtime.get<std::string>());
+                }
+            }
+        }
+        host.toolchain.checkedAtUtc = checkedAtUtc;
+        host.toolchain.status = trimCopy(toolchainPayload.value("status", deriveToolchainStatus(host)));
+        host.toolchain.message = trimCopy(toolchainPayload.value("message", std::string{}));
+
+        host.signing.signingReady = signingPayload.value("signingReady", false);
+        host.signing.developmentSigningReady =
+            signingPayload.value("developmentSigningReady", host.signing.signingReady);
+        host.signing.distributionSigningReady =
+            signingPayload.value("distributionSigningReady", host.signing.signingReady);
+        if (signingPayload.contains("availableTeams") && signingPayload.at("availableTeams").is_array()) {
+            host.signing.availableTeams.clear();
+            for (const auto& team : signingPayload.at("availableTeams")) {
+                if (team.is_string()) {
+                    host.signing.availableTeams.push_back(team.get<std::string>());
+                }
+            }
+        }
+        host.signing.status = trimCopy(signingPayload.value("status", deriveSigningStatus(host)));
+        host.signing.message = trimCopy(signingPayload.value("message", std::string{}));
+        return host;
+    }
+
+    static std::vector<std::string> parseSimulatorRuntimes(const std::string& stdoutText) {
+        std::vector<std::string> runtimes;
+        try {
+            const auto payload = nlohmann::json::parse(stdoutText);
+            if (!payload.contains("runtimes") || !payload.at("runtimes").is_array()) {
+                return runtimes;
+            }
+
+            for (const auto& runtime : payload.at("runtimes")) {
+                if (!runtime.is_object()) {
+                    continue;
+                }
+                if (runtime.contains("isAvailable") && runtime.at("isAvailable").is_boolean() &&
+                    !runtime.at("isAvailable").get<bool>()) {
+                    continue;
+                }
+                if (runtime.contains("name") && runtime.at("name").is_string()) {
+                    runtimes.push_back(runtime.at("name").get<std::string>());
+                } else if (runtime.contains("identifier") && runtime.at("identifier").is_string()) {
+                    runtimes.push_back(runtime.at("identifier").get<std::string>());
+                }
+            }
+        } catch (...) {
+        }
+        return runtimes;
+    }
+
+    static std::vector<std::string> parseSigningTeams(const std::string& stdoutText) {
+        std::vector<std::string> teams;
+        std::istringstream stream(stdoutText);
+        std::string line;
+        while (std::getline(stream, line)) {
+            const auto open = line.find('(');
+            const auto close = line.find(')', open == std::string::npos ? 0 : open + 1);
+            if (open == std::string::npos || close == std::string::npos || close <= open + 1) {
+                continue;
+            }
+            const auto team = trimCopy(line.substr(open + 1, close - open - 1));
+            if (!team.empty()) {
+                teams.push_back(team);
+            }
+        }
+        std::sort(teams.begin(), teams.end());
+        teams.erase(std::unique(teams.begin(), teams.end()), teams.end());
+        return teams;
+    }
+
+    AppleRemoteHost inspectCompanionService(AppleRemoteHost host) const {
+        host.toolchain.checkedAtUtc = timestampNowUtc();
+        const auto url = buildCompanionHealthUrl(host);
+        const auto response = sendJsonRequest("GET", url, {}, "");
+        if (!response.succeeded) {
+            host.toolchain.reachable = false;
+            host.toolchain.status = "offline";
+            host.toolchain.message = response.errorMessage.empty()
+                ? "The Apple companion service did not respond successfully."
+                : response.errorMessage;
+            host.signing.status = "unknown";
+            host.signing.message = "Signing state is unavailable because the companion service is unreachable.";
+            return host;
+        }
+
+        try {
+            return applyCompanionPayload(std::move(host), nlohmann::json::parse(response.body));
+        } catch (...) {
+            host.toolchain.reachable = false;
+            host.toolchain.status = "invalid_payload";
+            host.toolchain.message = "The Apple companion service returned an unreadable JSON payload.";
+            host.signing.status = "invalid_payload";
+            host.signing.message = "The Apple companion service returned an unreadable JSON payload.";
+            return host;
+        }
+    }
+
+    AppleRemoteHost inspectSshHost(AppleRemoteHost host) const {
+        host.toolchain.checkedAtUtc = timestampNowUtc();
+
+        const auto sshPath = findCommandOnPath({ L"ssh.exe" });
+        if (!sshPath.has_value()) {
+            host.toolchain.reachable = false;
+            host.toolchain.status = "unavailable";
+            host.toolchain.message = "ssh.exe is not available on the Windows host.";
+            host.signing.status = "unavailable";
+            host.signing.message = "SSH transport is unavailable because ssh.exe could not be found.";
+            return host;
+        }
+
+        const auto runRemoteCommand = [&](const std::string& remoteCommand) {
+            std::vector<std::wstring> arguments;
+            arguments.push_back(sshPath->wstring());
+            arguments.push_back(L"-o");
+            arguments.push_back(L"BatchMode=yes");
+            arguments.push_back(L"-o");
+            arguments.push_back(L"ConnectTimeout=5");
+            if (host.port != 0) {
+                arguments.push_back(L"-p");
+                arguments.push_back(std::to_wstring(host.port));
+            }
+            std::string target = host.address;
+            if (!host.username.empty()) {
+                target = host.username + "@" + host.address;
+            }
+            arguments.push_back(wideFromUtf8(target));
+            arguments.push_back(wideFromUtf8(remoteCommand));
+            return runProcessCapture(joinCommandArguments(arguments), std::filesystem::current_path());
+        };
+
+        const auto developerDirectory = runRemoteCommand("xcode-select -p");
+        const auto xcodeVersion = runRemoteCommand("xcodebuild -version");
+        const auto macosSdk = runRemoteCommand("xcrun --sdk macosx --show-sdk-path");
+        const auto iosSdk = runRemoteCommand("xcrun --sdk iphoneos --show-sdk-path");
+        const auto simulatorState = runRemoteCommand("xcrun simctl list runtimes --json");
+        const auto deviceControl = runRemoteCommand("xcrun devicectl list devices");
+        const auto signingState = runRemoteCommand("security find-identity -v -p codesigning");
+
+        host.toolchain.reachable = developerDirectory.launched && developerDirectory.exitCode == 0;
+        host.toolchain.developerDirectory = trimCopy(developerDirectory.stdoutText);
+        host.toolchain.xcodeInstalled = xcodeVersion.launched && xcodeVersion.exitCode == 0;
+        host.toolchain.xcodeVersion.clear();
+        {
+            std::istringstream versionStream(xcodeVersion.stdoutText);
+            std::getline(versionStream, host.toolchain.xcodeVersion);
+            host.toolchain.xcodeVersion = trimCopy(host.toolchain.xcodeVersion);
+        }
+        host.toolchain.macosSdkAvailable = macosSdk.launched && macosSdk.exitCode == 0;
+        host.toolchain.iosSdkAvailable = iosSdk.launched && iosSdk.exitCode == 0;
+        host.toolchain.simulatorControlAvailable = simulatorState.launched && simulatorState.exitCode == 0;
+        host.toolchain.deviceControlAvailable = deviceControl.launched && deviceControl.exitCode == 0;
+        host.toolchain.simulatorRuntimes = parseSimulatorRuntimes(simulatorState.stdoutText);
+        host.toolchain.status = deriveToolchainStatus(host);
+
+        std::vector<std::string> toolchainMessages;
+        if (!host.toolchain.reachable) {
+            toolchainMessages.push_back("The remote Mac did not respond to xcode-select.");
+        } else if (!host.toolchain.xcodeInstalled) {
+            toolchainMessages.push_back("Xcode is not available through ssh on the selected host.");
+        } else {
+            toolchainMessages.push_back("Xcode toolchain is reachable through ssh.");
+        }
+        if (!host.toolchain.macosSdkAvailable && supportsPlatform(host, PlatformTarget::MacOS)) {
+            toolchainMessages.push_back("The macOS SDK is not available on the selected host.");
+        }
+        if (!host.toolchain.iosSdkAvailable && supportsPlatform(host, PlatformTarget::IOS)) {
+            toolchainMessages.push_back("The iOS SDK is not available on the selected host.");
+        }
+        std::ostringstream toolchainMessageStream;
+        for (size_t index = 0; index < toolchainMessages.size(); ++index) {
+            if (index > 0) {
+                toolchainMessageStream << ' ';
+            }
+            toolchainMessageStream << toolchainMessages[index];
+        }
+        host.toolchain.message = trimCopy(toolchainMessageStream.str());
+
+        host.signing.signingReady = signingState.launched &&
+            signingState.exitCode == 0 &&
+            signingState.stdoutText.find("0 valid identities found") == std::string::npos;
+        host.signing.developmentSigningReady = host.signing.signingReady;
+        host.signing.distributionSigningReady = host.signing.signingReady;
+        host.signing.availableTeams = parseSigningTeams(signingState.stdoutText);
+        host.signing.status = deriveSigningStatus(host);
+        host.signing.message = host.signing.signingReady
+            ? "Code-signing identities are available on the selected Apple host."
+            : "No usable code-signing identities were detected on the selected Apple host.";
+
+        return host;
+    }
+
+    AppleRemoteHost inspectHostState(const AppleRemoteHost& host) const {
+        if (!host.enabled) {
+            auto inspected = host;
+            inspected.toolchain.checkedAtUtc = timestampNowUtc();
+            inspected.toolchain.status = "disabled";
+            inspected.toolchain.message = "This Apple remote host is disabled.";
+            inspected.signing.status = "disabled";
+            inspected.signing.message = "This Apple remote host is disabled.";
+            return inspected;
+        }
+
+        switch (host.transport) {
+            case AppleRemoteTransport::CompanionService:
+                return inspectCompanionService(host);
+            case AppleRemoteTransport::Ssh:
+                return inspectSshHost(host);
+            default: {
+                auto inspected = host;
+                inspected.toolchain.checkedAtUtc = timestampNowUtc();
+                inspected.toolchain.reachable = false;
+                inspected.toolchain.status = "unsupported_transport";
+                inspected.toolchain.message = "Unsupported Apple host transport.";
+                inspected.signing.status = "unsupported_transport";
+                inspected.signing.message = "Unsupported Apple host transport.";
+                return inspected;
+            }
+        }
+    }
+
+    void persistHost(const AppleRemoteHost& host) {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        auto& hosts = state_->configuration.appleRemoteHosts;
+        const auto iterator = std::find_if(
+            hosts.begin(),
+            hosts.end(),
+            [&host](const AppleRemoteHost& candidate) { return candidate.hostId == host.hostId; });
+        if (iterator == hosts.end()) {
+            hosts.push_back(host);
+        } else {
+            *iterator = host;
+        }
+        persistLocked();
+    }
+
+    void persistLocked() const {
+        writeJsonFile(filePath_, state_->configuration);
+    }
+
+    std::shared_ptr<SharedState> state_;
+    std::filesystem::path filePath_;
+};
+
 class PlatformGovernanceToolService final : public IPlatformGovernanceToolService {
 public:
-    explicit PlatformGovernanceToolService(AppPaths paths)
-        : paths_(std::move(paths)) {}
+    PlatformGovernanceToolService(AppPaths paths, std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService)
+        : paths_(std::move(paths))
+        , appleRemoteHostService_(std::move(appleRemoteHostService)) {}
 
     void upsertTool(const GovernanceToolDescriptor& descriptor) override {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -4072,34 +4607,24 @@ public:
 
         result.displayName = descriptor->displayName;
 
-        if (descriptor->requiresRemoteToolchain) {
-            result.status = GovernanceToolStatus::Unsupported;
-            result.summary = "Remote Apple governance routing is declared, but a remote Apple toolchain endpoint is not configured yet.";
-            result.findings.push_back(makeFinding(
-                "governance.remote-toolchain",
-                descriptor->displayName,
-                "medium",
-                "warning",
-                "This governance lane requires a remote Apple toolchain or companion runtime before it can enforce Forsetti rules."));
-            result.completedAtUtc = timestampNowUtc();
-            recordExecution(result);
-            return result;
-        }
-
         try {
-            switch (request.platform) {
-                case PlatformTarget::Windows:
-                    executeWindowsTool(*descriptor, request, result);
-                    break;
-                case PlatformTarget::MacOS:
-                case PlatformTarget::IOS:
-                    result.status = GovernanceToolStatus::Unsupported;
-                    result.summary = "Remote governance routing is declared but not yet configured for this platform.";
-                    break;
-                default:
-                    result.status = GovernanceToolStatus::Failed;
-                    result.summary = "Unknown governance platform.";
-                    break;
+            if (descriptor->requiresRemoteToolchain) {
+                executeAppleRemoteTool(*descriptor, request, result);
+            } else {
+                switch (request.platform) {
+                    case PlatformTarget::Windows:
+                        executeWindowsTool(*descriptor, request, result);
+                        break;
+                    case PlatformTarget::MacOS:
+                    case PlatformTarget::IOS:
+                        result.status = GovernanceToolStatus::Unsupported;
+                        result.summary = "Remote governance routing is required for this platform.";
+                        break;
+                    default:
+                        result.status = GovernanceToolStatus::Failed;
+                        result.summary = "Unknown governance platform.";
+                        break;
+                }
             }
         } catch (const std::exception& exception) {
             result.status = GovernanceToolStatus::Failed;
@@ -4408,7 +4933,110 @@ private:
         result.summary = "Unknown Windows governance tool ID '" + descriptor.toolId + "'.";
     }
 
+    void executeAppleRemoteTool(const GovernanceToolDescriptor& descriptor,
+                                const GovernanceToolRequest& request,
+                                GovernanceToolResult& result) const {
+        if (!appleRemoteHostService_) {
+            result.status = GovernanceToolStatus::Failed;
+            result.summary = "Apple remote host service is unavailable.";
+            result.findings.push_back(makeFinding(
+                descriptor.toolId,
+                descriptor.displayName,
+                "high",
+                "blocked",
+                "The Apple remote host registry service is not available in the Forsetti runtime."));
+            return;
+        }
+
+        const auto host = appleRemoteHostService_->selectHostForPlatform(request.platform);
+        if (!host.has_value()) {
+            result.status = GovernanceToolStatus::Warning;
+            result.summary = "No enabled Apple remote host is configured for platform " +
+                platformKey(request.platform) + ".";
+            result.findings.push_back(makeFinding(
+                "governance.remote-toolchain",
+                descriptor.displayName,
+                "high",
+                "blocked",
+                "Configure an Apple remote host with either ssh or companion_service transport before using this governance lane."));
+            return;
+        }
+
+        const bool readyForPlatform =
+            host->toolchain.reachable &&
+            host->toolchain.xcodeInstalled &&
+            ((request.platform == PlatformTarget::MacOS && host->toolchain.macosSdkAvailable) ||
+             (request.platform == PlatformTarget::IOS &&
+              host->toolchain.iosSdkAvailable &&
+              host->signing.signingReady &&
+              (host->toolchain.simulatorControlAvailable || host->toolchain.deviceControlAvailable)));
+
+        result.rawOutput = nlohmann::json(*host).dump(2);
+        result.findings.push_back(makeFinding(
+            descriptor.toolId,
+            descriptor.displayName,
+            host->toolchain.reachable ? "low" : "high",
+            host->toolchain.reachable ? "pass" : "blocked",
+            "Selected Apple host '" + host->displayName + "' via " + to_string(host->transport) + "."));
+        result.findings.push_back(makeFinding(
+            descriptor.toolId,
+            descriptor.displayName,
+            host->toolchain.xcodeInstalled ? "low" : "high",
+            host->toolchain.xcodeInstalled ? "pass" : "blocked",
+            host->toolchain.xcodeInstalled
+                ? "Xcode is available on the selected Apple host."
+                : "Xcode is not available on the selected Apple host."));
+        result.findings.push_back(makeFinding(
+            descriptor.toolId,
+            descriptor.displayName,
+            readyForPlatform ? "low" : "medium",
+            readyForPlatform ? "pass" : "warning",
+            request.platform == PlatformTarget::MacOS
+                ? (host->toolchain.macosSdkAvailable
+                    ? "macOS SDK routing is ready."
+                    : "The selected Apple host is missing the macOS SDK route.")
+                : (host->toolchain.iosSdkAvailable
+                    ? "iOS SDK routing is available."
+                    : "The selected Apple host is missing the iOS SDK route.")));
+        if (request.platform == PlatformTarget::IOS) {
+            result.findings.push_back(makeFinding(
+                descriptor.toolId,
+                descriptor.displayName,
+                host->signing.signingReady ? "low" : "high",
+                host->signing.signingReady ? "pass" : "blocked",
+                host->signing.signingReady
+                    ? "iOS signing is ready on the selected Apple host."
+                    : "iOS signing is not ready on the selected Apple host."));
+        }
+
+        if (descriptor.toolId == "forsetti.macos.toolchain.route" ||
+            descriptor.toolId == "forsetti.ios.signing.route" ||
+            descriptor.toolId == "forsetti.macos.remote-build.validate" ||
+            descriptor.toolId == "forsetti.ios.remote-build.validate") {
+            result.succeeded = readyForPlatform;
+            result.status = readyForPlatform ? GovernanceToolStatus::Passed : GovernanceToolStatus::Warning;
+            result.summary = readyForPlatform
+                ? "Governance routed to Apple host '" + host->displayName + "' via " + to_string(host->transport) + "."
+                : "Apple host '" + host->displayName + "' is configured, but not ready for " +
+                    platformKey(request.platform) + " governance execution.";
+            return;
+        }
+
+        result.succeeded = false;
+        result.status = GovernanceToolStatus::Warning;
+        result.summary =
+            "Apple remote governance readiness is configured, but platform-specific inspection for '" +
+            descriptor.toolId + "' will be completed in the next Apple execution slice.";
+        result.findings.push_back(makeFinding(
+            descriptor.toolId,
+            descriptor.displayName,
+            "medium",
+            "warning",
+            "Remote host selection is now real, but this specific Apple governance tool still needs a dedicated inspection handler."));
+    }
+
     AppPaths paths_;
+    std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService_;
     mutable std::mutex mutex_;
     std::map<std::string, GovernanceToolDescriptor> toolsByKey_;
     std::vector<GovernanceToolResult> recentExecutions_;
@@ -4500,6 +5128,7 @@ public:
                     std::shared_ptr<IRuntimeInventoryService> inventoryService,
                     std::shared_ptr<IConfigurationService> configurationService,
                     std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService,
+                    std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService,
                     std::shared_ptr<IProviderRegistry> providerRegistry,
                     std::shared_ptr<IProviderCatalogService> providerCatalogService,
                     std::shared_ptr<IProviderCredentialStore> providerCredentialStore,
@@ -4519,6 +5148,7 @@ public:
         , inventoryService_(std::move(inventoryService))
         , configurationService_(std::move(configurationService))
         , platformServiceCatalogService_(std::move(platformServiceCatalogService))
+        , appleRemoteHostService_(std::move(appleRemoteHostService))
         , providerRegistry_(std::move(providerRegistry))
         , providerCatalogService_(std::move(providerCatalogService))
         , providerCredentialStore_(std::move(providerCredentialStore))
@@ -4563,6 +5193,9 @@ public:
         snapshot.resourceAllocation = configuration.resourceAllocation;
         snapshot.security = configuration.security;
         snapshot.governance = commandLogicUnitService_->currentGovernance();
+        snapshot.appleRemoteHosts = appleRemoteHostService_
+            ? appleRemoteHostService_->listHosts()
+            : std::vector<AppleRemoteHost>{};
         snapshot.platformGateways = platformServiceCatalogService_
             ? platformServiceCatalogService_->listGateways()
             : std::vector<PlatformGatewayDescriptor>{};
@@ -4633,6 +5266,15 @@ public:
         return providerCredentialStore_->upsertCredentials(nlohmann::json::parse(requestBody).get<ProviderCredentialUpdate>());
     }
 
+    OperationResult upsertAppleRemoteHostJson(const std::string& requestBody) override {
+        return appleRemoteHostService_->upsertHost(nlohmann::json::parse(requestBody).get<AppleRemoteHost>());
+    }
+
+    OperationResult removeAppleRemoteHostJson(const std::string& requestBody) override {
+        return appleRemoteHostService_->removeHost(
+            nlohmann::json::parse(requestBody).get<AppleRemoteHostRemovalRequest>().hostId);
+    }
+
     OperationResult upsertMcpServerJson(const std::string& requestBody) override {
         return mcpServerCatalogService_->upsertMcpServer(nlohmann::json::parse(requestBody).get<RuntimeEndpoint>());
     }
@@ -4685,6 +5327,7 @@ private:
     std::shared_ptr<IRuntimeInventoryService> inventoryService_;
     std::shared_ptr<IConfigurationService> configurationService_;
     std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService_;
+    std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService_;
     std::shared_ptr<IProviderRegistry> providerRegistry_;
     std::shared_ptr<IProviderCatalogService> providerCatalogService_;
     std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
@@ -4931,6 +5574,8 @@ public:
     OperationResult applyConfigurationJson(const std::string& requestBody, bool confirmUnsafeChanges) { return adminApiService_->applyConfigurationJson(requestBody, confirmUnsafeChanges); }
     OperationResult upsertProviderJson(const std::string& requestBody) { return adminApiService_->upsertProviderJson(requestBody); }
     OperationResult upsertProviderCredentialsJson(const std::string& requestBody) { return adminApiService_->upsertProviderCredentialsJson(requestBody); }
+    OperationResult upsertAppleRemoteHostJson(const std::string& requestBody) { return adminApiService_->upsertAppleRemoteHostJson(requestBody); }
+    OperationResult removeAppleRemoteHostJson(const std::string& requestBody) { return adminApiService_->removeAppleRemoteHostJson(requestBody); }
     OperationResult upsertMcpServerJson(const std::string& requestBody) { return adminApiService_->upsertMcpServerJson(requestBody); }
     OperationResult removeMcpServerJson(const std::string& requestBody) { return adminApiService_->removeMcpServerJson(requestBody); }
     OperationResult upsertSubAgentJson(const std::string& requestBody) { return adminApiService_->upsertSubAgentJson(requestBody); }
@@ -4964,6 +5609,7 @@ private:
     std::shared_ptr<ITelemetryService> telemetryService_;
     std::shared_ptr<IRuntimeInventoryService> inventoryService_;
     std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService_;
+    std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService_;
     std::shared_ptr<IPackageTrustEvaluator> trustEvaluator_;
     std::shared_ptr<InstallerOrchestrator> installerOrchestrator_;
     std::shared_ptr<IProviderRegistry> providerRegistry_;
@@ -4995,6 +5641,7 @@ bool MasterControlApplication::Impl::initialize() {
     resourceAllocationService_ = std::make_shared<ResourceAllocationService>(state_, paths_.configurationFile);
     telemetryService_ = std::make_shared<WindowsHostTelemetryService>();
     inventoryService_ = std::make_shared<RuntimeInventoryService>(state_);
+    appleRemoteHostService_ = std::make_shared<AppleRemoteHostService>(state_, paths_.configurationFile);
     trustEvaluator_ = std::make_shared<PackageTrustEvaluator>(state_);
     installerOrchestrator_ = std::make_shared<InstallerOrchestrator>(state_, trustEvaluator_, paths_);
     providerCatalogService_ = std::make_shared<ProviderCatalogService>();
@@ -5019,7 +5666,7 @@ bool MasterControlApplication::Impl::initialize() {
         providerExecutionCatalogService_);
     exportService_ = std::make_shared<ExportService>(inventoryService_, configurationService_);
     platformServiceCatalogService_ = std::make_shared<PlatformServiceCatalogService>(configurationService_, telemetryService_);
-    platformGovernanceToolService_ = std::make_shared<PlatformGovernanceToolService>(paths_);
+    platformGovernanceToolService_ = std::make_shared<PlatformGovernanceToolService>(paths_, appleRemoteHostService_);
     commandLogicUnitService_ = std::make_shared<CommandLogicUnitService>(
         paths_.cluProfileFile,
         configurationService_,
@@ -5027,6 +5674,7 @@ bool MasterControlApplication::Impl::initialize() {
         providerAssignmentService_,
         installerOrchestrator_,
         exportService_,
+        appleRemoteHostService_,
         platformServiceCatalogService_,
         platformGovernanceToolService_);
     controlSurfaceService_ = std::make_shared<ModuleControlSurfaceService>();
@@ -5039,6 +5687,7 @@ bool MasterControlApplication::Impl::initialize() {
         inventoryService_,
         configurationService_,
         platformServiceCatalogService_,
+        appleRemoteHostService_,
         providerRegistry_,
         providerCatalogService_,
         providerCredentialStore_,
@@ -5127,6 +5776,7 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
     services->registerService<ITelemetryService>(telemetryService_);
     services->registerService<IRuntimeInventoryService>(inventoryService_);
     services->registerService<IPlatformServiceCatalogService>(platformServiceCatalogService_);
+    services->registerService<IAppleRemoteHostService>(appleRemoteHostService_);
     services->registerService<IPackageTrustEvaluator>(trustEvaluator_);
     services->registerService<IInstallerOrchestrator>(installerOrchestrator_);
     services->registerService<IBootstrapRepoService>(installerOrchestrator_);
@@ -5221,6 +5871,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         const auto governanceServers = platformServiceCatalogService_
             ? platformServiceCatalogService_->listGovernanceServers()
             : std::vector<GovernanceServerDescriptor>{};
+        const auto appleHosts = appleRemoteHostService_
+            ? appleRemoteHostService_->listHosts()
+            : std::vector<AppleRemoteHost>{};
         const auto findGateway = [&gateways](const PlatformTarget platform) -> std::optional<PlatformGatewayDescriptor> {
             const auto iterator = std::find_if(
                 gateways.begin(),
@@ -5242,6 +5895,30 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             }
             return *iterator;
         };
+        const auto listAppleHostsForPlatform =
+            [&appleHosts](const PlatformTarget platform) -> std::vector<AppleRemoteHost> {
+                std::vector<AppleRemoteHost> filtered;
+                for (const auto& host : appleHosts) {
+                    if (std::find(host.platforms.begin(), host.platforms.end(), platform) != host.platforms.end()) {
+                        filtered.push_back(host);
+                    }
+                }
+                return filtered;
+            };
+        const auto isAppleHostReadyForPlatform = [](const AppleRemoteHost& host, const PlatformTarget platform) {
+            if (!host.toolchain.reachable || !host.toolchain.xcodeInstalled) {
+                return false;
+            }
+            if (platform == PlatformTarget::MacOS) {
+                return host.toolchain.macosSdkAvailable;
+            }
+            if (platform == PlatformTarget::IOS) {
+                return host.toolchain.iosSdkAvailable &&
+                    host.signing.signingReady &&
+                    (host.toolchain.simulatorControlAvailable || host.toolchain.deviceControlAvailable);
+            }
+            return true;
+        };
         const auto makeBaseUrl = [this]() {
             const auto configuration = configurationService_->current();
             const auto telemetry = telemetryService_->captureSnapshot();
@@ -5257,6 +5934,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             if (!gateway.has_value() || !governance.has_value()) {
                 return nlohmann::json{};
             }
+            const auto platformAppleHosts = listAppleHostsForPlatform(platform);
+            const auto selectedAppleHost =
+                appleRemoteHostService_ ? appleRemoteHostService_->selectHostForPlatform(platform) : std::nullopt;
 
             const auto baseUrl = makeBaseUrl();
             const auto gatewayUrl = baseUrl + gateway->gatewayPath;
@@ -5281,6 +5961,10 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 } },
                 { "clientSelectionRule", "Clients should discover and connect to the service that matches their platform OS." },
                 { "governanceTools", governance->toolIds },
+                { "appleHosts", platformAppleHosts },
+                { "selectedAppleHost", selectedAppleHost.has_value() ? nlohmann::json(*selectedAppleHost) : nlohmann::json() },
+                { "routeable", platform == PlatformTarget::Windows ||
+                        (selectedAppleHost.has_value() && isAppleHostReadyForPlatform(*selectedAppleHost, platform)) },
                 { "agentConfigurations", nlohmann::json::array({
                     {
                         { "provider", "codex" },
@@ -5350,7 +6034,8 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "GET" && request.path == "/api/platform-services") {
             return jsonResponse(nlohmann::json{
                 { "gateways", gateways },
-                { "governanceServers", governanceServers }
+                { "governanceServers", governanceServers },
+                { "appleHosts", appleHosts }
             });
         }
         if (request.method == "GET" && request.path == "/api/platform-services/gateways") {
@@ -5358,6 +6043,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "GET" && request.path == "/api/platform-services/governance") {
             return jsonResponse(governanceServers);
+        }
+        if (request.method == "GET" && request.path == "/api/platform-services/apple-hosts") {
+            return jsonResponse(appleHosts);
         }
         if (request.method == "GET" && startsWith(request.path, "/api/platform-services/config/")) {
             const auto platform = platformFromKey(request.path.substr(std::string("/api/platform-services/config/").size()));
@@ -5386,6 +6074,8 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const auto platform = platformFromKey(request.path.substr(std::string("/mcp/governance/").size()));
             const auto governance = findGovernanceServer(platform);
             const auto gateway = findGateway(platform);
+            const auto selectedAppleHost =
+                appleRemoteHostService_ ? appleRemoteHostService_->selectHostForPlatform(platform) : std::nullopt;
             if (!gateway.has_value() || !governance.has_value()) {
                 return jsonResponse(nlohmann::json{ { "message", "Governance service not found." } }, 404);
             }
@@ -5403,7 +6093,10 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 { "governanceServer", *governance },
                 { "toolIds", governance->toolIds },
                 { "tools", platformTools },
-                { "requiresRemoteToolchain", governance->requiresRemoteToolchain }
+                { "requiresRemoteToolchain", governance->requiresRemoteToolchain },
+                { "selectedAppleHost", selectedAppleHost.has_value() ? nlohmann::json(*selectedAppleHost) : nlohmann::json() },
+                { "routeable", platform == PlatformTarget::Windows ||
+                        (selectedAppleHost.has_value() && isAppleHostReadyForPlatform(*selectedAppleHost, platform)) }
             });
         }
         if (request.method == "POST" && request.path == "/api/config") {
@@ -5418,6 +6111,14 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "POST" && request.path == "/api/providers/credentials") {
             const auto result = adminApiService_->upsertProviderCredentialsJson(request.body);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
+        if (request.method == "POST" && request.path == "/api/platform-services/apple-hosts") {
+            const auto result = adminApiService_->upsertAppleRemoteHostJson(request.body);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
+        if (request.method == "POST" && request.path == "/api/platform-services/apple-hosts/remove") {
+            const auto result = adminApiService_->removeAppleRemoteHostJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         if (request.method == "POST" && request.path == "/api/runtime/mcp-servers") {
@@ -5545,6 +6246,14 @@ OperationResult MasterControlApplication::upsertProviderJson(const std::string& 
 
 OperationResult MasterControlApplication::upsertProviderCredentialsJson(const std::string& requestBody) {
     return impl_->upsertProviderCredentialsJson(requestBody);
+}
+
+OperationResult MasterControlApplication::upsertAppleRemoteHostJson(const std::string& requestBody) {
+    return impl_->upsertAppleRemoteHostJson(requestBody);
+}
+
+OperationResult MasterControlApplication::removeAppleRemoteHostJson(const std::string& requestBody) {
+    return impl_->removeAppleRemoteHostJson(requestBody);
 }
 
 OperationResult MasterControlApplication::upsertMcpServerJson(const std::string& requestBody) {

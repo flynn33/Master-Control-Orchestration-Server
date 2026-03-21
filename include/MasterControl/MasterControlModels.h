@@ -85,6 +85,12 @@ enum class PlatformTarget {
     Unknown
 };
 
+enum class AppleRemoteTransport {
+    Unknown,
+    Ssh,
+    CompanionService
+};
+
 enum class GovernanceToolStatus {
     Passed,
     Warning,
@@ -347,6 +353,50 @@ struct GovernanceProfile final {
     std::vector<std::string> operatorChecklist;
 };
 
+struct AppleToolchainState final {
+    bool reachable = false;
+    bool xcodeInstalled = false;
+    std::string xcodeVersion;
+    std::string developerDirectory;
+    bool macosSdkAvailable = false;
+    bool iosSdkAvailable = false;
+    bool simulatorControlAvailable = false;
+    bool deviceControlAvailable = false;
+    std::vector<std::string> simulatorRuntimes;
+    std::string status = "unknown";
+    std::string message;
+    std::string checkedAtUtc;
+};
+
+struct AppleSigningState final {
+    bool signingReady = false;
+    bool developmentSigningReady = false;
+    bool distributionSigningReady = false;
+    std::vector<std::string> availableTeams;
+    std::string status = "unknown";
+    std::string message;
+};
+
+struct AppleRemoteHost final {
+    std::string hostId;
+    std::string displayName;
+    AppleRemoteTransport transport = AppleRemoteTransport::Unknown;
+    std::vector<PlatformTarget> platforms;
+    std::string address;
+    uint16_t port = 0;
+    std::string username;
+    std::string serviceBaseUrl;
+    std::string companionHealthPath = "/healthz";
+    std::string preferredDeveloperDirectory;
+    bool enabled = true;
+    AppleToolchainState toolchain;
+    AppleSigningState signing;
+};
+
+struct AppleRemoteHostRemovalRequest final {
+    std::string hostId;
+};
+
 struct PlatformGatewayDescriptor final {
     std::string moduleId;
     std::string serviceId;
@@ -417,6 +467,7 @@ struct GovernanceSnapshot final {
     std::vector<GovernanceFinding> findings;
     std::vector<std::string> operatorChecklist;
     std::vector<std::string> recommendedActions;
+    std::vector<AppleRemoteHost> appleRemoteHosts;
     std::vector<PlatformGatewayDescriptor> platformGateways;
     std::vector<GovernanceServerDescriptor> governanceServers;
     std::vector<GovernanceToolDescriptor> availableTools;
@@ -489,6 +540,7 @@ struct DashboardSnapshot final {
     std::vector<InstallProvenance> installHistory;
     std::vector<ExportArtifact> exports;
     GovernanceSnapshot governance;
+    std::vector<AppleRemoteHost> appleRemoteHosts;
     std::vector<PlatformGatewayDescriptor> platformGateways;
     std::vector<GovernanceServerDescriptor> governanceServers;
     ForsettiSurfaceSnapshot surface;
@@ -507,6 +559,7 @@ struct AppConfiguration final {
     std::vector<ProviderConnection> providers;
     std::vector<SubAgentGroupDefinition> subAgentGroups;
     std::vector<ProviderAssignment> providerAssignments;
+    std::vector<AppleRemoteHost> appleRemoteHosts;
     ManagedNodeProfile activeProfile;
 };
 
@@ -520,6 +573,7 @@ std::string to_string(ProviderExecutionTransport value);
 std::string to_string(InstallerKind value);
 std::string to_string(ControlSurfaceToolbarAction value);
 std::string to_string(PlatformTarget value);
+std::string to_string(AppleRemoteTransport value);
 std::string to_string(GovernanceToolStatus value);
 
 EndpointKind endpointKindFromString(const std::string& value);
@@ -532,6 +586,7 @@ ProviderExecutionTransport providerExecutionTransportFromString(const std::strin
 InstallerKind installerKindFromString(const std::string& value);
 ControlSurfaceToolbarAction controlSurfaceToolbarActionFromString(const std::string& value);
 PlatformTarget platformTargetFromString(const std::string& value);
+AppleRemoteTransport appleRemoteTransportFromString(const std::string& value);
 GovernanceToolStatus governanceToolStatusFromString(const std::string& value);
 
 void to_json(nlohmann::json& json, EndpointKind value);
@@ -563,6 +618,9 @@ void from_json(const nlohmann::json& json, ControlSurfaceToolbarAction& value);
 
 void to_json(nlohmann::json& json, PlatformTarget value);
 void from_json(const nlohmann::json& json, PlatformTarget& value);
+
+void to_json(nlohmann::json& json, AppleRemoteTransport value);
+void from_json(const nlohmann::json& json, AppleRemoteTransport& value);
 
 void to_json(nlohmann::json& json, GovernanceToolStatus value);
 void from_json(const nlohmann::json& json, GovernanceToolStatus& value);
@@ -826,6 +884,50 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     operatorChecklist)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    AppleToolchainState,
+    reachable,
+    xcodeInstalled,
+    xcodeVersion,
+    developerDirectory,
+    macosSdkAvailable,
+    iosSdkAvailable,
+    simulatorControlAvailable,
+    deviceControlAvailable,
+    simulatorRuntimes,
+    status,
+    message,
+    checkedAtUtc)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    AppleSigningState,
+    signingReady,
+    developmentSigningReady,
+    distributionSigningReady,
+    availableTeams,
+    status,
+    message)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    AppleRemoteHost,
+    hostId,
+    displayName,
+    transport,
+    platforms,
+    address,
+    port,
+    username,
+    serviceBaseUrl,
+    companionHealthPath,
+    preferredDeveloperDirectory,
+    enabled,
+    toolchain,
+    signing)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    AppleRemoteHostRemovalRequest,
+    hostId)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GovernanceToolDescriptor,
     moduleId,
     serviceId,
@@ -867,6 +969,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     findings,
     operatorChecklist,
     recommendedActions,
+    appleRemoteHosts,
     platformGateways,
     governanceServers,
     availableTools,
@@ -968,6 +1071,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     installHistory,
     exports,
     governance,
+    appleRemoteHosts,
     platformGateways,
     governanceServers,
     surface)
@@ -986,6 +1090,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     providers,
     subAgentGroups,
     providerAssignments,
+    appleRemoteHosts,
     activeProfile)
 
 } // namespace MasterControl
