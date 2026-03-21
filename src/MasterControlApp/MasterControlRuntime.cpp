@@ -5028,6 +5028,10 @@ private:
         const auto destination = optionValue(request, { "destination" });
         const auto sdk = optionValue(request, { "sdk" });
         const auto archivePath = optionValue(request, { "archivePath" });
+        const auto exportPath = optionValue(request, { "exportPath", "outputPath", "outputDirectory" });
+        const auto exportOptionsPlist = optionValue(request, { "exportOptionsPlist", "exportOptionsPlistPath" });
+        const auto deviceId = optionValue(request, { "deviceId", "device", "deviceIdentifier" });
+        const auto appPath = optionValue(request, { "appPath", "applicationPath", "bundlePath" });
         const auto timeoutText = optionValue(request, { "timeoutSeconds" });
         if (!timeoutText.empty()) {
             try {
@@ -5040,6 +5044,97 @@ private:
             command.executable = "xcrun";
             command.arguments = { "simctl", "list", "devices", "available", "--json" };
             command.timeoutSeconds = 120;
+            return command;
+        }
+
+        if (descriptor.toolId == "forsetti.ios.export") {
+            if (archivePath.empty()) {
+                result.status = GovernanceToolStatus::Warning;
+                result.summary = "iOS archive export requires an archivePath option.";
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    "high",
+                    "blocked",
+                    "Provide request.options.archivePath before exporting an iOS archive."));
+                return std::nullopt;
+            }
+            if (exportOptionsPlist.empty()) {
+                result.status = GovernanceToolStatus::Warning;
+                result.summary = "iOS archive export requires an exportOptionsPlist option.";
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    "high",
+                    "blocked",
+                    "Provide request.options.exportOptionsPlist with a remote ExportOptions.plist path before exporting an iOS archive."));
+                return std::nullopt;
+            }
+
+            const auto resolvedExportPath = !exportPath.empty()
+                ? exportPath
+                : remotePathJoin(remotePathJoin(command.workingDirectory, "build"), "ios-export");
+
+            command.executable = "xcodebuild";
+            command.arguments = {
+                "-exportArchive",
+                "-archivePath",
+                archivePath,
+                "-exportPath",
+                resolvedExportPath,
+                "-exportOptionsPlist",
+                exportOptionsPlist
+            };
+            command.timeoutSeconds = (std::max)(command.timeoutSeconds, 1200);
+            return command;
+        }
+
+        if (descriptor.toolId == "forsetti.ios.device.install") {
+            if (!host.toolchain.deviceControlAvailable) {
+                result.status = GovernanceToolStatus::Warning;
+                result.summary = "iOS device install requires device control on the selected Apple host.";
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    "high",
+                    "blocked",
+                    "The selected Apple host does not report xcrun devicectl availability."));
+                return std::nullopt;
+            }
+            if (deviceId.empty()) {
+                result.status = GovernanceToolStatus::Warning;
+                result.summary = "iOS device install requires a deviceId option.";
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    "high",
+                    "blocked",
+                    "Provide request.options.deviceId before installing an app on a connected iOS device."));
+                return std::nullopt;
+            }
+            if (appPath.empty()) {
+                result.status = GovernanceToolStatus::Warning;
+                result.summary = "iOS device install requires an appPath option.";
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    "high",
+                    "blocked",
+                    "Provide request.options.appPath with the remote .app bundle path before device installation."));
+                return std::nullopt;
+            }
+
+            command.executable = "xcrun";
+            command.arguments = {
+                "devicectl",
+                "device",
+                "install",
+                "app",
+                "--device",
+                deviceId,
+                appPath
+            };
+            command.timeoutSeconds = (std::max)(command.timeoutSeconds, 600);
             return command;
         }
 
@@ -5063,7 +5158,8 @@ private:
         if (!configuration.empty()) {
             command.arguments.push_back("-configuration");
             command.arguments.push_back(configuration);
-        } else if (descriptor.toolId == "forsetti.macos.archive") {
+        } else if (descriptor.toolId == "forsetti.macos.archive" ||
+                   descriptor.toolId == "forsetti.ios.archive") {
             command.arguments.push_back("-configuration");
             command.arguments.push_back("Release");
         } else {
@@ -5074,6 +5170,10 @@ private:
         if (!sdk.empty()) {
             command.arguments.push_back("-sdk");
             command.arguments.push_back(sdk);
+        } else if (request.platform == PlatformTarget::IOS &&
+                   descriptor.toolId == "forsetti.ios.archive") {
+            command.arguments.push_back("-sdk");
+            command.arguments.push_back("iphoneos");
         }
 
         if (!destination.empty()) {
@@ -5084,6 +5184,10 @@ private:
                    host.toolchain.simulatorControlAvailable) {
             command.arguments.push_back("-destination");
             command.arguments.push_back("generic/platform=iOS Simulator");
+        } else if (request.platform == PlatformTarget::IOS &&
+                   descriptor.toolId == "forsetti.ios.archive") {
+            command.arguments.push_back("-destination");
+            command.arguments.push_back("generic/platform=iOS");
         }
 
         if (descriptor.toolId == "forsetti.macos.build" || descriptor.toolId == "forsetti.ios.build") {
@@ -5108,6 +5212,16 @@ private:
         }
 
         if (descriptor.toolId == "forsetti.macos.archive") {
+            const auto resolvedArchivePath = !archivePath.empty()
+                ? archivePath
+                : remotePathJoin(remotePathJoin(command.workingDirectory, "build"), scheme + ".xcarchive");
+            command.arguments.push_back("-archivePath");
+            command.arguments.push_back(resolvedArchivePath);
+            command.arguments.push_back("archive");
+            return command;
+        }
+
+        if (descriptor.toolId == "forsetti.ios.archive") {
             const auto resolvedArchivePath = !archivePath.empty()
                 ? archivePath
                 : remotePathJoin(remotePathJoin(command.workingDirectory, "build"), scheme + ".xcarchive");
@@ -5393,7 +5507,10 @@ private:
             descriptor.toolId == "forsetti.macos.archive" ||
             descriptor.toolId == "forsetti.ios.simulator.list" ||
             descriptor.toolId == "forsetti.ios.build" ||
-            descriptor.toolId == "forsetti.ios.test") {
+            descriptor.toolId == "forsetti.ios.test" ||
+            descriptor.toolId == "forsetti.ios.archive" ||
+            descriptor.toolId == "forsetti.ios.export" ||
+            descriptor.toolId == "forsetti.ios.device.install") {
             const auto command = buildAppleOperationalCommand(descriptor, request, *host, result);
             if (!command.has_value()) {
                 result.succeeded = false;

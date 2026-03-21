@@ -938,7 +938,10 @@ GovernanceServerDescriptor makeIOSGovernanceServerDescriptor() {
             "forsetti.ios.remote-build.validate",
             "forsetti.ios.simulator.list",
             "forsetti.ios.build",
-            "forsetti.ios.test"
+            "forsetti.ios.test",
+            "forsetti.ios.archive",
+            "forsetti.ios.export",
+            "forsetti.ios.device.install"
         },
         true,
         "online"
@@ -1117,6 +1120,33 @@ std::vector<GovernanceToolDescriptor> makeIOSGovernanceToolDescriptors() {
             "forsetti.ios.test",
             "Test iOS Target",
             "Run remote iOS tests through the selected Apple host.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-ios",
+            "ios-governance",
+            PlatformTarget::IOS,
+            "forsetti.ios.archive",
+            "Archive iOS Target",
+            "Create a remote iOS archive through the selected Apple host.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-ios",
+            "ios-governance",
+            PlatformTarget::IOS,
+            "forsetti.ios.export",
+            "Export iOS Archive",
+            "Export a remote iOS archive with xcodebuild -exportArchive through the selected Apple host.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-ios",
+            "ios-governance",
+            PlatformTarget::IOS,
+            "forsetti.ios.device.install",
+            "Install iOS App On Device",
+            "Install a remote iOS app bundle on a connected device through the selected Apple host.",
             true
         }
     };

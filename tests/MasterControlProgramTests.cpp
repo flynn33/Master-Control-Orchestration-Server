@@ -974,6 +974,24 @@ int main() {
                     "forsetti.ios.remote-build.validate")->requiresRemoteToolchain,
             "iOS governance tools should declare their remote toolchain dependency.");
         success &= expect(
+            findGovernanceTool(
+                snapshot.governance.availableTools,
+                MasterControl::PlatformTarget::IOS,
+                "forsetti.ios.archive").has_value(),
+            "iOS governance tools should register archive execution.");
+        success &= expect(
+            findGovernanceTool(
+                snapshot.governance.availableTools,
+                MasterControl::PlatformTarget::IOS,
+                "forsetti.ios.export").has_value(),
+            "iOS governance tools should register archive export execution.");
+        success &= expect(
+            findGovernanceTool(
+                snapshot.governance.availableTools,
+                MasterControl::PlatformTarget::IOS,
+                "forsetti.ios.device.install").has_value(),
+            "iOS governance tools should register device installation execution.");
+        success &= expect(
             snapshot.surface.publishedByModuleId == "com.mastercontrol.dashboard-ui",
             "The dashboard UI module should publish the composed framework surface");
         success &= expect(
@@ -1125,7 +1143,12 @@ int main() {
                     };
                 }
 
-                if (executable == "xcodebuild") {
+                if (executable == "xcrun" &&
+                    arguments.size() >= 6 &&
+                    arguments[0] == "devicectl" &&
+                    arguments[1] == "device" &&
+                    arguments[2] == "install" &&
+                    arguments[3] == "app") {
                     return TestHttpResponse{
                         200,
                         "application/json",
@@ -1133,7 +1156,27 @@ int main() {
                             { "launched", true },
                             { "succeeded", true },
                             { "exitCode", 0 },
-                            { "stdout", "Build Succeeded\nTest Succeeded\nArchive Succeeded\n" }
+                            { "stdout", "Device install Succeeded\n" }
+                        }.dump()
+                    };
+                }
+
+                if (executable == "xcodebuild") {
+                    const bool exportArchive =
+                        std::find(arguments.begin(), arguments.end(), "-exportArchive") != arguments.end();
+                    const bool archive = std::find(arguments.begin(), arguments.end(), "archive") != arguments.end();
+                    return TestHttpResponse{
+                        200,
+                        "application/json",
+                        nlohmann::json{
+                            { "launched", true },
+                            { "succeeded", true },
+                            { "exitCode", 0 },
+                            { "stdout", exportArchive
+                                ? "Export Succeeded\n"
+                                : (archive
+                                    ? "Archive Succeeded\n"
+                                    : "Build Succeeded\nTest Succeeded\n") }
                         }.dump()
                     };
                 }
@@ -1294,6 +1337,50 @@ int main() {
                 iosTestExecution.status == MasterControl::GovernanceToolStatus::Passed,
             "iOS test governance execution should run through the Apple companion service.");
 
+        const auto iosArchiveExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "ios" },
+            { "toolId", "forsetti.ios.archive" },
+            { "options", nlohmann::json{
+                { "remoteWorkingDirectory", "/Volumes/Builds/MasterControl" },
+                { "workspace", "MasterControl.xcworkspace" },
+                { "scheme", "MasterControlMobile" },
+                { "archivePath", "/Volumes/Builds/MasterControl/build/MasterControlMobile.xcarchive" }
+            } }
+        }.dump());
+        success &= expect(
+            iosArchiveExecution.succeeded &&
+                iosArchiveExecution.status == MasterControl::GovernanceToolStatus::Passed,
+            "iOS archive governance execution should run through the Apple companion service.");
+
+        const auto iosExportExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "ios" },
+            { "toolId", "forsetti.ios.export" },
+            { "options", nlohmann::json{
+                { "remoteWorkingDirectory", "/Volumes/Builds/MasterControl" },
+                { "archivePath", "/Volumes/Builds/MasterControl/build/MasterControlMobile.xcarchive" },
+                { "exportPath", "/Volumes/Builds/MasterControl/build/ios-export" },
+                { "exportOptionsPlist", "/Volumes/Builds/MasterControl/config/ExportOptions.plist" }
+            } }
+        }.dump());
+        success &= expect(
+            iosExportExecution.succeeded &&
+                iosExportExecution.status == MasterControl::GovernanceToolStatus::Passed,
+            "iOS export governance execution should run through the Apple companion service.");
+
+        const auto iosDeviceInstallExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "ios" },
+            { "toolId", "forsetti.ios.device.install" },
+            { "options", nlohmann::json{
+                { "remoteWorkingDirectory", "/Volumes/Builds/MasterControl" },
+                { "deviceId", "00008110-001A2C123456801E" },
+                { "appPath", "/Volumes/Builds/MasterControl/build/ios-export/MasterControlMobile.app" }
+            } }
+        }.dump());
+        success &= expect(
+            iosDeviceInstallExecution.succeeded &&
+                iosDeviceInstallExecution.status == MasterControl::GovernanceToolStatus::Passed,
+            "iOS device install governance execution should run through the Apple companion service.");
+
         const auto companionRequests = appleCompanionServer.requests();
         success &= expect(
             std::any_of(
@@ -1315,6 +1402,28 @@ int main() {
                         request.body.find("\"executable\":\"xcrun\"") != std::string::npos;
                 }),
             "Apple companion service should receive xcrun execution payloads.");
+        success &= expect(
+            std::any_of(
+                companionRequests.begin(),
+                companionRequests.end(),
+                [](const TestHttpRequest& request) {
+                    return request.method == "POST" &&
+                        request.path == "/execute" &&
+                        request.body.find("-exportArchive") != std::string::npos;
+                }),
+            "Apple companion service should receive xcodebuild exportArchive payloads.");
+        success &= expect(
+            std::any_of(
+                companionRequests.begin(),
+                companionRequests.end(),
+                [](const TestHttpRequest& request) {
+                    return request.method == "POST" &&
+                        request.path == "/execute" &&
+                        request.body.find("devicectl") != std::string::npos &&
+                        request.body.find("install") != std::string::npos &&
+                        request.body.find("MasterControlMobile.app") != std::string::npos;
+                }),
+            "Apple companion service should receive devicectl device install payloads.");
 
         const auto appleHostRemoval = application.removeAppleRemoteHostJson(nlohmann::json{
             { "hostId", "apple-host-01" }
