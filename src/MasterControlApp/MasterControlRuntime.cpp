@@ -5032,7 +5032,33 @@ private:
         const auto exportOptionsPlist = optionValue(request, { "exportOptionsPlist", "exportOptionsPlistPath" });
         const auto deviceId = optionValue(request, { "deviceId", "device", "deviceIdentifier" });
         const auto appPath = optionValue(request, { "appPath", "applicationPath", "bundlePath" });
+        const auto bundlePath = optionValue(request, { "bundlePath", "appPath", "targetBundlePath" });
+        const auto signingIdentity = optionValue(request, { "signingIdentity", "identity" });
+        const auto entitlementsPath = optionValue(request, { "entitlementsPath" });
+        const auto notarizationArtifactPath = optionValue(
+            request,
+            { "artifactPath", "submissionPath", "packagePath", "bundlePath" });
+        const auto keychainProfile = optionValue(request, { "keychainProfile", "notaryKeychainProfile" });
+        const auto appleId = optionValue(request, { "appleId", "notaryAppleId" });
+        const auto appleIdPassword = optionValue(
+            request,
+            { "appSpecificPassword", "appleIdPassword", "notaryPassword", "password" });
+        const auto teamId = optionValue(request, { "teamId", "notaryTeamId" });
         const auto timeoutText = optionValue(request, { "timeoutSeconds" });
+        const auto parseBoolOption = [&](std::initializer_list<const char*> keys, const bool defaultValue) {
+            auto value = optionValue(request, keys);
+            if (value.empty()) {
+                return defaultValue;
+            }
+            std::transform(
+                value.begin(),
+                value.end(),
+                value.begin(),
+                [](const unsigned char character) {
+                    return static_cast<char>(std::tolower(character));
+                });
+            return !(value == "0" || value == "false" || value == "no" || value == "off");
+        };
         if (!timeoutText.empty()) {
             try {
                 command.timeoutSeconds = (std::max)(60, std::stoi(timeoutText));
@@ -5044,6 +5070,107 @@ private:
             command.executable = "xcrun";
             command.arguments = { "simctl", "list", "devices", "available", "--json" };
             command.timeoutSeconds = 120;
+            return command;
+        }
+
+        if (descriptor.toolId == "forsetti.macos.sign") {
+            if (!host.signing.distributionSigningReady) {
+                result.status = GovernanceToolStatus::Warning;
+                result.summary = "macOS signing requires distribution signing readiness on the selected Apple host.";
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    "high",
+                    "blocked",
+                    "The selected Apple host does not report distribution code-signing readiness."));
+                return std::nullopt;
+            }
+            if (bundlePath.empty()) {
+                result.status = GovernanceToolStatus::Warning;
+                result.summary = "macOS signing requires a bundlePath option.";
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    "high",
+                    "blocked",
+                    "Provide request.options.bundlePath before invoking macOS signing."));
+                return std::nullopt;
+            }
+            if (signingIdentity.empty()) {
+                result.status = GovernanceToolStatus::Warning;
+                result.summary = "macOS signing requires a signingIdentity option.";
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    "high",
+                    "blocked",
+                    "Provide request.options.signingIdentity before invoking macOS signing."));
+                return std::nullopt;
+            }
+
+            command.executable = "codesign";
+            if (parseBoolOption({ "force" }, true)) {
+                command.arguments.push_back("--force");
+            }
+            if (parseBoolOption({ "deep" }, true)) {
+                command.arguments.push_back("--deep");
+            }
+            if (parseBoolOption({ "timestamp" }, true)) {
+                command.arguments.push_back("--timestamp");
+            }
+            if (parseBoolOption({ "hardenedRuntime", "runtime" }, true)) {
+                command.arguments.push_back("--options");
+                command.arguments.push_back("runtime");
+            }
+            if (!entitlementsPath.empty()) {
+                command.arguments.push_back("--entitlements");
+                command.arguments.push_back(entitlementsPath);
+            }
+            command.arguments.push_back("--sign");
+            command.arguments.push_back(signingIdentity);
+            command.arguments.push_back(bundlePath);
+            command.timeoutSeconds = (std::max)(command.timeoutSeconds, 600);
+            return command;
+        }
+
+        if (descriptor.toolId == "forsetti.macos.notarize") {
+            if (notarizationArtifactPath.empty()) {
+                result.status = GovernanceToolStatus::Warning;
+                result.summary = "macOS notarization requires an artifactPath option.";
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    "high",
+                    "blocked",
+                    "Provide request.options.artifactPath before invoking macOS notarization."));
+                return std::nullopt;
+            }
+
+            command.executable = "xcrun";
+            command.arguments = { "notarytool", "submit", notarizationArtifactPath, "--wait" };
+            if (!keychainProfile.empty()) {
+                command.arguments.push_back("--keychain-profile");
+                command.arguments.push_back(keychainProfile);
+            } else {
+                if (appleId.empty() || appleIdPassword.empty() || teamId.empty()) {
+                    result.status = GovernanceToolStatus::Warning;
+                    result.summary = "macOS notarization requires either keychainProfile or Apple ID credentials.";
+                    result.findings.push_back(makeFinding(
+                        descriptor.toolId,
+                        descriptor.displayName,
+                        "high",
+                        "blocked",
+                        "Provide request.options.keychainProfile or the appleId, appSpecificPassword, and teamId options before invoking macOS notarization."));
+                    return std::nullopt;
+                }
+                command.arguments.push_back("--apple-id");
+                command.arguments.push_back(appleId);
+                command.arguments.push_back("--password");
+                command.arguments.push_back(appleIdPassword);
+                command.arguments.push_back("--team-id");
+                command.arguments.push_back(teamId);
+            }
+            command.timeoutSeconds = (std::max)(command.timeoutSeconds, 3600);
             return command;
         }
 
@@ -5505,6 +5632,8 @@ private:
         if (descriptor.toolId == "forsetti.macos.build" ||
             descriptor.toolId == "forsetti.macos.test" ||
             descriptor.toolId == "forsetti.macos.archive" ||
+            descriptor.toolId == "forsetti.macos.sign" ||
+            descriptor.toolId == "forsetti.macos.notarize" ||
             descriptor.toolId == "forsetti.ios.simulator.list" ||
             descriptor.toolId == "forsetti.ios.build" ||
             descriptor.toolId == "forsetti.ios.test" ||

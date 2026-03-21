@@ -966,6 +966,18 @@ int main() {
         success &= expect(
             findGovernanceTool(
                 snapshot.governance.availableTools,
+                MasterControl::PlatformTarget::MacOS,
+                "forsetti.macos.sign").has_value(),
+            "Mac governance tools should register code-signing execution.");
+        success &= expect(
+            findGovernanceTool(
+                snapshot.governance.availableTools,
+                MasterControl::PlatformTarget::MacOS,
+                "forsetti.macos.notarize").has_value(),
+            "Mac governance tools should register notarization execution.");
+        success &= expect(
+            findGovernanceTool(
+                snapshot.governance.availableTools,
                 MasterControl::PlatformTarget::IOS,
                 "forsetti.ios.remote-build.validate").has_value() &&
                 findGovernanceTool(
@@ -1144,6 +1156,22 @@ int main() {
                 }
 
                 if (executable == "xcrun" &&
+                    arguments.size() >= 3 &&
+                    arguments[0] == "notarytool" &&
+                    arguments[1] == "submit") {
+                    return TestHttpResponse{
+                        200,
+                        "application/json",
+                        nlohmann::json{
+                            { "launched", true },
+                            { "succeeded", true },
+                            { "exitCode", 0 },
+                            { "stdout", "Notarization Succeeded\n" }
+                        }.dump()
+                    };
+                }
+
+                if (executable == "xcrun" &&
                     arguments.size() >= 6 &&
                     arguments[0] == "devicectl" &&
                     arguments[1] == "device" &&
@@ -1157,6 +1185,19 @@ int main() {
                             { "succeeded", true },
                             { "exitCode", 0 },
                             { "stdout", "Device install Succeeded\n" }
+                        }.dump()
+                    };
+                }
+
+                if (executable == "codesign") {
+                    return TestHttpResponse{
+                        200,
+                        "application/json",
+                        nlohmann::json{
+                            { "launched", true },
+                            { "succeeded", true },
+                            { "exitCode", 0 },
+                            { "stdout", "CodeSign Succeeded\n" }
                         }.dump()
                     };
                 }
@@ -1310,6 +1351,34 @@ int main() {
                 macBuildExecution.status == MasterControl::GovernanceToolStatus::Passed,
             "Mac build governance execution should run through the Apple companion service.");
 
+        const auto macSignExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "macos" },
+            { "toolId", "forsetti.macos.sign" },
+            { "options", nlohmann::json{
+                { "remoteWorkingDirectory", "/Volumes/Builds/MasterControl" },
+                { "bundlePath", "/Volumes/Builds/MasterControl/build/MasterControlShell.app" },
+                { "signingIdentity", "Developer ID Application: Master Control" }
+            } }
+        }.dump());
+        success &= expect(
+            macSignExecution.succeeded &&
+                macSignExecution.status == MasterControl::GovernanceToolStatus::Passed,
+            "Mac signing governance execution should run through the Apple companion service.");
+
+        const auto macNotarizeExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "macos" },
+            { "toolId", "forsetti.macos.notarize" },
+            { "options", nlohmann::json{
+                { "remoteWorkingDirectory", "/Volumes/Builds/MasterControl" },
+                { "artifactPath", "/Volumes/Builds/MasterControl/build/MasterControlShell.zip" },
+                { "keychainProfile", "mastercontrol-notary" }
+            } }
+        }.dump());
+        success &= expect(
+            macNotarizeExecution.succeeded &&
+                macNotarizeExecution.status == MasterControl::GovernanceToolStatus::Passed,
+            "Mac notarization governance execution should run through the Apple companion service.");
+
         const auto iosSimulatorExecution = application.executeGovernanceToolJson(nlohmann::json{
             { "platform", "ios" },
             { "toolId", "forsetti.ios.simulator.list" }
@@ -1399,6 +1468,16 @@ int main() {
                 [](const TestHttpRequest& request) {
                     return request.method == "POST" &&
                         request.path == "/execute" &&
+                        request.body.find("\"executable\":\"codesign\"") != std::string::npos;
+                }),
+            "Apple companion service should receive codesign execution payloads.");
+        success &= expect(
+            std::any_of(
+                companionRequests.begin(),
+                companionRequests.end(),
+                [](const TestHttpRequest& request) {
+                    return request.method == "POST" &&
+                        request.path == "/execute" &&
                         request.body.find("\"executable\":\"xcrun\"") != std::string::npos;
                 }),
             "Apple companion service should receive xcrun execution payloads.");
@@ -1412,6 +1491,17 @@ int main() {
                         request.body.find("-exportArchive") != std::string::npos;
                 }),
             "Apple companion service should receive xcodebuild exportArchive payloads.");
+        success &= expect(
+            std::any_of(
+                companionRequests.begin(),
+                companionRequests.end(),
+                [](const TestHttpRequest& request) {
+                    return request.method == "POST" &&
+                        request.path == "/execute" &&
+                        request.body.find("notarytool") != std::string::npos &&
+                        request.body.find("mastercontrol-notary") != std::string::npos;
+                }),
+            "Apple companion service should receive notarytool submit payloads.");
         success &= expect(
             std::any_of(
                 companionRequests.begin(),
