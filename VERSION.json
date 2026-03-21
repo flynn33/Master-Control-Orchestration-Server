@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.17",
-  "current_tag": "v0.1.17",
+  "current_version": "0.1.18",
+  "current_tag": "v0.1.18",
   "released_at": "2026-03-21",
-  "last_release_commit": "e595bfd5d5a6f9c32182865994da461d7998cca5",
+  "last_release_commit": "8d3fc75998d175a4b0048a02d660e10ac7c4dfe0",
   "history": [
+    {
+      "version": "0.1.18",
+      "tag": "v0.1.18",
+      "released_at": "2026-03-21",
+      "commit": "8d3fc75998d175a4b0048a02d660e10ac7c4dfe0",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Track Apple governance operation history (flynn33)"
+      ]
+    },
     {
       "version": "0.1.17",
       "tag": "v0.1.17",
