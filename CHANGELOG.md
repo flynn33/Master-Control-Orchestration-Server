@@ -5,6 +5,13 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.1.12] - 2026-03-21
+### Summary
+Automated patch release for Master Control Program.
+
+### Included Changes
+- Implement governance tool execution layer (flynn33)
+
 ## [0.1.11] - 2026-03-20
 ### Summary
 Automated patch release for Master Control Program.

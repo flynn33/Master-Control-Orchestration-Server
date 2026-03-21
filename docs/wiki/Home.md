@@ -2,8 +2,8 @@
 
 Welcome to the maintained wiki for `master-control-dashboard`.
 
-- Current release: `v0.1.11`
-- Release date: `2026-03-20`
+- Current release: `v0.1.12`
+- Release date: `2026-03-21`
 - Summary: Automated patch release for Master Control Program.
 
 ## Core Surfaces
