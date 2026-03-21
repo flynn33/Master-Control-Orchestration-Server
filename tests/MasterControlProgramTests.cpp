@@ -1080,6 +1080,76 @@ int main() {
                 };
             }
 
+            if (request.path == "/execute" && request.method == "POST") {
+                const auto payload = nlohmann::json::parse(request.body, nullptr, false);
+                if (payload.is_discarded()) {
+                    return TestHttpResponse{
+                        400,
+                        "application/json",
+                        nlohmann::json{
+                            { "launched", false },
+                            { "succeeded", false },
+                            { "exitCode", -1 },
+                            { "errorMessage", "Execution payload was not valid JSON." }
+                        }.dump()
+                    };
+                }
+
+                const auto executable = payload.value("executable", std::string{});
+                const auto arguments = payload.contains("arguments") && payload.at("arguments").is_array()
+                    ? payload.at("arguments").get<std::vector<std::string>>()
+                    : std::vector<std::string>{};
+
+                if (executable == "xcrun" &&
+                    arguments.size() >= 3 &&
+                    arguments[0] == "simctl" &&
+                    arguments[1] == "list") {
+                    return TestHttpResponse{
+                        200,
+                        "application/json",
+                        nlohmann::json{
+                            { "launched", true },
+                            { "succeeded", true },
+                            { "exitCode", 0 },
+                            { "stdout", nlohmann::json{
+                                { "devices", nlohmann::json::object() },
+                                { "runtimes", nlohmann::json::array({
+                                    nlohmann::json{
+                                        { "name", "iOS 18.2" },
+                                        { "identifier", "com.apple.CoreSimulator.SimRuntime.iOS-18-2" },
+                                        { "isAvailable", true }
+                                    }
+                                }) }
+                            }.dump() }
+                        }.dump()
+                    };
+                }
+
+                if (executable == "xcodebuild") {
+                    return TestHttpResponse{
+                        200,
+                        "application/json",
+                        nlohmann::json{
+                            { "launched", true },
+                            { "succeeded", true },
+                            { "exitCode", 0 },
+                            { "stdout", "Build Succeeded\nTest Succeeded\nArchive Succeeded\n" }
+                        }.dump()
+                    };
+                }
+
+                return TestHttpResponse{
+                    400,
+                    "application/json",
+                    nlohmann::json{
+                        { "launched", false },
+                        { "succeeded", false },
+                        { "exitCode", -1 },
+                        { "errorMessage", "Unsupported execution request." }
+                    }.dump()
+                };
+            }
+
             return TestHttpResponse{
                 404,
                 "application/json",
@@ -1095,6 +1165,7 @@ int main() {
             { "address", "127.0.0.1" },
             { "port", appleCompanionServer.port() },
             { "companionHealthPath", "/healthz" },
+            { "companionExecutePath", "/execute" },
             { "enabled", true }
         }.dump());
         success &= expect(appleHostUpsert.succeeded, "Apple remote host upsert should succeed.");
@@ -1180,6 +1251,70 @@ int main() {
             iosExecution.succeeded &&
                 iosExecution.status == MasterControl::GovernanceToolStatus::Passed,
             "iOS governance execution should pass once a ready Apple host is configured.");
+
+        const auto macBuildExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "macos" },
+            { "toolId", "forsetti.macos.build" },
+            { "options", nlohmann::json{
+                { "remoteWorkingDirectory", "/Volumes/Builds/MasterControl" },
+                { "workspace", "MasterControl.xcworkspace" },
+                { "scheme", "MasterControlShell" },
+                { "configuration", "Debug" }
+            } }
+        }.dump());
+        success &= expect(
+            macBuildExecution.succeeded &&
+                macBuildExecution.status == MasterControl::GovernanceToolStatus::Passed,
+            "Mac build governance execution should run through the Apple companion service.");
+
+        const auto iosSimulatorExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "ios" },
+            { "toolId", "forsetti.ios.simulator.list" }
+        }.dump());
+        success &= expect(
+            iosSimulatorExecution.succeeded &&
+                iosSimulatorExecution.status == MasterControl::GovernanceToolStatus::Passed,
+            "iOS simulator inventory should be retrievable through the Apple companion service.");
+        success &= expect(
+            iosSimulatorExecution.rawOutput.find("SimRuntime.iOS-18-2") != std::string::npos,
+            "iOS simulator inventory should include the companion-provided runtime list.");
+
+        const auto iosTestExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "ios" },
+            { "toolId", "forsetti.ios.test" },
+            { "options", nlohmann::json{
+                { "remoteWorkingDirectory", "/Volumes/Builds/MasterControl" },
+                { "workspace", "MasterControl.xcworkspace" },
+                { "scheme", "MasterControlMobile" },
+                { "destination", "platform=iOS Simulator,name=iPhone 16,OS=18.2" }
+            } }
+        }.dump());
+        success &= expect(
+            iosTestExecution.succeeded &&
+                iosTestExecution.status == MasterControl::GovernanceToolStatus::Passed,
+            "iOS test governance execution should run through the Apple companion service.");
+
+        const auto companionRequests = appleCompanionServer.requests();
+        success &= expect(
+            std::any_of(
+                companionRequests.begin(),
+                companionRequests.end(),
+                [](const TestHttpRequest& request) {
+                    return request.method == "POST" &&
+                        request.path == "/execute" &&
+                        request.body.find("\"executable\":\"xcodebuild\"") != std::string::npos;
+                }),
+            "Apple companion service should receive xcodebuild execution payloads.");
+        success &= expect(
+            std::any_of(
+                companionRequests.begin(),
+                companionRequests.end(),
+                [](const TestHttpRequest& request) {
+                    return request.method == "POST" &&
+                        request.path == "/execute" &&
+                        request.body.find("\"executable\":\"xcrun\"") != std::string::npos;
+                }),
+            "Apple companion service should receive xcrun execution payloads.");
 
         const auto appleHostRemoval = application.removeAppleRemoteHostJson(nlohmann::json{
             { "hostId", "apple-host-01" }

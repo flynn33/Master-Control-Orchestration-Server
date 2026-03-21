@@ -913,7 +913,10 @@ GovernanceServerDescriptor makeMacGovernanceServerDescriptor() {
             "forsetti.macos.manifest.validate",
             "forsetti.macos.project-layout.inspect",
             "forsetti.macos.toolchain.route",
-            "forsetti.macos.remote-build.validate"
+            "forsetti.macos.remote-build.validate",
+            "forsetti.macos.build",
+            "forsetti.macos.test",
+            "forsetti.macos.archive"
         },
         true,
         "online"
@@ -932,7 +935,10 @@ GovernanceServerDescriptor makeIOSGovernanceServerDescriptor() {
             "forsetti.ios.manifest.validate",
             "forsetti.ios.project-layout.inspect",
             "forsetti.ios.signing.route",
-            "forsetti.ios.remote-build.validate"
+            "forsetti.ios.remote-build.validate",
+            "forsetti.ios.simulator.list",
+            "forsetti.ios.build",
+            "forsetti.ios.test"
         },
         true,
         "online"
@@ -1017,6 +1023,33 @@ std::vector<GovernanceToolDescriptor> makeMacGovernanceToolDescriptors() {
             "Validate Remote Mac Build",
             "Validate remote Mac build infrastructure and governance prerequisites.",
             true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-macos",
+            "mac-governance",
+            PlatformTarget::MacOS,
+            "forsetti.macos.build",
+            "Build macOS Target",
+            "Run a remote macOS xcodebuild build through the selected Apple host.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-macos",
+            "mac-governance",
+            PlatformTarget::MacOS,
+            "forsetti.macos.test",
+            "Test macOS Target",
+            "Run remote macOS tests through the selected Apple host.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-macos",
+            "mac-governance",
+            PlatformTarget::MacOS,
+            "forsetti.macos.archive",
+            "Archive macOS Target",
+            "Create a remote macOS archive through the selected Apple host.",
+            true
         }
     };
 }
@@ -1057,6 +1090,33 @@ std::vector<GovernanceToolDescriptor> makeIOSGovernanceToolDescriptors() {
             "forsetti.ios.remote-build.validate",
             "Validate Remote iOS Build",
             "Validate remote iOS build infrastructure and governance prerequisites.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-ios",
+            "ios-governance",
+            PlatformTarget::IOS,
+            "forsetti.ios.simulator.list",
+            "List iOS Simulators",
+            "List remote iOS simulator runtimes through the selected Apple host.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-ios",
+            "ios-governance",
+            PlatformTarget::IOS,
+            "forsetti.ios.build",
+            "Build iOS Target",
+            "Run a remote iOS xcodebuild build through the selected Apple host.",
+            true
+        },
+        GovernanceToolDescriptor{
+            "com.mastercontrol.governance-ios",
+            "ios-governance",
+            PlatformTarget::IOS,
+            "forsetti.ios.test",
+            "Test iOS Target",
+            "Run remote iOS tests through the selected Apple host.",
             true
         }
     };

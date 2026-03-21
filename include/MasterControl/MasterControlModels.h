@@ -387,6 +387,7 @@ struct AppleRemoteHost final {
     std::string username;
     std::string serviceBaseUrl;
     std::string companionHealthPath = "/healthz";
+    std::string companionExecutePath = "/execute";
     std::string preferredDeveloperDirectory;
     bool enabled = true;
     AppleToolchainState toolchain;
@@ -395,6 +396,26 @@ struct AppleRemoteHost final {
 
 struct AppleRemoteHostRemovalRequest final {
     std::string hostId;
+};
+
+struct AppleRemoteCommandRequest final {
+    std::string executable;
+    std::vector<std::string> arguments;
+    std::string workingDirectory;
+    std::map<std::string, std::string> environment;
+    int timeoutSeconds = 900;
+};
+
+struct AppleRemoteCommandResult final {
+    std::string hostId;
+    AppleRemoteTransport transport = AppleRemoteTransport::Unknown;
+    bool launched = false;
+    bool succeeded = false;
+    int exitCode = -1;
+    std::string stdoutText;
+    std::string stderrText;
+    std::string rawResponse;
+    std::string errorMessage;
 };
 
 struct PlatformGatewayDescriptor final {
@@ -918,6 +939,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     username,
     serviceBaseUrl,
     companionHealthPath,
+    companionExecutePath,
     preferredDeveloperDirectory,
     enabled,
     toolchain,
@@ -926,6 +948,26 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     AppleRemoteHostRemovalRequest,
     hostId)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    AppleRemoteCommandRequest,
+    executable,
+    arguments,
+    workingDirectory,
+    environment,
+    timeoutSeconds)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    AppleRemoteCommandResult,
+    hostId,
+    transport,
+    launched,
+    succeeded,
+    exitCode,
+    stdoutText,
+    stderrText,
+    rawResponse,
+    errorMessage)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GovernanceToolDescriptor,

@@ -202,6 +202,25 @@ std::wstring quoteWindowsArgument(const std::wstring& argument) {
     return quoted;
 }
 
+std::string quotePosixShellArgument(const std::string& argument) {
+    if (argument.empty()) {
+        return "''";
+    }
+
+    std::string quoted;
+    quoted.reserve(argument.size() + 2);
+    quoted.push_back('\'');
+    for (const char character : argument) {
+        if (character == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted.push_back(character);
+        }
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
 std::wstring joinCommandArguments(const std::vector<std::wstring>& arguments) {
     std::wstring commandLine;
     for (size_t index = 0; index < arguments.size(); ++index) {
@@ -4114,6 +4133,41 @@ public:
         return bestHost;
     }
 
+    AppleRemoteCommandResult executeCommand(
+        const std::string& hostId,
+        const AppleRemoteCommandRequest& request) override {
+        AppleRemoteCommandResult result;
+        const auto inspectedHost = inspectHost(hostId);
+        if (!inspectedHost.has_value()) {
+            result.errorMessage = "Apple remote host '" + trimCopy(hostId) + "' was not found.";
+            return result;
+        }
+
+        auto host = *inspectedHost;
+        result.hostId = host.hostId;
+        result.transport = host.transport;
+        if (!host.enabled) {
+            result.errorMessage = "Apple remote host '" + host.displayName + "' is disabled.";
+            return result;
+        }
+
+        auto normalizedRequest = normalizeCommandRequest(request, host);
+        if (normalizedRequest.executable.empty()) {
+            result.errorMessage = "Apple remote execution requires an executable.";
+            return result;
+        }
+
+        switch (host.transport) {
+            case AppleRemoteTransport::CompanionService:
+                return executeCompanionCommand(host, normalizedRequest);
+            case AppleRemoteTransport::Ssh:
+                return executeSshCommand(host, normalizedRequest);
+            default:
+                result.errorMessage = "Unsupported Apple remote host transport.";
+                return result;
+        }
+    }
+
 private:
     static AppleRemoteHost normalizeHost(AppleRemoteHost host) {
         host.hostId = trimCopy(host.hostId);
@@ -4122,6 +4176,7 @@ private:
         host.username = trimCopy(host.username);
         host.serviceBaseUrl = trimCopy(host.serviceBaseUrl);
         host.companionHealthPath = trimCopy(host.companionHealthPath);
+        host.companionExecutePath = trimCopy(host.companionExecutePath);
         host.preferredDeveloperDirectory = trimCopy(host.preferredDeveloperDirectory);
 
         if (host.displayName.empty()) {
@@ -4129,6 +4184,9 @@ private:
         }
         if (host.companionHealthPath.empty()) {
             host.companionHealthPath = "/healthz";
+        }
+        if (host.companionExecutePath.empty()) {
+            host.companionExecutePath = "/execute";
         }
 
         host.platforms.erase(
@@ -4259,6 +4317,40 @@ private:
         return "http://" + host.address + ":" + std::to_string(port) + path;
     }
 
+    static std::string buildCompanionExecuteUrl(const AppleRemoteHost& host) {
+        std::string path = trimCopy(host.companionExecutePath);
+        if (path.empty()) {
+            path = "/execute";
+        }
+        if (startsWith(path, "http://") || startsWith(path, "https://")) {
+            return path;
+        }
+        if (!path.empty() && path.front() != '/') {
+            path.insert(path.begin(), '/');
+        }
+        if (!host.serviceBaseUrl.empty()) {
+            return trimTrailingSlash(host.serviceBaseUrl) + path;
+        }
+
+        const uint16_t port = host.port == 0 ? 80 : host.port;
+        return "http://" + host.address + ":" + std::to_string(port) + path;
+    }
+
+    static AppleRemoteCommandRequest normalizeCommandRequest(
+        AppleRemoteCommandRequest request,
+        const AppleRemoteHost& host) {
+        request.executable = trimCopy(request.executable);
+        request.workingDirectory = trimCopy(request.workingDirectory);
+        if (request.timeoutSeconds <= 0) {
+            request.timeoutSeconds = 900;
+        }
+        if (!host.preferredDeveloperDirectory.empty() &&
+            request.environment.find("DEVELOPER_DIR") == request.environment.end()) {
+            request.environment.emplace("DEVELOPER_DIR", host.preferredDeveloperDirectory);
+        }
+        return request;
+    }
+
     static std::string deriveToolchainStatus(const AppleRemoteHost& host) {
         if (!host.enabled) {
             return "disabled";
@@ -4372,6 +4464,123 @@ private:
         return teams;
     }
 
+    static AppleRemoteCommandResult parseCompanionCommandPayload(
+        const AppleRemoteHost& host,
+        const HttpClientResponse& response) {
+        AppleRemoteCommandResult result;
+        result.hostId = host.hostId;
+        result.transport = AppleRemoteTransport::CompanionService;
+        result.rawResponse = response.body;
+        if (!response.succeeded) {
+            result.errorMessage = response.errorMessage.empty()
+                ? "The Apple companion service did not return a successful response."
+                : response.errorMessage;
+            return result;
+        }
+
+        try {
+            const auto payload = nlohmann::json::parse(response.body);
+            const auto commandPayload =
+                payload.contains("result") && payload.at("result").is_object() ? payload.at("result") : payload;
+            result.launched = commandPayload.value("launched", true);
+            result.exitCode = commandPayload.value("exitCode", result.launched ? 0 : -1);
+            result.stdoutText = commandPayload.value("stdout", std::string{});
+            result.stderrText = commandPayload.value("stderr", std::string{});
+            result.errorMessage = commandPayload.value("errorMessage", std::string{});
+            result.succeeded = commandPayload.value(
+                "succeeded",
+                result.launched && result.exitCode == 0 && result.errorMessage.empty());
+            return result;
+        } catch (...) {
+            result.errorMessage = "The Apple companion service returned an unreadable execution payload.";
+            return result;
+        }
+    }
+
+    static std::string buildRemoteShellScript(const AppleRemoteCommandRequest& request) {
+        std::ostringstream script;
+        if (!request.workingDirectory.empty()) {
+            script << "cd " << quotePosixShellArgument(request.workingDirectory) << " && ";
+        }
+        for (const auto& [key, value] : request.environment) {
+            script << key << "=" << quotePosixShellArgument(value) << ' ';
+        }
+        script << quotePosixShellArgument(request.executable);
+        for (const auto& argument : request.arguments) {
+            script << ' ' << quotePosixShellArgument(argument);
+        }
+        return script.str();
+    }
+
+    AppleRemoteCommandResult executeCompanionCommand(
+        const AppleRemoteHost& host,
+        const AppleRemoteCommandRequest& request) const {
+        const auto url = buildCompanionExecuteUrl(host);
+        const auto payload = nlohmann::json{
+            { "executable", request.executable },
+            { "arguments", request.arguments },
+            { "workingDirectory", request.workingDirectory },
+            { "environment", request.environment },
+            { "timeoutSeconds", request.timeoutSeconds }
+        };
+        const auto response = sendJsonRequest(
+            "POST",
+            url,
+            { { L"Content-Type", L"application/json" } },
+            payload.dump());
+        return parseCompanionCommandPayload(host, response);
+    }
+
+    AppleRemoteCommandResult executeSshCommand(
+        const AppleRemoteHost& host,
+        const AppleRemoteCommandRequest& request) const {
+        AppleRemoteCommandResult result;
+        result.hostId = host.hostId;
+        result.transport = AppleRemoteTransport::Ssh;
+
+        const auto sshPath = findCommandOnPath({ L"ssh.exe" });
+        if (!sshPath.has_value()) {
+            result.errorMessage = "ssh.exe is not available on the Windows host.";
+            return result;
+        }
+
+        std::vector<std::wstring> arguments;
+        arguments.push_back(sshPath->wstring());
+        arguments.push_back(L"-o");
+        arguments.push_back(L"BatchMode=yes");
+        arguments.push_back(L"-o");
+        arguments.push_back(L"ConnectTimeout=8");
+        if (host.port != 0) {
+            arguments.push_back(L"-p");
+            arguments.push_back(std::to_wstring(host.port));
+        }
+
+        std::string target = host.address;
+        if (!host.username.empty()) {
+            target = host.username + "@" + host.address;
+        }
+        arguments.push_back(wideFromUtf8(target));
+        arguments.push_back(L"sh");
+        arguments.push_back(L"-lc");
+        arguments.push_back(wideFromUtf8(buildRemoteShellScript(request)));
+
+        const auto process = runProcessCapture(joinCommandArguments(arguments), std::filesystem::current_path());
+        result.launched = process.launched;
+        result.exitCode = process.exitCode;
+        result.stdoutText = process.stdoutText;
+        result.stderrText = process.stderrText;
+        result.rawResponse = process.stdoutText.empty() ? process.stderrText : process.stdoutText;
+        result.succeeded = process.launched && process.exitCode == 0;
+        if (!result.succeeded) {
+            result.errorMessage = trimCopy(
+                process.stderrText.empty() ? process.stdoutText : process.stderrText);
+            if (result.errorMessage.empty() && !process.launched) {
+                result.errorMessage = "SSH remote command could not be launched.";
+            }
+        }
+        return result;
+    }
+
     AppleRemoteHost inspectCompanionService(AppleRemoteHost host) const {
         host.toolchain.checkedAtUtc = timestampNowUtc();
         const auto url = buildCompanionHealthUrl(host);
@@ -4413,23 +4622,13 @@ private:
         }
 
         const auto runRemoteCommand = [&](const std::string& remoteCommand) {
-            std::vector<std::wstring> arguments;
-            arguments.push_back(sshPath->wstring());
-            arguments.push_back(L"-o");
-            arguments.push_back(L"BatchMode=yes");
-            arguments.push_back(L"-o");
-            arguments.push_back(L"ConnectTimeout=5");
-            if (host.port != 0) {
-                arguments.push_back(L"-p");
-                arguments.push_back(std::to_wstring(host.port));
-            }
-            std::string target = host.address;
-            if (!host.username.empty()) {
-                target = host.username + "@" + host.address;
-            }
-            arguments.push_back(wideFromUtf8(target));
-            arguments.push_back(wideFromUtf8(remoteCommand));
-            return runProcessCapture(joinCommandArguments(arguments), std::filesystem::current_path());
+            AppleRemoteCommandRequest request;
+            request.executable = "sh";
+            request.arguments = { "-lc", remoteCommand };
+            request.workingDirectory.clear();
+            request.environment.clear();
+            request.timeoutSeconds = 60;
+            return executeSshCommand(host, request);
         };
 
         const auto developerDirectory = runRemoteCommand("xcode-select -p");
@@ -4440,19 +4639,19 @@ private:
         const auto deviceControl = runRemoteCommand("xcrun devicectl list devices");
         const auto signingState = runRemoteCommand("security find-identity -v -p codesigning");
 
-        host.toolchain.reachable = developerDirectory.launched && developerDirectory.exitCode == 0;
+        host.toolchain.reachable = developerDirectory.launched && developerDirectory.succeeded;
         host.toolchain.developerDirectory = trimCopy(developerDirectory.stdoutText);
-        host.toolchain.xcodeInstalled = xcodeVersion.launched && xcodeVersion.exitCode == 0;
+        host.toolchain.xcodeInstalled = xcodeVersion.launched && xcodeVersion.succeeded;
         host.toolchain.xcodeVersion.clear();
         {
             std::istringstream versionStream(xcodeVersion.stdoutText);
             std::getline(versionStream, host.toolchain.xcodeVersion);
             host.toolchain.xcodeVersion = trimCopy(host.toolchain.xcodeVersion);
         }
-        host.toolchain.macosSdkAvailable = macosSdk.launched && macosSdk.exitCode == 0;
-        host.toolchain.iosSdkAvailable = iosSdk.launched && iosSdk.exitCode == 0;
-        host.toolchain.simulatorControlAvailable = simulatorState.launched && simulatorState.exitCode == 0;
-        host.toolchain.deviceControlAvailable = deviceControl.launched && deviceControl.exitCode == 0;
+        host.toolchain.macosSdkAvailable = macosSdk.launched && macosSdk.succeeded;
+        host.toolchain.iosSdkAvailable = iosSdk.launched && iosSdk.succeeded;
+        host.toolchain.simulatorControlAvailable = simulatorState.launched && simulatorState.succeeded;
+        host.toolchain.deviceControlAvailable = deviceControl.launched && deviceControl.succeeded;
         host.toolchain.simulatorRuntimes = parseSimulatorRuntimes(simulatorState.stdoutText);
         host.toolchain.status = deriveToolchainStatus(host);
 
@@ -4480,7 +4679,7 @@ private:
         host.toolchain.message = trimCopy(toolchainMessageStream.str());
 
         host.signing.signingReady = signingState.launched &&
-            signingState.exitCode == 0 &&
+            signingState.succeeded &&
             signingState.stdoutText.find("0 valid identities found") == std::string::npos;
         host.signing.developmentSigningReady = host.signing.signingReady;
         host.signing.distributionSigningReady = host.signing.signingReady;
@@ -4754,6 +4953,173 @@ private:
         return runProcessCapture(commandLine, workingDirectory);
     }
 
+    static std::string optionValue(
+        const GovernanceToolRequest& request,
+        std::initializer_list<const char*> keys) {
+        for (const auto* key : keys) {
+            const auto iterator = request.options.find(key);
+            if (iterator == request.options.end()) {
+                continue;
+            }
+            const auto value = trimCopy(iterator->second);
+            if (!value.empty()) {
+                return value;
+            }
+        }
+        return {};
+    }
+
+    static void appendProjectSelectionArguments(std::vector<std::string>& arguments,
+                                                const GovernanceToolRequest& request) {
+        const auto workspace = optionValue(request, { "workspace" });
+        const auto project = optionValue(request, { "project", "xcodeproj" });
+        if (!workspace.empty()) {
+            arguments.push_back("-workspace");
+            arguments.push_back(workspace);
+            return;
+        }
+        if (!project.empty()) {
+            arguments.push_back("-project");
+            arguments.push_back(project);
+        }
+    }
+
+    static std::string remotePathJoin(const std::string& left, const std::string& right) {
+        if (left.empty()) {
+            return right;
+        }
+        if (right.empty()) {
+            return left;
+        }
+        if (left.back() == '/' || left.back() == '\\') {
+            return left + right;
+        }
+        return left + "/" + right;
+    }
+
+    std::string resolveAppleWorkingDirectory(const GovernanceToolRequest& request) const {
+        const auto workingDirectory = optionValue(request, { "remoteWorkingDirectory", "workingDirectory" });
+        if (!workingDirectory.empty()) {
+            return workingDirectory;
+        }
+        if (!trimCopy(request.targetPath).empty()) {
+            return request.targetPath;
+        }
+        if (const auto iterator = request.options.find("targetRoot"); iterator != request.options.end()) {
+            const auto targetRoot = trimCopy(iterator->second);
+            if (!targetRoot.empty()) {
+                return targetRoot;
+            }
+        }
+        return ".";
+    }
+
+    std::optional<AppleRemoteCommandRequest> buildAppleOperationalCommand(
+        const GovernanceToolDescriptor& descriptor,
+        const GovernanceToolRequest& request,
+        const AppleRemoteHost& host,
+        GovernanceToolResult& result) const {
+        AppleRemoteCommandRequest command;
+        command.timeoutSeconds = 1800;
+        command.workingDirectory = resolveAppleWorkingDirectory(request);
+
+        const auto scheme = optionValue(request, { "scheme" });
+        const auto configuration = optionValue(request, { "configuration" });
+        const auto destination = optionValue(request, { "destination" });
+        const auto sdk = optionValue(request, { "sdk" });
+        const auto archivePath = optionValue(request, { "archivePath" });
+        const auto timeoutText = optionValue(request, { "timeoutSeconds" });
+        if (!timeoutText.empty()) {
+            try {
+                command.timeoutSeconds = (std::max)(60, std::stoi(timeoutText));
+            } catch (...) {
+            }
+        }
+
+        if (descriptor.toolId == "forsetti.ios.simulator.list") {
+            command.executable = "xcrun";
+            command.arguments = { "simctl", "list", "devices", "available", "--json" };
+            command.timeoutSeconds = 120;
+            return command;
+        }
+
+        if (scheme.empty()) {
+            result.status = GovernanceToolStatus::Warning;
+            result.summary = "Apple build governance tools require a scheme option.";
+            result.findings.push_back(makeFinding(
+                descriptor.toolId,
+                descriptor.displayName,
+                "high",
+                "blocked",
+                "Provide request.options.scheme before invoking this Apple governance tool."));
+            return std::nullopt;
+        }
+
+        command.executable = "xcodebuild";
+        appendProjectSelectionArguments(command.arguments, request);
+        command.arguments.push_back("-scheme");
+        command.arguments.push_back(scheme);
+
+        if (!configuration.empty()) {
+            command.arguments.push_back("-configuration");
+            command.arguments.push_back(configuration);
+        } else if (descriptor.toolId == "forsetti.macos.archive") {
+            command.arguments.push_back("-configuration");
+            command.arguments.push_back("Release");
+        } else {
+            command.arguments.push_back("-configuration");
+            command.arguments.push_back("Debug");
+        }
+
+        if (!sdk.empty()) {
+            command.arguments.push_back("-sdk");
+            command.arguments.push_back(sdk);
+        }
+
+        if (!destination.empty()) {
+            command.arguments.push_back("-destination");
+            command.arguments.push_back(destination);
+        } else if (request.platform == PlatformTarget::IOS &&
+                   descriptor.toolId == "forsetti.ios.build" &&
+                   host.toolchain.simulatorControlAvailable) {
+            command.arguments.push_back("-destination");
+            command.arguments.push_back("generic/platform=iOS Simulator");
+        }
+
+        if (descriptor.toolId == "forsetti.macos.build" || descriptor.toolId == "forsetti.ios.build") {
+            command.arguments.push_back("build");
+            return command;
+        }
+
+        if (descriptor.toolId == "forsetti.macos.test" || descriptor.toolId == "forsetti.ios.test") {
+            if (request.platform == PlatformTarget::IOS && destination.empty()) {
+                result.status = GovernanceToolStatus::Warning;
+                result.summary = "iOS test governance requires a destination option.";
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    "high",
+                    "blocked",
+                    "Provide request.options.destination for remote iOS test execution."));
+                return std::nullopt;
+            }
+            command.arguments.push_back("test");
+            return command;
+        }
+
+        if (descriptor.toolId == "forsetti.macos.archive") {
+            const auto resolvedArchivePath = !archivePath.empty()
+                ? archivePath
+                : remotePathJoin(remotePathJoin(command.workingDirectory, "build"), scheme + ".xcarchive");
+            command.arguments.push_back("-archivePath");
+            command.arguments.push_back(resolvedArchivePath);
+            command.arguments.push_back("archive");
+            return command;
+        }
+
+        return std::nullopt;
+    }
+
     void executeWindowsTool(const GovernanceToolDescriptor& descriptor,
                             const GovernanceToolRequest& request,
                             GovernanceToolResult& result) const {
@@ -5019,6 +5385,67 @@ private:
                 ? "Governance routed to Apple host '" + host->displayName + "' via " + to_string(host->transport) + "."
                 : "Apple host '" + host->displayName + "' is configured, but not ready for " +
                     platformKey(request.platform) + " governance execution.";
+            return;
+        }
+
+        if (descriptor.toolId == "forsetti.macos.build" ||
+            descriptor.toolId == "forsetti.macos.test" ||
+            descriptor.toolId == "forsetti.macos.archive" ||
+            descriptor.toolId == "forsetti.ios.simulator.list" ||
+            descriptor.toolId == "forsetti.ios.build" ||
+            descriptor.toolId == "forsetti.ios.test") {
+            const auto command = buildAppleOperationalCommand(descriptor, request, *host, result);
+            if (!command.has_value()) {
+                result.succeeded = false;
+                if (result.summary.empty()) {
+                    result.status = GovernanceToolStatus::Warning;
+                    result.summary = "Apple governance tool options are incomplete.";
+                }
+                return;
+            }
+
+            const auto execution = appleRemoteHostService_->executeCommand(host->hostId, *command);
+            result.rawOutput = execution.stdoutText.empty() ? execution.stderrText : execution.stdoutText;
+            if (!execution.rawResponse.empty()) {
+                result.rawOutput = execution.rawResponse;
+            }
+            result.findings.push_back(makeFinding(
+                descriptor.toolId,
+                descriptor.displayName,
+                execution.succeeded ? "low" : "high",
+                execution.succeeded ? "pass" : "blocked",
+                "Remote execution used host '" + host->displayName + "' via " + to_string(execution.transport) + "."));
+
+            if (descriptor.toolId == "forsetti.ios.simulator.list") {
+                result.succeeded = execution.succeeded;
+                result.status = execution.succeeded ? GovernanceToolStatus::Passed : GovernanceToolStatus::Failed;
+                result.summary = execution.succeeded
+                    ? "Remote iOS simulator inventory retrieved from '" + host->displayName + "'."
+                    : "Remote iOS simulator inventory failed on '" + host->displayName + "'.";
+                if (!execution.errorMessage.empty()) {
+                    result.findings.push_back(makeFinding(
+                        descriptor.toolId,
+                        descriptor.displayName,
+                        "medium",
+                        "warning",
+                        execution.errorMessage));
+                }
+                return;
+            }
+
+            result.succeeded = execution.succeeded;
+            result.status = execution.succeeded ? GovernanceToolStatus::Passed : GovernanceToolStatus::Failed;
+            result.summary = execution.succeeded
+                ? descriptor.displayName + " completed on Apple host '" + host->displayName + "'."
+                : descriptor.displayName + " failed on Apple host '" + host->displayName + "'.";
+            if (!execution.errorMessage.empty()) {
+                result.findings.push_back(makeFinding(
+                    descriptor.toolId,
+                    descriptor.displayName,
+                    execution.succeeded ? "low" : "high",
+                    execution.succeeded ? "pass" : "blocked",
+                    execution.errorMessage));
+            }
             return;
         }
 

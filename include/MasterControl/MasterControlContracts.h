@@ -153,6 +153,9 @@ public:
     virtual OperationResult removeHost(const std::string& hostId) = 0;
     virtual std::optional<AppleRemoteHost> inspectHost(const std::string& hostId) = 0;
     virtual std::optional<AppleRemoteHost> selectHostForPlatform(PlatformTarget platform) = 0;
+    virtual AppleRemoteCommandResult executeCommand(
+        const std::string& hostId,
+        const AppleRemoteCommandRequest& request) = 0;
     virtual ~IAppleRemoteHostService() = default;
 };
 
