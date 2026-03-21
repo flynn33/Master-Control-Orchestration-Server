@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.12",
-  "current_tag": "v0.1.12",
+  "current_version": "0.1.13",
+  "current_tag": "v0.1.13",
   "released_at": "2026-03-21",
-  "last_release_commit": "d7d29809b2a4d11274a7d8b023fd0063189e481e",
+  "last_release_commit": "b64842a2c5415eb01b5f62916ee87851411a4747",
   "history": [
+    {
+      "version": "0.1.13",
+      "tag": "v0.1.13",
+      "released_at": "2026-03-21",
+      "commit": "b64842a2c5415eb01b5f62916ee87851411a4747",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add Apple host registry and readiness routing (flynn33)"
+      ]
+    },
     {
       "version": "0.1.12",
       "tag": "v0.1.12",
