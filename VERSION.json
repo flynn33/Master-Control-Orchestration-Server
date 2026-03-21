@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.16",
-  "current_tag": "v0.1.16",
+  "current_version": "0.1.17",
+  "current_tag": "v0.1.17",
   "released_at": "2026-03-21",
-  "last_release_commit": "49615b335c337353e96ca1a575b730bd13cf556c",
+  "last_release_commit": "e595bfd5d5a6f9c32182865994da461d7998cca5",
   "history": [
+    {
+      "version": "0.1.17",
+      "tag": "v0.1.17",
+      "released_at": "2026-03-21",
+      "commit": "e595bfd5d5a6f9c32182865994da461d7998cca5",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add macOS stapling and Apple host defaults (flynn33)"
+      ]
+    },
     {
       "version": "0.1.16",
       "tag": "v0.1.16",
