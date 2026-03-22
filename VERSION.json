@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.22",
-  "current_tag": "v0.1.22",
+  "current_version": "0.1.23",
+  "current_tag": "v0.1.23",
   "released_at": "2026-03-22",
-  "last_release_commit": "172993192bc1381ae5f6f5dbffc6f0fa6e638d8c",
+  "last_release_commit": "d998c19c69ff5f61ce98c497d082dca5ad418c22",
   "history": [
+    {
+      "version": "0.1.23",
+      "tag": "v0.1.23",
+      "released_at": "2026-03-22",
+      "commit": "d998c19c69ff5f61ce98c497d082dca5ad418c22",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add Apple replay readiness safeguards (flynn33)"
+      ]
+    },
     {
       "version": "0.1.22",
       "tag": "v0.1.22",
