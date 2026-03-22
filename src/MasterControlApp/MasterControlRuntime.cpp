@@ -4754,7 +4754,14 @@ class PlatformGovernanceToolService final : public IPlatformGovernanceToolServic
 public:
     PlatformGovernanceToolService(AppPaths paths, std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService)
         : paths_(std::move(paths))
-        , appleRemoteHostService_(std::move(appleRemoteHostService)) {}
+        , appleRemoteHostService_(std::move(appleRemoteHostService)) {
+        if (std::filesystem::exists(paths_.appleOperationHistoryFile)) {
+            const auto json = readJsonFile(paths_.appleOperationHistoryFile);
+            if (!json.is_null() && !json.empty()) {
+                recentAppleOperations_ = json.get<std::vector<AppleOperationRecord>>();
+            }
+        }
+    }
 
     void upsertTool(const GovernanceToolDescriptor& descriptor) override {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -5074,6 +5081,7 @@ private:
         if (recentAppleOperations_.size() > 30) {
             recentAppleOperations_.resize(30);
         }
+        writeJsonFile(paths_.appleOperationHistoryFile, recentAppleOperations_);
     }
 
     std::filesystem::path resolveTargetRoot(const GovernanceToolRequest& request) const {

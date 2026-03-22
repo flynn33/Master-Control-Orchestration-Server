@@ -300,6 +300,7 @@ AppPaths resolveAppPaths() {
         ? std::filesystem::path(*dataDirectoryOverride)
         : programDataDirectory() / "MasterControlProgram";
     const auto installHistoryFile = dataDirectory / "state" / "install-history.json";
+    const auto appleOperationHistoryFile = dataDirectory / "state" / "apple-operations.json";
     const auto entitlementsFile = dataDirectory / "state" / "entitlements.json";
     const auto providerCredentialsFile = dataDirectory / "state" / "provider-credentials.json";
     const auto configurationFile = dataDirectory / "config" / "master-control-program.json";
@@ -338,6 +339,7 @@ std::filesystem::path cluProfileFile;
         dataDirectory,
         configurationFile,
         installHistoryFile,
+        appleOperationHistoryFile,
         entitlementsFile,
         providerCredentialsFile,
         manifestsDirectory,

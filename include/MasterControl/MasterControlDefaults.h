@@ -24,6 +24,7 @@ struct AppPaths final {
     std::filesystem::path dataDirectory;
     std::filesystem::path configurationFile;
     std::filesystem::path installHistoryFile;
+    std::filesystem::path appleOperationHistoryFile;
     std::filesystem::path entitlementsFile;
     std::filesystem::path providerCredentialsFile;
     std::filesystem::path manifestsDirectory;

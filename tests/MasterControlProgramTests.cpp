@@ -2284,6 +2284,33 @@ int main() {
         }
 
         application.shutdown();
+
+        success &= expect(
+            std::filesystem::exists(appPaths.appleOperationHistoryFile),
+            "Apple governance operation history should persist to disk.");
+
+        MasterControl::MasterControlApplication restartedApplication;
+        success &= expect(restartedApplication.initialize(), "Application should reinitialize after shutdown");
+        if (success) {
+            const auto restartedSnapshot = restartedApplication.snapshot();
+            const auto restartedMacStapleOperation = findAppleOperation(
+                restartedSnapshot.governance.appleOperations,
+                MasterControl::PlatformTarget::MacOS,
+                "forsetti.macos.staple");
+            success &= expect(
+                restartedMacStapleOperation.has_value() &&
+                    restartedMacStapleOperation->artifactPath.find("MasterControlShell.zip") != std::string::npos,
+                "Apple governance operation history should survive application restart.");
+            const auto restartedIosExportOperation = findAppleOperation(
+                restartedSnapshot.governance.appleOperations,
+                MasterControl::PlatformTarget::IOS,
+                "forsetti.ios.export");
+            success &= expect(
+                restartedIosExportOperation.has_value() &&
+                    restartedIosExportOperation->artifactPath.find("ios-export") != std::string::npos,
+                "Restarted snapshots should restore persisted iOS Apple operations.");
+        }
+        restartedApplication.shutdown();
     }
 
     const auto bootstrapperBinary = bootstrapperBinaryPath();
