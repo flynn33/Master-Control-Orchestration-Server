@@ -66,6 +66,8 @@ void RuntimeSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnaps
     RuntimeCountText().Text(winrt::hstring(std::to_wstring(snapshot.endpointCount)));
     RuntimeNarrativeText().Text(winrt::hstring(formatRuntimeNarrative(snapshot)));
     populateListView(EndpointsListView(), snapshot.endpointRows);
+    populateListView(PlatformGatewaysListView(), snapshot.platformGatewayRows);
+    populateListView(AppleRemoteHostsListView(), snapshot.appleRemoteHostRows);
 
     customMcpServers_.clear();
     customSubAgents_.clear();

@@ -26,15 +26,24 @@ void CommandLogicUnitSectionControl::ApplySnapshot(const ::MasterControlShell::S
     CluRoleCountText().Text(winrt::hstring(std::to_wstring(snapshot.governanceRoleCount)));
     CluRuleCountText().Text(winrt::hstring(std::to_wstring(snapshot.governanceRuleCount)));
     CluDocumentCountText().Text(winrt::hstring(std::to_wstring(snapshot.governanceDocumentCount)));
+    CluAppleHostCountText().Text(winrt::hstring(std::to_wstring(snapshot.appleRemoteHostCount)));
+    CluAppleOperationCountText().Text(winrt::hstring(std::to_wstring(snapshot.appleOperationCount)));
+    CluGatewayCountText().Text(winrt::hstring(std::to_wstring(snapshot.platformGatewayCount)));
+    CluGovernanceServerCountText().Text(winrt::hstring(std::to_wstring(snapshot.governanceServerCount)));
     CluEvaluatedText().Text(winrt::hstring(L"Last evaluated: " + snapshot.governanceLastEvaluatedUtc));
     CluNarrativeText().Text(winrt::hstring(snapshot.governanceNarrative));
     CluDoctrineText().Text(winrt::hstring(snapshot.governanceDoctrine));
 
     populateListView(CluActionsListView(), snapshot.governanceActionRows);
     populateListView(CluFindingsListView(), snapshot.governanceFindingRows);
+    populateListView(CluAppleHostsListView(), snapshot.appleRemoteHostRows);
+    populateListView(CluAppleOperationsListView(), snapshot.appleOperationRows);
+    populateListView(CluPlatformGatewaysListView(), snapshot.platformGatewayRows);
+    populateListView(CluGovernanceServersListView(), snapshot.governanceServerRows);
     populateListView(CluRolesListView(), snapshot.governanceRoleRows);
     populateListView(CluRulesListView(), snapshot.governanceRuleRows);
     populateListView(CluDocumentsListView(), snapshot.governanceDocumentRows);
+    populateListView(CluRecentExecutionsListView(), snapshot.governanceExecutionRows);
 }
 
 } // namespace winrt::MasterControlShell::implementation

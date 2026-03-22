@@ -261,6 +261,11 @@ struct ShellSnapshot final {
     size_t governanceRuleCount = 0;
     size_t governanceDocumentCount = 0;
     size_t governanceFindingCount = 0;
+    size_t appleRemoteHostCount = 0;
+    size_t appleOperationCount = 0;
+    size_t platformGatewayCount = 0;
+    size_t governanceServerCount = 0;
+    size_t governanceExecutionCount = 0;
     std::wstring dashboardUrl;
     std::wstring configPath;
     std::wstring dataDirectory;
@@ -303,6 +308,11 @@ struct ShellSnapshot final {
     std::vector<std::wstring> governanceRuleRows;
     std::vector<std::wstring> governanceDocumentRows;
     std::vector<std::wstring> governanceActionRows;
+    std::vector<std::wstring> appleRemoteHostRows;
+    std::vector<std::wstring> appleOperationRows;
+    std::vector<std::wstring> platformGatewayRows;
+    std::vector<std::wstring> governanceServerRows;
+    std::vector<std::wstring> governanceExecutionRows;
     std::wstring statusMessage;
 };
 

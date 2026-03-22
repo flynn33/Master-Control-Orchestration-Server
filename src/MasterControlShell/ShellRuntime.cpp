@@ -957,6 +957,133 @@ std::wstring governanceDocumentRow(const JsonObject& object) {
     return stream.str();
 }
 
+std::wstring joinJsonStringArray(const JsonArray& array, const wchar_t* separator = L", ") {
+    std::wstring combined;
+    for (const auto& value : array) {
+        if (value.ValueType() != JsonValueType::String) {
+            continue;
+        }
+
+        if (!combined.empty()) {
+            combined += separator;
+        }
+        combined += std::wstring(value.GetString().c_str());
+    }
+    return combined;
+}
+
+std::wstring appleRemoteHostRow(const JsonObject& object) {
+    const auto toolchain = object.GetNamedObject(L"toolchain", JsonObject());
+    const auto signing = object.GetNamedObject(L"signing", JsonObject());
+    const auto platforms = joinJsonStringArray(object.GetNamedArray(L"platforms", JsonArray()));
+    const auto transport = wideFromUtf8(jsonStringOr(object, L"transport", "unknown"));
+    const auto displayName = wideFromUtf8(jsonStringOr(object, L"displayName", jsonStringOr(object, L"hostId", "Apple host")));
+    const auto address = wideFromUtf8(jsonStringOr(object, L"address", jsonStringOr(object, L"serviceBaseUrl", "unconfigured")));
+    const auto port = static_cast<int>(jsonNumberOr(object, L"port", 0));
+
+    std::wostringstream stream;
+    stream << displayName
+           << L"  |  "
+           << (platforms.empty() ? L"no platform targets" : platforms)
+           << L"  |  "
+           << transport
+           << L"  |  "
+           << (address.empty() ? L"unconfigured" : address);
+    if (port > 0) {
+        stream << L':' << port;
+    }
+    stream << L"  |  toolchain="
+           << wideFromUtf8(jsonStringOr(toolchain, L"status", "unknown"))
+           << L"  |  signing="
+           << wideFromUtf8(jsonStringOr(signing, L"status", "unknown"));
+
+    if (const auto version = wideFromUtf8(jsonStringOr(toolchain, L"xcodeVersion", "")); !version.empty()) {
+        stream << L"  |  Xcode " << version;
+    }
+    return stream.str();
+}
+
+std::wstring appleOperationRow(const JsonObject& object) {
+    std::wostringstream stream;
+    stream << L"["
+           << wideFromUtf8(jsonStringOr(object, L"status", "queued"))
+           << L"] "
+           << wideFromUtf8(jsonStringOr(object, L"displayName", jsonStringOr(object, L"toolId", "Apple operation")))
+           << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"platform", "unknown"))
+           << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"hostDisplayName", jsonStringOr(object, L"hostId", "unassigned host")))
+           << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"transport", "unknown"));
+
+    if (const auto artifact = wideFromUtf8(jsonStringOr(object, L"artifactPath", "")); !artifact.empty()) {
+        stream << L"  |  artifact=" << artifact;
+    } else if (const auto summary = wideFromUtf8(jsonStringOr(object, L"summary", "")); !summary.empty()) {
+        stream << L"  |  " << summary;
+    }
+
+    if (const auto completedAt = wideFromUtf8(jsonStringOr(object, L"completedAtUtc", "")); !completedAt.empty()) {
+        stream << L"  |  " << completedAt;
+    }
+    return stream.str();
+}
+
+std::wstring platformGatewayRow(const JsonObject& object) {
+    std::wostringstream stream;
+    stream << wideFromUtf8(jsonStringOr(object, L"displayName", jsonStringOr(object, L"serviceId", "gateway")))
+           << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"platform", "unknown"))
+           << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"serviceType", "_service._tcp.local"))
+           << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"ipAddress", jsonStringOr(object, L"hostName", "unpublished")));
+
+    if (const auto port = static_cast<int>(jsonNumberOr(object, L"port", 0)); port > 0) {
+        stream << L':' << port;
+    }
+
+    stream << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"status", "unknown"));
+    return stream.str();
+}
+
+std::wstring governanceServerRow(const JsonObject& object) {
+    std::wostringstream stream;
+    stream << wideFromUtf8(jsonStringOr(object, L"displayName", jsonStringOr(object, L"serviceId", "governance")))
+           << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"platform", "unknown"))
+           << L"  |  route="
+           << wideFromUtf8(jsonStringOr(object, L"routePath", "/mcp/governance"))
+           << L"  |  tools="
+           << object.GetNamedArray(L"toolIds", JsonArray()).Size()
+           << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"status", "unknown"));
+
+    if (jsonBoolOr(object, L"requiresRemoteToolchain")) {
+        stream << L"  |  remote toolchain";
+    }
+    return stream.str();
+}
+
+std::wstring governanceExecutionRow(const JsonObject& object) {
+    std::wostringstream stream;
+    stream << L"["
+           << wideFromUtf8(jsonStringOr(object, L"status", "failed"))
+           << L"] "
+           << wideFromUtf8(jsonStringOr(object, L"displayName", jsonStringOr(object, L"toolId", "governance tool")))
+           << L"  |  "
+           << wideFromUtf8(jsonStringOr(object, L"platform", "unknown"));
+
+    if (const auto summary = wideFromUtf8(jsonStringOr(object, L"summary", "")); !summary.empty()) {
+        stream << L"  |  " << summary;
+    }
+
+    if (const auto completedAt = wideFromUtf8(jsonStringOr(object, L"completedAtUtc", "")); !completedAt.empty()) {
+        stream << L"  |  " << completedAt;
+    }
+    return stream.str();
+}
+
 void openPathInExplorer(const std::filesystem::path& path) {
     if (std::filesystem::is_regular_file(path)) {
         std::wstring arguments = L"/select,\"" + path.wstring() + L"\"";
@@ -1296,6 +1423,11 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     std::vector<std::wstring> governanceRuleRows;
     std::vector<std::wstring> governanceDocumentRows;
     std::vector<std::wstring> governanceActionRows;
+    std::vector<std::wstring> appleRemoteHostRows;
+    std::vector<std::wstring> appleOperationRows;
+    std::vector<std::wstring> platformGatewayRows;
+    std::vector<std::wstring> governanceServerRows;
+    std::vector<std::wstring> governanceExecutionRows;
 
     if (service.state == ServiceState::Running || service.state == ServiceState::StartPending) {
         std::wstring errorMessage;
@@ -1416,6 +1548,26 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                     appendStringArrayRows(
                         governance.GetNamedArray(L"recommendedActions", JsonArray()),
                         governanceActionRows);
+                    appendJsonArrayRows(
+                        governance.GetNamedArray(L"appleRemoteHosts", JsonArray()),
+                        appleRemoteHostRow,
+                        appleRemoteHostRows);
+                    appendJsonArrayRows(
+                        governance.GetNamedArray(L"appleOperations", JsonArray()),
+                        appleOperationRow,
+                        appleOperationRows);
+                    appendJsonArrayRows(
+                        governance.GetNamedArray(L"platformGateways", JsonArray()),
+                        platformGatewayRow,
+                        platformGatewayRows);
+                    appendJsonArrayRows(
+                        governance.GetNamedArray(L"governanceServers", JsonArray()),
+                        governanceServerRow,
+                        governanceServerRows);
+                    appendJsonArrayRows(
+                        governance.GetNamedArray(L"recentExecutions", JsonArray()),
+                        governanceExecutionRow,
+                        governanceExecutionRows);
                 }
 
                 if (dashboardJson->HasKey(L"surface")) {
@@ -1514,6 +1666,11 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.governanceRuleCount = governanceRuleRows.size();
     snapshot.governanceDocumentCount = governanceDocumentRows.size();
     snapshot.governanceFindingCount = governanceFindingRows.size();
+    snapshot.appleRemoteHostCount = appleRemoteHostRows.size();
+    snapshot.appleOperationCount = appleOperationRows.size();
+    snapshot.platformGatewayCount = platformGatewayRows.size();
+    snapshot.governanceServerCount = governanceServerRows.size();
+    snapshot.governanceExecutionCount = governanceExecutionRows.size();
 
     if (endpointRows.empty()) {
         endpointRows.push_back(L"No endpoint snapshot is available yet.");
@@ -1554,6 +1711,21 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     if (governanceActionRows.empty()) {
         governanceActionRows.push_back(L"No immediate operator actions are recommended.");
     }
+    if (appleRemoteHostRows.empty()) {
+        appleRemoteHostRows.push_back(L"No Apple remote hosts are registered yet.");
+    }
+    if (appleOperationRows.empty()) {
+        appleOperationRows.push_back(L"No Apple governance operations have been recorded yet.");
+    }
+    if (platformGatewayRows.empty()) {
+        platformGatewayRows.push_back(L"No platform gateway lanes are published yet.");
+    }
+    if (governanceServerRows.empty()) {
+        governanceServerRows.push_back(L"No governance server lanes are published yet.");
+    }
+    if (governanceExecutionRows.empty()) {
+        governanceExecutionRows.push_back(L"No governance tool executions have been recorded yet.");
+    }
 
     std::wostringstream overviewStream;
     overviewStream << L"Service state: " << serviceStateLabel(service.state);
@@ -1593,6 +1765,12 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                      << snapshot.governanceRoleCount << L" / "
                      << snapshot.governanceRuleCount << L" / "
                      << snapshot.governanceDocumentCount << L'\n'
+                     << L"Apple hosts / operations: "
+                     << snapshot.appleRemoteHostCount << L" / "
+                     << snapshot.appleOperationCount << L'\n'
+                     << L"Gateway lanes / governance servers: "
+                     << snapshot.platformGatewayCount << L" / "
+                     << snapshot.governanceServerCount << L'\n'
                      << governanceDoctrine;
 
     snapshot.overviewText = overviewStream.str();
@@ -1643,6 +1821,11 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.governanceRuleRows = std::move(governanceRuleRows);
     snapshot.governanceDocumentRows = std::move(governanceDocumentRows);
     snapshot.governanceActionRows = std::move(governanceActionRows);
+    snapshot.appleRemoteHostRows = std::move(appleRemoteHostRows);
+    snapshot.appleOperationRows = std::move(appleOperationRows);
+    snapshot.platformGatewayRows = std::move(platformGatewayRows);
+    snapshot.governanceServerRows = std::move(governanceServerRows);
+    snapshot.governanceExecutionRows = std::move(governanceExecutionRows);
     return snapshot;
 }
 

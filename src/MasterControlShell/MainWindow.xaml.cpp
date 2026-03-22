@@ -165,10 +165,10 @@ SectionMetadata metadataForDestination(const std::wstring& destinationId, const 
         return { L"TELEMETRY", title, L"Track live CPU, memory, disk, network, and environment discovery details from the local service snapshot." };
     }
     if (destinationId == kRuntimeDestination) {
-        return { L"RUNTIME", title, L"Inspect MCP runtime lanes, gateway-facing inventory, and the current operational map exposed by the service." };
+        return { L"RUNTIME", title, L"Inspect MCP runtime lanes, platform gateway inventory, Apple remote hosts, and the current operational map exposed by the service." };
     }
     if (destinationId == kCluDestination) {
-        return { L"CLU", title, L"Inspect the Command Logic Unit governance profile, live posture findings, and operator-visible control rules." };
+        return { L"CLU", title, L"Inspect the Command Logic Unit governance profile, Apple production operations, and operator-visible control rules." };
     }
     if (destinationId == kProvidersDestination) {
         return { L"PROVIDERS", title, L"Review provider adapters, autonomous control posture, and the current agent service envelope." };

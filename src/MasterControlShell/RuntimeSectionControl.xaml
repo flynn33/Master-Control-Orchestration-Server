@@ -26,6 +26,27 @@
                 </Border>
             </Grid>
 
+            <Grid ColumnSpacing="20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="Platform Gateway Lanes" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <ListView x:Name="PlatformGatewaysListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="320" Style="{StaticResource ShellListViewStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="Apple Remote Hosts" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <ListView x:Name="AppleRemoteHostsListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="320" Style="{StaticResource ShellListViewStyle}" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
             <Border Style="{StaticResource ShellCardStyle}">
                 <StackPanel Spacing="14">
                     <TextBlock Text="Custom MCP Servers" Style="{StaticResource ShellSectionTitleTextStyle}" />

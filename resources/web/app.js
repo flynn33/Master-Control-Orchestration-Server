@@ -75,6 +75,143 @@ function statusPill(status) {
   return `<span class="status-pill status-${escapeHtml(safeStatus)}">${escapeHtml(safeStatus)}</span>`;
 }
 
+function platformLabel(value) {
+  switch (String(value || '').toLowerCase()) {
+    case 'windows': return 'Windows';
+    case 'macos': return 'macOS';
+    case 'ios': return 'iOS';
+    default: return String(value || 'Unknown');
+  }
+}
+
+function transportLabel(value) {
+  switch (String(value || '').toLowerCase()) {
+    case 'companion_service': return 'Companion Service';
+    case 'ssh': return 'SSH';
+    default: return String(value || 'Unknown');
+  }
+}
+
+function platformListLabel(values) {
+  const labels = safeArray(values).map(platformLabel).filter(Boolean);
+  return labels.length ? labels.join(', ') : 'Unassigned';
+}
+
+function appleHostAddressLabel(host) {
+  const base = host?.address || host?.serviceBaseUrl || 'unconfigured';
+  const port = safeNumber(host?.port, 0);
+  if (port > 0 && !String(base).includes('://')) {
+    return `${base}:${port}`;
+  }
+  return base;
+}
+
+function renderAppleHostsMarkup(hosts) {
+  if (!hosts.length) {
+    return emptyState('No Apple remote hosts', 'Register remote Mac infrastructure to light up Mac and iOS governance lanes.');
+  }
+
+  return `
+    <div class="history-list">
+      ${hosts.map((host) => {
+        const toolchain = host.toolchain || {};
+        const signing = host.signing || {};
+        const runtimeSummary = safeArray(toolchain.simulatorRuntimes).length
+          ? `${safeArray(toolchain.simulatorRuntimes).length} simulator runtimes`
+          : 'no simulator runtimes';
+        return `
+          <article class="history-item">
+            <strong>${escapeHtml(host.displayName || host.hostId || 'Apple host')}</strong>
+            <div>${escapeHtml(platformListLabel(host.platforms))} | ${escapeHtml(transportLabel(host.transport))}</div>
+            <div>${escapeHtml(appleHostAddressLabel(host))}</div>
+            <div>${statusPill(toolchain.status || 'unknown')} ${statusPill(signing.status || 'unknown')}</div>
+            <div>${escapeHtml(toolchain.xcodeVersion ? `Xcode ${toolchain.xcodeVersion}` : 'Xcode pending')} | ${escapeHtml(runtimeSummary)}</div>
+          </article>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function renderPlatformGatewaysMarkup(gateways) {
+  if (!gateways.length) {
+    return emptyState('No platform gateways', 'Gateway modules will publish LAN service lanes here when the service is online.');
+  }
+
+  return `
+    <div class="history-list">
+      ${gateways.map((gateway) => `
+        <article class="history-item">
+          <strong>${escapeHtml(gateway.displayName || gateway.serviceId || 'Gateway lane')}</strong>
+          <div>${escapeHtml(platformLabel(gateway.platform))} | ${escapeHtml(gateway.serviceType || '_service._tcp.local')}</div>
+          <div>${escapeHtml(gateway.instanceLabel || gateway.hostName || gateway.ipAddress || 'unpublished')}</div>
+          <div>${escapeHtml(gateway.ipAddress || gateway.hostName || 'unknown host')}${safeNumber(gateway.port, 0) ? `:${escapeHtml(gateway.port)}` : ''}</div>
+          <div>${statusPill(gateway.status || 'unknown')}</div>
+        </article>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderGovernanceServersMarkup(servers) {
+  if (!servers.length) {
+    return emptyState('No governance servers', 'Platform governance MCP lanes will appear here when their modules are active.');
+  }
+
+  return `
+    <div class="history-list">
+      ${servers.map((server) => `
+        <article class="history-item">
+          <strong>${escapeHtml(server.displayName || server.serviceId || 'Governance server')}</strong>
+          <div>${escapeHtml(platformLabel(server.platform))} | ${escapeHtml(server.routePath || '/mcp/governance')}</div>
+          <div>${escapeHtml(formatCount(safeArray(server.toolIds).length))} tools | remote toolchain ${server.requiresRemoteToolchain ? 'required' : 'optional'}</div>
+          <div>${statusPill(server.status || 'unknown')}</div>
+        </article>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderAppleOperationsMarkup(operations) {
+  if (!operations.length) {
+    return emptyState('No Apple operations yet', 'Mac and iOS build, sign, notarize, and install runs will appear here.');
+  }
+
+  return `
+    <div class="history-list">
+      ${operations.map((operation) => `
+        <article class="history-item">
+          <strong>${escapeHtml(operation.displayName || operation.toolId || 'Apple operation')}</strong>
+          <div>${statusPill(operation.status || 'queued')}</div>
+          <div>${escapeHtml(platformLabel(operation.platform))} | ${escapeHtml(operation.hostDisplayName || operation.hostId || 'unassigned host')} | ${escapeHtml(transportLabel(operation.transport))}</div>
+          <div>${escapeHtml(operation.artifactPath || operation.summary || operation.errorMessage || 'No artifact published')}</div>
+          <div>${escapeHtml(operation.completedAtUtc || operation.startedAtUtc || operation.queuedAtUtc || 'pending')}</div>
+        </article>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderGovernanceExecutionsMarkup(executions) {
+  if (!executions.length) {
+    return emptyState('No governance executions yet', 'CLU governance tool runs will appear here after platform checks execute.');
+  }
+
+  return `
+    <div class="history-list">
+      ${executions.map((execution) => `
+        <article class="history-item">
+          <strong>${escapeHtml(execution.displayName || execution.toolId || 'Governance tool')}</strong>
+          <div>${statusPill(execution.status || 'unknown')}</div>
+          <div>${escapeHtml(platformLabel(execution.platform))}</div>
+          <div>${escapeHtml(execution.summary || formatPreview(execution.rawOutput || '', 180) || 'No summary published')}</div>
+          <div>${escapeHtml(execution.completedAtUtc || execution.startedAtUtc || 'pending')}</div>
+        </article>
+      `).join('')}
+    </div>
+  `;
+}
+
 function metricCard(label, value, detail = '') {
   return `
     <article class="telemetry-card">
@@ -452,14 +589,14 @@ function metadataForDestination(destinationId) {
     return {
       eyebrow: 'RUNTIME',
       title,
-      description: 'Inspect MCP servers, sub-agents, browser gateway lanes, and installation provenance from the shared runtime map.'
+      description: 'Inspect MCP servers, sub-agents, platform gateway lanes, Apple remote hosts, and installation provenance from the shared runtime map.'
     };
   }
   if (destinationId === 'clu') {
     return {
       eyebrow: 'CLU',
       title,
-      description: 'Review the Command Logic Unit governance profile, live posture findings, and operator-visible control doctrine.'
+      description: 'Review the Command Logic Unit governance profile, Apple production operations, and operator-visible enforcement doctrine.'
     };
   }
   if (destinationId === 'providers') {
@@ -704,6 +841,10 @@ function renderTelemetryView() {
 
 function renderRuntimeView() {
   const snapshot = dashboardSnapshot();
+  const governance = governanceSnapshot();
+  const appleHosts = safeArray(governance.appleRemoteHosts);
+  const gateways = safeArray(governance.platformGateways);
+  const governanceServers = safeArray(governance.governanceServers);
   const customMcpServers = snapshot.endpoints.filter((endpoint) => String(endpoint.kind || '').toLowerCase() === 'mcp_server' && !!endpoint.userDefined);
   const customSubAgents = snapshot.endpoints.filter((endpoint) => String(endpoint.kind || '').toLowerCase() === 'sub_agent' && !!endpoint.userDefined);
   const mcpServerDraft = state.mcpServerDraft;
@@ -776,8 +917,19 @@ function renderRuntimeView() {
     </div>
   ` : emptyState('No install provenance yet', 'Installer history will appear here after package, repo, or zip imports run successfully.');
 
+  const gatewayMarkup = renderPlatformGatewaysMarkup(gateways);
+  const appleHostMarkup = renderAppleHostsMarkup(appleHosts);
+  const governanceServerMarkup = renderGovernanceServersMarkup(governanceServers);
+
   return `
     <section class="section-shell">
+      <div class="card-grid">
+        ${metricCard('Endpoints', formatCount(snapshot.endpoints.length), 'runtime inventory')}
+        ${metricCard('Gateway Lanes', formatCount(gateways.length), 'LAN service broadcasts')}
+        ${metricCard('Apple Hosts', formatCount(appleHosts.length), 'remote toolchains')}
+        ${metricCard('Gov Servers', formatCount(governanceServers.length), 'platform enforcement')}
+      </div>
+
       <div class="split-grid">
         <article class="panel-block">
           <p class="eyebrow">Shared MCP</p>
@@ -858,6 +1010,27 @@ function renderRuntimeView() {
             </div>
           </form>
         </article>
+      </div>
+
+      <div class="split-grid">
+        <article class="panel-block">
+          <p class="eyebrow">Platform Lanes</p>
+          <h3>Gateway Services</h3>
+          ${gatewayMarkup}
+        </article>
+        <article class="panel-block">
+          <p class="eyebrow">Apple Fabric</p>
+          <h3>Remote Hosts</h3>
+          ${appleHostMarkup}
+        </article>
+      </div>
+
+      <div class="split-grid">
+        <article class="panel-block">
+          <p class="eyebrow">Governance Lanes</p>
+          <h3>Platform MCP Servers</h3>
+          ${governanceServerMarkup}
+        </article>
         <article class="panel-block">
           <p class="eyebrow">Runtime Map</p>
           <h3>Endpoints</h3>
@@ -882,6 +1055,11 @@ function renderCluView() {
   const documents = safeArray(governance.documents);
   const actions = safeArray(governance.recommendedActions);
   const operatorChecklist = safeArray(governance.operatorChecklist);
+  const appleHosts = safeArray(governance.appleRemoteHosts);
+  const gateways = safeArray(governance.platformGateways);
+  const governanceServers = safeArray(governance.governanceServers);
+  const recentExecutions = safeArray(governance.recentExecutions);
+  const appleOperations = safeArray(governance.appleOperations);
 
   const findingsMarkup = findings.length ? `
     <div class="history-list">
@@ -900,9 +1078,9 @@ function renderCluView() {
     <div class="history-list">
       ${roles.map((role) => `
         <article class="history-item">
-          <strong>${escapeHtml(role.displayName || role.roleId || 'Role')}</strong>
-          <div>${escapeHtml(role.domain || 'governance')}</div>
-          <div>${escapeHtml(formatPreview(safeArray(role.authorities).join(' | '), 180) || 'No published authorities')}</div>
+          <strong>${escapeHtml(role.name || role.roleId || 'Role')}</strong>
+          <div>${escapeHtml(role.authorityLevel || 'governance')}</div>
+          <div>${escapeHtml(formatPreview(safeArray(role.responsibilities).join(' | '), 180) || 'No published responsibilities')}</div>
         </article>
       `).join('')}
     </div>
@@ -914,7 +1092,7 @@ function renderCluView() {
         <article class="history-item">
           <strong>${escapeHtml(rule.ruleId || 'Rule')}</strong>
           <div>${escapeHtml(rule.title || 'Governance rule')}</div>
-          <div>${escapeHtml(rule.severity || 'unspecified')} | ${escapeHtml(rule.enforcement || 'advisory')}</div>
+          <div>${escapeHtml(rule.severity || 'unspecified')} | ${escapeHtml(rule.failureConsequence || 'advisory')}</div>
         </article>
       `).join('')}
     </div>
@@ -934,6 +1112,11 @@ function renderCluView() {
 
   const actionNarrative = actions.length ? actions.join('\n') : 'No recommended actions are currently required.';
   const checklistNarrative = operatorChecklist.length ? operatorChecklist.join('\n') : 'No operator checklist is published yet.';
+  const appleHostsMarkup = renderAppleHostsMarkup(appleHosts);
+  const appleOperationsMarkup = renderAppleOperationsMarkup(appleOperations);
+  const gatewaysMarkup = renderPlatformGatewaysMarkup(gateways);
+  const governanceServersMarkup = renderGovernanceServersMarkup(governanceServers);
+  const governanceExecutionsMarkup = renderGovernanceExecutionsMarkup(recentExecutions);
 
   return `
     <section class="section-shell">
@@ -942,6 +1125,13 @@ function renderCluView() {
         ${metricCard('Findings', formatCount(findings.length), governance.lastEvaluatedUtc || 'awaiting evaluation')}
         ${metricCard('Roles', formatCount(roles.length), 'published authorities')}
         ${metricCard('Rules', formatCount(rules.length), `${documents.length} documents`)}
+      </div>
+
+      <div class="card-grid">
+        ${metricCard('Apple Hosts', formatCount(appleHosts.length), 'remote toolchain lanes')}
+        ${metricCard('Apple Ops', formatCount(appleOperations.length), 'recent production runs')}
+        ${metricCard('Gateways', formatCount(gateways.length), 'platform broadcasts')}
+        ${metricCard('Gov Servers', formatCount(governanceServers.length), `${recentExecutions.length} recent executions`)}
       </div>
 
       <div class="split-grid">
@@ -964,6 +1154,32 @@ function renderCluView() {
 
       <div class="split-grid">
         <article class="panel-block">
+          <p class="eyebrow">Apple Fabric</p>
+          <h3>Remote Hosts</h3>
+          ${appleHostsMarkup}
+        </article>
+        <article class="panel-block">
+          <p class="eyebrow">Apple Operations</p>
+          <h3>Production History</h3>
+          ${appleOperationsMarkup}
+        </article>
+      </div>
+
+      <div class="split-grid">
+        <article class="panel-block">
+          <p class="eyebrow">Platform Gateways</p>
+          <h3>LAN Broadcast Lanes</h3>
+          ${gatewaysMarkup}
+        </article>
+        <article class="panel-block">
+          <p class="eyebrow">Governance Servers</p>
+          <h3>Enforcement Routes</h3>
+          ${governanceServersMarkup}
+        </article>
+      </div>
+
+      <div class="split-grid">
+        <article class="panel-block">
           <p class="eyebrow">Roles</p>
           <h3>Published Authorities</h3>
           ${rolesMarkup}
@@ -975,11 +1191,18 @@ function renderCluView() {
         </article>
       </div>
 
-      <article class="panel-block">
-        <p class="eyebrow">Documents</p>
-        <h3>Governance Corpus</h3>
-        ${documentsMarkup}
-      </article>
+      <div class="split-grid">
+        <article class="panel-block">
+          <p class="eyebrow">Executions</p>
+          <h3>Recent Governance Runs</h3>
+          ${governanceExecutionsMarkup}
+        </article>
+        <article class="panel-block">
+          <p class="eyebrow">Documents</p>
+          <h3>Governance Corpus</h3>
+          ${documentsMarkup}
+        </article>
+      </div>
     </section>
   `;
 }

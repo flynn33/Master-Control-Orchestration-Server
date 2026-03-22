@@ -51,6 +51,47 @@
 
             <Grid ColumnSpacing="20">
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Style="{StaticResource ShellMetricTileStyle}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="APPLE HOSTS" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBlock x:Name="CluAppleHostCountText" Style="{StaticResource ShellValueTextStyle}" Text="0" />
+                        <TextBlock Text="Remote toolchain lanes" Style="{StaticResource ShellLabelTextStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="APPLE OPS" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBlock x:Name="CluAppleOperationCountText" Style="{StaticResource ShellValueTextStyle}" Text="0" />
+                        <TextBlock Text="Queued and completed runs" Style="{StaticResource ShellLabelTextStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="2" Style="{StaticResource ShellMetricTileStyle}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="GATEWAYS" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBlock x:Name="CluGatewayCountText" Style="{StaticResource ShellValueTextStyle}" Text="0" />
+                        <TextBlock Text="Broadcast platform lanes" Style="{StaticResource ShellLabelTextStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="3" Style="{StaticResource ShellMetricTileStyle}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="GOVERNANCE SERVERS" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBlock x:Name="CluGovernanceServerCountText" Style="{StaticResource ShellValueTextStyle}" Text="0" />
+                        <TextBlock Text="Platform enforcement lanes" Style="{StaticResource ShellLabelTextStyle}" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Grid ColumnSpacing="20">
+                <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="1.2*" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
@@ -102,6 +143,48 @@
 
                 <Border Style="{StaticResource ShellCardStyle}">
                     <StackPanel Spacing="16">
+                        <TextBlock Text="Apple Remote Hosts" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <ListView x:Name="CluAppleHostsListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="420" Style="{StaticResource ShellListViewStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="Recent Apple Operations" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <ListView x:Name="CluAppleOperationsListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="420" Style="{StaticResource ShellListViewStyle}" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Grid ColumnSpacing="20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="Platform Gateways" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <ListView x:Name="CluPlatformGatewaysListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="420" Style="{StaticResource ShellListViewStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="Governance Servers" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <ListView x:Name="CluGovernanceServersListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="420" Style="{StaticResource ShellListViewStyle}" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Grid ColumnSpacing="20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="16">
                         <TextBlock Text="Rules" Style="{StaticResource ShellSectionTitleTextStyle}" />
                         <ListView x:Name="CluRulesListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="420" Style="{StaticResource ShellListViewStyle}" />
                     </StackPanel>
@@ -114,6 +197,13 @@
                     </StackPanel>
                 </Border>
             </Grid>
+
+            <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="16">
+                    <TextBlock Text="Recent Governance Executions" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <ListView x:Name="CluRecentExecutionsListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="420" Style="{StaticResource ShellListViewStyle}" />
+                </StackPanel>
+            </Border>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

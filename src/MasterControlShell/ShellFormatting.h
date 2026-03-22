@@ -47,6 +47,14 @@ inline std::wstring formatRuntimeNarrative(const ShellSnapshot& snapshot) {
            << pluralize(snapshot.endpointCount, L"lane", L"lanes")
            << L" across the local host and gateway profile. ";
 
+    if (snapshot.platformGatewayCount != 0 || snapshot.appleRemoteHostCount != 0) {
+        stream << L"The Apple production plane currently exposes "
+               << pluralize(snapshot.platformGatewayCount, L"gateway lane", L"gateway lanes")
+               << L" and "
+               << pluralize(snapshot.appleRemoteHostCount, L"remote host", L"remote hosts")
+               << L". ";
+    }
+
     if (snapshot.apiHealthy) {
         stream << L"The service is publishing a live inventory snapshot through the local admin API.";
     } else {
