@@ -391,6 +391,21 @@ std::vector<std::wstring> jsonStringArrayOr(const JsonObject& object, const wcha
     return values;
 }
 
+std::map<std::wstring, std::wstring> jsonStringMapOr(const JsonObject& object, const wchar_t* key) {
+    std::map<std::wstring, std::wstring> values;
+    if (!object.HasKey(key)) {
+        return values;
+    }
+
+    const auto mapObject = object.GetNamedObject(key, JsonObject());
+    for (const auto& pair : mapObject.GetView()) {
+        if (pair.Value().ValueType() == JsonValueType::String) {
+            values.emplace(std::wstring(pair.Key().c_str()), std::wstring(pair.Value().GetString().c_str()));
+        }
+    }
+    return values;
+}
+
 ShellRuntimeEndpoint runtimeEndpointFromJson(const JsonObject& object) {
     ShellRuntimeEndpoint endpoint;
     endpoint.id = wideFromUtf8(jsonStringOr(object, L"id", ""));
@@ -536,6 +551,58 @@ ShellSecuritySettings securityFromJson(const JsonObject& object) {
     return settings;
 }
 
+ShellAppleRemoteHost appleRemoteHostFromJson(const JsonObject& object) {
+    ShellAppleRemoteHost host;
+    host.hostId = wideFromUtf8(jsonStringOr(object, L"hostId", ""));
+    host.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
+    host.transport = wideFromUtf8(jsonStringOr(object, L"transport", "unknown"));
+    host.platforms = jsonStringArrayOr(object, L"platforms");
+    host.address = wideFromUtf8(jsonStringOr(object, L"address", ""));
+    host.port = static_cast<uint16_t>(jsonNumberOr(object, L"port", 0));
+    host.username = wideFromUtf8(jsonStringOr(object, L"username", ""));
+    host.serviceBaseUrl = wideFromUtf8(jsonStringOr(object, L"serviceBaseUrl", ""));
+    host.companionHealthPath = wideFromUtf8(jsonStringOr(object, L"companionHealthPath", "/healthz"));
+    host.companionExecutePath = wideFromUtf8(jsonStringOr(object, L"companionExecutePath", "/execute"));
+    host.preferredDeveloperDirectory = wideFromUtf8(jsonStringOr(object, L"preferredDeveloperDirectory", ""));
+    host.defaultSigningIdentity = wideFromUtf8(jsonStringOr(object, L"defaultSigningIdentity", ""));
+    host.defaultNotaryKeychainProfile = wideFromUtf8(jsonStringOr(object, L"defaultNotaryKeychainProfile", ""));
+    host.defaultNotaryTeamId = wideFromUtf8(jsonStringOr(object, L"defaultNotaryTeamId", ""));
+    host.enabled = jsonBoolOr(object, L"enabled", true);
+
+    const auto toolchain = object.GetNamedObject(L"toolchain", JsonObject());
+    host.toolchainStatus = wideFromUtf8(jsonStringOr(toolchain, L"status", "unknown"));
+    host.toolchainMessage = wideFromUtf8(jsonStringOr(toolchain, L"message", ""));
+    host.simulatorRuntimes = jsonStringArrayOr(toolchain, L"simulatorRuntimes");
+
+    const auto signing = object.GetNamedObject(L"signing", JsonObject());
+    host.signingStatus = wideFromUtf8(jsonStringOr(signing, L"status", "unknown"));
+    host.signingMessage = wideFromUtf8(jsonStringOr(signing, L"message", ""));
+    return host;
+}
+
+ShellAppleOperationRecord appleOperationFromJson(const JsonObject& object) {
+    ShellAppleOperationRecord record;
+    record.operationId = wideFromUtf8(jsonStringOr(object, L"operationId", ""));
+    record.platform = wideFromUtf8(jsonStringOr(object, L"platform", "unknown"));
+    record.toolId = wideFromUtf8(jsonStringOr(object, L"toolId", ""));
+    record.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
+    record.hostId = wideFromUtf8(jsonStringOr(object, L"hostId", ""));
+    record.hostDisplayName = wideFromUtf8(jsonStringOr(object, L"hostDisplayName", ""));
+    record.transport = wideFromUtf8(jsonStringOr(object, L"transport", "unknown"));
+    record.status = wideFromUtf8(jsonStringOr(object, L"status", "queued"));
+    record.workingDirectory = wideFromUtf8(jsonStringOr(object, L"workingDirectory", ""));
+    record.artifactPath = wideFromUtf8(jsonStringOr(object, L"artifactPath", ""));
+    record.targetPath = wideFromUtf8(jsonStringOr(object, L"targetPath", ""));
+    record.summary = wideFromUtf8(jsonStringOr(object, L"summary", ""));
+    record.rawOutput = wideFromUtf8(jsonStringOr(object, L"rawOutput", ""));
+    record.errorMessage = wideFromUtf8(jsonStringOr(object, L"errorMessage", ""));
+    record.queuedAtUtc = wideFromUtf8(jsonStringOr(object, L"queuedAtUtc", ""));
+    record.startedAtUtc = wideFromUtf8(jsonStringOr(object, L"startedAtUtc", ""));
+    record.completedAtUtc = wideFromUtf8(jsonStringOr(object, L"completedAtUtc", ""));
+    record.requestOptions = jsonStringMapOr(object, L"requestOptions");
+    return record;
+}
+
 std::string installerKindString(const ShellInstallerKind kind) {
     switch (kind) {
         case ShellInstallerKind::Msi: return "msi";
@@ -604,6 +671,50 @@ JsonObject providerAssignmentToJson(const ShellProviderAssignment& assignment) {
     object.SetNamedValue(L"targetId", JsonValue::CreateStringValue(assignment.targetId));
     object.SetNamedValue(L"kind", JsonValue::CreateStringValue(assignment.kind));
     object.SetNamedValue(L"providerId", JsonValue::CreateStringValue(assignment.providerId));
+    return object;
+}
+
+JsonObject stringMapToJson(const std::map<std::wstring, std::wstring>& values) {
+    JsonObject object;
+    for (const auto& [key, value] : values) {
+        object.SetNamedValue(key, JsonValue::CreateStringValue(value));
+    }
+    return object;
+}
+
+JsonObject appleRemoteHostToJson(const ShellAppleRemoteHost& host) {
+    JsonObject object;
+    JsonArray platforms;
+    for (const auto& platform : host.platforms) {
+        platforms.Append(JsonValue::CreateStringValue(platform));
+    }
+    object.SetNamedValue(L"hostId", JsonValue::CreateStringValue(host.hostId));
+    object.SetNamedValue(L"displayName", JsonValue::CreateStringValue(host.displayName));
+    object.SetNamedValue(L"transport", JsonValue::CreateStringValue(host.transport));
+    object.SetNamedValue(L"platforms", platforms);
+    object.SetNamedValue(L"address", JsonValue::CreateStringValue(host.address));
+    object.SetNamedValue(L"port", JsonValue::CreateNumberValue(host.port));
+    object.SetNamedValue(L"username", JsonValue::CreateStringValue(host.username));
+    object.SetNamedValue(L"serviceBaseUrl", JsonValue::CreateStringValue(host.serviceBaseUrl));
+    object.SetNamedValue(L"companionHealthPath", JsonValue::CreateStringValue(host.companionHealthPath));
+    object.SetNamedValue(L"companionExecutePath", JsonValue::CreateStringValue(host.companionExecutePath));
+    object.SetNamedValue(L"preferredDeveloperDirectory", JsonValue::CreateStringValue(host.preferredDeveloperDirectory));
+    object.SetNamedValue(L"defaultSigningIdentity", JsonValue::CreateStringValue(host.defaultSigningIdentity));
+    object.SetNamedValue(L"defaultNotaryKeychainProfile", JsonValue::CreateStringValue(host.defaultNotaryKeychainProfile));
+    object.SetNamedValue(L"defaultNotaryTeamId", JsonValue::CreateStringValue(host.defaultNotaryTeamId));
+    object.SetNamedValue(L"enabled", JsonValue::CreateBooleanValue(host.enabled));
+    return object;
+}
+
+JsonObject governanceToolRequestToJson(const std::wstring& platform,
+                                       const std::wstring& toolId,
+                                       const std::wstring& targetPath,
+                                       const std::map<std::wstring, std::wstring>& options) {
+    JsonObject object;
+    object.SetNamedValue(L"platform", JsonValue::CreateStringValue(platform));
+    object.SetNamedValue(L"toolId", JsonValue::CreateStringValue(toolId));
+    object.SetNamedValue(L"targetPath", JsonValue::CreateStringValue(targetPath));
+    object.SetNamedValue(L"options", stringMapToJson(options));
     return object;
 }
 
@@ -745,6 +856,23 @@ ShellOperationResult operationResultFromResponse(const HttpResponse& response) {
         result.message = wideFromUtf8(jsonStringOr(*json, L"message", result.succeeded ? "Operation completed." : "Operation failed."));
     } else {
         result.message = result.succeeded ? L"Operation completed." : L"Operation failed.";
+    }
+
+    return result;
+}
+
+ShellOperationResult governanceOperationResultFromResponse(const HttpResponse& response) {
+    ShellOperationResult result;
+    result.succeeded = response.statusCode >= 200 && response.statusCode < 300;
+
+    if (const auto json = parseJsonObject(response.body); json.has_value()) {
+        result.succeeded = jsonBoolOr(*json, L"succeeded", result.succeeded);
+        const auto summary = wideFromUtf8(jsonStringOr(*json, L"summary", ""));
+        result.message = !summary.empty()
+            ? summary
+            : wideFromUtf8(jsonStringOr(*json, L"message", result.succeeded ? "Governance execution completed." : "Governance execution failed."));
+    } else {
+        result.message = result.succeeded ? L"Governance execution completed." : L"Governance execution failed.";
     }
 
     return result;
@@ -1230,6 +1358,33 @@ ShellProviderExecutionRecord postProviderExecutionToAdminApi(const std::filesyst
     return parsedRecord;
 }
 
+ShellOperationResult postGovernanceToolToAdminApi(const std::filesystem::path& configurationFile,
+                                                  const std::wstring& platform,
+                                                  const std::wstring& toolId,
+                                                  const std::wstring& targetPath,
+                                                  const std::map<std::wstring, std::wstring>& options) {
+    std::wstring errorMessage;
+    const auto [host, port] = adminApiEndpoint(configurationFile);
+    const auto payload = governanceToolRequestToJson(platform, toolId, targetPath, options);
+    const auto response = httpRequest(
+        host,
+        port,
+        L"POST",
+        L"/api/clu/execute",
+        narrowFromWide(payload.Stringify().c_str()),
+        {},
+        errorMessage);
+    if (!response.has_value()) {
+        return ShellOperationResult{
+            false,
+            false,
+            errorMessage.empty() ? L"Unable to execute the governance tool through the local admin API." : errorMessage
+        };
+    }
+
+    return governanceOperationResultFromResponse(*response);
+}
+
 ShellExportFetchResult fetchExportsFromAdminApi(const std::filesystem::path& configurationFile) {
     std::wstring errorMessage;
     const auto [host, port] = adminApiEndpoint(configurationFile);
@@ -1339,6 +1494,8 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     std::vector<ShellProviderAssignment> providerAssignments;
     std::vector<ShellProviderExecutionRegistration> providerExecutionRegistrations;
     std::vector<ShellProviderExecutionRecord> providerExecutionHistory;
+    std::vector<ShellAppleRemoteHost> appleRemoteHosts;
+    std::vector<ShellAppleOperationRecord> appleOperations;
     int cpuPercent = 50;
     int memoryPercent = 50;
     int bandwidthPercent = 50;
@@ -1552,10 +1709,20 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                         governance.GetNamedArray(L"appleRemoteHosts", JsonArray()),
                         appleRemoteHostRow,
                         appleRemoteHostRows);
+                    for (const auto& value : governance.GetNamedArray(L"appleRemoteHosts", JsonArray())) {
+                        if (value.ValueType() == JsonValueType::Object) {
+                            appleRemoteHosts.push_back(appleRemoteHostFromJson(value.GetObject()));
+                        }
+                    }
                     appendJsonArrayRows(
                         governance.GetNamedArray(L"appleOperations", JsonArray()),
                         appleOperationRow,
                         appleOperationRows);
+                    for (const auto& value : governance.GetNamedArray(L"appleOperations", JsonArray())) {
+                        if (value.ValueType() == JsonValueType::Object) {
+                            appleOperations.push_back(appleOperationFromJson(value.GetObject()));
+                        }
+                    }
                     appendJsonArrayRows(
                         governance.GetNamedArray(L"platformGateways", JsonArray()),
                         platformGatewayRow,
@@ -1806,6 +1973,8 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.providerAssignments = std::move(providerAssignments);
     snapshot.providerExecutionRegistrations = std::move(providerExecutionRegistrations);
     snapshot.providerExecutionHistory = std::move(providerExecutionHistory);
+    snapshot.appleRemoteHosts = std::move(appleRemoteHosts);
+    snapshot.appleOperations = std::move(appleOperations);
     snapshot.navigationPointers = std::move(navigationPointers);
     snapshot.toolbarItems = std::move(toolbarItems);
     snapshot.overlayRoutes = std::move(overlayRoutes);
@@ -1987,6 +2156,41 @@ ShellOperationResult ShellRuntime::UpsertProviderCredentials(
         L"Unable to update provider credentials through the local admin API.");
 }
 
+ShellOperationResult ShellRuntime::UpsertAppleRemoteHost(const ShellAppleRemoteHost& host) const {
+    if (host.hostId.empty()) {
+        return ShellOperationResult{ false, false, L"Apple remote host ID is required." };
+    }
+    if (host.displayName.empty()) {
+        return ShellOperationResult{ false, false, L"Apple remote host display name is required." };
+    }
+    if (host.transport.empty() || host.transport == L"unknown") {
+        return ShellOperationResult{ false, false, L"Select either SSH or Companion Service transport." };
+    }
+    if (host.platforms.empty()) {
+        return ShellOperationResult{ false, false, L"Select at least one Apple platform for the remote host." };
+    }
+
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/platform-services/apple-hosts",
+        appleRemoteHostToJson(host),
+        L"Unable to update the Apple remote host through the local admin API.");
+}
+
+ShellOperationResult ShellRuntime::RemoveAppleRemoteHost(const std::wstring& hostId) const {
+    if (hostId.empty()) {
+        return ShellOperationResult{ false, false, L"Select an Apple remote host before removing it." };
+    }
+
+    JsonObject payload;
+    payload.SetNamedValue(L"hostId", JsonValue::CreateStringValue(hostId));
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/platform-services/apple-hosts/remove",
+        payload,
+        L"Unable to remove the Apple remote host through the local admin API.");
+}
+
 ShellOperationResult ShellRuntime::UpsertSubAgentGroup(const ShellSubAgentGroupDefinition& group) const {
     if (group.groupId.empty()) {
         return ShellOperationResult{ false, false, L"Enter a group ID before saving the sub-agent group." };
@@ -2039,6 +2243,20 @@ ShellProviderExecutionRecord ShellRuntime::ExecuteProviderTask(const ShellProvid
     }
 
     return postProviderExecutionToAdminApi(ResolveConfigurationFile(), request);
+}
+
+ShellOperationResult ShellRuntime::ExecuteGovernanceTool(const std::wstring& platform,
+                                                         const std::wstring& toolId,
+                                                         const std::wstring& targetPath,
+                                                         const std::map<std::wstring, std::wstring>& options) const {
+    if (platform.empty()) {
+        return ShellOperationResult{ false, false, L"Governance execution requires a platform." };
+    }
+    if (toolId.empty()) {
+        return ShellOperationResult{ false, false, L"Governance execution requires a tool ID." };
+    }
+
+    return postGovernanceToolToAdminApi(ResolveConfigurationFile(), platform, toolId, targetPath, options);
 }
 
 ShellOperationResult ShellRuntime::UpdateAiAutonomyEnabled(const bool enabled) const {

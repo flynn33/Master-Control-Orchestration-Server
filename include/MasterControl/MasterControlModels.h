@@ -506,6 +506,7 @@ struct AppleOperationRecord final {
     std::string queuedAtUtc;
     std::string startedAtUtc;
     std::string completedAtUtc;
+    std::map<std::string, std::string> requestOptions;
 };
 
 struct GovernanceSnapshot final {
@@ -1057,7 +1058,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     errorMessage,
     queuedAtUtc,
     startedAtUtc,
-    completedAtUtc)
+    completedAtUtc,
+    requestOptions)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GovernanceSnapshot,

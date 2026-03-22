@@ -4937,6 +4937,65 @@ private:
         return {};
     }
 
+    static std::map<std::string, std::string> sanitizeAppleRequestOptions(const GovernanceToolRequest& request) {
+        static const std::set<std::string> allowedKeys = {
+            "workspace",
+            "project",
+            "xcodeproj",
+            "scheme",
+            "configuration",
+            "destination",
+            "sdk",
+            "archivePath",
+            "exportPath",
+            "outputPath",
+            "outputDirectory",
+            "exportOptionsPlist",
+            "exportOptionsPlistPath",
+            "deviceId",
+            "device",
+            "deviceIdentifier",
+            "appPath",
+            "applicationPath",
+            "bundlePath",
+            "targetBundlePath",
+            "signingIdentity",
+            "identity",
+            "entitlementsPath",
+            "artifactPath",
+            "submissionPath",
+            "packagePath",
+            "staplePath",
+            "keychainProfile",
+            "notaryKeychainProfile",
+            "appleId",
+            "notaryAppleId",
+            "teamId",
+            "notaryTeamId",
+            "timeoutSeconds",
+            "force",
+            "deep",
+            "timestamp",
+            "hardenedRuntime",
+            "runtime",
+            "remoteWorkingDirectory",
+            "workingDirectory",
+            "targetRoot"
+        };
+
+        std::map<std::string, std::string> sanitized;
+        for (const auto& [key, value] : request.options) {
+            if (!allowedKeys.contains(key)) {
+                continue;
+            }
+            const auto trimmedValue = trimCopy(value);
+            if (!trimmedValue.empty()) {
+                sanitized.emplace(key, trimmedValue);
+            }
+        }
+        return sanitized;
+    }
+
     AppleOperationRecord queueAppleOperation(const GovernanceToolDescriptor& descriptor,
                                              const GovernanceToolRequest& request) {
         AppleOperationRecord record;
@@ -4949,6 +5008,7 @@ private:
         record.workingDirectory = resolveAppleWorkingDirectory(request);
         record.artifactPath = findAppleArtifactPath(descriptor, request);
         record.targetPath = request.targetPath;
+        record.requestOptions = sanitizeAppleRequestOptions(request);
         record.summary = "Queued Apple governance operation.";
         persistAppleOperation(record);
         return record;
@@ -5718,20 +5778,47 @@ private:
             return;
         }
 
-        const auto host = appleRemoteHostService_->selectHostForPlatform(request.platform);
+        std::optional<AppleRemoteHost> host;
+        const auto preferredHostId = optionValue(request, { "hostId", "preferredHostId" });
+        if (!preferredHostId.empty()) {
+            host = appleRemoteHostService_->inspectHost(preferredHostId);
+        } else {
+            host = appleRemoteHostService_->selectHostForPlatform(request.platform);
+        }
         if (!host.has_value()) {
             result.status = GovernanceToolStatus::Warning;
-            result.summary = "No enabled Apple remote host is configured for platform " +
+            result.summary = preferredHostId.empty()
+                ? "No enabled Apple remote host is configured for platform " + platformKey(request.platform) + "."
+                : "Preferred Apple remote host '" + preferredHostId + "' is not available.";
+            result.findings.push_back(makeFinding(
+                "governance.remote-toolchain",
+                descriptor.displayName,
+                "high",
+                "blocked",
+                preferredHostId.empty()
+                    ? "Configure an Apple remote host with either ssh or companion_service transport before using this governance lane."
+                    : "The requested Apple remote host could not be loaded from the CLU host registry."));
+            if (appleOperation != nullptr) {
+                appleOperation->summary = result.summary;
+                appleOperation->errorMessage = preferredHostId.empty()
+                    ? "No eligible Apple host is configured."
+                    : "The requested Apple host is unavailable.";
+            }
+            return;
+        }
+        if (host->platforms.end() == std::find(host->platforms.begin(), host->platforms.end(), request.platform)) {
+            result.status = GovernanceToolStatus::Warning;
+            result.summary = "Apple host '" + host->displayName + "' does not advertise support for " +
                 platformKey(request.platform) + ".";
             result.findings.push_back(makeFinding(
                 "governance.remote-toolchain",
                 descriptor.displayName,
                 "high",
                 "blocked",
-                "Configure an Apple remote host with either ssh or companion_service transport before using this governance lane."));
+                "The selected Apple host does not declare the requested platform lane."));
             if (appleOperation != nullptr) {
                 appleOperation->summary = result.summary;
-                appleOperation->errorMessage = "No eligible Apple host is configured.";
+                appleOperation->errorMessage = "Selected host does not support the requested platform.";
             }
             return;
         }

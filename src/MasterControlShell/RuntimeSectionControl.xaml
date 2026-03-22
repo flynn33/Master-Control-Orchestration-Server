@@ -43,6 +43,123 @@
                     <StackPanel Spacing="16">
                         <TextBlock Text="Apple Remote Hosts" Style="{StaticResource ShellSectionTitleTextStyle}" />
                         <ListView x:Name="AppleRemoteHostsListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="320" Style="{StaticResource ShellListViewStyle}" />
+
+                        <TextBlock Text="Apple Host" Style="{StaticResource ShellLabelTextStyle}" />
+                        <ComboBox x:Name="AppleHostSelector" SelectionChanged="AppleHostSelector_SelectionChanged" PlaceholderText="Choose a registered Apple remote host" />
+
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="1.2*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Host ID" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="AppleHostIdTextBox" TextChanged="AppleHostEditor_TextChanged" PlaceholderText="apple-host-01" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Spacing="8">
+                                <TextBlock Text="Display Name" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="AppleHostDisplayNameTextBox" TextChanged="AppleHostEditor_TextChanged" PlaceholderText="Primary Apple Build Host" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="220" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="120" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Transport" Style="{StaticResource ShellLabelTextStyle}" />
+                                <ComboBox x:Name="AppleHostTransportComboBox" SelectionChanged="AppleHostTransportComboBox_SelectionChanged">
+                                    <ComboBoxItem Content="Companion Service" Tag="companion_service" />
+                                    <ComboBoxItem Content="SSH" Tag="ssh" />
+                                </ComboBox>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Spacing="8">
+                                <TextBlock Text="Address or Hostname" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="AppleHostAddressTextBox" TextChanged="AppleHostEditor_TextChanged" PlaceholderText="mac-builder.local or 192.168.1.40" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2" Spacing="8">
+                                <TextBlock Text="Port" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="AppleHostPortTextBox" TextChanged="AppleHostEditor_TextChanged" PlaceholderText="22 or 8081" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Username" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="AppleHostUsernameTextBox" TextChanged="AppleHostEditor_TextChanged" PlaceholderText="builder" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Spacing="8">
+                                <TextBlock Text="Companion Base URL" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="AppleHostServiceBaseUrlTextBox" TextChanged="AppleHostEditor_TextChanged" PlaceholderText="http://mac-builder.local:8081" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Companion Health Path" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="AppleHostHealthPathTextBox" TextChanged="AppleHostEditor_TextChanged" PlaceholderText="/healthz" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Spacing="8">
+                                <TextBlock Text="Companion Execute Path" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="AppleHostExecutePathTextBox" TextChanged="AppleHostEditor_TextChanged" PlaceholderText="/execute" />
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="Preferred Developer Directory" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBox x:Name="AppleHostDeveloperDirectoryTextBox" TextChanged="AppleHostEditor_TextChanged" PlaceholderText="/Applications/Xcode.app/Contents/Developer" />
+
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Default Signing Identity" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="AppleHostSigningIdentityTextBox" TextChanged="AppleHostEditor_TextChanged" PlaceholderText="Developer ID Application: Example Corp" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Spacing="8">
+                                <TextBlock Text="Default Notary Profile" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="AppleHostNotaryProfileTextBox" TextChanged="AppleHostEditor_TextChanged" PlaceholderText="mastercontrol-notary" />
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="Default Notary Team ID" Style="{StaticResource ShellLabelTextStyle}" />
+                        <TextBox x:Name="AppleHostTeamIdTextBox" TextChanged="AppleHostEditor_TextChanged" PlaceholderText="ABCDE12345" />
+
+                        <StackPanel Orientation="Horizontal" Spacing="18">
+                            <CheckBox x:Name="AppleHostMacPlatformCheckBox" Content="macOS" Click="AppleHostEnabledCheckBox_Click" />
+                            <CheckBox x:Name="AppleHostIosPlatformCheckBox" Content="iOS" Click="AppleHostEnabledCheckBox_Click" />
+                            <CheckBox x:Name="AppleHostEnabledCheckBox" Content="Enabled" Click="AppleHostEnabledCheckBox_Click" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <Button x:Name="SaveAppleHostButton" Click="SaveAppleHostButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Apple Host" />
+                            <Button x:Name="NewAppleHostButton" Click="NewAppleHostButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Apple Host" />
+                            <Button x:Name="RemoveAppleHostButton" Click="RemoveAppleHostButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Remove Apple Host" />
+                        </StackPanel>
+
+                        <TextBlock x:Name="AppleHostStatusText" Style="{StaticResource ShellDataTextStyle}" Text="No Apple remote host changes are staged." TextWrapping="WrapWholeWords" />
                     </StackPanel>
                 </Border>
             </Grid>

@@ -150,6 +150,50 @@ struct ShellSecuritySettings final {
     std::vector<std::wstring> trustedRemoteHosts;
 };
 
+struct ShellAppleRemoteHost final {
+    std::wstring hostId;
+    std::wstring displayName;
+    std::wstring transport;
+    std::vector<std::wstring> platforms;
+    std::wstring address;
+    uint16_t port = 0;
+    std::wstring username;
+    std::wstring serviceBaseUrl;
+    std::wstring companionHealthPath;
+    std::wstring companionExecutePath;
+    std::wstring preferredDeveloperDirectory;
+    std::wstring defaultSigningIdentity;
+    std::wstring defaultNotaryKeychainProfile;
+    std::wstring defaultNotaryTeamId;
+    bool enabled = true;
+    std::wstring toolchainStatus;
+    std::wstring toolchainMessage;
+    std::wstring signingStatus;
+    std::wstring signingMessage;
+    std::vector<std::wstring> simulatorRuntimes;
+};
+
+struct ShellAppleOperationRecord final {
+    std::wstring operationId;
+    std::wstring platform;
+    std::wstring toolId;
+    std::wstring displayName;
+    std::wstring hostId;
+    std::wstring hostDisplayName;
+    std::wstring transport;
+    std::wstring status;
+    std::wstring workingDirectory;
+    std::wstring artifactPath;
+    std::wstring targetPath;
+    std::wstring summary;
+    std::wstring rawOutput;
+    std::wstring errorMessage;
+    std::wstring queuedAtUtc;
+    std::wstring startedAtUtc;
+    std::wstring completedAtUtc;
+    std::map<std::wstring, std::wstring> requestOptions;
+};
+
 struct ShellOperationResult final {
     bool succeeded = false;
     bool requiresConfirmation = false;
@@ -293,6 +337,8 @@ struct ShellSnapshot final {
     std::vector<ShellProviderAssignment> providerAssignments;
     std::vector<ShellProviderExecutionRegistration> providerExecutionRegistrations;
     std::vector<ShellProviderExecutionRecord> providerExecutionHistory;
+    std::vector<ShellAppleRemoteHost> appleRemoteHosts;
+    std::vector<ShellAppleOperationRecord> appleOperations;
     std::vector<ShellNavigationPointer> navigationPointers;
     std::vector<ShellToolbarItem> toolbarItems;
     std::vector<ShellOverlayRoute> overlayRoutes;
@@ -331,10 +377,16 @@ public:
     [[nodiscard]] ShellOperationResult UpsertProviderCredentials(
         const std::wstring& providerId,
         const std::vector<std::pair<std::wstring, std::wstring>>& values) const;
+    [[nodiscard]] ShellOperationResult UpsertAppleRemoteHost(const ShellAppleRemoteHost& host) const;
+    [[nodiscard]] ShellOperationResult RemoveAppleRemoteHost(const std::wstring& hostId) const;
     [[nodiscard]] ShellOperationResult UpsertSubAgentGroup(const ShellSubAgentGroupDefinition& group) const;
     [[nodiscard]] ShellOperationResult RemoveSubAgentGroup(const std::wstring& groupId) const;
     [[nodiscard]] ShellOperationResult UpsertProviderAssignment(const ShellProviderAssignment& assignment) const;
     [[nodiscard]] ShellProviderExecutionRecord ExecuteProviderTask(const ShellProviderExecutionRequest& request) const;
+    [[nodiscard]] ShellOperationResult ExecuteGovernanceTool(const std::wstring& platform,
+                                                            const std::wstring& toolId,
+                                                            const std::wstring& targetPath,
+                                                            const std::map<std::wstring, std::wstring>& options) const;
     [[nodiscard]] ShellOperationResult UpdateAiAutonomyEnabled(bool enabled) const;
     [[nodiscard]] ShellOperationResult UpdateSecuritySettings(const ShellSecuritySettings& settings,
                                                              bool confirmUnsafeChanges) const;

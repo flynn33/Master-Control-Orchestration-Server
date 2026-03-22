@@ -71,6 +71,7 @@ void RuntimeSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnaps
 
     customMcpServers_.clear();
     customSubAgents_.clear();
+    appleRemoteHosts_ = snapshot.appleRemoteHosts;
     for (const auto& endpoint : snapshot.endpoints) {
         if (!endpoint.userDefined) {
             continue;
@@ -119,6 +120,25 @@ void RuntimeSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnaps
         }
     } else if (!customSubAgents_.empty() && selectedCustomSubAgentIndex_ >= 0) {
         PopulateCustomSubAgentEditor(static_cast<size_t>(selectedCustomSubAgentIndex_));
+    }
+
+    RefreshAppleHostSelector();
+    if (!selectedAppleHostId_.empty()) {
+        const auto iterator = std::find_if(
+            appleRemoteHosts_.begin(),
+            appleRemoteHosts_.end(),
+            [this](const ::MasterControlShell::ShellAppleRemoteHost& host) {
+                return host.hostId == selectedAppleHostId_;
+            });
+        if (iterator != appleRemoteHosts_.end()) {
+            PopulateAppleHostEditor(static_cast<size_t>(std::distance(appleRemoteHosts_.begin(), iterator)));
+        } else {
+            selectedAppleHostId_.clear();
+            selectedAppleHostIndex_ = -1;
+            ClearAppleHostEditor();
+        }
+    } else if (!appleRemoteHosts_.empty() && selectedAppleHostIndex_ >= 0) {
+        PopulateAppleHostEditor(static_cast<size_t>(selectedAppleHostIndex_));
     }
 
     UpdateEditorState();
@@ -386,6 +406,89 @@ void RuntimeSectionControl::RemoveCustomSubAgentButton_Click(
     (void)ignored;
 }
 
+void RuntimeSectionControl::AppleHostSelector_SelectionChanged(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&) {
+    if (suspendDirtyTracking_) {
+        return;
+    }
+
+    const auto index = AppleHostSelector().SelectedIndex();
+    if (index <= 0) {
+        selectedAppleHostIndex_ = -1;
+        selectedAppleHostId_.clear();
+        ClearAppleHostEditor();
+        return;
+    }
+
+    const auto resolvedIndex = static_cast<size_t>(index - 1);
+    if (resolvedIndex >= appleRemoteHosts_.size()) {
+        return;
+    }
+
+    PopulateAppleHostEditor(resolvedIndex);
+}
+
+void RuntimeSectionControl::AppleHostEditor_TextChanged(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::Controls::TextChangedEventArgs const&) {
+    if (suspendDirtyTracking_) {
+        return;
+    }
+
+    appleHostDirty_ = true;
+    AppleHostStatusText().Text(L"Apple remote host changes are ready to save.");
+    UpdateEditorState();
+}
+
+void RuntimeSectionControl::AppleHostTransportComboBox_SelectionChanged(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&) {
+    if (suspendDirtyTracking_) {
+        return;
+    }
+
+    appleHostDirty_ = true;
+    AppleHostStatusText().Text(L"Apple remote host changes are ready to save.");
+    UpdateEditorState();
+}
+
+void RuntimeSectionControl::AppleHostEnabledCheckBox_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    if (suspendDirtyTracking_) {
+        return;
+    }
+
+    appleHostDirty_ = true;
+    AppleHostStatusText().Text(L"Apple remote host changes are ready to save.");
+    UpdateEditorState();
+}
+
+void RuntimeSectionControl::SaveAppleHostButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    auto ignored = SaveAppleHostAsync();
+    (void)ignored;
+}
+
+void RuntimeSectionControl::NewAppleHostButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    selectedAppleHostIndex_ = -1;
+    selectedAppleHostId_.clear();
+    ClearAppleHostEditor();
+    AppleHostStatusText().Text(L"Staging a new Apple remote host.");
+    UpdateEditorState();
+}
+
+void RuntimeSectionControl::RemoveAppleHostButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    auto ignored = RemoveAppleHostAsync();
+    (void)ignored;
+}
+
 void RuntimeSectionControl::PopulateCustomSubAgentEditor(const size_t index) {
     if (index >= customSubAgents_.size()) {
         return;
@@ -425,6 +528,106 @@ void RuntimeSectionControl::ClearCustomSubAgentEditor() {
     UpdateEditorState();
 }
 
+void RuntimeSectionControl::PopulateAppleHostEditor(const size_t index) {
+    if (index >= appleRemoteHosts_.size()) {
+        return;
+    }
+
+    const auto& host = appleRemoteHosts_[index];
+    suspendDirtyTracking_ = true;
+    selectedAppleHostIndex_ = static_cast<int>(index);
+    selectedAppleHostId_ = host.hostId;
+    AppleHostIdTextBox().Text(winrt::hstring(host.hostId));
+    AppleHostDisplayNameTextBox().Text(winrt::hstring(host.displayName));
+    AppleHostAddressTextBox().Text(winrt::hstring(host.address));
+    AppleHostPortTextBox().Text(winrt::hstring(host.port == 0 ? std::wstring{} : std::to_wstring(host.port)));
+    AppleHostUsernameTextBox().Text(winrt::hstring(host.username));
+    AppleHostServiceBaseUrlTextBox().Text(winrt::hstring(host.serviceBaseUrl));
+    AppleHostHealthPathTextBox().Text(winrt::hstring(host.companionHealthPath.empty() ? L"/healthz" : host.companionHealthPath));
+    AppleHostExecutePathTextBox().Text(winrt::hstring(host.companionExecutePath.empty() ? L"/execute" : host.companionExecutePath));
+    AppleHostDeveloperDirectoryTextBox().Text(winrt::hstring(host.preferredDeveloperDirectory));
+    AppleHostSigningIdentityTextBox().Text(winrt::hstring(host.defaultSigningIdentity));
+    AppleHostNotaryProfileTextBox().Text(winrt::hstring(host.defaultNotaryKeychainProfile));
+    AppleHostTeamIdTextBox().Text(winrt::hstring(host.defaultNotaryTeamId));
+    AppleHostMacPlatformCheckBox().IsChecked(
+        std::find(host.platforms.begin(), host.platforms.end(), L"macos") != host.platforms.end());
+    AppleHostIosPlatformCheckBox().IsChecked(
+        std::find(host.platforms.begin(), host.platforms.end(), L"ios") != host.platforms.end());
+    AppleHostEnabledCheckBox().IsChecked(host.enabled);
+
+    int transportIndex = 0;
+    if (host.transport == L"ssh") {
+        transportIndex = 1;
+    }
+    AppleHostTransportComboBox().SelectedIndex(transportIndex);
+    suspendDirtyTracking_ = false;
+    appleHostDirty_ = false;
+
+    std::wstring status = L"Apple remote host loaded from the CLU registry.";
+    if (!host.toolchainStatus.empty() || !host.signingStatus.empty()) {
+        status += L" Toolchain ";
+        status += host.toolchainStatus.empty() ? L"unknown" : host.toolchainStatus;
+        status += L", signing ";
+        status += host.signingStatus.empty() ? L"unknown" : host.signingStatus;
+        status += L".";
+    }
+    AppleHostStatusText().Text(winrt::hstring(status));
+    UpdateEditorState();
+}
+
+void RuntimeSectionControl::ClearAppleHostEditor() {
+    suspendDirtyTracking_ = true;
+    AppleHostSelector().SelectedIndex(0);
+    AppleHostIdTextBox().Text(L"");
+    AppleHostDisplayNameTextBox().Text(L"");
+    AppleHostTransportComboBox().SelectedIndex(0);
+    AppleHostAddressTextBox().Text(L"");
+    AppleHostPortTextBox().Text(L"");
+    AppleHostUsernameTextBox().Text(L"");
+    AppleHostServiceBaseUrlTextBox().Text(L"");
+    AppleHostHealthPathTextBox().Text(L"/healthz");
+    AppleHostExecutePathTextBox().Text(L"/execute");
+    AppleHostDeveloperDirectoryTextBox().Text(L"");
+    AppleHostSigningIdentityTextBox().Text(L"");
+    AppleHostNotaryProfileTextBox().Text(L"");
+    AppleHostTeamIdTextBox().Text(L"");
+    AppleHostMacPlatformCheckBox().IsChecked(true);
+    AppleHostIosPlatformCheckBox().IsChecked(true);
+    AppleHostEnabledCheckBox().IsChecked(true);
+    suspendDirtyTracking_ = false;
+    appleHostDirty_ = false;
+    UpdateEditorState();
+}
+
+void RuntimeSectionControl::RefreshAppleHostSelector() {
+    suspendDirtyTracking_ = true;
+    AppleHostSelector().Items().Clear();
+
+    Microsoft::UI::Xaml::Controls::ComboBoxItem placeholder;
+    placeholder.Content(box_value(L"New Apple remote host"));
+    AppleHostSelector().Items().Append(placeholder);
+
+    int selectedIndex = 0;
+    int currentIndex = 1;
+    for (const auto& host : appleRemoteHosts_) {
+        Microsoft::UI::Xaml::Controls::ComboBoxItem item;
+        std::wstring label = host.displayName.empty() ? host.hostId : host.displayName;
+        if (!host.transport.empty()) {
+            label += L"  |  " + host.transport;
+        }
+        item.Content(box_value(label));
+        item.Tag(box_value(host.hostId));
+        AppleHostSelector().Items().Append(item);
+        if (!selectedAppleHostId_.empty() && host.hostId == selectedAppleHostId_) {
+            selectedIndex = currentIndex;
+        }
+        ++currentIndex;
+    }
+
+    AppleHostSelector().SelectedIndex(selectedIndex);
+    suspendDirtyTracking_ = false;
+}
+
 void RuntimeSectionControl::RefreshCustomSubAgentSelector() {
     suspendDirtyTracking_ = true;
     CustomSubAgentSelector().Items().Clear();
@@ -461,6 +664,10 @@ void RuntimeSectionControl::UpdateEditorState() {
     const auto hasSubAgentSelection = !selectedCustomSubAgentId_.empty();
     SaveCustomSubAgentButton().IsEnabled(runtime_ != nullptr);
     RemoveCustomSubAgentButton().IsEnabled(runtime_ != nullptr && hasSubAgentSelection);
+
+    const auto hasAppleHostSelection = !selectedAppleHostId_.empty();
+    SaveAppleHostButton().IsEnabled(runtime_ != nullptr);
+    RemoveAppleHostButton().IsEnabled(runtime_ != nullptr && hasAppleHostSelection);
 }
 
 std::optional<::MasterControlShell::ShellRuntimeEndpoint> RuntimeSectionControl::BuildCustomSubAgentFromEditor() {
@@ -487,6 +694,54 @@ std::optional<::MasterControlShell::ShellRuntimeEndpoint> RuntimeSectionControl:
         trimEditorValue(CustomSubAgentRoutePathTextBox().Text().c_str()),
         trimEditorValue(CustomSubAgentSpecializationTextBox().Text().c_str()),
         true
+    };
+}
+
+std::optional<::MasterControlShell::ShellAppleRemoteHost> RuntimeSectionControl::BuildAppleHostFromEditor() {
+    const auto hostId = trimEditorValue(AppleHostIdTextBox().Text().c_str());
+    const auto displayName = trimEditorValue(AppleHostDisplayNameTextBox().Text().c_str());
+    if (hostId.empty() || displayName.empty()) {
+        return std::nullopt;
+    }
+
+    const auto transportIndex = AppleHostTransportComboBox().SelectedIndex();
+    const std::wstring transport = transportIndex == 1 ? L"ssh" : L"companion_service";
+    const auto port = parseEditorPort(AppleHostPortTextBox().Text().c_str(), true);
+    if (!port.has_value()) {
+        return std::nullopt;
+    }
+
+    std::vector<std::wstring> platforms;
+    const auto macPlatformChecked = AppleHostMacPlatformCheckBox().IsChecked();
+    if (macPlatformChecked && macPlatformChecked.Value()) {
+        platforms.push_back(L"macos");
+    }
+    const auto iosPlatformChecked = AppleHostIosPlatformCheckBox().IsChecked();
+    if (iosPlatformChecked && iosPlatformChecked.Value()) {
+        platforms.push_back(L"ios");
+    }
+    if (platforms.empty()) {
+        return std::nullopt;
+    }
+
+    const auto enabledChecked = AppleHostEnabledCheckBox().IsChecked();
+
+    return ::MasterControlShell::ShellAppleRemoteHost{
+        hostId,
+        displayName,
+        transport,
+        platforms,
+        trimEditorValue(AppleHostAddressTextBox().Text().c_str()),
+        *port,
+        trimEditorValue(AppleHostUsernameTextBox().Text().c_str()),
+        trimEditorValue(AppleHostServiceBaseUrlTextBox().Text().c_str()),
+        trimEditorValue(AppleHostHealthPathTextBox().Text().c_str()),
+        trimEditorValue(AppleHostExecutePathTextBox().Text().c_str()),
+        trimEditorValue(AppleHostDeveloperDirectoryTextBox().Text().c_str()),
+        trimEditorValue(AppleHostSigningIdentityTextBox().Text().c_str()),
+        trimEditorValue(AppleHostNotaryProfileTextBox().Text().c_str()),
+        trimEditorValue(AppleHostTeamIdTextBox().Text().c_str()),
+        enabledChecked && enabledChecked.Value()
     };
 }
 
@@ -543,6 +798,66 @@ winrt::Windows::Foundation::IAsyncAction RuntimeSectionControl::RemoveCustomSubA
         selectedCustomSubAgentId_.clear();
         selectedCustomSubAgentIndex_ = -1;
         ClearCustomSubAgentEditor();
+        if (refreshRequested_) {
+            refreshRequested_();
+        }
+    }
+    UpdateEditorState();
+}
+
+winrt::Windows::Foundation::IAsyncAction RuntimeSectionControl::SaveAppleHostAsync() {
+    if (runtime_ == nullptr) {
+        AppleHostStatusText().Text(L"Apple remote host editing is unavailable until the shell runtime is attached.");
+        co_return;
+    }
+
+    const auto host = BuildAppleHostFromEditor();
+    if (!host.has_value()) {
+        AppleHostStatusText().Text(L"Apple host ID, display name, transport, and at least one platform are required. Ports must be blank or between 0 and 65535.");
+        co_return;
+    }
+
+    SaveAppleHostButton().IsEnabled(false);
+    winrt::apartment_context uiThread;
+    const auto hostValue = *host;
+    co_await winrt::resume_background();
+    const auto result = runtime_->UpsertAppleRemoteHost(hostValue);
+    co_await uiThread;
+
+    AppleHostStatusText().Text(winrt::hstring(result.message));
+    if (result.succeeded) {
+        appleHostDirty_ = false;
+        selectedAppleHostId_ = hostValue.hostId;
+        if (refreshRequested_) {
+            refreshRequested_();
+        }
+    }
+    UpdateEditorState();
+}
+
+winrt::Windows::Foundation::IAsyncAction RuntimeSectionControl::RemoveAppleHostAsync() {
+    if (runtime_ == nullptr) {
+        AppleHostStatusText().Text(L"Apple remote host editing is unavailable until the shell runtime is attached.");
+        co_return;
+    }
+    if (selectedAppleHostId_.empty()) {
+        AppleHostStatusText().Text(L"Select an Apple remote host before removing it.");
+        co_return;
+    }
+
+    RemoveAppleHostButton().IsEnabled(false);
+    winrt::apartment_context uiThread;
+    const auto hostId = selectedAppleHostId_;
+    co_await winrt::resume_background();
+    const auto result = runtime_->RemoveAppleRemoteHost(hostId);
+    co_await uiThread;
+
+    AppleHostStatusText().Text(winrt::hstring(result.message));
+    if (result.succeeded) {
+        appleHostDirty_ = false;
+        selectedAppleHostId_.clear();
+        selectedAppleHostIndex_ = -1;
+        ClearAppleHostEditor();
         if (refreshRequested_) {
             refreshRequested_();
         }

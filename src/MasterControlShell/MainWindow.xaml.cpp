@@ -309,6 +309,11 @@ void attachInteractiveRuntime(const FrameworkElement& view,
         winrt::get_self<winrt::MasterControlShell::implementation::RuntimeSectionControl>(typed)->AttachRuntime(&runtime, std::move(refreshRequested));
         return;
     }
+    if (viewId == kCluView) {
+        const auto typed = view.as<winrt::MasterControlShell::CommandLogicUnitSectionControl>();
+        winrt::get_self<winrt::MasterControlShell::implementation::CommandLogicUnitSectionControl>(typed)->AttachRuntime(&runtime, std::move(refreshRequested));
+        return;
+    }
     if (viewId == kProvidersView) {
         const auto typed = view.as<winrt::MasterControlShell::ProvidersSectionControl>();
         winrt::get_self<winrt::MasterControlShell::implementation::ProvidersSectionControl>(typed)->AttachRuntime(&runtime, std::move(refreshRequested));
