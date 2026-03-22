@@ -4357,6 +4357,24 @@ private:
         return request;
     }
 
+    static std::string joinSummaryParts(const std::vector<std::string>& parts,
+                                        const char* separator = " | ") {
+        std::ostringstream stream;
+        bool first = true;
+        for (const auto& part : parts) {
+            const auto trimmed = trimCopy(part);
+            if (trimmed.empty()) {
+                continue;
+            }
+            if (!first) {
+                stream << separator;
+            }
+            stream << trimmed;
+            first = false;
+        }
+        return trimCopy(stream.str());
+    }
+
     static std::string deriveToolchainStatus(const AppleRemoteHost& host) {
         if (!host.enabled) {
             return "disabled";
@@ -4373,6 +4391,87 @@ private:
 
     static std::string deriveSigningStatus(const AppleRemoteHost& host) {
         return host.signing.signingReady ? "ready" : "not_ready";
+    }
+
+    static std::string buildAppleTransportSummary(const AppleRemoteHost& host) {
+        switch (host.transport) {
+            case AppleRemoteTransport::CompanionService: {
+                const auto baseUrl = trimCopy(host.serviceBaseUrl);
+                if (!baseUrl.empty()) {
+                    return "Companion service at " + baseUrl;
+                }
+                if (!trimCopy(host.address).empty()) {
+                    const auto port = host.port == 0 ? 80 : host.port;
+                    return "Companion service via http://" + host.address + ":" + std::to_string(port);
+                }
+                return "Companion service transport";
+            }
+            case AppleRemoteTransport::Ssh: {
+                auto target = trimCopy(host.address);
+                if (!trimCopy(host.username).empty()) {
+                    target = host.username + "@" + target;
+                }
+                if (host.port != 0) {
+                    target += ":" + std::to_string(host.port);
+                }
+                return target.empty() ? "SSH transport" : "SSH to " + target;
+            }
+            default:
+                return "Unknown transport";
+        }
+    }
+
+    static std::string buildAppleCredentialProfileSummary(const AppleRemoteHost& host) {
+        std::vector<std::string> parts;
+        if (!trimCopy(host.defaultSigningIdentity).empty()) {
+            parts.push_back("Default signing identity: " + host.defaultSigningIdentity);
+        }
+        if (!trimCopy(host.defaultNotaryKeychainProfile).empty()) {
+            parts.push_back("Default notary profile: " + host.defaultNotaryKeychainProfile);
+        }
+        if (!trimCopy(host.defaultNotaryTeamId).empty()) {
+            parts.push_back("Default team ID: " + host.defaultNotaryTeamId);
+        }
+        if (parts.empty()) {
+            return "No host distribution defaults configured.";
+        }
+        return joinSummaryParts(parts, "; ");
+    }
+
+    static std::vector<std::string> deriveAppleReadinessIssues(const AppleRemoteHost& host) {
+        std::vector<std::string> issues;
+        if (!host.enabled) {
+            issues.push_back("Host is disabled.");
+            return issues;
+        }
+        if (!host.toolchain.reachable) {
+            issues.push_back("Remote host is unreachable.");
+        }
+        if (!host.toolchain.xcodeInstalled) {
+            issues.push_back("Xcode is unavailable.");
+        }
+        if (supportsPlatform(host, PlatformTarget::MacOS) && !host.toolchain.macosSdkAvailable) {
+            issues.push_back("macOS SDK route is unavailable.");
+        }
+        if (supportsPlatform(host, PlatformTarget::IOS) && !host.toolchain.iosSdkAvailable) {
+            issues.push_back("iOS SDK route is unavailable.");
+        }
+        if (supportsPlatform(host, PlatformTarget::IOS) && !host.signing.signingReady) {
+            issues.push_back("iOS signing is not ready.");
+        }
+        if (supportsPlatform(host, PlatformTarget::IOS) &&
+            !host.toolchain.simulatorControlAvailable &&
+            !host.toolchain.deviceControlAvailable) {
+            issues.push_back("Neither simulator nor device control is available.");
+        }
+        return issues;
+    }
+
+    static AppleRemoteHost finalizeAppleHostState(AppleRemoteHost host) {
+        host.transportSummary = buildAppleTransportSummary(host);
+        host.credentialProfileSummary = buildAppleCredentialProfileSummary(host);
+        host.readinessIssues = deriveAppleReadinessIssues(host);
+        return host;
     }
 
     static AppleRemoteHost applyCompanionPayload(AppleRemoteHost host, const nlohmann::json& payload) {
@@ -4420,7 +4519,7 @@ private:
         }
         host.signing.status = trimCopy(signingPayload.value("status", deriveSigningStatus(host)));
         host.signing.message = trimCopy(signingPayload.value("message", std::string{}));
-        return host;
+        return finalizeAppleHostState(std::move(host));
     }
 
     static std::vector<std::string> parseSimulatorRuntimes(const std::string& stdoutText) {
@@ -4599,7 +4698,7 @@ private:
                 : response.errorMessage;
             host.signing.status = "unknown";
             host.signing.message = "Signing state is unavailable because the companion service is unreachable.";
-            return host;
+            return finalizeAppleHostState(std::move(host));
         }
 
         try {
@@ -4610,7 +4709,7 @@ private:
             host.toolchain.message = "The Apple companion service returned an unreadable JSON payload.";
             host.signing.status = "invalid_payload";
             host.signing.message = "The Apple companion service returned an unreadable JSON payload.";
-            return host;
+            return finalizeAppleHostState(std::move(host));
         }
     }
 
@@ -4624,7 +4723,7 @@ private:
             host.toolchain.message = "ssh.exe is not available on the Windows host.";
             host.signing.status = "unavailable";
             host.signing.message = "SSH transport is unavailable because ssh.exe could not be found.";
-            return host;
+            return finalizeAppleHostState(std::move(host));
         }
 
         const auto runRemoteCommand = [&](const std::string& remoteCommand) {
@@ -4695,7 +4794,7 @@ private:
             ? "Code-signing identities are available on the selected Apple host."
             : "No usable code-signing identities were detected on the selected Apple host.";
 
-        return host;
+        return finalizeAppleHostState(std::move(host));
     }
 
     AppleRemoteHost inspectHostState(const AppleRemoteHost& host) const {
@@ -4706,7 +4805,7 @@ private:
             inspected.toolchain.message = "This Apple remote host is disabled.";
             inspected.signing.status = "disabled";
             inspected.signing.message = "This Apple remote host is disabled.";
-            return inspected;
+            return finalizeAppleHostState(std::move(inspected));
         }
 
         switch (host.transport) {
@@ -4722,7 +4821,7 @@ private:
                 inspected.toolchain.message = "Unsupported Apple host transport.";
                 inspected.signing.status = "unsupported_transport";
                 inspected.signing.message = "Unsupported Apple host transport.";
-                return inspected;
+                return finalizeAppleHostState(std::move(inspected));
             }
         }
     }
@@ -4944,7 +5043,30 @@ private:
         return {};
     }
 
-    static std::map<std::string, std::string> sanitizeAppleRequestOptions(const GovernanceToolRequest& request) {
+    struct SanitizedAppleRequestOptions final {
+        std::map<std::string, std::string> persistedOptions;
+        std::vector<std::string> redactedKeys;
+    };
+
+    static std::string joinAppleGovernanceSummaryParts(const std::vector<std::string>& parts,
+                                                       const char* separator = " | ") {
+        std::ostringstream stream;
+        bool first = true;
+        for (const auto& part : parts) {
+            const auto trimmed = trimCopy(part);
+            if (trimmed.empty()) {
+                continue;
+            }
+            if (!first) {
+                stream << separator;
+            }
+            stream << trimmed;
+            first = false;
+        }
+        return trimCopy(stream.str());
+    }
+
+    static SanitizedAppleRequestOptions sanitizeAppleRequestOptions(const GovernanceToolRequest& request) {
         static const std::set<std::string> allowedKeys = {
             "workspace",
             "project",
@@ -4975,8 +5097,6 @@ private:
             "staplePath",
             "keychainProfile",
             "notaryKeychainProfile",
-            "appleId",
-            "notaryAppleId",
             "teamId",
             "notaryTeamId",
             "timeoutSeconds",
@@ -4990,22 +5110,139 @@ private:
             "targetRoot"
         };
 
-        std::map<std::string, std::string> sanitized;
+        static const std::set<std::string> secretKeys = {
+            "appleId",
+            "notaryAppleId",
+            "password",
+            "appleIdPassword",
+            "appSpecificPassword",
+            "notaryPassword"
+        };
+
+        SanitizedAppleRequestOptions sanitized;
         for (const auto& [key, value] : request.options) {
+            const auto trimmedValue = trimCopy(value);
+            if (trimmedValue.empty()) {
+                continue;
+            }
+            if (secretKeys.contains(key)) {
+                sanitized.redactedKeys.push_back(key);
+                continue;
+            }
             if (!allowedKeys.contains(key)) {
                 continue;
             }
-            const auto trimmedValue = trimCopy(value);
-            if (!trimmedValue.empty()) {
-                sanitized.emplace(key, trimmedValue);
+            sanitized.persistedOptions.emplace(key, trimmedValue);
+        }
+        std::sort(sanitized.redactedKeys.begin(), sanitized.redactedKeys.end());
+        sanitized.redactedKeys.erase(
+            std::unique(sanitized.redactedKeys.begin(), sanitized.redactedKeys.end()),
+            sanitized.redactedKeys.end());
+        return sanitized;
+    }
+
+    static std::string buildAppleRouteReason(const GovernanceToolRequest& request,
+                                             const AppleRemoteHost& host,
+                                             const std::string& preferredHostId) {
+        if (!trimCopy(preferredHostId).empty()) {
+            return "Requested Apple host '" + preferredHostId + "' was used for the " +
+                platformKey(request.platform) + " governance lane.";
+        }
+        return "CLU selected Apple host '" + host.displayName + "' as the best eligible " +
+            platformKey(request.platform) + " route.";
+    }
+
+    static std::string buildAppleDiagnosticSummary(const AppleRemoteHost& host,
+                                                   const PlatformTarget platform) {
+        std::vector<std::string> parts;
+        if (!trimCopy(host.transportSummary).empty()) {
+            parts.push_back(host.transportSummary);
+        }
+        if (!trimCopy(host.toolchain.xcodeVersion).empty()) {
+            parts.push_back("Xcode " + host.toolchain.xcodeVersion);
+        } else if (host.toolchain.xcodeInstalled) {
+            parts.push_back("Xcode available");
+        } else {
+            parts.push_back("Xcode unavailable");
+        }
+        if (!trimCopy(host.toolchain.developerDirectory).empty()) {
+            parts.push_back("Developer dir " + host.toolchain.developerDirectory);
+        }
+        if (platform == PlatformTarget::MacOS) {
+            parts.push_back(host.toolchain.macosSdkAvailable ? "macOS SDK ready" : "macOS SDK missing");
+        }
+        if (platform == PlatformTarget::IOS) {
+            parts.push_back(host.toolchain.iosSdkAvailable ? "iOS SDK ready" : "iOS SDK missing");
+            parts.push_back(host.signing.signingReady ? "Signing ready" : "Signing unavailable");
+            parts.push_back(
+                (host.toolchain.simulatorControlAvailable || host.toolchain.deviceControlAvailable)
+                    ? "Runtime control available"
+                    : "Runtime control unavailable");
+        }
+        if (!host.readinessIssues.empty()) {
+            parts.push_back("Open issues: " + joinAppleGovernanceSummaryParts(host.readinessIssues, "; "));
+        }
+        return joinAppleGovernanceSummaryParts(parts, "; ");
+    }
+
+    static std::string buildAppleOperationCredentialProfileSummary(const GovernanceToolDescriptor& descriptor,
+                                                                   const GovernanceToolRequest& request,
+                                                                   const AppleRemoteHost& host,
+                                                                   const std::vector<std::string>& redactedKeys) {
+        const auto readOption = [&request](std::initializer_list<const char*> keys) {
+            for (const auto* key : keys) {
+                const auto iterator = request.options.find(key);
+                if (iterator == request.options.end()) {
+                    continue;
+                }
+                const auto value = trimCopy(iterator->second);
+                if (!value.empty()) {
+                    return value;
+                }
+            }
+            return std::string{};
+        };
+
+        std::vector<std::string> parts;
+        if (descriptor.toolId == "forsetti.macos.sign") {
+            const auto signingIdentity = readOption({ "signingIdentity", "identity" });
+            if (!signingIdentity.empty()) {
+                parts.push_back("Explicit signing identity: " + signingIdentity);
+            } else if (!trimCopy(host.defaultSigningIdentity).empty()) {
+                parts.push_back("Host signing identity: " + host.defaultSigningIdentity);
+            } else {
+                parts.push_back("No signing identity is configured.");
+            }
+        } else if (descriptor.toolId == "forsetti.macos.notarize") {
+            const auto keychainProfile = readOption({ "keychainProfile", "notaryKeychainProfile" });
+            const auto teamId = readOption({ "teamId", "notaryTeamId" });
+            if (!keychainProfile.empty()) {
+                parts.push_back("Explicit notary profile: " + keychainProfile);
+            } else if (!trimCopy(host.defaultNotaryKeychainProfile).empty()) {
+                parts.push_back("Host notary profile: " + host.defaultNotaryKeychainProfile);
+            }
+            if (!teamId.empty()) {
+                parts.push_back("Explicit team ID: " + teamId);
+            } else if (!trimCopy(host.defaultNotaryTeamId).empty()) {
+                parts.push_back("Host team ID: " + host.defaultNotaryTeamId);
+            }
+            if (!redactedKeys.empty()) {
+                parts.push_back("Apple ID credentials were supplied and redacted from persisted history.");
+            } else if (parts.empty()) {
+                parts.push_back("No notarization credential profile is configured.");
             }
         }
-        return sanitized;
+
+        if (parts.empty()) {
+            return host.credentialProfileSummary;
+        }
+        return joinAppleGovernanceSummaryParts(parts, "; ");
     }
 
     AppleOperationRecord queueAppleOperation(const GovernanceToolDescriptor& descriptor,
                                              const GovernanceToolRequest& request) {
         AppleOperationRecord record;
+        const auto sanitizedOptions = sanitizeAppleRequestOptions(request);
         record.operationId = generateExecutionId();
         record.platform = request.platform;
         record.toolId = request.toolId;
@@ -5015,8 +5252,13 @@ private:
         record.workingDirectory = resolveAppleWorkingDirectory(request);
         record.artifactPath = findAppleArtifactPath(descriptor, request);
         record.targetPath = request.targetPath;
-        record.requestOptions = sanitizeAppleRequestOptions(request);
+        record.requestOptions = sanitizedOptions.persistedOptions;
+        record.redactedRequestOptionKeys = sanitizedOptions.redactedKeys;
         record.summary = "Queued Apple governance operation.";
+        if (!record.redactedRequestOptionKeys.empty()) {
+            record.diagnosticSummary =
+                "Sensitive Apple request options were redacted from persisted history.";
+        }
         persistAppleOperation(record);
         return record;
     }
@@ -5041,6 +5283,15 @@ private:
         record.status = mapAppleOperationStatus(result);
         record.summary = result.summary;
         record.rawOutput = result.rawOutput;
+        if (!result.routeReason.empty()) {
+            record.routeReason = result.routeReason;
+        }
+        if (!result.diagnosticSummary.empty()) {
+            record.diagnosticSummary = result.diagnosticSummary;
+        }
+        if (!result.readinessIssues.empty()) {
+            record.readinessIssues = result.readinessIssues;
+        }
         if (!result.succeeded && !result.findings.empty()) {
             record.errorMessage = result.findings.front().message;
         }
@@ -5773,6 +6024,8 @@ private:
         if (!appleRemoteHostService_) {
             result.status = GovernanceToolStatus::Failed;
             result.summary = "Apple remote host service is unavailable.";
+            result.routeReason = "The Apple governance lane could not reach the CLU Apple host registry.";
+            result.diagnosticSummary = "The Forsetti Apple remote host service is unavailable in the runtime.";
             result.findings.push_back(makeFinding(
                 descriptor.toolId,
                 descriptor.displayName,
@@ -5782,6 +6035,8 @@ private:
             if (appleOperation != nullptr) {
                 appleOperation->summary = result.summary;
                 appleOperation->errorMessage = result.summary;
+                appleOperation->routeReason = result.routeReason;
+                appleOperation->diagnosticSummary = result.diagnosticSummary;
             }
             return;
         }
@@ -5798,6 +6053,12 @@ private:
             result.summary = preferredHostId.empty()
                 ? "No enabled Apple remote host is configured for platform " + platformKey(request.platform) + "."
                 : "Preferred Apple remote host '" + preferredHostId + "' is not available.";
+            result.routeReason = preferredHostId.empty()
+                ? "CLU could not find an enabled Apple host for automatic " + platformKey(request.platform) + " routing."
+                : "Requested Apple host '" + preferredHostId + "' was unavailable.";
+            result.diagnosticSummary = preferredHostId.empty()
+                ? "Register or enable an Apple host with ssh or companion_service transport for this platform lane."
+                : "The requested Apple host could not be loaded from the CLU host registry.";
             result.findings.push_back(makeFinding(
                 "governance.remote-toolchain",
                 descriptor.displayName,
@@ -5811,6 +6072,8 @@ private:
                 appleOperation->errorMessage = preferredHostId.empty()
                     ? "No eligible Apple host is configured."
                     : "The requested Apple host is unavailable.";
+                appleOperation->routeReason = result.routeReason;
+                appleOperation->diagnosticSummary = result.diagnosticSummary;
             }
             return;
         }
@@ -5818,6 +6081,10 @@ private:
             result.status = GovernanceToolStatus::Warning;
             result.summary = "Apple host '" + host->displayName + "' does not advertise support for " +
                 platformKey(request.platform) + ".";
+            result.routeReason = "The selected Apple host does not publish the requested platform lane.";
+            result.diagnosticSummary = host->transportSummary.empty()
+                ? "The selected Apple host does not advertise the requested platform."
+                : host->transportSummary + " does not advertise the requested platform.";
             result.findings.push_back(makeFinding(
                 "governance.remote-toolchain",
                 descriptor.displayName,
@@ -5827,11 +6094,41 @@ private:
             if (appleOperation != nullptr) {
                 appleOperation->summary = result.summary;
                 appleOperation->errorMessage = "Selected host does not support the requested platform.";
+                appleOperation->routeReason = result.routeReason;
+                appleOperation->diagnosticSummary = result.diagnosticSummary;
             }
             return;
         }
 
+        const auto routeReason = buildAppleRouteReason(request, *host, preferredHostId);
+        const auto selectedDeveloperDirectory = trimCopy(
+            host->toolchain.developerDirectory.empty()
+                ? host->preferredDeveloperDirectory
+                : host->toolchain.developerDirectory);
+        const auto credentialProfileSummary = buildAppleOperationCredentialProfileSummary(
+            descriptor,
+            request,
+            *host,
+            appleOperation == nullptr ? std::vector<std::string>{} : appleOperation->redactedRequestOptionKeys);
+        const auto diagnosticSummary = joinAppleGovernanceSummaryParts(
+            {
+                buildAppleDiagnosticSummary(*host, request.platform),
+                credentialProfileSummary
+            },
+            "; ");
+
+        result.routeReason = routeReason;
+        result.diagnosticSummary = diagnosticSummary;
+        result.readinessIssues = host->readinessIssues;
+
         if (appleOperation != nullptr) {
+            appleOperation->routeReason = routeReason;
+            appleOperation->selectedDeveloperDirectory = selectedDeveloperDirectory;
+            appleOperation->credentialProfileSummary = credentialProfileSummary;
+            appleOperation->readinessIssues = host->readinessIssues;
+            appleOperation->diagnosticSummary = joinAppleGovernanceSummaryParts(
+                { appleOperation->diagnosticSummary, diagnosticSummary },
+                "; ");
             markAppleOperationRunning(*appleOperation, *host);
         }
 

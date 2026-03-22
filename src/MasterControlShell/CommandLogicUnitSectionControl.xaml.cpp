@@ -129,6 +129,37 @@ void CommandLogicUnitSectionControl::UpdateOperationState() {
     }
 
     std::wstring status = iterator->summary.empty() ? L"Ready to replay the selected Apple operation." : iterator->summary;
+    if (!iterator->routeReason.empty()) {
+        status += L" Route: " + iterator->routeReason;
+    }
+    if (!iterator->selectedDeveloperDirectory.empty()) {
+        status += L" Developer dir: " + iterator->selectedDeveloperDirectory + L".";
+    }
+    if (!iterator->credentialProfileSummary.empty()) {
+        status += L" Profile: " + iterator->credentialProfileSummary;
+        if (!status.empty() && status.back() != L'.') {
+            status += L".";
+        }
+    }
+    if (!iterator->readinessIssues.empty()) {
+        status += L" Readiness gaps: ";
+        for (size_t index = 0; index < iterator->readinessIssues.size(); ++index) {
+            if (index > 0) {
+                status += L"; ";
+            }
+            status += iterator->readinessIssues[index];
+        }
+        status += L".";
+    }
+    if (!iterator->redactedRequestOptionKeys.empty()) {
+        status += L" Sensitive request options were redacted from stored history, so replay may require host defaults or fresh credentials.";
+    }
+    if (!iterator->diagnosticSummary.empty()) {
+        status += L" Diagnostics: " + iterator->diagnosticSummary;
+        if (!status.empty() && status.back() != L'.') {
+            status += L".";
+        }
+    }
     if (!iterator->errorMessage.empty()) {
         status += L" Last error: " + iterator->errorMessage;
     }

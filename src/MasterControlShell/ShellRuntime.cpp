@@ -577,6 +577,9 @@ ShellAppleRemoteHost appleRemoteHostFromJson(const JsonObject& object) {
     const auto signing = object.GetNamedObject(L"signing", JsonObject());
     host.signingStatus = wideFromUtf8(jsonStringOr(signing, L"status", "unknown"));
     host.signingMessage = wideFromUtf8(jsonStringOr(signing, L"message", ""));
+    host.transportSummary = wideFromUtf8(jsonStringOr(object, L"transportSummary", ""));
+    host.credentialProfileSummary = wideFromUtf8(jsonStringOr(object, L"credentialProfileSummary", ""));
+    host.readinessIssues = jsonStringArrayOr(object, L"readinessIssues");
     return host;
 }
 
@@ -600,6 +603,12 @@ ShellAppleOperationRecord appleOperationFromJson(const JsonObject& object) {
     record.startedAtUtc = wideFromUtf8(jsonStringOr(object, L"startedAtUtc", ""));
     record.completedAtUtc = wideFromUtf8(jsonStringOr(object, L"completedAtUtc", ""));
     record.requestOptions = jsonStringMapOr(object, L"requestOptions");
+    record.routeReason = wideFromUtf8(jsonStringOr(object, L"routeReason", ""));
+    record.diagnosticSummary = wideFromUtf8(jsonStringOr(object, L"diagnosticSummary", ""));
+    record.selectedDeveloperDirectory = wideFromUtf8(jsonStringOr(object, L"selectedDeveloperDirectory", ""));
+    record.credentialProfileSummary = wideFromUtf8(jsonStringOr(object, L"credentialProfileSummary", ""));
+    record.readinessIssues = jsonStringArrayOr(object, L"readinessIssues");
+    record.redactedRequestOptionKeys = jsonStringArrayOr(object, L"redactedRequestOptionKeys");
     return record;
 }
 
@@ -1128,6 +1137,13 @@ std::wstring appleRemoteHostRow(const JsonObject& object) {
     if (const auto version = wideFromUtf8(jsonStringOr(toolchain, L"xcodeVersion", "")); !version.empty()) {
         stream << L"  |  Xcode " << version;
     }
+    if (const auto transportSummary = wideFromUtf8(jsonStringOr(object, L"transportSummary", "")); !transportSummary.empty()) {
+        stream << L"  |  " << transportSummary;
+    }
+    const auto readinessIssues = jsonStringArrayOr(object, L"readinessIssues");
+    if (!readinessIssues.empty()) {
+        stream << L"  |  issue: " << readinessIssues.front();
+    }
     return stream.str();
 }
 
@@ -1148,6 +1164,13 @@ std::wstring appleOperationRow(const JsonObject& object) {
         stream << L"  |  artifact=" << artifact;
     } else if (const auto summary = wideFromUtf8(jsonStringOr(object, L"summary", "")); !summary.empty()) {
         stream << L"  |  " << summary;
+    }
+    if (const auto routeReason = wideFromUtf8(jsonStringOr(object, L"routeReason", "")); !routeReason.empty()) {
+        stream << L"  |  " << routeReason;
+    }
+    const auto redactedKeys = jsonStringArrayOr(object, L"redactedRequestOptionKeys");
+    if (!redactedKeys.empty()) {
+        stream << L"  |  redacted credentials";
     }
 
     if (const auto completedAt = wideFromUtf8(jsonStringOr(object, L"completedAtUtc", "")); !completedAt.empty()) {

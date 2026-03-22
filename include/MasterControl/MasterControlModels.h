@@ -403,6 +403,9 @@ struct AppleRemoteHost final {
     bool enabled = true;
     AppleToolchainState toolchain;
     AppleSigningState signing;
+    std::string transportSummary;
+    std::string credentialProfileSummary;
+    std::vector<std::string> readinessIssues;
 };
 
 struct AppleRemoteHostRemovalRequest final {
@@ -486,6 +489,9 @@ struct GovernanceToolResult final {
     std::string rawOutput;
     std::string startedAtUtc;
     std::string completedAtUtc;
+    std::string routeReason;
+    std::string diagnosticSummary;
+    std::vector<std::string> readinessIssues;
 };
 
 struct AppleOperationRecord final {
@@ -507,6 +513,12 @@ struct AppleOperationRecord final {
     std::string startedAtUtc;
     std::string completedAtUtc;
     std::map<std::string, std::string> requestOptions;
+    std::string routeReason;
+    std::string diagnosticSummary;
+    std::string selectedDeveloperDirectory;
+    std::string credentialProfileSummary;
+    std::vector<std::string> readinessIssues;
+    std::vector<std::string> redactedRequestOptionKeys;
 };
 
 struct GovernanceSnapshot final {
@@ -984,7 +996,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     defaultNotaryTeamId,
     enabled,
     toolchain,
-    signing)
+    signing,
+    transportSummary,
+    credentialProfileSummary,
+    readinessIssues)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     AppleRemoteHostRemovalRequest,
@@ -1038,7 +1053,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     findings,
     rawOutput,
     startedAtUtc,
-    completedAtUtc)
+    completedAtUtc,
+    routeReason,
+    diagnosticSummary,
+    readinessIssues)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     AppleOperationRecord,
@@ -1059,7 +1077,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     queuedAtUtc,
     startedAtUtc,
     completedAtUtc,
-    requestOptions)
+    requestOptions,
+    routeReason,
+    diagnosticSummary,
+    selectedDeveloperDirectory,
+    credentialProfileSummary,
+    readinessIssues,
+    redactedRequestOptionKeys)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GovernanceSnapshot,

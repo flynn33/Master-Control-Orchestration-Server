@@ -120,6 +120,7 @@ function renderAppleHostsMarkup(hosts) {
         const runtimeSummary = safeArray(toolchain.simulatorRuntimes).length
           ? `${safeArray(toolchain.simulatorRuntimes).length} simulator runtimes`
           : 'no simulator runtimes';
+        const readinessIssues = safeArray(host.readinessIssues);
         return `
           <article class="history-item ${isSelected ? 'selected' : ''}" data-apple-host-id="${escapeHtml(host.hostId || '')}">
             <strong>${escapeHtml(host.displayName || host.hostId || 'Apple host')}</strong>
@@ -127,6 +128,9 @@ function renderAppleHostsMarkup(hosts) {
             <div>${escapeHtml(appleHostAddressLabel(host))}</div>
             <div>${statusPill(toolchain.status || 'unknown')} ${statusPill(signing.status || 'unknown')}</div>
             <div>${escapeHtml(toolchain.xcodeVersion ? `Xcode ${toolchain.xcodeVersion}` : 'Xcode pending')} | ${escapeHtml(runtimeSummary)}</div>
+            <div>${escapeHtml(host.transportSummary || 'Transport summary pending')}</div>
+            <div>${escapeHtml(host.credentialProfileSummary || 'No Apple distribution defaults configured')}</div>
+            ${readinessIssues.length ? `<div>${escapeHtml(`Readiness gaps: ${readinessIssues.join('; ')}`)}</div>` : ''}
           </article>
         `;
       }).join('')}
@@ -186,6 +190,12 @@ function renderAppleOperationsMarkup(operations) {
           <div>${statusPill(operation.status || 'queued')}</div>
           <div>${escapeHtml(platformLabel(operation.platform))} | ${escapeHtml(operation.hostDisplayName || operation.hostId || 'unassigned host')} | ${escapeHtml(transportLabel(operation.transport))}</div>
           <div>${escapeHtml(operation.artifactPath || operation.summary || operation.errorMessage || 'No artifact published')}</div>
+          ${operation.routeReason ? `<div>${escapeHtml(operation.routeReason)}</div>` : ''}
+          ${operation.selectedDeveloperDirectory ? `<div>${escapeHtml(`Developer dir: ${operation.selectedDeveloperDirectory}`)}</div>` : ''}
+          ${operation.credentialProfileSummary ? `<div>${escapeHtml(operation.credentialProfileSummary)}</div>` : ''}
+          ${safeArray(operation.readinessIssues).length ? `<div>${escapeHtml(`Readiness gaps: ${safeArray(operation.readinessIssues).join('; ')}`)}</div>` : ''}
+          ${operation.diagnosticSummary ? `<div>${escapeHtml(operation.diagnosticSummary)}</div>` : ''}
+          ${safeArray(operation.redactedRequestOptionKeys).length ? `<div>${escapeHtml('Sensitive request options were redacted from stored history. Rerun may require host defaults or fresh credentials.')}</div>` : ''}
           <div>${escapeHtml(operation.completedAtUtc || operation.startedAtUtc || operation.queuedAtUtc || 'pending')}</div>
           <div class="card-actions">
             <button type="button" class="secondary-button" data-action="rerun-apple-operation" data-apple-operation-id="${escapeHtml(operation.operationId || '')}">

@@ -564,12 +564,30 @@ void RuntimeSectionControl::PopulateAppleHostEditor(const size_t index) {
     appleHostDirty_ = false;
 
     std::wstring status = L"Apple remote host loaded from the CLU registry.";
+    if (!host.transportSummary.empty()) {
+        status += L" " + host.transportSummary + L".";
+    }
     if (!host.toolchainStatus.empty() || !host.signingStatus.empty()) {
         status += L" Toolchain ";
         status += host.toolchainStatus.empty() ? L"unknown" : host.toolchainStatus;
         status += L", signing ";
         status += host.signingStatus.empty() ? L"unknown" : host.signingStatus;
         status += L".";
+    }
+    if (!host.credentialProfileSummary.empty()) {
+        status += L" " + host.credentialProfileSummary;
+        if (!status.empty() && status.back() != L'.') {
+            status += L".";
+        }
+    }
+    if (!host.readinessIssues.empty()) {
+        status += L" Readiness gaps: ";
+        for (size_t issueIndex = 0; issueIndex < host.readinessIssues.size(); ++issueIndex) {
+            if (issueIndex > 0) {
+                status += L"; ";
+            }
+            status += host.readinessIssues[issueIndex];
+        }
     }
     AppleHostStatusText().Text(winrt::hstring(status));
     UpdateEditorState();

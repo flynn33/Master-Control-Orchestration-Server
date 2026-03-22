@@ -171,6 +171,9 @@ struct ShellAppleRemoteHost final {
     std::wstring signingStatus;
     std::wstring signingMessage;
     std::vector<std::wstring> simulatorRuntimes;
+    std::wstring transportSummary;
+    std::wstring credentialProfileSummary;
+    std::vector<std::wstring> readinessIssues;
 };
 
 struct ShellAppleOperationRecord final {
@@ -192,6 +195,12 @@ struct ShellAppleOperationRecord final {
     std::wstring startedAtUtc;
     std::wstring completedAtUtc;
     std::map<std::wstring, std::wstring> requestOptions;
+    std::wstring routeReason;
+    std::wstring diagnosticSummary;
+    std::wstring selectedDeveloperDirectory;
+    std::wstring credentialProfileSummary;
+    std::vector<std::wstring> readinessIssues;
+    std::vector<std::wstring> redactedRequestOptionKeys;
 };
 
 struct ShellOperationResult final {

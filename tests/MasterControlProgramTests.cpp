@@ -1410,7 +1410,9 @@ int main() {
             { "toolId", "forsetti.macos.notarize" },
             { "options", nlohmann::json{
                 { "remoteWorkingDirectory", "/Volumes/Builds/MasterControl" },
-                { "artifactPath", "/Volumes/Builds/MasterControl/build/MasterControlShell.zip" }
+                { "artifactPath", "/Volumes/Builds/MasterControl/build/MasterControlShell.zip" },
+                { "appleId", "operator@example.com" },
+                { "appSpecificPassword", "app-secret-123" }
             } }
         }.dump());
         success &= expect(
@@ -1507,6 +1509,10 @@ int main() {
             snapshot.governance.appleOperations,
             MasterControl::PlatformTarget::MacOS,
             "forsetti.macos.staple");
+        const auto macNotarizeOperation = findAppleOperation(
+            snapshot.governance.appleOperations,
+            MasterControl::PlatformTarget::MacOS,
+            "forsetti.macos.notarize");
         success &= expect(
             macStapleOperation.has_value(),
             "CLU should publish recent Apple macOS distribution operations.");
@@ -1517,6 +1523,29 @@ int main() {
                 macStapleOperation->transport == MasterControl::AppleRemoteTransport::CompanionService &&
                 macStapleOperation->artifactPath.find("MasterControlShell.zip") != std::string::npos,
             "Apple operation history should capture the selected host, transport, and macOS artifact path.");
+        success &= expect(
+            macNotarizeOperation.has_value() &&
+                !macNotarizeOperation->routeReason.empty() &&
+                !macNotarizeOperation->diagnosticSummary.empty() &&
+                !macNotarizeOperation->selectedDeveloperDirectory.empty(),
+            "Apple notarization history should capture route reasoning and diagnostics for operators.");
+        success &= expect(
+            macNotarizeOperation.has_value() &&
+                std::find(
+                    macNotarizeOperation->redactedRequestOptionKeys.begin(),
+                    macNotarizeOperation->redactedRequestOptionKeys.end(),
+                    "appleId") != macNotarizeOperation->redactedRequestOptionKeys.end() &&
+                std::find(
+                    macNotarizeOperation->redactedRequestOptionKeys.begin(),
+                    macNotarizeOperation->redactedRequestOptionKeys.end(),
+                    "appSpecificPassword") != macNotarizeOperation->redactedRequestOptionKeys.end() &&
+                macNotarizeOperation->requestOptions.find("appleId") == macNotarizeOperation->requestOptions.end() &&
+                macNotarizeOperation->requestOptions.find("appSpecificPassword") == macNotarizeOperation->requestOptions.end(),
+            "Apple operation history should redact explicit Apple credential values from persisted request options.");
+        success &= expect(
+            macNotarizeOperation.has_value() &&
+                macNotarizeOperation->credentialProfileSummary.find("redacted") != std::string::npos,
+            "Apple operation history should tell operators when reruns may need fresh Apple credentials.");
 
         const auto iosExportOperation = findAppleOperation(
             snapshot.governance.appleOperations,
@@ -1664,6 +1693,15 @@ int main() {
                 MasterControl::PlatformTarget::MacOS,
                 "forsetti.macos.remote-build.validate").has_value(),
             "CLU should record recent Apple operation history even when the selected host is not ready.");
+        const auto blockedMacRoute = findAppleOperation(
+            snapshot.governance.appleOperations,
+            MasterControl::PlatformTarget::MacOS,
+            "forsetti.macos.remote-build.validate");
+        success &= expect(
+            blockedMacRoute.has_value() &&
+                !blockedMacRoute->routeReason.empty() &&
+                !blockedMacRoute->readinessIssues.empty(),
+            "Blocked Apple route history should preserve route reasoning and readiness gaps.");
 
         success &= expect(std::filesystem::exists(appPaths.entitlementsFile), "The runtime should seed an entitlement state file");
         writeTextFile(
@@ -2288,6 +2326,12 @@ int main() {
         success &= expect(
             std::filesystem::exists(appPaths.appleOperationHistoryFile),
             "Apple governance operation history should persist to disk.");
+        const auto persistedAppleHistory = readFileUtf8(appPaths.appleOperationHistoryFile);
+        success &= expect(
+            persistedAppleHistory.has_value() &&
+                persistedAppleHistory->find("operator@example.com") == std::string::npos &&
+                persistedAppleHistory->find("app-secret-123") == std::string::npos,
+            "Persisted Apple governance history should not contain explicit Apple credential values.");
 
         MasterControl::MasterControlApplication restartedApplication;
         success &= expect(restartedApplication.initialize(), "Application should reinitialize after shutdown");
@@ -2305,10 +2349,22 @@ int main() {
                 restartedSnapshot.governance.appleOperations,
                 MasterControl::PlatformTarget::IOS,
                 "forsetti.ios.export");
+            const auto restartedMacNotarizeOperation = findAppleOperation(
+                restartedSnapshot.governance.appleOperations,
+                MasterControl::PlatformTarget::MacOS,
+                "forsetti.macos.notarize");
             success &= expect(
                 restartedIosExportOperation.has_value() &&
                     restartedIosExportOperation->artifactPath.find("ios-export") != std::string::npos,
                 "Restarted snapshots should restore persisted iOS Apple operations.");
+            success &= expect(
+                restartedMacNotarizeOperation.has_value() &&
+                    std::find(
+                        restartedMacNotarizeOperation->redactedRequestOptionKeys.begin(),
+                        restartedMacNotarizeOperation->redactedRequestOptionKeys.end(),
+                        "appleId") != restartedMacNotarizeOperation->redactedRequestOptionKeys.end() &&
+                    restartedMacNotarizeOperation->requestOptions.find("appleId") == restartedMacNotarizeOperation->requestOptions.end(),
+                "Restarted snapshots should preserve Apple credential redaction metadata without restoring secrets.");
         }
         restartedApplication.shutdown();
     }
