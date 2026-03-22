@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.24",
-  "current_tag": "v0.1.24",
+  "current_version": "0.1.25",
+  "current_tag": "v0.1.25",
   "released_at": "2026-03-22",
-  "last_release_commit": "94f042f039f91b9c9c4a5d48254e5685c5152abb",
+  "last_release_commit": "342c1e3176db7526792e975888127897be4faba0",
   "history": [
+    {
+      "version": "0.1.25",
+      "tag": "v0.1.25",
+      "released_at": "2026-03-22",
+      "commit": "342c1e3176db7526792e975888127897be4faba0",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add proprietary software license (Jim Daley)"
+      ]
+    },
     {
       "version": "0.1.24",
       "tag": "v0.1.24",
