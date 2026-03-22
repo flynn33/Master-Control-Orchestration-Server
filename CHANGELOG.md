@@ -5,6 +5,13 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.1.19] - 2026-03-22
+### Summary
+Automated patch release for Master Control Program.
+
+### Included Changes
+- Expose Apple operations in shell and browser (flynn33)
+
 ## [0.1.18] - 2026-03-21
 ### Summary
 Automated patch release for Master Control Program.

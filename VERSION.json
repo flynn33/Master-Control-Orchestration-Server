@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.18",
-  "current_tag": "v0.1.18",
-  "released_at": "2026-03-21",
-  "last_release_commit": "8d3fc75998d175a4b0048a02d660e10ac7c4dfe0",
+  "current_version": "0.1.19",
+  "current_tag": "v0.1.19",
+  "released_at": "2026-03-22",
+  "last_release_commit": "0b062e6b5d75a484bfcf79078bddecec7a6cd3ea",
   "history": [
+    {
+      "version": "0.1.19",
+      "tag": "v0.1.19",
+      "released_at": "2026-03-22",
+      "commit": "0b062e6b5d75a484bfcf79078bddecec7a6cd3ea",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Expose Apple operations in shell and browser (flynn33)"
+      ]
+    },
     {
       "version": "0.1.18",
       "tag": "v0.1.18",
