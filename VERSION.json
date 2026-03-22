@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.23",
-  "current_tag": "v0.1.23",
+  "current_version": "0.1.24",
+  "current_tag": "v0.1.24",
   "released_at": "2026-03-22",
-  "last_release_commit": "d998c19c69ff5f61ce98c497d082dca5ad418c22",
+  "last_release_commit": "94f042f039f91b9c9c4a5d48254e5685c5152abb",
   "history": [
+    {
+      "version": "0.1.24",
+      "tag": "v0.1.24",
+      "released_at": "2026-03-22",
+      "commit": "94f042f039f91b9c9c4a5d48254e5685c5152abb",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add Apple job-control triage surfaces (flynn33)"
+      ]
+    },
     {
       "version": "0.1.23",
       "tag": "v0.1.23",
