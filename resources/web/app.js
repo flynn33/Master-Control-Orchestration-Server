@@ -209,6 +209,74 @@ function renderAppleOperationsMarkup(operations) {
   `;
 }
 
+function normalizeAppleOperationStatus(status) {
+  const normalized = String(status || 'queued').toLowerCase();
+  if (normalized === 'running' || normalized === 'in_progress') {
+    return 'running';
+  }
+  if (normalized === 'failed' || normalized === 'error' || normalized === 'blocked') {
+    return normalized === 'blocked' ? 'blocked' : 'failed';
+  }
+  if (normalized === 'completed' || normalized === 'success') {
+    return 'succeeded';
+  }
+  return normalized;
+}
+
+function isAttentionAppleOperation(operation) {
+  const normalized = normalizeAppleOperationStatus(operation?.status);
+  return normalized === 'failed' || normalized === 'blocked';
+}
+
+function isActiveAppleOperation(operation) {
+  const normalized = normalizeAppleOperationStatus(operation?.status);
+  return normalized === 'queued' || normalized === 'running';
+}
+
+function appleOperationCounts(operations) {
+  const counts = {
+    queued: 0,
+    running: 0,
+    succeeded: 0,
+    attention: 0,
+    rerunnableAttention: 0
+  };
+
+  for (const operation of safeArray(operations)) {
+    const normalized = normalizeAppleOperationStatus(operation?.status);
+    if (normalized === 'queued') {
+      counts.queued += 1;
+    } else if (normalized === 'running') {
+      counts.running += 1;
+    } else if (normalized === 'succeeded') {
+      counts.succeeded += 1;
+    }
+
+    if (isAttentionAppleOperation(operation)) {
+      counts.attention += 1;
+      if (operation?.rerunReady) {
+        counts.rerunnableAttention += 1;
+      }
+    }
+  }
+
+  return counts;
+}
+
+function filterAppleOperationsByMode(operations, mode) {
+  const normalizedMode = String(mode || 'attention').toLowerCase();
+  if (normalizedMode === 'all') {
+    return safeArray(operations);
+  }
+  if (normalizedMode === 'active') {
+    return safeArray(operations).filter(isActiveAppleOperation);
+  }
+  if (normalizedMode === 'succeeded') {
+    return safeArray(operations).filter((operation) => normalizeAppleOperationStatus(operation?.status) === 'succeeded');
+  }
+  return safeArray(operations).filter(isAttentionAppleOperation);
+}
+
 function renderGovernanceExecutionsMarkup(executions) {
   if (!executions.length) {
     return emptyState('No governance executions yet', 'CLU governance tool runs will appear here after platform checks execute.');
@@ -505,6 +573,7 @@ const state = {
   providerExecutionDraft: defaultProviderExecutionDraft(),
   mcpServerDraft: defaultMcpServerDraft(),
   appleHostDraft: defaultAppleHostDraft(),
+  cluAppleOperationFilter: 'attention',
   subAgentDraft: defaultSubAgentDraft(),
   subAgentGroupDraft: defaultSubAgentGroupDraft(),
   importStatus: makeStatus('Import operations are executed through the local admin API.', 'info'),
@@ -1165,6 +1234,17 @@ function renderCluView() {
   const governanceServers = safeArray(governance.governanceServers);
   const recentExecutions = safeArray(governance.recentExecutions);
   const appleOperations = safeArray(governance.appleOperations);
+  const appleOperationCountsSnapshot = appleOperationCounts(appleOperations);
+  const appleOperationFilter = state.cluAppleOperationFilter || 'attention';
+  const filteredAppleOperations = filterAppleOperationsByMode(appleOperations, appleOperationFilter);
+  const attentionHosts = appleHosts.filter((host) => safeArray(host.readinessIssues).length || safeArray(host.toolchain?.readinessIssues).length);
+  const appleQueueSummary = `${appleOperationCountsSnapshot.queued} queued | ${appleOperationCountsSnapshot.running} running | ${appleOperationCountsSnapshot.attention} attention`;
+  const appleFilterDescription = ({
+    attention: 'failed and blocked operations',
+    active: 'queued and running operations',
+    succeeded: 'completed Apple operations',
+    all: 'the full Apple operation history'
+  }[appleOperationFilter] || 'failed and blocked operations');
 
   const findingsMarkup = findings.length ? `
     <div class="history-list">
@@ -1218,7 +1298,9 @@ function renderCluView() {
   const actionNarrative = actions.length ? actions.join('\n') : 'No recommended actions are currently required.';
   const checklistNarrative = operatorChecklist.length ? operatorChecklist.join('\n') : 'No operator checklist is published yet.';
   const appleHostsMarkup = renderAppleHostsMarkup(appleHosts);
-  const appleOperationsMarkup = renderAppleOperationsMarkup(appleOperations);
+  const appleOperationsMarkup = filteredAppleOperations.length
+    ? renderAppleOperationsMarkup(filteredAppleOperations)
+    : emptyState('No Apple operations match this filter', `Switch filters to review ${appleFilterDescription}.`);
   const gatewaysMarkup = renderPlatformGatewaysMarkup(gateways);
   const governanceServersMarkup = renderGovernanceServersMarkup(governanceServers);
   const governanceExecutionsMarkup = renderGovernanceExecutionsMarkup(recentExecutions);
@@ -1234,7 +1316,9 @@ function renderCluView() {
 
       <div class="card-grid">
         ${metricCard('Apple Hosts', formatCount(appleHosts.length), 'remote toolchain lanes')}
-        ${metricCard('Apple Ops', formatCount(appleOperations.length), 'recent production runs')}
+        ${metricCard('Apple Ops', formatCount(appleOperations.length), appleQueueSummary)}
+        ${metricCard('Apple Attention', formatCount(appleOperationCountsSnapshot.attention), `${appleOperationCountsSnapshot.rerunnableAttention} ready for replay`)}
+        ${metricCard('Host Readiness', formatCount(attentionHosts.length), `${appleHosts.length - attentionHosts.length} hosts ready`)}
         ${metricCard('Gateways', formatCount(gateways.length), 'platform broadcasts')}
         ${metricCard('Gov Servers', formatCount(governanceServers.length), `${recentExecutions.length} recent executions`)}
       </div>
@@ -1263,11 +1347,20 @@ function renderCluView() {
         <article class="panel-block">
           <p class="eyebrow">Apple Fabric</p>
           <h3>Remote Hosts</h3>
+          <p class="narrative-copy">${escapeHtml(attentionHosts.length ? `${attentionHosts.length} Apple host${attentionHosts.length === 1 ? '' : 's'} report readiness gaps that could block Mac or iOS jobs.` : 'All published Apple hosts currently report ready toolchains and signing posture.')}</p>
           ${appleHostsMarkup}
         </article>
         <article class="panel-block">
           <p class="eyebrow">Apple Operations</p>
           <h3>Production History</h3>
+          <div class="button-row">
+            <button type="button" class="${appleOperationFilter === 'attention' ? 'route-button active' : 'route-button'}" data-action="set-apple-operation-filter" data-apple-operation-filter="attention">Attention</button>
+            <button type="button" class="${appleOperationFilter === 'active' ? 'route-button active' : 'route-button'}" data-action="set-apple-operation-filter" data-apple-operation-filter="active">Active</button>
+            <button type="button" class="${appleOperationFilter === 'succeeded' ? 'route-button active' : 'route-button'}" data-action="set-apple-operation-filter" data-apple-operation-filter="succeeded">Succeeded</button>
+            <button type="button" class="${appleOperationFilter === 'all' ? 'route-button active' : 'route-button'}" data-action="set-apple-operation-filter" data-apple-operation-filter="all">All</button>
+            <button type="button" data-action="retry-apple-attention"${appleOperationCountsSnapshot.rerunnableAttention ? '' : ' disabled'}>Retry Attention Ops</button>
+          </div>
+          <p class="narrative-copy">${escapeHtml(`Showing ${appleFilterDescription}. ${filteredAppleOperations.length} operation${filteredAppleOperations.length === 1 ? '' : 's'} match the current filter.`)}</p>
           ${appleOperationsMarkup}
         </article>
       </div>
@@ -2358,6 +2451,44 @@ async function rerunAppleOperation(operationId) {
   }
 }
 
+async function rerunAppleOperationsBatch(operations) {
+  const candidates = safeArray(operations).filter((operation) => operation?.rerunReady);
+  if (!candidates.length) {
+    state.cluStatus = makeStatus('No Apple operations are ready for a safe bulk replay.', 'warning');
+    renderShell();
+    return;
+  }
+
+  let completed = 0;
+  for (const operation of candidates) {
+    const options = { ...(operation.requestOptions || {}) };
+    if (operation.hostId && !options.hostId) {
+      options.hostId = operation.hostId;
+    }
+
+    try {
+      await loadJson('/api/clu/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          platform: operation.platform,
+          toolId: operation.toolId,
+          targetPath: operation.targetPath || '',
+          options
+        })
+      });
+      completed += 1;
+    } catch (error) {
+      state.cluStatus = makeStatus(`Bulk replay stopped on ${operation.displayName || operation.toolId || 'Apple operation'}: ${error.message}`, 'error');
+      renderShell();
+      return;
+    }
+  }
+
+  state.cluStatus = makeStatus(`Replayed ${completed} Apple attention operation${completed === 1 ? '' : 's'}.`, 'success');
+  await refreshDashboard({ preserveDynamicContent: false });
+}
+
 async function submitSubAgentGroupForm(form) {
   try {
     const memberTargetIds = Array.from(form.querySelectorAll('input[name="memberTargetId"]:checked')).map((input) => input.value);
@@ -2657,8 +2788,20 @@ function handleSurfaceClick(event) {
     renderShell();
     return;
   }
+  if (action === 'set-apple-operation-filter') {
+    state.cluAppleOperationFilter = actionButton.dataset.appleOperationFilter || 'attention';
+    renderShell();
+    return;
+  }
+  if (action === 'retry-apple-attention') {
+    const appleOperations = safeArray(governanceSnapshot().appleOperations);
+    const attentionOperations = appleOperations.filter((operation) => isAttentionAppleOperation(operation) && operation?.rerunReady);
+    rerunAppleOperationsBatch(attentionOperations);
+    return;
+  }
   if (action === 'rerun-apple-operation') {
     rerunAppleOperation(actionButton.dataset.appleOperationId);
+    return;
   }
 }
 

@@ -151,6 +151,16 @@
                 <Border Grid.Column="1" Style="{StaticResource ShellCardStyle}">
                     <StackPanel Spacing="16">
                         <TextBlock Text="Recent Apple Operations" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock x:Name="AppleOperationQueueText" Style="{StaticResource ShellDataTextStyle}" Text="Apple operation queue summary will appear here." TextWrapping="WrapWholeWords" />
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <ComboBox x:Name="AppleOperationFilterSelector" SelectionChanged="AppleOperationFilterSelector_SelectionChanged" Width="220">
+                                <ComboBoxItem Content="Attention required" Tag="attention" />
+                                <ComboBoxItem Content="Queued and running" Tag="active" />
+                                <ComboBoxItem Content="Succeeded" Tag="succeeded" />
+                                <ComboBoxItem Content="All Apple operations" Tag="all" />
+                            </ComboBox>
+                            <Button x:Name="RetryAttentionAppleOperationsButton" Click="RetryAttentionAppleOperationsButton_Click" Style="{StaticResource ShellSecondaryButtonStyle}" Content="Retry Attention Ops" />
+                        </StackPanel>
                         <ListView x:Name="CluAppleOperationsListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="420" Style="{StaticResource ShellListViewStyle}" />
                         <TextBlock Text="Replay Apple Operation" Style="{StaticResource ShellLabelTextStyle}" />
                         <ComboBox x:Name="AppleOperationSelector" SelectionChanged="AppleOperationSelector_SelectionChanged" PlaceholderText="Choose a recorded Apple operation" />
