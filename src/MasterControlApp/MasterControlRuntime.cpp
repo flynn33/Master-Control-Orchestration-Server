@@ -4901,8 +4901,15 @@ public:
     }
 
     std::vector<AppleOperationRecord> recentAppleOperations() const override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return recentAppleOperations_;
+        std::vector<AppleOperationRecord> operations;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            operations = recentAppleOperations_;
+        }
+        for (auto& operation : operations) {
+            operation = refreshAppleOperationReplayState(std::move(operation));
+        }
+        return operations;
     }
 
     GovernanceToolResult execute(const GovernanceToolRequest& request) override {
@@ -5237,6 +5244,210 @@ private:
             return host.credentialProfileSummary;
         }
         return joinAppleGovernanceSummaryParts(parts, "; ");
+    }
+
+    struct AppleOperationReplayAssessment final {
+        bool ready = false;
+        std::string message;
+    };
+
+    static bool isAppleReplayValidationTool(const std::string& toolId) {
+        return toolId == "forsetti.macos.toolchain.route" ||
+            toolId == "forsetti.ios.signing.route" ||
+            toolId == "forsetti.macos.remote-build.validate" ||
+            toolId == "forsetti.ios.remote-build.validate";
+    }
+
+    static bool replayHostSupportsPlatform(const AppleRemoteHost& host, const PlatformTarget platform) {
+        return std::find(host.platforms.begin(), host.platforms.end(), platform) != host.platforms.end();
+    }
+
+    static bool replayHostReadyForPlatform(const AppleRemoteHost& host, const PlatformTarget platform) {
+        if (!host.toolchain.reachable || !host.toolchain.xcodeInstalled) {
+            return false;
+        }
+        if (platform == PlatformTarget::MacOS) {
+            return host.toolchain.macosSdkAvailable;
+        }
+        if (platform == PlatformTarget::IOS) {
+            return host.toolchain.iosSdkAvailable &&
+                host.signing.signingReady &&
+                (host.toolchain.simulatorControlAvailable || host.toolchain.deviceControlAvailable);
+        }
+        return false;
+    }
+
+    std::optional<AppleRemoteHost> resolveReplayHost(const AppleOperationRecord& record) const {
+        if (!appleRemoteHostService_) {
+            return std::nullopt;
+        }
+
+        const auto hosts = appleRemoteHostService_->listHosts();
+        if (!trimCopy(record.hostId).empty()) {
+            const auto iterator = std::find_if(
+                hosts.begin(),
+                hosts.end(),
+                [&record](const AppleRemoteHost& candidate) { return candidate.hostId == record.hostId; });
+            if (iterator == hosts.end()) {
+                return std::nullopt;
+            }
+            return *iterator;
+        }
+
+        std::optional<AppleRemoteHost> bestHost;
+        int bestScore = (std::numeric_limits<int>::min)();
+        for (const auto& host : hosts) {
+            if (!host.enabled || !replayHostSupportsPlatform(host, record.platform)) {
+                continue;
+            }
+
+            int score = 0;
+            if (host.enabled) {
+                score += 50;
+            }
+            if (replayHostSupportsPlatform(host, record.platform)) {
+                score += 50;
+            }
+            if (host.toolchain.reachable) {
+                score += 40;
+            }
+            if (host.toolchain.xcodeInstalled) {
+                score += 30;
+            }
+            if (record.platform == PlatformTarget::MacOS && host.toolchain.macosSdkAvailable) {
+                score += 20;
+            }
+            if (record.platform == PlatformTarget::IOS && host.toolchain.iosSdkAvailable) {
+                score += 20;
+            }
+            if (record.platform == PlatformTarget::IOS && host.signing.signingReady) {
+                score += 15;
+            }
+            if (record.platform == PlatformTarget::IOS && host.toolchain.simulatorControlAvailable) {
+                score += 10;
+            }
+            if (host.transport == AppleRemoteTransport::CompanionService) {
+                score += 2;
+            }
+            if (replayHostReadyForPlatform(host, record.platform)) {
+                score += 100;
+            }
+
+            if (!bestHost.has_value() || score > bestScore) {
+                bestScore = score;
+                bestHost = host;
+            }
+        }
+        return bestHost;
+    }
+
+    AppleOperationReplayAssessment assessAppleOperationReplay(const AppleOperationRecord& record) const {
+        if (record.status == AppleOperationStatus::Queued || record.status == AppleOperationStatus::Running) {
+            return AppleOperationReplayAssessment{
+                false,
+                "Wait for the current Apple operation to finish before rerunning it."
+            };
+        }
+
+        const auto descriptor = findDescriptor(record.platform, record.toolId);
+        if (!descriptor.has_value()) {
+            return AppleOperationReplayAssessment{
+                false,
+                "The recorded Apple governance tool is no longer registered in this build."
+            };
+        }
+
+        const auto host = resolveReplayHost(record);
+        if (!host.has_value()) {
+            return AppleOperationReplayAssessment{
+                false,
+                trimCopy(record.hostId).empty()
+                    ? "No enabled Apple host is currently configured for automatic " + platformKey(record.platform) +
+                        " reruns."
+                    : "The original Apple host '" + record.hostId +
+                        "' is no longer available for safe reruns."
+            };
+        }
+
+        if (!host->enabled) {
+            return AppleOperationReplayAssessment{
+                false,
+                "Apple host '" + host->displayName + "' is disabled and cannot be used for reruns."
+            };
+        }
+
+        if (!replayHostSupportsPlatform(*host, record.platform)) {
+            return AppleOperationReplayAssessment{
+                false,
+                "Apple host '" + host->displayName + "' no longer advertises the " +
+                    platformKey(record.platform) + " governance lane."
+            };
+        }
+
+        if (isAppleReplayValidationTool(record.toolId)) {
+            std::vector<std::string> parts;
+            parts.push_back(
+                "Ready to rerun CLU validation on Apple host '" + host->displayName + "' via " +
+                to_string(host->transport) + ".");
+            if (!host->readinessIssues.empty()) {
+                parts.push_back("Current readiness gaps: " + joinAppleGovernanceSummaryParts(host->readinessIssues, "; "));
+            }
+            return AppleOperationReplayAssessment{ true, joinAppleGovernanceSummaryParts(parts, "; ") };
+        }
+
+        GovernanceToolRequest request;
+        request.platform = record.platform;
+        request.toolId = record.toolId;
+        request.targetPath = record.targetPath;
+        request.options = record.requestOptions;
+
+        GovernanceToolResult preview;
+        preview.platform = record.platform;
+        preview.toolId = record.toolId;
+        preview.displayName = descriptor->displayName;
+
+        const auto command = buildAppleOperationalCommand(*descriptor, request, *host, preview);
+        if (!command.has_value()) {
+            std::string message = trimCopy(preview.summary);
+            if (record.toolId == "forsetti.macos.notarize" &&
+                !record.redactedRequestOptionKeys.empty() &&
+                trimCopy(host->defaultNotaryKeychainProfile).empty()) {
+                message =
+                    "Rerun requires a host default notarization profile or fresh Apple ID credentials because "
+                    "the original secrets were redacted from stored history.";
+            } else if (message.empty() && !preview.findings.empty()) {
+                message = preview.findings.front().message;
+            }
+            if (message.empty()) {
+                message = "Stored Apple operation no longer has enough information for a safe rerun.";
+            }
+            return AppleOperationReplayAssessment{ false, message };
+        }
+
+        std::vector<std::string> parts;
+        parts.push_back(
+            "Ready to rerun on Apple host '" + host->displayName + "' via " +
+            to_string(host->transport) + ".");
+        if (record.toolId == "forsetti.macos.notarize" &&
+            !record.redactedRequestOptionKeys.empty() &&
+            !trimCopy(host->defaultNotaryKeychainProfile).empty()) {
+            parts.push_back(
+                "Redacted Apple ID secrets will be replaced by host notary profile '" +
+                host->defaultNotaryKeychainProfile + "'.");
+        } else if (!record.redactedRequestOptionKeys.empty()) {
+            parts.push_back("Stored history still omits sensitive request values.");
+        }
+        if (!host->readinessIssues.empty()) {
+            parts.push_back("Current readiness gaps: " + joinAppleGovernanceSummaryParts(host->readinessIssues, "; "));
+        }
+        return AppleOperationReplayAssessment{ true, joinAppleGovernanceSummaryParts(parts, "; ") };
+    }
+
+    AppleOperationRecord refreshAppleOperationReplayState(AppleOperationRecord record) const {
+        const auto assessment = assessAppleOperationReplay(record);
+        record.rerunReady = assessment.ready;
+        record.rerunReadinessMessage = assessment.message;
+        return record;
     }
 
     AppleOperationRecord queueAppleOperation(const GovernanceToolDescriptor& descriptor,

@@ -201,6 +201,8 @@ struct ShellAppleOperationRecord final {
     std::wstring credentialProfileSummary;
     std::vector<std::wstring> readinessIssues;
     std::vector<std::wstring> redactedRequestOptionKeys;
+    bool rerunReady = false;
+    std::wstring rerunReadinessMessage;
 };
 
 struct ShellOperationResult final {

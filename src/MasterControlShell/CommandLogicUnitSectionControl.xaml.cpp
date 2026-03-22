@@ -111,7 +111,7 @@ void CommandLogicUnitSectionControl::RefreshAppleOperationSelector() {
 
 void CommandLogicUnitSectionControl::UpdateOperationState() {
     const auto hasSelection = !selectedAppleOperationId_.empty();
-    RerunAppleOperationButton().IsEnabled(runtime_ != nullptr && hasSelection);
+    RerunAppleOperationButton().IsEnabled(false);
     if (!hasSelection) {
         AppleOperationStatusText().Text(L"Select an Apple operation to replay it through CLU.");
         return;
@@ -128,7 +128,14 @@ void CommandLogicUnitSectionControl::UpdateOperationState() {
         return;
     }
 
+    RerunAppleOperationButton().IsEnabled(runtime_ != nullptr && iterator->rerunReady);
     std::wstring status = iterator->summary.empty() ? L"Ready to replay the selected Apple operation." : iterator->summary;
+    if (!iterator->rerunReadinessMessage.empty()) {
+        status += L" Replay: " + iterator->rerunReadinessMessage;
+        if (!status.empty() && status.back() != L'.') {
+            status += L".";
+        }
+    }
     if (!iterator->routeReason.empty()) {
         status += L" Route: " + iterator->routeReason;
     }
@@ -179,6 +186,14 @@ winrt::Windows::Foundation::IAsyncAction CommandLogicUnitSectionControl::RerunAp
         });
     if (iterator == appleOperations_.end()) {
         AppleOperationStatusText().Text(L"Select a recorded Apple operation before replaying it.");
+        co_return;
+    }
+    if (!iterator->rerunReady) {
+        AppleOperationStatusText().Text(
+            iterator->rerunReadinessMessage.empty()
+                ? L"This Apple operation is not ready for a safe rerun yet."
+                : winrt::hstring(iterator->rerunReadinessMessage));
+        UpdateOperationState();
         co_return;
     }
 

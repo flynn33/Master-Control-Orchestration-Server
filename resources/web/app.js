@@ -194,11 +194,12 @@ function renderAppleOperationsMarkup(operations) {
           ${operation.selectedDeveloperDirectory ? `<div>${escapeHtml(`Developer dir: ${operation.selectedDeveloperDirectory}`)}</div>` : ''}
           ${operation.credentialProfileSummary ? `<div>${escapeHtml(operation.credentialProfileSummary)}</div>` : ''}
           ${safeArray(operation.readinessIssues).length ? `<div>${escapeHtml(`Readiness gaps: ${safeArray(operation.readinessIssues).join('; ')}`)}</div>` : ''}
+          ${operation.rerunReadinessMessage ? `<div>${escapeHtml(`Replay: ${operation.rerunReadinessMessage}`)}</div>` : ''}
           ${operation.diagnosticSummary ? `<div>${escapeHtml(operation.diagnosticSummary)}</div>` : ''}
           ${safeArray(operation.redactedRequestOptionKeys).length ? `<div>${escapeHtml('Sensitive request options were redacted from stored history. Rerun may require host defaults or fresh credentials.')}</div>` : ''}
           <div>${escapeHtml(operation.completedAtUtc || operation.startedAtUtc || operation.queuedAtUtc || 'pending')}</div>
           <div class="card-actions">
-            <button type="button" class="secondary-button" data-action="rerun-apple-operation" data-apple-operation-id="${escapeHtml(operation.operationId || '')}">
+            <button type="button" class="secondary-button" data-action="rerun-apple-operation" data-apple-operation-id="${escapeHtml(operation.operationId || '')}" ${operation.rerunReady ? '' : 'disabled'}>
               Rerun
             </button>
           </div>
@@ -2321,6 +2322,14 @@ async function rerunAppleOperation(operationId) {
   const operation = safeArray(governanceSnapshot().appleOperations).find((candidate) => candidate.operationId === operationId);
   if (!operation) {
     state.cluStatus = makeStatus('Select a recorded Apple operation before replaying it.', 'warning');
+    renderShell();
+    return;
+  }
+  if (!operation.rerunReady) {
+    state.cluStatus = makeStatus(
+      operation.rerunReadinessMessage || 'This Apple operation is not ready for a safe rerun yet.',
+      'warning'
+    );
     renderShell();
     return;
   }

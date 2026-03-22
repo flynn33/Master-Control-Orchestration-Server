@@ -519,6 +519,8 @@ struct AppleOperationRecord final {
     std::string credentialProfileSummary;
     std::vector<std::string> readinessIssues;
     std::vector<std::string> redactedRequestOptionKeys;
+    bool rerunReady = false;
+    std::string rerunReadinessMessage;
 };
 
 struct GovernanceSnapshot final {
@@ -1083,7 +1085,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     selectedDeveloperDirectory,
     credentialProfileSummary,
     readinessIssues,
-    redactedRequestOptionKeys)
+    redactedRequestOptionKeys,
+    rerunReady,
+    rerunReadinessMessage)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GovernanceSnapshot,

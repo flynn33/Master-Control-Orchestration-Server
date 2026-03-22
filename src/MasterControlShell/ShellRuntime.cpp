@@ -609,6 +609,8 @@ ShellAppleOperationRecord appleOperationFromJson(const JsonObject& object) {
     record.credentialProfileSummary = wideFromUtf8(jsonStringOr(object, L"credentialProfileSummary", ""));
     record.readinessIssues = jsonStringArrayOr(object, L"readinessIssues");
     record.redactedRequestOptionKeys = jsonStringArrayOr(object, L"redactedRequestOptionKeys");
+    record.rerunReady = jsonBoolOr(object, L"rerunReady", false);
+    record.rerunReadinessMessage = wideFromUtf8(jsonStringOr(object, L"rerunReadinessMessage", ""));
     return record;
 }
 

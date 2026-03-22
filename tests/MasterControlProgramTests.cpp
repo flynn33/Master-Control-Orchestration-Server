@@ -1546,6 +1546,11 @@ int main() {
             macNotarizeOperation.has_value() &&
                 macNotarizeOperation->credentialProfileSummary.find("redacted") != std::string::npos,
             "Apple operation history should tell operators when reruns may need fresh Apple credentials.");
+        success &= expect(
+            macNotarizeOperation.has_value() &&
+                macNotarizeOperation->rerunReady &&
+                macNotarizeOperation->rerunReadinessMessage.find("host notary profile") != std::string::npos,
+            "Apple notarization history should mark reruns ready when host defaults can replace redacted credentials.");
 
         const auto iosExportOperation = findAppleOperation(
             snapshot.governance.appleOperations,
@@ -1554,8 +1559,66 @@ int main() {
         success &= expect(
             iosExportOperation.has_value() &&
                 iosExportOperation->status == MasterControl::AppleOperationStatus::Succeeded &&
-                iosExportOperation->artifactPath.find("ios-export") != std::string::npos,
+                iosExportOperation->artifactPath.find("ios-export") != std::string::npos &&
+                iosExportOperation->rerunReady,
             "Apple operation history should capture iOS export operations and output paths.");
+
+        const auto appleHostCredentialReset = application.upsertAppleRemoteHostJson(nlohmann::json{
+            { "hostId", "apple-host-01" },
+            { "displayName", "Apple Host 01" },
+            { "transport", "companion_service" },
+            { "platforms", nlohmann::json::array({ "macos", "ios" }) },
+            { "address", "127.0.0.1" },
+            { "port", appleCompanionServer.port() },
+            { "companionHealthPath", "/healthz" },
+            { "companionExecutePath", "/execute" },
+            { "defaultSigningIdentity", "Developer ID Application: Master Control" },
+            { "defaultNotaryKeychainProfile", "" },
+            { "defaultNotaryTeamId", "" },
+            { "enabled", true }
+        }.dump());
+        success &= expect(
+            appleHostCredentialReset.succeeded,
+            "Apple host updates should allow the test to remove default notarization credentials.");
+
+        snapshot = application.snapshot();
+        const auto blockedReplayNotarizeOperation = findAppleOperation(
+            snapshot.governance.appleOperations,
+            MasterControl::PlatformTarget::MacOS,
+            "forsetti.macos.notarize");
+        success &= expect(
+            blockedReplayNotarizeOperation.has_value() &&
+                !blockedReplayNotarizeOperation->rerunReady &&
+                blockedReplayNotarizeOperation->rerunReadinessMessage.find("fresh Apple ID credentials") != std::string::npos,
+            "Apple rerun readiness should block replay when redacted notarization credentials no longer have host defaults.");
+
+        const auto appleHostCredentialRestore = application.upsertAppleRemoteHostJson(nlohmann::json{
+            { "hostId", "apple-host-01" },
+            { "displayName", "Apple Host 01" },
+            { "transport", "companion_service" },
+            { "platforms", nlohmann::json::array({ "macos", "ios" }) },
+            { "address", "127.0.0.1" },
+            { "port", appleCompanionServer.port() },
+            { "companionHealthPath", "/healthz" },
+            { "companionExecutePath", "/execute" },
+            { "defaultSigningIdentity", "Developer ID Application: Master Control" },
+            { "defaultNotaryKeychainProfile", "mastercontrol-notary" },
+            { "defaultNotaryTeamId", "TEAM12345" },
+            { "enabled", true }
+        }.dump());
+        success &= expect(
+            appleHostCredentialRestore.succeeded,
+            "Apple host updates should allow the test to restore default notarization credentials.");
+
+        snapshot = application.snapshot();
+        const auto restoredReplayNotarizeOperation = findAppleOperation(
+            snapshot.governance.appleOperations,
+            MasterControl::PlatformTarget::MacOS,
+            "forsetti.macos.notarize");
+        success &= expect(
+            restoredReplayNotarizeOperation.has_value() &&
+                restoredReplayNotarizeOperation->rerunReady,
+            "Apple rerun readiness should recover once host notarization defaults are restored.");
 
         const auto appleOperationsDocument = httpGetJson(application.browserUrl() + "api/clu/apple-operations");
         success &= expect(
@@ -1563,6 +1626,12 @@ int main() {
                 appleOperationsDocument->is_array() &&
                 !appleOperationsDocument->empty(),
             "The admin API should expose recent Apple operations through the CLU route.");
+        success &= expect(
+            appleOperationsDocument.has_value() &&
+                !appleOperationsDocument->empty() &&
+                (*appleOperationsDocument)[0].contains("rerunReady") &&
+                (*appleOperationsDocument)[0].contains("rerunReadinessMessage"),
+            "The admin API should expose Apple rerun readiness metadata through the CLU route.");
         const auto macGovernanceDocumentWithHistory = httpGetJson(application.browserUrl() + "mcp/governance/macos");
         success &= expect(
             macGovernanceDocumentWithHistory.has_value() &&
@@ -2363,8 +2432,10 @@ int main() {
                         restartedMacNotarizeOperation->redactedRequestOptionKeys.begin(),
                         restartedMacNotarizeOperation->redactedRequestOptionKeys.end(),
                         "appleId") != restartedMacNotarizeOperation->redactedRequestOptionKeys.end() &&
-                    restartedMacNotarizeOperation->requestOptions.find("appleId") == restartedMacNotarizeOperation->requestOptions.end(),
-                "Restarted snapshots should preserve Apple credential redaction metadata without restoring secrets.");
+                    restartedMacNotarizeOperation->requestOptions.find("appleId") == restartedMacNotarizeOperation->requestOptions.end() &&
+                    !restartedMacNotarizeOperation->rerunReady &&
+                    restartedMacNotarizeOperation->rerunReadinessMessage.find("no longer available") != std::string::npos,
+                "Restarted snapshots should preserve Apple credential redaction metadata and block reruns when the original Apple host is gone.");
         }
         restartedApplication.shutdown();
     }
