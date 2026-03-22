@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.21",
-  "current_tag": "v0.1.21",
+  "current_version": "0.1.22",
+  "current_tag": "v0.1.22",
   "released_at": "2026-03-22",
-  "last_release_commit": "117e881830738479c4a8e1a1f861869da6b46c2d",
+  "last_release_commit": "172993192bc1381ae5f6f5dbffc6f0fa6e638d8c",
   "history": [
+    {
+      "version": "0.1.22",
+      "tag": "v0.1.22",
+      "released_at": "2026-03-22",
+      "commit": "172993192bc1381ae5f6f5dbffc6f0fa6e638d8c",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Harden Apple operation diagnostics and credential redaction (flynn33)"
+      ]
+    },
     {
       "version": "0.1.21",
       "tag": "v0.1.21",
