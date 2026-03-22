@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.19",
-  "current_tag": "v0.1.19",
+  "current_version": "0.1.20",
+  "current_tag": "v0.1.20",
   "released_at": "2026-03-22",
-  "last_release_commit": "0b062e6b5d75a484bfcf79078bddecec7a6cd3ea",
+  "last_release_commit": "c12105c1cacc0107d6403b2a4ded94fa71a21402",
   "history": [
+    {
+      "version": "0.1.20",
+      "tag": "v0.1.20",
+      "released_at": "2026-03-22",
+      "commit": "c12105c1cacc0107d6403b2a4ded94fa71a21402",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add Apple host management and replay controls (flynn33)"
+      ]
+    },
     {
       "version": "0.1.19",
       "tag": "v0.1.19",
