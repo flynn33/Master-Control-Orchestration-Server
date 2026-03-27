@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.36",
-  "current_tag": "v0.1.36",
+  "current_version": "0.1.37",
+  "current_tag": "v0.1.37",
   "released_at": "2026-03-27",
-  "last_release_commit": "eb06d5c82798e0b71faf4b0ffa9f9563f6f123bb",
+  "last_release_commit": "117023f3e430ba17cd60d47402d5a9ee867a85c0",
   "history": [
+    {
+      "version": "0.1.37",
+      "tag": "v0.1.37",
+      "released_at": "2026-03-27",
+      "commit": "117023f3e430ba17cd60d47402d5a9ee867a85c0",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Package deployment acceptance bundles (flynn33)"
+      ]
+    },
     {
       "version": "0.1.36",
       "tag": "v0.1.36",
