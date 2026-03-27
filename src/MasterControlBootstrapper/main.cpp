@@ -224,6 +224,11 @@ std::filesystem::path knownFolder(REFKNOWNFOLDERID folderId) {
     return output;
 }
 
+std::filesystem::path preferredShortcutDirectory() {
+    const auto folderId = IsUserAnAdmin() != FALSE ? FOLDERID_CommonPrograms : FOLDERID_Programs;
+    return knownFolder(folderId) / kProgramsFolderName;
+}
+
 std::wstring escapePowerShellLiteral(std::wstring value) {
     size_t position = 0;
     while ((position = value.find(L'\'', position)) != std::wstring::npos) {
@@ -539,7 +544,7 @@ InstallationState buildInstallationState(const std::filesystem::path& installDir
                                          const MasterControl::AppConfiguration& configuration,
                                          const IntegrationOptions& options) {
     const auto paths = MasterControl::resolveAppPaths();
-    const auto shortcutDirectory = knownFolder(FOLDERID_CommonPrograms) / kProgramsFolderName;
+    const auto shortcutDirectory = preferredShortcutDirectory();
     InstallationState state;
     state.version = MASTERCONTROL_BOOTSTRAPPER_VERSION;
     state.installDirectory = installDirectory.string();
@@ -1508,12 +1513,14 @@ bool runPreflight(const std::filesystem::path& installDirectory, const Integrati
 
     if (options.manageShortcuts) {
         try {
-            const auto shortcutDirectory = knownFolder(FOLDERID_CommonPrograms) / kProgramsFolderName;
+            const auto shortcutDirectory = preferredShortcutDirectory();
             if (shortcutDirectory.empty()) {
-                appendIssue(L"Common Programs shortcut folder could not be resolved.");
+                appendIssue(L"Shortcut folder could not be resolved.");
+            } else if (!probeWritableInstallTarget(shortcutDirectory)) {
+                appendIssue(L"Shortcut folder is not writable: " + shortcutDirectory.wstring());
             }
         } catch (const std::exception& error) {
-            appendIssue(L"Common Programs shortcut folder could not be resolved: " + wideFromUtf8(error.what()));
+            appendIssue(L"Shortcut folder could not be resolved: " + wideFromUtf8(error.what()));
         }
     }
 
@@ -1534,6 +1541,7 @@ bool runPreflight(const std::filesystem::path& installDirectory, const Integrati
             { "firewallManaged", options.manageFirewall },
             { "shortcutsManaged", options.manageShortcuts },
             { "uninstallRegistrationManaged", options.manageUninstallRegistration },
+            { "shortcutDirectory", options.manageShortcuts ? preferredShortcutDirectory().string() : "" },
             { "issues", nlohmann::json::array() },
             { "warnings", nlohmann::json::array() }
         };
