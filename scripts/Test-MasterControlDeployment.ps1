@@ -193,6 +193,9 @@ function New-DeploymentSummary {
     if ($Report.PSObject.Properties.Name -contains "artifactRoot") {
         $lines.Add("* Artifact root: $($Report.artifactRoot)")
     }
+    if ($Report.PSObject.Properties.Name -contains "bundlePath") {
+        $lines.Add("* Bundle path: $($Report.bundlePath)")
+    }
     if ($Report.PSObject.Properties.Name -contains "hostDiagnostics" -and $Report.hostDiagnostics) {
         $lines.Add("* Host diagnostics: $($Report.hostDiagnostics.directory)")
     }
@@ -760,6 +763,11 @@ $artifactRoot = if (-not [string]::IsNullOrWhiteSpace($ReportPath)) {
 } else {
     Join-Path $report.root "artifacts"
 }
+$bundlePath = if (-not [string]::IsNullOrWhiteSpace($ReportPath)) {
+    [System.IO.Path]::ChangeExtension([System.IO.Path]::GetFullPath($ReportPath), ".bundle.zip")
+} else {
+    Join-Path $artifactRoot "deployment-acceptance.bundle.zip"
+}
 $scriptCompletedAt = Get-Date
 
 $reportForSerialization = [pscustomobject][ordered]@{
@@ -768,6 +776,7 @@ $reportForSerialization = [pscustomobject][ordered]@{
     bootstrapperPath = $report.bootstrapperPath
     root = $report.root
     artifactRoot = $artifactRoot
+    bundlePath = $bundlePath
     scenario = $report.scenario
     effectiveScenario = $report.effectiveScenario
     isAdministrator = $report.isAdministrator
@@ -863,6 +872,23 @@ if (-not [string]::IsNullOrWhiteSpace($SummaryPath)) {
         New-Item -ItemType Directory -Force -Path $summaryDirectory | Out-Null
     }
     Set-Content -Path $SummaryPath -Value (New-DeploymentSummary -Report $reportForSerialization) -Encoding UTF8
+}
+
+$bundleSources = New-Object System.Collections.ArrayList
+if ($ReportPath -and (Test-Path $ReportPath)) {
+    [void]$bundleSources.Add($ReportPath)
+}
+if ($SummaryPath -and (Test-Path $SummaryPath)) {
+    [void]$bundleSources.Add($SummaryPath)
+}
+if (Test-Path $artifactRoot) {
+    [void]$bundleSources.Add($artifactRoot)
+}
+if ($bundleSources.Count -gt 0) {
+    if (Test-Path $bundlePath) {
+        Remove-Item -Path $bundlePath -Force
+    }
+    Compress-Archive -Path @($bundleSources) -DestinationPath $bundlePath -Force
 }
 
 $reportJson
