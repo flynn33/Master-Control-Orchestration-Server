@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.31",
-  "current_tag": "v0.1.31",
+  "current_version": "0.1.32",
+  "current_tag": "v0.1.32",
   "released_at": "2026-03-27",
-  "last_release_commit": "55a085c3a1f721d6cdda9b7d74e2d98f2fe7c2ff",
+  "last_release_commit": "e4ed023f191a0026dff029f186063a939f3c37a9",
   "history": [
+    {
+      "version": "0.1.32",
+      "tag": "v0.1.32",
+      "released_at": "2026-03-27",
+      "commit": "e4ed023f191a0026dff029f186063a939f3c37a9",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Harden bootstrapper rollback and deployment contracts (flynn33)"
+      ]
+    },
     {
       "version": "0.1.31",
       "tag": "v0.1.31",
