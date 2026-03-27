@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -59,6 +60,20 @@ struct InstallationState final {
     uint16_t beaconPort = 0;
     bool allowOpenLanAccess = false;
     bool beaconEnabled = false;
+    bool serviceManaged = true;
+    bool firewallManaged = true;
+    bool shortcutsManaged = true;
+    bool uninstallRegistrationManaged = true;
+};
+
+struct ServiceInstallationStatus final {
+    bool registered = false;
+    bool autoStart = false;
+    bool delayedAutoStart = false;
+    bool recoveryConfigured = false;
+    bool failureActionsOnNonCrash = false;
+    bool sidUnrestricted = false;
+    std::string binaryPath;
 };
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -77,7 +92,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     browserPort,
     beaconPort,
     allowOpenLanAccess,
-    beaconEnabled)
+    beaconEnabled,
+    serviceManaged,
+    firewallManaged,
+    shortcutsManaged,
+    uninstallRegistrationManaged)
 
 struct PayloadLayout final {
     bool flatPayload = false;
@@ -356,7 +375,8 @@ std::string browserHostForConfiguration(const MasterControl::AppConfiguration& c
 }
 
 InstallationState buildInstallationState(const std::filesystem::path& installDirectory,
-                                         const MasterControl::AppConfiguration& configuration) {
+                                         const MasterControl::AppConfiguration& configuration,
+                                         const IntegrationOptions& options) {
     const auto paths = MasterControl::resolveAppPaths();
     const auto shortcutDirectory = knownFolder(FOLDERID_CommonPrograms) / kProgramsFolderName;
     InstallationState state;
@@ -375,6 +395,10 @@ InstallationState buildInstallationState(const std::filesystem::path& installDir
     state.beaconPort = configuration.beaconPort;
     state.allowOpenLanAccess = configuration.security.allowOpenLanAccess;
     state.beaconEnabled = configuration.beaconEnabled;
+    state.serviceManaged = options.manageService;
+    state.firewallManaged = options.manageFirewall;
+    state.shortcutsManaged = options.manageShortcuts;
+    state.uninstallRegistrationManaged = options.manageUninstallRegistration;
     return state;
 }
 
@@ -566,6 +590,135 @@ bool stopServiceIfPresent() {
     return true;
 }
 
+ServiceInstallationStatus queryServiceInstallationStatus() {
+    ServiceInstallationStatus status;
+
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (scm == nullptr) {
+        return status;
+    }
+
+    SC_HANDLE service = OpenServiceW(scm, kServiceName, SERVICE_QUERY_CONFIG | SERVICE_QUERY_STATUS);
+    if (service == nullptr) {
+        CloseServiceHandle(scm);
+        return status;
+    }
+
+    status.registered = true;
+
+    DWORD bytesNeeded = 0;
+    QueryServiceConfigW(service, nullptr, 0, &bytesNeeded);
+    if (bytesNeeded != 0) {
+        std::vector<std::byte> buffer(bytesNeeded);
+        auto* configuration = reinterpret_cast<QUERY_SERVICE_CONFIGW*>(buffer.data());
+        if (QueryServiceConfigW(service, configuration, bytesNeeded, &bytesNeeded) != 0) {
+            status.autoStart = configuration->dwStartType == SERVICE_AUTO_START;
+            if (configuration->lpBinaryPathName != nullptr) {
+                status.binaryPath = utf8FromWide(configuration->lpBinaryPathName);
+            }
+        }
+    }
+
+    SERVICE_DELAYED_AUTO_START_INFO delayedAutoStart{};
+    bytesNeeded = 0;
+    if (QueryServiceConfig2W(
+            service,
+            SERVICE_CONFIG_DELAYED_AUTO_START_INFO,
+            reinterpret_cast<LPBYTE>(&delayedAutoStart),
+            sizeof(delayedAutoStart),
+            &bytesNeeded) != 0) {
+        status.delayedAutoStart = delayedAutoStart.fDelayedAutostart != FALSE;
+    }
+
+    DWORD failureActionsBytes = 0;
+    QueryServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS, nullptr, 0, &failureActionsBytes);
+    if (failureActionsBytes != 0) {
+        std::vector<std::byte> failureActionsBuffer(failureActionsBytes);
+        auto* failureActions = reinterpret_cast<SERVICE_FAILURE_ACTIONSW*>(failureActionsBuffer.data());
+        if (QueryServiceConfig2W(
+                service,
+                SERVICE_CONFIG_FAILURE_ACTIONS,
+                reinterpret_cast<LPBYTE>(failureActions),
+                failureActionsBytes,
+                &failureActionsBytes) != 0) {
+            status.recoveryConfigured = failureActions->cActions > 0 &&
+                failureActions->lpsaActions != nullptr &&
+                failureActions->lpsaActions[0].Type == SC_ACTION_RESTART;
+        }
+    }
+
+    SERVICE_FAILURE_ACTIONS_FLAG failureActionsFlag{};
+    bytesNeeded = 0;
+    if (QueryServiceConfig2W(
+            service,
+            SERVICE_CONFIG_FAILURE_ACTIONS_FLAG,
+            reinterpret_cast<LPBYTE>(&failureActionsFlag),
+            sizeof(failureActionsFlag),
+            &bytesNeeded) != 0) {
+        status.failureActionsOnNonCrash = failureActionsFlag.fFailureActionsOnNonCrashFailures != FALSE;
+    }
+
+    SERVICE_SID_INFO serviceSidInfo{};
+    bytesNeeded = 0;
+    if (QueryServiceConfig2W(
+            service,
+            SERVICE_CONFIG_SERVICE_SID_INFO,
+            reinterpret_cast<LPBYTE>(&serviceSidInfo),
+            sizeof(serviceSidInfo),
+            &bytesNeeded) != 0) {
+        status.sidUnrestricted = serviceSidInfo.dwServiceSidType == SERVICE_SID_TYPE_UNRESTRICTED;
+    }
+
+    CloseServiceHandle(service);
+    CloseServiceHandle(scm);
+    return status;
+}
+
+bool configureServicePolicies(SC_HANDLE service) {
+    SERVICE_DESCRIPTIONW description{};
+    description.lpDescription = const_cast<LPWSTR>(
+        L"Forsetti-native control service for MCP servers, sub-agents, telemetry, and browser administration.");
+    if (ChangeServiceConfig2W(service, SERVICE_CONFIG_DESCRIPTION, &description) == 0) {
+        return false;
+    }
+
+    SERVICE_DELAYED_AUTO_START_INFO delayedAutoStart{};
+    delayedAutoStart.fDelayedAutostart = TRUE;
+    if (ChangeServiceConfig2W(service, SERVICE_CONFIG_DELAYED_AUTO_START_INFO, &delayedAutoStart) == 0) {
+        return false;
+    }
+
+    SC_ACTION recoveryActions[3]{};
+    recoveryActions[0].Type = SC_ACTION_RESTART;
+    recoveryActions[0].Delay = 5000;
+    recoveryActions[1].Type = SC_ACTION_RESTART;
+    recoveryActions[1].Delay = 5000;
+    recoveryActions[2].Type = SC_ACTION_NONE;
+    recoveryActions[2].Delay = 0;
+
+    SERVICE_FAILURE_ACTIONSW failureActions{};
+    failureActions.dwResetPeriod = 86400;
+    failureActions.cActions = static_cast<DWORD>(std::size(recoveryActions));
+    failureActions.lpsaActions = recoveryActions;
+    if (ChangeServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS, &failureActions) == 0) {
+        return false;
+    }
+
+    SERVICE_FAILURE_ACTIONS_FLAG failureActionsFlag{};
+    failureActionsFlag.fFailureActionsOnNonCrashFailures = TRUE;
+    if (ChangeServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS_FLAG, &failureActionsFlag) == 0) {
+        return false;
+    }
+
+    SERVICE_SID_INFO serviceSidInfo{};
+    serviceSidInfo.dwServiceSidType = SERVICE_SID_TYPE_UNRESTRICTED;
+    if (ChangeServiceConfig2W(service, SERVICE_CONFIG_SERVICE_SID_INFO, &serviceSidInfo) == 0) {
+        return false;
+    }
+
+    return true;
+}
+
 bool installOrUpdateService(const std::filesystem::path& serviceBinary) {
     SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CREATE_SERVICE);
     if (scm == nullptr) {
@@ -613,9 +766,11 @@ bool installOrUpdateService(const std::filesystem::path& serviceBinary) {
         }
     }
 
-    SERVICE_DESCRIPTIONW description{};
-    description.lpDescription = const_cast<LPWSTR>(L"Forsetti-native control service for MCP servers, sub-agents, telemetry, and browser administration.");
-    ChangeServiceConfig2W(service, SERVICE_CONFIG_DESCRIPTION, &description);
+    if (!configureServicePolicies(service)) {
+        CloseServiceHandle(service);
+        CloseServiceHandle(scm);
+        return false;
+    }
 
     CloseServiceHandle(service);
     CloseServiceHandle(scm);
@@ -734,6 +889,14 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
             appendIssue(std::wstring(label) + L" is missing: " + path.wstring());
         }
     };
+    const auto normalizeServiceBinaryPath = [](std::string value) {
+        if (!value.empty() && value.front() == '"' && value.back() == '"') {
+            value = value.substr(1, value.size() - 2);
+        }
+        std::error_code error;
+        const auto normalized = std::filesystem::weakly_canonical(std::filesystem::path(value), error);
+        return error ? std::filesystem::path(value) : normalized;
+    };
 
     checkFile(installDirectory / "MasterControlServiceHost.exe", L"Service host");
     checkFile(installDirectory / "MasterControlShell.exe", L"Shell host");
@@ -743,6 +906,7 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
     checkDirectory(installDirectory / "share" / "MasterControlProgram" / "web", L"Web asset directory");
     checkFile(installDirectory / "share" / "MasterControlProgram" / "web" / "index.html", L"Browser dashboard asset");
 
+    const auto serviceStatus = queryServiceInstallationStatus();
     if (state.has_value()) {
         const auto expectedInstallDirectory = std::filesystem::path(state->installDirectory);
         if (!expectedInstallDirectory.empty() && expectedInstallDirectory != installDirectory) {
@@ -767,13 +931,52 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
         } else {
             checkDirectory(std::filesystem::path(state->dataDirectory), L"Data directory");
         }
+
+        if (state->serviceManaged) {
+            if (!serviceStatus.registered) {
+                appendIssue(L"Windows service integration is expected but the service is not registered.");
+            } else {
+                if (!serviceStatus.autoStart) {
+                    appendIssue(L"Windows service is registered but not configured for automatic startup.");
+                }
+                if (!serviceStatus.delayedAutoStart) {
+                    appendIssue(L"Windows service is registered but delayed auto-start is not enabled.");
+                }
+                if (!serviceStatus.recoveryConfigured) {
+                    appendIssue(L"Windows service is registered but recovery actions are not configured.");
+                }
+                if (!serviceStatus.failureActionsOnNonCrash) {
+                    appendIssue(L"Windows service does not apply recovery actions to non-crash failures.");
+                }
+                if (!serviceStatus.sidUnrestricted) {
+                    appendIssue(L"Windows service SID type is not configured as unrestricted.");
+                }
+                if (!state->serviceBinary.empty() && !serviceStatus.binaryPath.empty()) {
+                    const auto expectedBinary = normalizeServiceBinaryPath(state->serviceBinary);
+                    const auto registeredBinary = normalizeServiceBinaryPath(serviceStatus.binaryPath);
+                    if (expectedBinary != registeredBinary) {
+                        appendIssue(
+                            L"Windows service is registered to a different binary path: " +
+                            registeredBinary.wstring());
+                    }
+                }
+            }
+        }
     }
 
     if (jsonOutput) {
         nlohmann::json payload = {
             { "valid", issues.empty() },
             { "installDirectory", installDirectory.string() },
-            { "issues", nlohmann::json::array() }
+            { "issues", nlohmann::json::array() },
+            { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
+            { "serviceRegistered", serviceStatus.registered },
+            { "serviceAutoStart", serviceStatus.autoStart },
+            { "serviceDelayedAutoStart", serviceStatus.delayedAutoStart },
+            { "serviceRecoveryConfigured", serviceStatus.recoveryConfigured },
+            { "serviceFailureActionsOnNonCrash", serviceStatus.failureActionsOnNonCrash },
+            { "serviceSidUnrestricted", serviceStatus.sidUnrestricted },
+            { "serviceBinaryPath", serviceStatus.binaryPath }
         };
         for (const auto& issue : issues) {
             payload["issues"].push_back(utf8FromWide(issue));
@@ -786,6 +989,10 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
             payload["dataDirectory"] = state->dataDirectory;
             payload["browserPort"] = state->browserPort;
             payload["beaconPort"] = state->beaconPort;
+            payload["serviceManaged"] = state->serviceManaged;
+            payload["firewallManaged"] = state->firewallManaged;
+            payload["shortcutsManaged"] = state->shortcutsManaged;
+            payload["uninstallRegistrationManaged"] = state->uninstallRegistrationManaged;
         }
 
         std::cout << payload.dump(2) << '\n';
@@ -816,8 +1023,10 @@ void showDetectedEnvironment(const bool jsonOutput) {
     const auto environment = MasterControl::detectLocalEnvironment();
     const auto configuration = MasterControl::buildDefaultConfiguration();
     if (jsonOutput) {
+        const auto serviceStatus = queryServiceInstallationStatus();
         const nlohmann::json payload = {
             { "detected", true },
+            { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
             { "hostName", environment.hostName },
             { "operatingSystem", environment.operatingSystem },
             { "preferredBindAddress", environment.preferredBindAddress },
@@ -826,7 +1035,14 @@ void showDetectedEnvironment(const bool jsonOutput) {
             { "dataDirectory", paths.dataDirectory.string() },
             { "defaultBrowserPort", configuration.browserPort },
             { "defaultBeaconPort", configuration.beaconPort },
-            { "seededBladeEndpoints", configuration.activeProfile.seededEndpoints.size() }
+            { "seededBladeEndpoints", configuration.activeProfile.seededEndpoints.size() },
+            { "serviceRegistered", serviceStatus.registered },
+            { "serviceAutoStart", serviceStatus.autoStart },
+            { "serviceDelayedAutoStart", serviceStatus.delayedAutoStart },
+            { "serviceRecoveryConfigured", serviceStatus.recoveryConfigured },
+            { "serviceFailureActionsOnNonCrash", serviceStatus.failureActionsOnNonCrash },
+            { "serviceSidUnrestricted", serviceStatus.sidUnrestricted },
+            { "serviceBinaryPath", serviceStatus.binaryPath }
         };
         std::cout << payload.dump(2) << '\n';
         return;
@@ -855,7 +1071,7 @@ bool installLike(const std::wstring& mode,
 
     stagePayload(payloadLayout, installDirectory);
     const auto configuration = ensureConfigurationPresent();
-    const auto state = buildInstallationState(installDirectory, configuration);
+    const auto state = buildInstallationState(installDirectory, configuration, options);
     if (!writeInstallationState(state, installDirectory)) {
         std::wcerr << L"Failed to write installation state.\n";
         return false;
@@ -887,6 +1103,11 @@ bool installLike(const std::wstring& mode,
         }
     }
 
+    if (!validateInstalledApplication(installDirectory, false)) {
+        std::wcerr << L"Post-" << mode << L" validation failed.\n";
+        return false;
+    }
+
     const wchar_t* action =
         mode == L"repair" ? L"Repaired" :
         mode == L"upgrade" ? L"Upgraded" :
@@ -901,7 +1122,10 @@ bool installLike(const std::wstring& mode,
 bool uninstallApplication(const std::filesystem::path& installDirectory,
                           const IntegrationOptions& options) {
     const auto configuration = ensureConfigurationPresent();
-    const auto state = readInstallationState(installDirectory).value_or(buildInstallationState(installDirectory, configuration));
+    const auto state = readInstallationState(installDirectory).value_or(buildInstallationState(
+        installDirectory,
+        configuration,
+        options));
 
     if (options.manageService && !uninstallService()) {
         std::wcerr << L"Failed to uninstall Windows service.\n";

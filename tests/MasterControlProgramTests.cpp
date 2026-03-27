@@ -2882,8 +2882,15 @@ int main() {
             detectJson.is_object() &&
                 detectJson.value("detected", false) &&
                 !detectJson.value("hostName", std::string{}).empty() &&
-                detectJson.value("defaultBrowserPort", 0) > 0,
-            "Bootstrapper detect JSON mode should publish host and default port details.");
+                detectJson.value("defaultBrowserPort", 0) > 0 &&
+                !detectJson.value("bootstrapperVersion", std::string{}).empty(),
+            "Bootstrapper detect JSON mode should publish host, version, and default port details.");
+        success &= expect(
+            detectJson.is_object() &&
+                !detectJson.value("serviceRegistered", true) &&
+                !detectJson.value("serviceDelayedAutoStart", true) &&
+                !detectJson.value("serviceRecoveryConfigured", true),
+            "Bootstrapper detect JSON mode should report that the Windows service is not installed in the skipped-service test flow.");
         const auto validateJsonResult = runProcessWithOutput(validateJsonCommand, tempRoot);
         success &= expect(
             validateJsonResult.exitCode == 0,
@@ -2893,12 +2900,28 @@ int main() {
             validateJson.is_object() &&
                 validateJson.value("valid", false) &&
                 validateJson.value("installDirectory", std::string{}) == bootstrapInstallDirectory.string() &&
-                validateJson.value("issues", nlohmann::json::array()).empty(),
+                validateJson.value("issues", nlohmann::json::array()).empty() &&
+                !validateJson.value("bootstrapperVersion", std::string{}).empty(),
             "Bootstrapper validate JSON mode should describe a healthy installation.");
+        success &= expect(
+            validateJson.is_object() &&
+                !validateJson.value("serviceRegistered", true) &&
+                !validateJson.value("serviceAutoStart", true) &&
+                !validateJson.value("serviceRecoveryConfigured", true) &&
+                !validateJson.value("serviceManaged", true) &&
+                !validateJson.value("firewallManaged", true) &&
+                !validateJson.value("shortcutsManaged", true) &&
+                !validateJson.value("uninstallRegistrationManaged", true),
+            "Bootstrapper validate JSON mode should report that service policy is absent when installation skipped service registration.");
         const auto installedState = readJsonFile(bootstrapInstallStateFile);
         success &= expect(
-            installedState.has_value() && installedState->contains("version"),
-            "Bootstrapper install state should record the installed version");
+            installedState.has_value() &&
+                installedState->contains("version") &&
+                !installedState->value("serviceManaged", true) &&
+                !installedState->value("firewallManaged", true) &&
+                !installedState->value("shortcutsManaged", true) &&
+                !installedState->value("uninstallRegistrationManaged", true),
+            "Bootstrapper install state should record the installed version and skipped integration policy.");
         const auto installedVersion = installedState.has_value() ? installedState->value("version", std::string{}) : std::string{};
         if (installedState.has_value()) {
             auto downgradedState = *installedState;
@@ -2920,6 +2943,13 @@ int main() {
             upgradedState.has_value() &&
                 (!installedVersion.empty() ? upgradedState->value("version", std::string{}) == installedVersion : true),
             "Bootstrapper upgrade should restore the current bootstrapper version");
+        success &= expect(
+            upgradedState.has_value() &&
+                !upgradedState->value("serviceManaged", true) &&
+                !upgradedState->value("firewallManaged", true) &&
+                !upgradedState->value("shortcutsManaged", true) &&
+                !upgradedState->value("uninstallRegistrationManaged", true),
+            "Bootstrapper upgrade should preserve the skipped integration policy.");
         success &= expect(
             runProcess(validateCommand, tempRoot) == 0,
             "Bootstrapper validate should succeed after upgrade");
