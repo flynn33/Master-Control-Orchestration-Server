@@ -166,6 +166,7 @@
                         <ComboBox x:Name="AppleOperationSelector" SelectionChanged="AppleOperationSelector_SelectionChanged" PlaceholderText="Choose a recorded Apple operation" />
                         <Button x:Name="RerunAppleOperationButton" Click="RerunAppleOperationButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Rerun Apple Operation" />
                         <TextBlock x:Name="AppleOperationStatusText" Style="{StaticResource ShellDataTextStyle}" Text="Select an Apple operation to replay it through CLU." TextWrapping="WrapWholeWords" />
+                        <TextBlock x:Name="AppleOperationDetailsText" Style="{StaticResource ShellDataTextStyle}" Text="Apple operation route and readiness detail will appear here." TextWrapping="WrapWholeWords" />
                     </StackPanel>
                 </Border>
             </Grid>

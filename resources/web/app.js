@@ -106,6 +106,17 @@ function appleHostAddressLabel(host) {
   return base;
 }
 
+function appleRequestOptionsSummary(operation) {
+  const requestOptions = operation && typeof operation.requestOptions === 'object' && operation.requestOptions !== null
+    ? operation.requestOptions
+    : {};
+  const redactedKeys = new Set(safeArray(operation?.redactedRequestOptionKeys).map((key) => String(key || '')));
+  const visibleEntries = Object.entries(requestOptions)
+    .filter(([key]) => !redactedKeys.has(String(key || '')))
+    .map(([key, value]) => `${key}=${value}`);
+  return visibleEntries.length ? visibleEntries.join(' | ') : '';
+}
+
 function renderAppleHostsMarkup(hosts) {
   if (!hosts.length) {
     return emptyState('No Apple remote hosts', 'Register remote Mac infrastructure to light up Mac and iOS governance lanes.');
@@ -120,6 +131,11 @@ function renderAppleHostsMarkup(hosts) {
         const runtimeSummary = safeArray(toolchain.simulatorRuntimes).length
           ? `${safeArray(toolchain.simulatorRuntimes).length} simulator runtimes`
           : 'no simulator runtimes';
+        const sdkSummary = `macOS SDK ${toolchain.macosSdkAvailable ? 'ready' : 'missing'} | iOS SDK ${toolchain.iosSdkAvailable ? 'ready' : 'missing'}`;
+        const controlSummary = `simctl ${toolchain.simulatorControlAvailable ? 'ready' : 'blocked'} | devicectl ${toolchain.deviceControlAvailable ? 'ready' : 'blocked'}`;
+        const teamsSummary = safeArray(signing.availableTeams).length
+          ? `Teams: ${safeArray(signing.availableTeams).join(', ')}`
+          : 'Teams: none published';
         const readinessIssues = safeArray(host.readinessIssues);
         return `
           <article class="history-item ${isSelected ? 'selected' : ''}" data-apple-host-id="${escapeHtml(host.hostId || '')}">
@@ -128,8 +144,15 @@ function renderAppleHostsMarkup(hosts) {
             <div>${escapeHtml(appleHostAddressLabel(host))}</div>
             <div>${statusPill(toolchain.status || 'unknown')} ${statusPill(signing.status || 'unknown')}</div>
             <div>${escapeHtml(toolchain.xcodeVersion ? `Xcode ${toolchain.xcodeVersion}` : 'Xcode pending')} | ${escapeHtml(runtimeSummary)}</div>
+            <div>${escapeHtml(toolchain.developerDirectory ? `Developer dir: ${toolchain.developerDirectory}` : 'Developer dir pending')}</div>
+            <div>${escapeHtml(sdkSummary)}</div>
+            <div>${escapeHtml(controlSummary)}</div>
+            <div>${escapeHtml(teamsSummary)}</div>
             <div>${escapeHtml(host.transportSummary || 'Transport summary pending')}</div>
             <div>${escapeHtml(host.credentialProfileSummary || 'No Apple distribution defaults configured')}</div>
+            ${toolchain.message ? `<div>${escapeHtml(`Toolchain: ${toolchain.message}`)}</div>` : ''}
+            ${signing.message ? `<div>${escapeHtml(`Signing: ${signing.message}`)}</div>` : ''}
+            ${toolchain.checkedAtUtc ? `<div>${escapeHtml(`Checked: ${toolchain.checkedAtUtc}`)}</div>` : ''}
             ${readinessIssues.length ? `<div>${escapeHtml(`Readiness gaps: ${readinessIssues.join('; ')}`)}</div>` : ''}
           </article>
         `;
@@ -184,7 +207,9 @@ function renderAppleOperationsMarkup(operations) {
 
   return `
     <div class="history-list">
-      ${operations.map((operation) => `
+      ${operations.map((operation) => {
+        const requestOptionsSummary = appleRequestOptionsSummary(operation);
+        return `
         <article class="history-item">
           <strong>${escapeHtml(operation.displayName || operation.toolId || 'Apple operation')}</strong>
           <div>${statusPill(operation.status || 'queued')}</div>
@@ -193,18 +218,22 @@ function renderAppleOperationsMarkup(operations) {
           ${operation.routeReason ? `<div>${escapeHtml(operation.routeReason)}</div>` : ''}
           ${operation.selectedDeveloperDirectory ? `<div>${escapeHtml(`Developer dir: ${operation.selectedDeveloperDirectory}`)}</div>` : ''}
           ${operation.credentialProfileSummary ? `<div>${escapeHtml(operation.credentialProfileSummary)}</div>` : ''}
+          ${operation.workingDirectory ? `<div>${escapeHtml(`Working dir: ${operation.workingDirectory}`)}</div>` : ''}
+          ${operation.targetPath ? `<div>${escapeHtml(`Target: ${operation.targetPath}`)}</div>` : ''}
+          ${requestOptionsSummary ? `<div>${escapeHtml(`Request: ${requestOptionsSummary}`)}</div>` : ''}
           ${safeArray(operation.readinessIssues).length ? `<div>${escapeHtml(`Readiness gaps: ${safeArray(operation.readinessIssues).join('; ')}`)}</div>` : ''}
           ${operation.rerunReadinessMessage ? `<div>${escapeHtml(`Replay: ${operation.rerunReadinessMessage}`)}</div>` : ''}
           ${operation.diagnosticSummary ? `<div>${escapeHtml(operation.diagnosticSummary)}</div>` : ''}
           ${safeArray(operation.redactedRequestOptionKeys).length ? `<div>${escapeHtml('Sensitive request options were redacted from stored history. Rerun may require host defaults or fresh credentials.')}</div>` : ''}
-          <div>${escapeHtml(operation.completedAtUtc || operation.startedAtUtc || operation.queuedAtUtc || 'pending')}</div>
+          <div>${escapeHtml(`Queued: ${operation.queuedAtUtc || 'pending'} | Started: ${operation.startedAtUtc || 'pending'} | Completed: ${operation.completedAtUtc || 'pending'}`)}</div>
           <div class="card-actions">
             <button type="button" class="secondary-button" data-action="rerun-apple-operation" data-apple-operation-id="${escapeHtml(operation.operationId || '')}" ${operation.rerunReady ? '' : 'disabled'}>
               Rerun
             </button>
           </div>
         </article>
-      `).join('')}
+      `;
+      }).join('')}
     </div>
   `;
 }

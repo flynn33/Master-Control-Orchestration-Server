@@ -570,11 +570,24 @@ ShellAppleRemoteHost appleRemoteHostFromJson(const JsonObject& object) {
     host.enabled = jsonBoolOr(object, L"enabled", true);
 
     const auto toolchain = object.GetNamedObject(L"toolchain", JsonObject());
+    host.reachable = jsonBoolOr(toolchain, L"reachable", false);
+    host.xcodeInstalled = jsonBoolOr(toolchain, L"xcodeInstalled", false);
+    host.xcodeVersion = wideFromUtf8(jsonStringOr(toolchain, L"xcodeVersion", ""));
+    host.developerDirectory = wideFromUtf8(jsonStringOr(toolchain, L"developerDirectory", ""));
+    host.macosSdkAvailable = jsonBoolOr(toolchain, L"macosSdkAvailable", false);
+    host.iosSdkAvailable = jsonBoolOr(toolchain, L"iosSdkAvailable", false);
+    host.simulatorControlAvailable = jsonBoolOr(toolchain, L"simulatorControlAvailable", false);
+    host.deviceControlAvailable = jsonBoolOr(toolchain, L"deviceControlAvailable", false);
+    host.toolchainCheckedAtUtc = wideFromUtf8(jsonStringOr(toolchain, L"checkedAtUtc", ""));
     host.toolchainStatus = wideFromUtf8(jsonStringOr(toolchain, L"status", "unknown"));
     host.toolchainMessage = wideFromUtf8(jsonStringOr(toolchain, L"message", ""));
     host.simulatorRuntimes = jsonStringArrayOr(toolchain, L"simulatorRuntimes");
 
     const auto signing = object.GetNamedObject(L"signing", JsonObject());
+    host.signingReady = jsonBoolOr(signing, L"signingReady", false);
+    host.developmentSigningReady = jsonBoolOr(signing, L"developmentSigningReady", false);
+    host.distributionSigningReady = jsonBoolOr(signing, L"distributionSigningReady", false);
+    host.availableTeams = jsonStringArrayOr(signing, L"availableTeams");
     host.signingStatus = wideFromUtf8(jsonStringOr(signing, L"status", "unknown"));
     host.signingMessage = wideFromUtf8(jsonStringOr(signing, L"message", ""));
     host.transportSummary = wideFromUtf8(jsonStringOr(object, L"transportSummary", ""));

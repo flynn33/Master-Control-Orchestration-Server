@@ -61,6 +61,17 @@ std::wstring appleOperationRowText(const ::MasterControlShell::ShellAppleOperati
     return row;
 }
 
+std::wstring joinValues(const std::vector<std::wstring>& values, const wchar_t* separator = L", ") {
+    std::wstring result;
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (index > 0) {
+            result += separator;
+        }
+        result += values[index];
+    }
+    return result;
+}
+
 } // namespace
 
 CommandLogicUnitSectionControl::CommandLogicUnitSectionControl() {
@@ -246,6 +257,7 @@ void CommandLogicUnitSectionControl::UpdateOperationState() {
 
     if (!hasSelection) {
         AppleOperationStatusText().Text(L"Select an Apple operation to replay it through CLU.");
+        AppleOperationDetailsText().Text(L"Apple operation route and readiness detail will appear here.");
         return;
     }
 
@@ -257,6 +269,7 @@ void CommandLogicUnitSectionControl::UpdateOperationState() {
         });
     if (iterator == appleOperations_.end()) {
         AppleOperationStatusText().Text(L"Selected Apple operation is no longer available.");
+        AppleOperationDetailsText().Text(L"Apple operation route and readiness detail will appear here.");
         return;
     }
 
@@ -268,41 +281,68 @@ void CommandLogicUnitSectionControl::UpdateOperationState() {
             status += L".";
         }
     }
-    if (!iterator->routeReason.empty()) {
-        status += L" Route: " + iterator->routeReason;
-    }
-    if (!iterator->selectedDeveloperDirectory.empty()) {
-        status += L" Developer dir: " + iterator->selectedDeveloperDirectory + L".";
-    }
-    if (!iterator->credentialProfileSummary.empty()) {
-        status += L" Profile: " + iterator->credentialProfileSummary;
-        if (!status.empty() && status.back() != L'.') {
-            status += L".";
-        }
-    }
-    if (!iterator->readinessIssues.empty()) {
-        status += L" Readiness gaps: ";
-        for (size_t index = 0; index < iterator->readinessIssues.size(); ++index) {
-            if (index > 0) {
-                status += L"; ";
-            }
-            status += iterator->readinessIssues[index];
-        }
-        status += L".";
-    }
-    if (!iterator->redactedRequestOptionKeys.empty()) {
-        status += L" Sensitive request options were redacted from stored history, so replay may require host defaults or fresh credentials.";
-    }
-    if (!iterator->diagnosticSummary.empty()) {
-        status += L" Diagnostics: " + iterator->diagnosticSummary;
-        if (!status.empty() && status.back() != L'.') {
-            status += L".";
-        }
-    }
     if (!iterator->errorMessage.empty()) {
         status += L" Last error: " + iterator->errorMessage;
     }
     AppleOperationStatusText().Text(winrt::hstring(status));
+
+    std::wstring details = L"Route lane: ";
+    details += iterator->routeReason.empty() ? L"pending route summary" : iterator->routeReason;
+    details += L"\n";
+
+    details += L"Execution host: ";
+    details += iterator->hostDisplayName.empty() ? (iterator->hostId.empty() ? L"unassigned host" : iterator->hostId) : iterator->hostDisplayName;
+    details += L" via ";
+    details += iterator->transport.empty() ? L"unknown transport" : iterator->transport;
+    details += L".\n";
+
+    if (!iterator->selectedDeveloperDirectory.empty()) {
+        details += L"Developer directory: " + iterator->selectedDeveloperDirectory + L".\n";
+    }
+    if (!iterator->credentialProfileSummary.empty()) {
+        details += L"Credential profile: " + iterator->credentialProfileSummary + L".\n";
+    }
+    if (!iterator->artifactPath.empty()) {
+        details += L"Artifact: " + iterator->artifactPath + L".\n";
+    }
+    if (!iterator->targetPath.empty()) {
+        details += L"Target: " + iterator->targetPath + L".\n";
+    }
+    if (!iterator->workingDirectory.empty()) {
+        details += L"Working directory: " + iterator->workingDirectory + L".\n";
+    }
+    if (!iterator->queuedAtUtc.empty() || !iterator->startedAtUtc.empty() || !iterator->completedAtUtc.empty()) {
+        details += L"Timeline: queued=";
+        details += iterator->queuedAtUtc.empty() ? L"n/a" : iterator->queuedAtUtc;
+        details += L", started=";
+        details += iterator->startedAtUtc.empty() ? L"n/a" : iterator->startedAtUtc;
+        details += L", completed=";
+        details += iterator->completedAtUtc.empty() ? L"n/a" : iterator->completedAtUtc;
+        details += L".\n";
+    }
+    if (!iterator->requestOptions.empty()) {
+        std::vector<std::wstring> visibleOptions;
+        visibleOptions.reserve(iterator->requestOptions.size());
+        for (const auto& [key, value] : iterator->requestOptions) {
+            if (std::find(iterator->redactedRequestOptionKeys.begin(), iterator->redactedRequestOptionKeys.end(), key) != iterator->redactedRequestOptionKeys.end()) {
+                continue;
+            }
+            visibleOptions.push_back(key + L"=" + value);
+        }
+        if (!visibleOptions.empty()) {
+            details += L"Request options: " + joinValues(visibleOptions, L" | ") + L".\n";
+        }
+    }
+    if (!iterator->readinessIssues.empty()) {
+        details += L"Readiness gaps: " + joinValues(iterator->readinessIssues, L"; ") + L".\n";
+    }
+    if (!iterator->redactedRequestOptionKeys.empty()) {
+        details += L"Redacted keys: " + joinValues(iterator->redactedRequestOptionKeys) + L". Replay may require host defaults or fresh credentials.\n";
+    }
+    if (!iterator->diagnosticSummary.empty()) {
+        details += L"Diagnostics: " + iterator->diagnosticSummary + L".";
+    }
+    AppleOperationDetailsText().Text(winrt::hstring(details));
 }
 
 winrt::Windows::Foundation::IAsyncAction CommandLogicUnitSectionControl::RetryAttentionAppleOperationsAsync() {

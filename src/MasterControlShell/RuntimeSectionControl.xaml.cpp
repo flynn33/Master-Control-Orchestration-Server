@@ -48,6 +48,21 @@ std::optional<uint16_t> parseEditorPort(const std::wstring& value, const bool al
     }
 }
 
+std::wstring boolLabel(const bool value, const wchar_t* whenTrue = L"yes", const wchar_t* whenFalse = L"no") {
+    return value ? whenTrue : whenFalse;
+}
+
+std::wstring joinValues(const std::vector<std::wstring>& values, const wchar_t* separator = L", ") {
+    std::wstring result;
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (index > 0) {
+            result += separator;
+        }
+        result += values[index];
+    }
+    return result;
+}
+
 } // namespace
 
 RuntimeSectionControl::RuntimeSectionControl() {
@@ -590,6 +605,79 @@ void RuntimeSectionControl::PopulateAppleHostEditor(const size_t index) {
         }
     }
     AppleHostStatusText().Text(winrt::hstring(status));
+
+    std::wstring details = L"Route: ";
+    details += host.transport.empty() ? L"unknown transport" : host.transport;
+    details += L" via ";
+    if (!host.serviceBaseUrl.empty()) {
+        details += host.serviceBaseUrl;
+    } else {
+        details += host.address.empty() ? L"unconfigured host" : host.address;
+        if (host.port > 0) {
+            details += L":" + std::to_wstring(host.port);
+        }
+    }
+    if (!host.username.empty()) {
+        details += L" as " + host.username;
+    }
+    details += L".\n";
+
+    details += L"Toolchain: reachable=" + boolLabel(host.reachable);
+    details += L", Xcode installed=" + boolLabel(host.xcodeInstalled);
+    if (!host.xcodeVersion.empty()) {
+        details += L", version=" + host.xcodeVersion;
+    }
+    if (!host.developerDirectory.empty()) {
+        details += L", developer dir=" + host.developerDirectory;
+    }
+    details += L".\n";
+
+    details += L"SDK lanes: macOS=" + boolLabel(host.macosSdkAvailable);
+    details += L", iOS=" + boolLabel(host.iosSdkAvailable);
+    details += L", simulator control=" + boolLabel(host.simulatorControlAvailable);
+    details += L", device control=" + boolLabel(host.deviceControlAvailable);
+    details += L".\n";
+
+    if (!host.simulatorRuntimes.empty()) {
+        details += L"Simulator runtimes: " + joinValues(host.simulatorRuntimes) + L".\n";
+    } else {
+        details += L"Simulator runtimes: none published.\n";
+    }
+
+    details += L"Signing: ready=" + boolLabel(host.signingReady);
+    details += L", development=" + boolLabel(host.developmentSigningReady);
+    details += L", distribution=" + boolLabel(host.distributionSigningReady);
+    details += L".\n";
+
+    if (!host.availableTeams.empty()) {
+        details += L"Apple teams: " + joinValues(host.availableTeams) + L".\n";
+    }
+    if (!host.defaultSigningIdentity.empty() || !host.defaultNotaryKeychainProfile.empty() || !host.defaultNotaryTeamId.empty()) {
+        details += L"Defaults: ";
+        if (!host.defaultSigningIdentity.empty()) {
+            details += L"signing identity=" + host.defaultSigningIdentity + L"; ";
+        }
+        if (!host.defaultNotaryKeychainProfile.empty()) {
+            details += L"notary profile=" + host.defaultNotaryKeychainProfile + L"; ";
+        }
+        if (!host.defaultNotaryTeamId.empty()) {
+            details += L"team ID=" + host.defaultNotaryTeamId + L"; ";
+        }
+        if (details.size() >= 2 && details.substr(details.size() - 2) == L"; ") {
+            details.erase(details.size() - 2);
+        }
+        details += L".\n";
+    }
+    if (!host.toolchainMessage.empty()) {
+        details += L"Toolchain note: " + host.toolchainMessage + L".\n";
+    }
+    if (!host.signingMessage.empty()) {
+        details += L"Signing note: " + host.signingMessage + L".\n";
+    }
+    if (!host.toolchainCheckedAtUtc.empty()) {
+        details += L"Last checked: " + host.toolchainCheckedAtUtc + L".";
+    }
+    AppleHostReadinessDetailsText().Text(winrt::hstring(details));
     UpdateEditorState();
 }
 
@@ -614,6 +702,7 @@ void RuntimeSectionControl::ClearAppleHostEditor() {
     AppleHostEnabledCheckBox().IsChecked(true);
     suspendDirtyTracking_ = false;
     appleHostDirty_ = false;
+    AppleHostReadinessDetailsText().Text(L"Apple host readiness details will appear here.");
     UpdateEditorState();
 }
 

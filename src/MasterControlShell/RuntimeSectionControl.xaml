@@ -160,6 +160,7 @@
                         </StackPanel>
 
                         <TextBlock x:Name="AppleHostStatusText" Style="{StaticResource ShellDataTextStyle}" Text="No Apple remote host changes are staged." TextWrapping="WrapWholeWords" />
+                        <TextBlock x:Name="AppleHostReadinessDetailsText" Style="{StaticResource ShellDataTextStyle}" Text="Apple host readiness details will appear here." TextWrapping="WrapWholeWords" />
                     </StackPanel>
                 </Border>
             </Grid>
