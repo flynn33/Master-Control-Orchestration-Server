@@ -9,6 +9,7 @@ param(
     [ValidateSet("auto", "mixed", "managed", "both")]
     [string]$Scenario = "auto",
     [switch]$ManagedMutating,
+    [switch]$AutoElevateManaged,
     [switch]$KeepArtifacts,
     [string]$ReportPath,
     [string]$SummaryPath
@@ -16,6 +17,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$scriptStartedAt = Get-Date
 
 if ([string]::IsNullOrWhiteSpace($BootstrapperPath)) {
     $BootstrapperPath = Join-Path $repoRoot "dist\debug\MasterControlBootstrapper.exe"
@@ -99,6 +101,41 @@ function Invoke-Bootstrapper {
     }
 }
 
+function Invoke-NativeCapture {
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments,
+        [string]$ArtifactDirectory,
+        [string]$Name
+    )
+
+    New-Item -ItemType Directory -Force -Path $ArtifactDirectory | Out-Null
+    $stdoutPath = Join-Path $ArtifactDirectory ($Name + "-stdout.txt")
+    $stderrPath = Join-Path $ArtifactDirectory ($Name + "-stderr.txt")
+    $startedAt = Get-Date
+    $process = Start-Process `
+        -FilePath $FilePath `
+        -ArgumentList (New-ArgumentLine -Arguments $Arguments) `
+        -Wait `
+        -PassThru `
+        -NoNewWindow `
+        -RedirectStandardOutput $stdoutPath `
+        -RedirectStandardError $stderrPath
+    $completedAt = Get-Date
+
+    return [pscustomobject][ordered]@{
+        name = $Name
+        filePath = $FilePath
+        arguments = @($Arguments)
+        startedAt = $startedAt.ToString("o")
+        completedAt = $completedAt.ToString("o")
+        durationMs = [int][Math]::Round(($completedAt - $startedAt).TotalMilliseconds)
+        exitCode = $process.ExitCode
+        stdoutPath = $stdoutPath
+        stderrPath = $stderrPath
+    }
+}
+
 function Capture-DetectSnapshot {
     param(
         [string]$Bootstrapper,
@@ -151,8 +188,38 @@ function New-DeploymentSummary {
     $lines.Add("* Administrator: $($Report.isAdministrator)")
     $lines.Add("* Scenario: $($Report.scenario) -> $($Report.effectiveScenario)")
     $lines.Add("* Managed mutating enabled: $($Report.managedMutating)")
+    $lines.Add("* Auto-elevate managed: $($Report.autoElevateManaged)")
     $lines.Add("* Overall result: $(if ($Report.succeeded) { 'passed' } else { 'failed' })")
+    if ($Report.PSObject.Properties.Name -contains "artifactRoot") {
+        $lines.Add("* Artifact root: $($Report.artifactRoot)")
+    }
+    if ($Report.PSObject.Properties.Name -contains "hostDiagnostics" -and $Report.hostDiagnostics) {
+        $lines.Add("* Host diagnostics: $($Report.hostDiagnostics.directory)")
+    }
     $lines.Add("")
+
+    if ($Report.PSObject.Properties.Name -contains "followUpActions" -and $Report.followUpActions.Count -gt 0) {
+        $lines.Add("## Follow-Up")
+        $lines.Add("")
+        foreach ($action in $Report.followUpActions) {
+            $lines.Add("* $action")
+        }
+        $lines.Add("")
+    }
+
+    if ($Report.PSObject.Properties.Name -contains "elevatedManagedAttempt" -and $Report.elevatedManagedAttempt) {
+        $lines.Add("## Elevated Managed Attempt")
+        $lines.Add("")
+        $lines.Add("* Attempted: $($Report.elevatedManagedAttempt.attempted)")
+        $lines.Add("* Launched: $($Report.elevatedManagedAttempt.launched)")
+        $lines.Add("* Canceled: $($Report.elevatedManagedAttempt.canceled)")
+        $lines.Add("* Exit code: $($Report.elevatedManagedAttempt.exitCode)")
+        $lines.Add("* Report path: $($Report.elevatedManagedAttempt.reportPath)")
+        if (-not [string]::IsNullOrWhiteSpace($Report.elevatedManagedAttempt.message)) {
+            $lines.Add("* Message: $($Report.elevatedManagedAttempt.message)")
+        }
+        $lines.Add("")
+    }
 
     foreach ($scenarioResult in $Report.scenarios) {
         $lines.Add("## $($scenarioResult.scenario)")
@@ -246,6 +313,181 @@ function Convert-ScenarioForReport {
     }
 
     return [pscustomobject]$payload
+}
+
+function Capture-HostDiagnostics {
+    param(
+        [string]$ArtifactRoot,
+        [datetime]$StartedAt,
+        [datetime]$CompletedAt,
+        [bool]$IsAdministrator
+    )
+
+    $diagnosticsDirectory = Join-Path $ArtifactRoot "_host"
+    New-Item -ItemType Directory -Force -Path $diagnosticsDirectory | Out-Null
+
+    $hostContextPath = Join-Path $diagnosticsDirectory "host-context.json"
+    $serviceStatusPath = Join-Path $diagnosticsDirectory "service-status.json"
+    $serviceEventsPath = Join-Path $diagnosticsDirectory "service-events.json"
+    $uninstallStatusPath = Join-Path $diagnosticsDirectory "uninstall-registration.json"
+    $shortcutStatusPath = Join-Path $diagnosticsDirectory "shortcut-surfaces.json"
+
+    $hostContext = [pscustomobject][ordered]@{
+        collectedAt = (Get-Date).ToString("o")
+        startedAt = $StartedAt.ToString("o")
+        completedAt = $CompletedAt.ToString("o")
+        machineName = $env:COMPUTERNAME
+        userName = [Environment]::UserName
+        isAdministrator = $IsAdministrator
+        powerShellVersion = $PSVersionTable.PSVersion.ToString()
+        operatingSystem = (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber)
+    }
+    Set-Content -Path $hostContextPath -Value ($hostContext | ConvertTo-Json -Depth 5) -Encoding UTF8
+
+    $uninstallStatus = [pscustomobject][ordered]@{
+        hklm = @(Get-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MasterControlProgram" -ErrorAction SilentlyContinue |
+            Select-Object DisplayName, DisplayVersion, InstallLocation, UninstallString, Publisher)
+        hkcu = @(Get-ItemProperty -Path "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MasterControlProgram" -ErrorAction SilentlyContinue |
+            Select-Object DisplayName, DisplayVersion, InstallLocation, UninstallString, Publisher)
+    }
+    Set-Content -Path $uninstallStatusPath -Value ($uninstallStatus | ConvertTo-Json -Depth 5) -Encoding UTF8
+
+    $userProgramsRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
+    $commonProgramsRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonPrograms)
+    $userShortcutDirectory = Join-Path $userProgramsRoot "Master Control Program"
+    $commonShortcutDirectory = Join-Path $commonProgramsRoot "Master Control Program"
+    $shortcutStatus = [pscustomobject][ordered]@{
+        userProgramsRoot = $userProgramsRoot
+        commonProgramsRoot = $commonProgramsRoot
+        userShortcutDirectory = $userShortcutDirectory
+        commonShortcutDirectory = $commonShortcutDirectory
+        userShortcutDirectoryExists = Test-Path $userShortcutDirectory
+        commonShortcutDirectoryExists = Test-Path $commonShortcutDirectory
+        userEntries = @()
+        commonEntries = @()
+    }
+    if ($shortcutStatus.userShortcutDirectoryExists) {
+        $shortcutStatus.userEntries = @(Get-ChildItem -Path $userShortcutDirectory -File -ErrorAction SilentlyContinue |
+            Select-Object Name, Length, LastWriteTime)
+    }
+    if ($shortcutStatus.commonShortcutDirectoryExists) {
+        $shortcutStatus.commonEntries = @(Get-ChildItem -Path $commonShortcutDirectory -File -ErrorAction SilentlyContinue |
+            Select-Object Name, Length, LastWriteTime)
+    }
+    Set-Content -Path $shortcutStatusPath -Value ($shortcutStatus | ConvertTo-Json -Depth 5) -Encoding UTF8
+
+    $serviceStatus = [pscustomobject][ordered]@{
+        getService = @(Get-Service -Name "MasterControlProgram" -ErrorAction SilentlyContinue |
+            Select-Object Name, DisplayName, Status, StartType)
+        cimService = @(Get-CimInstance Win32_Service -Filter "Name='MasterControlProgram'" -ErrorAction SilentlyContinue |
+            Select-Object Name, DisplayName, State, StartMode, ProcessId, ExitCode, PathName)
+    }
+    Set-Content -Path $serviceStatusPath -Value ($serviceStatus | ConvertTo-Json -Depth 5) -Encoding UTF8
+
+    $systemEvents = @()
+    try {
+        $systemEvents = @(Get-WinEvent -FilterHashtable @{
+                LogName = "System"
+                StartTime = $StartedAt.AddMinutes(-2)
+                EndTime = $CompletedAt.AddMinutes(2)
+            } -ErrorAction Stop |
+            Where-Object {
+                $_.ProviderName -eq "Service Control Manager" -and
+                $_.Message -match "Master Control Program|MasterControlProgram"
+            } |
+            Select-Object TimeCreated, Id, LevelDisplayName, ProviderName, Message)
+    } catch {
+        $systemEvents = @([pscustomobject]@{
+                collectionError = $_.Exception.Message
+            })
+    }
+    Set-Content -Path $serviceEventsPath -Value ($systemEvents | ConvertTo-Json -Depth 6) -Encoding UTF8
+
+    $nativeCaptures = New-Object System.Collections.ArrayList
+    [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "sc.exe" -Arguments @("queryex", "MasterControlProgram") -ArtifactDirectory $diagnosticsDirectory -Name "sc-queryex"))
+    [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "sc.exe" -Arguments @("qc", "MasterControlProgram") -ArtifactDirectory $diagnosticsDirectory -Name "sc-qc"))
+    [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "sc.exe" -Arguments @("qfailure", "MasterControlProgram") -ArtifactDirectory $diagnosticsDirectory -Name "sc-qfailure"))
+    [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "sc.exe" -Arguments @("qsidtype", "MasterControlProgram") -ArtifactDirectory $diagnosticsDirectory -Name "sc-qsidtype"))
+    [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "reg.exe" -Arguments @("query", "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MasterControlProgram", "/s") -ArtifactDirectory $diagnosticsDirectory -Name "reg-uninstall-hklm"))
+    [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "reg.exe" -Arguments @("query", "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MasterControlProgram", "/s") -ArtifactDirectory $diagnosticsDirectory -Name "reg-uninstall-hkcu"))
+    [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "netsh.exe" -Arguments @("advfirewall", "firewall", "show", "rule", "name=Master Control Program - Browser Access") -ArtifactDirectory $diagnosticsDirectory -Name "netsh-browser-rule"))
+    [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "netsh.exe" -Arguments @("advfirewall", "firewall", "show", "rule", "name=Master Control Program - Beacon Discovery") -ArtifactDirectory $diagnosticsDirectory -Name "netsh-beacon-rule"))
+
+    return [pscustomobject][ordered]@{
+        directory = $diagnosticsDirectory
+        hostContextPath = $hostContextPath
+        serviceStatusPath = $serviceStatusPath
+        serviceEventsPath = $serviceEventsPath
+        uninstallStatusPath = $uninstallStatusPath
+        shortcutStatusPath = $shortcutStatusPath
+        nativeCaptures = $nativeCaptures
+    }
+}
+
+function Invoke-ElevatedManagedAcceptance {
+    param(
+        [string]$Bootstrapper,
+        [string]$ReportPath,
+        [bool]$KeepArtifacts
+    )
+
+    $summaryPath = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetFullPath($ReportPath), ".md")
+    $scriptArguments = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $PSCommandPath,
+        "-BootstrapperPath", $Bootstrapper,
+        "-Scenario", "managed",
+        "-ManagedMutating",
+        "-ReportPath", $ReportPath,
+        "-SummaryPath", $summaryPath
+    )
+    if ($KeepArtifacts) {
+        $scriptArguments += "-KeepArtifacts"
+    }
+
+    $result = [pscustomobject][ordered]@{
+        attempted = $true
+        launched = $false
+        canceled = $false
+        exitCode = $null
+        reportPath = $ReportPath
+        summaryPath = $summaryPath
+        command = "powershell.exe " + (New-ArgumentLine -Arguments $scriptArguments)
+        reportLoaded = $false
+        childSucceeded = $false
+        message = ""
+    }
+
+    try {
+        $process = Start-Process `
+            -FilePath "powershell.exe" `
+            -ArgumentList (New-ArgumentLine -Arguments $scriptArguments) `
+            -Verb RunAs `
+            -Wait `
+            -PassThru
+
+        $result.launched = $true
+        $result.exitCode = $process.ExitCode
+    } catch {
+        $result.canceled = $true
+        $result.message = $_.Exception.Message
+        return $result
+    }
+
+    if (Test-Path $ReportPath) {
+        try {
+            $childReport = Get-Content $ReportPath -Raw | ConvertFrom-Json
+            $result.reportLoaded = $true
+            $result.childSucceeded = [bool]$childReport.succeeded
+        } catch {
+            $result.message = "Elevated managed report was written but could not be parsed: $($_.Exception.Message)"
+        }
+    } elseif ([string]::IsNullOrWhiteSpace($result.message)) {
+        $result.message = "Elevated managed report was not produced."
+    }
+
+    return $result
 }
 
 function Run-MixedAcceptance {
@@ -518,9 +760,11 @@ $artifactRoot = if (-not [string]::IsNullOrWhiteSpace($ReportPath)) {
 } else {
     Join-Path $report.root "artifacts"
 }
+$scriptCompletedAt = Get-Date
 
 $reportForSerialization = [pscustomobject][ordered]@{
     generatedAt = $report.generatedAt
+    completedAt = $scriptCompletedAt.ToString("o")
     bootstrapperPath = $report.bootstrapperPath
     root = $report.root
     artifactRoot = $artifactRoot
@@ -528,6 +772,7 @@ $reportForSerialization = [pscustomobject][ordered]@{
     effectiveScenario = $report.effectiveScenario
     isAdministrator = $report.isAdministrator
     managedMutating = $report.managedMutating
+    autoElevateManaged = [bool]$AutoElevateManaged
     host = [pscustomobject][ordered]@{
         caption = $report.host.caption
         version = $report.host.version
@@ -536,6 +781,66 @@ $reportForSerialization = [pscustomobject][ordered]@{
     }
     scenarios = @($report.scenarios | ForEach-Object { Convert-ScenarioForReport -ScenarioResult $_ -ArtifactRoot $artifactRoot })
     succeeded = $report.succeeded
+}
+$reportForSerialization | Add-Member -NotePropertyName hostDiagnostics -NotePropertyValue (
+    Capture-HostDiagnostics -ArtifactRoot $artifactRoot -StartedAt $scriptStartedAt -CompletedAt $scriptCompletedAt -IsAdministrator:$isAdministrator
+)
+
+$managedReportPath = if (-not [string]::IsNullOrWhiteSpace($ReportPath)) {
+    [System.IO.Path]::ChangeExtension([System.IO.Path]::GetFullPath($ReportPath), ".managed.json")
+} else {
+    Join-Path $artifactRoot "managed-elevated.json"
+}
+
+if ($AutoElevateManaged -and -not $isAdministrator -and $effectiveScenario -in @("managed", "both")) {
+    $elevatedManagedAttempt = Invoke-ElevatedManagedAcceptance `
+        -Bootstrapper $bootstrapper.Path `
+        -ReportPath $managedReportPath `
+        -KeepArtifacts:$KeepArtifacts
+    $reportForSerialization | Add-Member -NotePropertyName elevatedManagedAttempt -NotePropertyValue $elevatedManagedAttempt
+    if (-not $elevatedManagedAttempt.childSucceeded) {
+        $reportForSerialization.succeeded = $false
+    }
+}
+
+$followUpActions = New-Object System.Collections.ArrayList
+if (-not $report.isAdministrator -and $report.effectiveScenario -in @("managed", "both")) {
+    $elevatedCommand = @(
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $PSCommandPath,
+        "-BootstrapperPath", $bootstrapper.Path,
+        "-Scenario", "managed",
+        "-ManagedMutating",
+        "-AutoElevateManaged:$false",
+        "-ReportPath", $managedReportPath
+    ) -join " "
+    if (-not $AutoElevateManaged) {
+        [void]$followUpActions.Add("Run the fully managed lifecycle from an elevated PowerShell session: $elevatedCommand")
+    }
+}
+
+if ($report.host.caption -notmatch "Windows Server 2022") {
+    $serverReportPath = if (-not [string]::IsNullOrWhiteSpace($ReportPath)) {
+        [System.IO.Path]::ChangeExtension([System.IO.Path]::GetFullPath($ReportPath), ".server2022.json")
+    } else {
+        "<server-2022-report-path>"
+    }
+    $serverCommand = @(
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $PSCommandPath,
+        "-BootstrapperPath", $bootstrapper.Path,
+        "-Scenario", "both",
+        "-ReportPath", $serverReportPath
+    ) -join " "
+    [void]$followUpActions.Add("Run the same acceptance harness on a Windows Server 2022 host: $serverCommand")
+}
+
+if ($followUpActions.Count -gt 0) {
+    $reportForSerialization | Add-Member -NotePropertyName followUpActions -NotePropertyValue @($followUpActions)
 }
 
 $reportJson = $reportForSerialization | ConvertTo-Json -Depth 10
