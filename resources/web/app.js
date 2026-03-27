@@ -1252,6 +1252,7 @@ function renderRuntimeView() {
 
 function renderCluView() {
   const governance = governanceSnapshot();
+  const resourceAllocation = currentConfig().resourceAllocation;
   const findings = safeArray(governance.findings);
   const roles = safeArray(governance.roles);
   const rules = safeArray(governance.rules);
@@ -1268,6 +1269,11 @@ function renderCluView() {
   const filteredAppleOperations = filterAppleOperationsByMode(appleOperations, appleOperationFilter);
   const attentionHosts = appleHosts.filter((host) => safeArray(host.readinessIssues).length || safeArray(host.toolchain?.readinessIssues).length);
   const appleQueueSummary = `${appleOperationCountsSnapshot.queued} queued | ${appleOperationCountsSnapshot.running} running | ${appleOperationCountsSnapshot.attention} attention`;
+  const managedLaunchBlocked = safeNumber(resourceAllocation.cpuPercent, 0) <= 0 || safeNumber(resourceAllocation.memoryPercent, 0) <= 0;
+  const resourceEnvelopeValue = `CPU ${safeNumber(resourceAllocation.cpuPercent, 0)}% | RAM ${safeNumber(resourceAllocation.memoryPercent, 0)}%`;
+  const resourceEnvelopeDetail = managedLaunchBlocked
+    ? 'managed launches blocked'
+    : `Bandwidth ${safeNumber(resourceAllocation.bandwidthPercent, 0)}% | Storage ${safeNumber(resourceAllocation.storagePercent, 0)}%`;
   const appleFilterDescription = ({
     attention: 'failed and blocked operations',
     active: 'queued and running operations',
@@ -1348,6 +1354,7 @@ function renderCluView() {
         ${metricCard('Apple Ops', formatCount(appleOperations.length), appleQueueSummary)}
         ${metricCard('Apple Attention', formatCount(appleOperationCountsSnapshot.attention), `${appleOperationCountsSnapshot.rerunnableAttention} ready for replay`)}
         ${metricCard('Host Readiness', formatCount(attentionHosts.length), `${appleHosts.length - attentionHosts.length} hosts ready`)}
+        ${metricCard('Resource Envelope', resourceEnvelopeValue, resourceEnvelopeDetail)}
         ${metricCard('Gateways', formatCount(gateways.length), 'platform broadcasts')}
         ${metricCard('Gov Servers', formatCount(governanceServers.length), `${recentExecutions.length} recent executions`)}
       </div>

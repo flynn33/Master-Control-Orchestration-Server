@@ -11,6 +11,7 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -505,6 +506,70 @@ int runProcess(const std::wstring& command, const std::filesystem::path& working
     CloseHandle(processInformation.hThread);
     CloseHandle(processInformation.hProcess);
     return static_cast<int>(exitCode);
+}
+
+struct ProcessOutputResult final {
+    int exitCode = 1;
+    std::string rawOutput;
+};
+
+ProcessOutputResult runProcessWithOutput(const std::wstring& command, const std::filesystem::path& workingDirectory) {
+    SECURITY_ATTRIBUTES securityAttributes{};
+    securityAttributes.nLength = sizeof(securityAttributes);
+    securityAttributes.bInheritHandle = TRUE;
+
+    HANDLE readPipe = nullptr;
+    HANDLE writePipe = nullptr;
+    if (CreatePipe(&readPipe, &writePipe, &securityAttributes, 0) == 0) {
+        return { static_cast<int>(GetLastError()), {} };
+    }
+
+    SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOW startupInfo{};
+    startupInfo.cb = sizeof(startupInfo);
+    startupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startupInfo.hStdOutput = writePipe;
+    startupInfo.hStdError = writePipe;
+
+    PROCESS_INFORMATION processInformation{};
+    std::wstring mutableCommand = command;
+    if (CreateProcessW(
+            nullptr,
+            mutableCommand.data(),
+            nullptr,
+            nullptr,
+            TRUE,
+            CREATE_NO_WINDOW,
+            nullptr,
+            workingDirectory.empty() ? nullptr : workingDirectory.wstring().c_str(),
+            &startupInfo,
+            &processInformation) == 0) {
+        const auto errorCode = static_cast<int>(GetLastError());
+        CloseHandle(readPipe);
+        CloseHandle(writePipe);
+        return { errorCode, {} };
+    }
+
+    CloseHandle(writePipe);
+    writePipe = nullptr;
+
+    std::string output;
+    std::array<char, 4096> buffer{};
+    DWORD bytesRead = 0;
+    while (ReadFile(readPipe, buffer.data(), static_cast<DWORD>(buffer.size()), &bytesRead, nullptr) != 0 && bytesRead > 0) {
+        output.append(buffer.data(), bytesRead);
+    }
+
+    WaitForSingleObject(processInformation.hProcess, INFINITE);
+
+    DWORD exitCode = 1;
+    GetExitCodeProcess(processInformation.hProcess, &exitCode);
+    CloseHandle(readPipe);
+    CloseHandle(processInformation.hThread);
+    CloseHandle(processInformation.hProcess);
+    return { static_cast<int>(exitCode), std::move(output) };
 }
 
 bool toolExists(const wchar_t* executableName) {
@@ -2604,6 +2669,19 @@ int main() {
                 constrainedResourceResult.succeeded,
                 "Resource allocation updates should support zero-CPU enforcement testing.");
 
+            snapshot = application.snapshot();
+            success &= expect(
+                snapshot.governance.posture == "blocked",
+                "CLU should report blocked posture when the managed resource envelope denies CPU allocation.");
+            success &= expect(
+                std::any_of(
+                    snapshot.governance.findings.begin(),
+                    snapshot.governance.findings.end(),
+                    [](const auto& finding) {
+                        return finding.ruleId == "CLU-C008";
+                    }),
+                "CLU should publish a managed resource envelope finding when CPU allocation is zero.");
+
             const auto blockedResourceExecution = application.executeProviderTaskJson(nlohmann::json{
                 { "targetId", "planner" },
                 { "prompt", "Attempt execution while CPU allocation is disabled." },
@@ -2749,12 +2827,25 @@ int main() {
         const auto bootstrapDataDirectory = tempRoot / "bootstrapper-data";
         const auto bootstrapConfigurationFile = bootstrapDataDirectory / "config" / "master-control-program.json";
         const auto bootstrapInstallStateFile = bootstrapInstallDirectory / "installation-state.json";
+        const auto readJsonFile = [](const std::filesystem::path& path) -> std::optional<nlohmann::json> {
+            std::ifstream input(path);
+            if (!input) {
+                return std::nullopt;
+            }
+
+            try {
+                return nlohmann::json::parse(input);
+            } catch (...) {
+                return std::nullopt;
+            }
+        };
 
         ScopedEnvironmentOverride bootstrapDataOverride(L"MASTERCONTROL_DATA_DIR", bootstrapDataDirectory.wstring());
 
         const auto installCommand = L"\"" + bootstrapperBinary.wstring() + L"\" install \"" +
             bootstrapInstallDirectory.wstring() +
             L"\" --skip-service --skip-firewall --skip-shortcuts --skip-uninstall-registration";
+        const auto detectJsonCommand = L"\"" + bootstrapperBinary.wstring() + L"\" detect --json";
         success &= expect(
             runProcess(installCommand, tempRoot) == 0,
             "Bootstrapper install should succeed when system integrations are skipped");
@@ -2776,6 +2867,62 @@ int main() {
         success &= expect(
             std::filesystem::exists(bootstrapConfigurationFile),
             "Bootstrapper install should seed configuration in the configured data directory");
+        const auto validateCommand = L"\"" + bootstrapperBinary.wstring() + L"\" validate \"" +
+            bootstrapInstallDirectory.wstring() + L"\"";
+        const auto validateJsonCommand = validateCommand + L" --json";
+        success &= expect(
+            runProcess(validateCommand, tempRoot) == 0,
+            "Bootstrapper validate should succeed after install when the staged payload and state are healthy");
+        const auto detectJsonResult = runProcessWithOutput(detectJsonCommand, tempRoot);
+        success &= expect(
+            detectJsonResult.exitCode == 0,
+            "Bootstrapper detect JSON mode should succeed.");
+        const auto detectJson = nlohmann::json::parse(detectJsonResult.rawOutput, nullptr, false);
+        success &= expect(
+            detectJson.is_object() &&
+                detectJson.value("detected", false) &&
+                !detectJson.value("hostName", std::string{}).empty() &&
+                detectJson.value("defaultBrowserPort", 0) > 0,
+            "Bootstrapper detect JSON mode should publish host and default port details.");
+        const auto validateJsonResult = runProcessWithOutput(validateJsonCommand, tempRoot);
+        success &= expect(
+            validateJsonResult.exitCode == 0,
+            "Bootstrapper validate JSON mode should succeed after install.");
+        const auto validateJson = nlohmann::json::parse(validateJsonResult.rawOutput, nullptr, false);
+        success &= expect(
+            validateJson.is_object() &&
+                validateJson.value("valid", false) &&
+                validateJson.value("installDirectory", std::string{}) == bootstrapInstallDirectory.string() &&
+                validateJson.value("issues", nlohmann::json::array()).empty(),
+            "Bootstrapper validate JSON mode should describe a healthy installation.");
+        const auto installedState = readJsonFile(bootstrapInstallStateFile);
+        success &= expect(
+            installedState.has_value() && installedState->contains("version"),
+            "Bootstrapper install state should record the installed version");
+        const auto installedVersion = installedState.has_value() ? installedState->value("version", std::string{}) : std::string{};
+        if (installedState.has_value()) {
+            auto downgradedState = *installedState;
+            downgradedState["version"] = "0.0.0";
+            writeTextFile(bootstrapInstallStateFile, downgradedState.dump(2));
+        }
+
+        const auto upgradeCommand = L"\"" + bootstrapperBinary.wstring() + L"\" upgrade \"" +
+            bootstrapInstallDirectory.wstring() +
+            L"\" --skip-service --skip-firewall --skip-shortcuts --skip-uninstall-registration";
+        success &= expect(
+            runProcess(upgradeCommand, tempRoot) == 0,
+            "Bootstrapper upgrade should succeed when refreshing an existing installation");
+        const auto upgradedState = readJsonFile(bootstrapInstallStateFile);
+        success &= expect(
+            upgradedState.has_value() && upgradedState->value("version", std::string{}) != "0.0.0",
+            "Bootstrapper upgrade should refresh the stored installation version");
+        success &= expect(
+            upgradedState.has_value() &&
+                (!installedVersion.empty() ? upgradedState->value("version", std::string{}) == installedVersion : true),
+            "Bootstrapper upgrade should restore the current bootstrapper version");
+        success &= expect(
+            runProcess(validateCommand, tempRoot) == 0,
+            "Bootstrapper validate should succeed after upgrade");
 
         std::filesystem::remove(bootstrapConfigurationFile);
         const auto repairCommand = L"\"" + bootstrapperBinary.wstring() + L"\" repair \"" +
@@ -2787,6 +2934,9 @@ int main() {
         success &= expect(
             std::filesystem::exists(bootstrapConfigurationFile),
             "Bootstrapper repair should reseed missing configuration");
+        success &= expect(
+            runProcess(validateCommand, tempRoot) == 0,
+            "Bootstrapper validate should succeed after repair");
 
         const auto uninstallCommand = L"\"" + bootstrapperBinary.wstring() + L"\" uninstall \"" +
             bootstrapInstallDirectory.wstring() +
@@ -2800,6 +2950,19 @@ int main() {
         success &= expect(
             !std::filesystem::exists(bootstrapDataDirectory),
             "Bootstrapper uninstall should remove the data directory when requested");
+        success &= expect(
+            runProcess(validateCommand, tempRoot) != 0,
+            "Bootstrapper validate should fail after uninstall removes the staged payload");
+        const auto failedValidateJsonResult = runProcessWithOutput(validateJsonCommand, tempRoot);
+        const auto failedValidateJson = nlohmann::json::parse(failedValidateJsonResult.rawOutput, nullptr, false);
+        success &= expect(
+            failedValidateJsonResult.exitCode != 0 &&
+                failedValidateJson.is_object() &&
+                !failedValidateJson.value("valid", true) &&
+                failedValidateJson.contains("issues") &&
+                failedValidateJson.at("issues").is_array() &&
+                !failedValidateJson.at("issues").empty(),
+            "Bootstrapper validate JSON mode should report structured issues after uninstall removes the payload.");
     }
 
     std::filesystem::remove_all(tempRoot);

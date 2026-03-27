@@ -1970,6 +1970,15 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                      << snapshot.governanceRoleCount << L" / "
                      << snapshot.governanceRuleCount << L" / "
                      << snapshot.governanceDocumentCount << L'\n'
+                     << L"Managed resource envelope: CPU " << cpuPercent
+                     << L"% | RAM " << memoryPercent
+                     << L"% | Bandwidth " << bandwidthPercent
+                     << L"% | Storage " << storagePercent
+                     << L"%";
+    if (cpuPercent <= 0 || memoryPercent <= 0) {
+        governanceStream << L"  (managed launches blocked)";
+    }
+    governanceStream << L'\n'
                      << L"Apple hosts / operations: "
                      << snapshot.appleRemoteHostCount << L" / "
                      << snapshot.appleOperationCount << L'\n'

@@ -40,6 +40,7 @@ struct IntegrationOptions final {
     bool manageUninstallRegistration = true;
     bool purgeInstallDirectory = false;
     bool purgeData = false;
+    bool jsonOutput = false;
 };
 
 struct InstallationState final {
@@ -109,6 +110,33 @@ std::wstring wideFromUtf8(const std::string& input) {
         static_cast<int>(input.size()),
         output.data(),
         required);
+    return output;
+}
+
+std::string utf8FromWide(const std::wstring& input) {
+    if (input.empty()) {
+        return {};
+    }
+
+    const int required = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        input.c_str(),
+        static_cast<int>(input.size()),
+        nullptr,
+        0,
+        nullptr,
+        nullptr);
+    std::string output(static_cast<size_t>(required), '\0');
+    WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        input.c_str(),
+        static_cast<int>(input.size()),
+        output.data(),
+        required,
+        nullptr,
+        nullptr);
     return output;
 }
 
@@ -680,10 +708,130 @@ bool scheduleDeferredInstallRemoval(const std::filesystem::path& installDirector
     return true;
 }
 
-void showDetectedEnvironment() {
+bool validateInstalledApplication(const std::filesystem::path& installDirectory, const bool jsonOutput) {
+    std::vector<std::wstring> issues;
+    auto appendIssue = [&issues](std::wstring issue) {
+        issues.push_back(std::move(issue));
+    };
+
+    if (!std::filesystem::exists(installDirectory) || !std::filesystem::is_directory(installDirectory)) {
+        appendIssue(L"Install directory does not exist.");
+    }
+
+    const auto state = readInstallationState(installDirectory);
+    if (!state.has_value()) {
+        appendIssue(L"Installation state file is missing or unreadable.");
+    }
+
+    const auto checkFile = [&appendIssue](const std::filesystem::path& path, const wchar_t* label) {
+        if (!std::filesystem::exists(path) || !std::filesystem::is_regular_file(path)) {
+            appendIssue(std::wstring(label) + L" is missing: " + path.wstring());
+        }
+    };
+
+    const auto checkDirectory = [&appendIssue](const std::filesystem::path& path, const wchar_t* label) {
+        if (!std::filesystem::exists(path) || !std::filesystem::is_directory(path)) {
+            appendIssue(std::wstring(label) + L" is missing: " + path.wstring());
+        }
+    };
+
+    checkFile(installDirectory / "MasterControlServiceHost.exe", L"Service host");
+    checkFile(installDirectory / "MasterControlShell.exe", L"Shell host");
+    checkFile(installDirectory / "MasterControlBootstrapper.exe", L"Bootstrapper");
+    checkDirectory(installDirectory / "share" / "MasterControlProgram" / "ForsettiManifests", L"Forsetti manifest directory");
+    checkFile(installDirectory / "share" / "MasterControlProgram" / "ForsettiManifests" / "DashboardUIModule.json", L"Dashboard UI manifest");
+    checkDirectory(installDirectory / "share" / "MasterControlProgram" / "web", L"Web asset directory");
+    checkFile(installDirectory / "share" / "MasterControlProgram" / "web" / "index.html", L"Browser dashboard asset");
+
+    if (state.has_value()) {
+        const auto expectedInstallDirectory = std::filesystem::path(state->installDirectory);
+        if (!expectedInstallDirectory.empty() && expectedInstallDirectory != installDirectory) {
+            appendIssue(
+                L"Installation state points to a different install directory: " +
+                expectedInstallDirectory.wstring());
+        }
+
+        if (state->browserPort == 0) {
+            appendIssue(L"Installation state does not publish a valid browser port.");
+        }
+        if (state->browserUrl.empty()) {
+            appendIssue(L"Installation state does not publish a browser URL.");
+        }
+        if (state->configPath.empty()) {
+            appendIssue(L"Installation state does not publish a configuration path.");
+        } else {
+            checkFile(std::filesystem::path(state->configPath), L"Configuration file");
+        }
+        if (state->dataDirectory.empty()) {
+            appendIssue(L"Installation state does not publish a data directory.");
+        } else {
+            checkDirectory(std::filesystem::path(state->dataDirectory), L"Data directory");
+        }
+    }
+
+    if (jsonOutput) {
+        nlohmann::json payload = {
+            { "valid", issues.empty() },
+            { "installDirectory", installDirectory.string() },
+            { "issues", nlohmann::json::array() }
+        };
+        for (const auto& issue : issues) {
+            payload["issues"].push_back(utf8FromWide(issue));
+        }
+
+        if (state.has_value()) {
+            payload["version"] = state->version;
+            payload["browserUrl"] = state->browserUrl;
+            payload["configPath"] = state->configPath;
+            payload["dataDirectory"] = state->dataDirectory;
+            payload["browserPort"] = state->browserPort;
+            payload["beaconPort"] = state->beaconPort;
+        }
+
+        std::cout << payload.dump(2) << '\n';
+        return issues.empty();
+    }
+
+    if (!issues.empty()) {
+        std::wcerr << L"Master Control Program installation validation failed for "
+                   << installDirectory.c_str() << L":\n";
+        for (const auto& issue : issues) {
+            std::wcerr << L"  - " << issue << L'\n';
+        }
+        return false;
+    }
+
+    std::wcout << L"Validated Master Control Program installation at "
+               << installDirectory.c_str() << L'\n';
+    if (state.has_value()) {
+        std::wcout << L"Browser URL: " << wideFromUtf8(state->browserUrl) << L'\n';
+        std::wcout << L"Configuration path: " << wideFromUtf8(state->configPath) << L'\n';
+        std::wcout << L"Data directory: " << wideFromUtf8(state->dataDirectory) << L'\n';
+    }
+    return true;
+}
+
+void showDetectedEnvironment(const bool jsonOutput) {
     const auto paths = MasterControl::resolveAppPaths();
     const auto environment = MasterControl::detectLocalEnvironment();
     const auto configuration = MasterControl::buildDefaultConfiguration();
+    if (jsonOutput) {
+        const nlohmann::json payload = {
+            { "detected", true },
+            { "hostName", environment.hostName },
+            { "operatingSystem", environment.operatingSystem },
+            { "preferredBindAddress", environment.preferredBindAddress },
+            { "macAddress", environment.macAddress },
+            { "configurationPath", paths.configurationFile.string() },
+            { "dataDirectory", paths.dataDirectory.string() },
+            { "defaultBrowserPort", configuration.browserPort },
+            { "defaultBeaconPort", configuration.beaconPort },
+            { "seededBladeEndpoints", configuration.activeProfile.seededEndpoints.size() }
+        };
+        std::cout << payload.dump(2) << '\n';
+        return;
+    }
+
     std::cout << "Detected host name: " << environment.hostName << '\n';
     std::cout << "Detected operating system: " << environment.operatingSystem << '\n';
     std::cout << "Detected primary IP: " << environment.preferredBindAddress << '\n';
@@ -739,7 +887,11 @@ bool installLike(const std::wstring& mode,
         }
     }
 
-    std::wcout << (mode == L"repair" ? L"Repaired" : L"Installed")
+    const wchar_t* action =
+        mode == L"repair" ? L"Repaired" :
+        mode == L"upgrade" ? L"Upgraded" :
+        L"Installed";
+    std::wcout << action
                << L" Master Control Program at " << installDirectory.c_str() << L'\n';
     std::wcout << L"Configuration path: " << wideFromUtf8(state.configPath) << L'\n';
     std::wcout << L"Browser URL: " << wideFromUtf8(state.browserUrl) << L'\n';
@@ -813,6 +965,8 @@ IntegrationOptions parseOptions(int argc, wchar_t* argv[], int startIndex) {
             options.purgeInstallDirectory = true;
         } else if (argument == L"--purge-data") {
             options.purgeData = true;
+        } else if (argument == L"--json") {
+            options.jsonOutput = true;
         }
     }
     return options;
@@ -830,14 +984,15 @@ std::optional<std::filesystem::path> parseInstallDirectoryArgument(int argc, wch
 
 void printUsage() {
     std::wcout
-        << L"Usage: MasterControlBootstrapper.exe [detect|install|repair|uninstall] [installDir] [options]\n"
+        << L"Usage: MasterControlBootstrapper.exe [detect|install|repair|upgrade|validate|uninstall] [installDir] [options]\n"
         << L"Options:\n"
         << L"  --skip-service                Skip Windows service registration/start\n"
         << L"  --skip-firewall               Skip firewall rule creation/removal\n"
         << L"  --skip-shortcuts              Skip Start Menu shortcut creation/removal\n"
         << L"  --skip-uninstall-registration Skip Programs and Features registration/removal\n"
         << L"  --purge-install-dir           Remove the install directory during uninstall\n"
-        << L"  --purge-data                  Remove ProgramData configuration and state during uninstall\n";
+        << L"  --purge-data                  Remove ProgramData configuration and state during uninstall\n"
+        << L"  --json                        Emit machine-readable JSON for detect and validate\n";
 }
 
 } // namespace
@@ -848,12 +1003,16 @@ int wmain(int argc, wchar_t* argv[]) {
     const auto options = parseOptions(argc, argv, 2);
 
     if (mode == L"detect") {
-        showDetectedEnvironment();
+        showDetectedEnvironment(options.jsonOutput);
         return 0;
     }
 
-    if (mode == L"install" || mode == L"repair") {
+    if (mode == L"install" || mode == L"repair" || mode == L"upgrade") {
         return installLike(mode, installDirectory, options) ? 0 : 1;
+    }
+
+    if (mode == L"validate") {
+        return validateInstalledApplication(installDirectory, options.jsonOutput) ? 0 : 1;
     }
 
     if (mode == L"uninstall") {

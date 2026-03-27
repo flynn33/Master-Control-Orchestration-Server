@@ -1,29 +1,26 @@
 # AGENTS.md
 
 ## Operating Mode
-You must operate with a strict MCP Gateway-first workflow.
+You must operate with a local repository-first workflow.
 
 ## Core Rules
-- Use the configured MCP Gateway before any non-gateway tool, workflow, direct integration, or external search.
-- Prefer sub-agents available through the MCP Gateway whenever they fit the task.
-- Before continuing project work, read prior context from the Memory MCP server through the gateway.
-- During and after meaningful work, sync updated project state back to Memory MCP.
-- Non-gateway execution is allowed only after gateway discovery has been attempted and a concrete fallback reason exists.
-- After a fallback step, return to gateway-first behavior immediately.
+- Use the local repository, local build/test tools, and local project documents as the primary execution path.
+- Prefer direct inspection of source, tests, manifests, configs, and staged outputs before external research.
+- Keep project context in-repo through code, tests, docs, and handoff notes rather than relying on external memory services.
+- Validate meaningful work locally with the strongest available repo-native checks.
+- External browsing or integrations should be used only when the task truly requires information that is not available in the repository or local environment.
 
 ## Required Sequence
 1. Interpret the task and identify needed capabilities.
-2. Discover gateway tools, workflows, Memory MCP access, and sub-agents.
-3. Read existing Memory MCP context before planning or editing project work when relevant.
-4. Choose the best matching gateway sub-agent or tool.
-5. Execute through gateway-managed capabilities whenever possible.
-6. Validate using gateway-exposed testing, review, linting, or inspection capabilities when available.
-7. Sync meaningful updates to Memory MCP.
-8. Only then use a documented non-gateway fallback if necessary.
-9. Return to the gateway as soon as the fallback condition no longer applies.
+2. Read existing local context from the repository before planning or editing project work when relevant.
+3. Choose the best matching local code, script, test, or document entry point.
+4. Execute changes through repo-managed code and tooling.
+5. Validate using local build, test, lint, review, or staged-install paths when available.
+6. Record meaningful state in-repo when relevant through docs, changelog, version notes, or handoff files.
+7. Use external browsing or integrations only if the answer cannot be derived locally.
 
-## Memory MCP Minimum Sync Content
-When syncing project context, include these items when relevant:
+## Local Handoff Minimum Content
+When recording project context in-repo, include these items when relevant:
 - project identifier
 - current objective
 - active task
@@ -34,14 +31,3 @@ When syncing project context, include these items when relevant:
 - important files or modules touched
 - validation results
 - next steps or handoff notes
-
-## Fallback Documentation
-If fallback is required, document:
-- the discovery attempt
-- the expected gateway capability
-- why it could not be used
-- the fallback resource chosen
-- the point at which gateway-first execution resumes
-
-## Execution Note Template
-Gateway discovery: <performed/not performed>. Memory context read: <yes/no>. Gateway capability selected: <name or none>. Validation path: <method or none>. Memory sync completed: <yes/no>. Fallback: <yes/no>. Fallback reason: <reason or none>.

@@ -3624,6 +3624,23 @@ public:
         snapshot.rules = profile_.rules;
         snapshot.operatorChecklist = profile_.operatorChecklist;
 
+        const auto ensureRule = [&snapshot](GovernanceRule rule) {
+            const auto iterator = std::find_if(
+                snapshot.rules.begin(),
+                snapshot.rules.end(),
+                [&rule](const GovernanceRule& candidate) { return candidate.ruleId == rule.ruleId; });
+            if (iterator == snapshot.rules.end()) {
+                snapshot.rules.push_back(std::move(rule));
+            }
+        };
+        ensureRule(GovernanceRule{
+            "CLU-C008",
+            "Managed Resource Envelope",
+            "high",
+            "Managed launches are blocked when the enforced CPU or memory envelope is zero.",
+            "CLU preflights provider execution and managed install actions against the configured local CPU and memory envelope before spawning governed workloads."
+        });
+
         const auto configuration = configurationService_->current();
         const auto providers = providerRegistry_->listProviders();
         const auto assignments = providerAssignmentService_->listAssignments();
@@ -3677,6 +3694,22 @@ public:
             [](const ProviderConnection& provider) {
                 return provider.enabled && provider.allowAutonomousControl;
             }));
+
+        if (configuration.resourceAllocation.cpuPercent <= 0) {
+            appendFinding(
+                "CLU-C008",
+                "blocked",
+                "Managed execution is blocked because CPU allocation is set to 0%. Raise the CPU envelope before running governed providers or installs.");
+            snapshot.recommendedActions.push_back("Increase CPU allocation above 0% to re-enable CLU-governed provider execution and managed installs.");
+        }
+
+        if (configuration.resourceAllocation.memoryPercent <= 0) {
+            appendFinding(
+                "CLU-C008",
+                "blocked",
+                "Managed execution is blocked because memory allocation is set to 0%. Raise the memory envelope before running governed providers or installs.");
+            snapshot.recommendedActions.push_back("Increase memory allocation above 0% to re-enable CLU-governed provider execution and managed installs.");
+        }
 
         if (!configuration.security.securityProtocolsEnabled && configuration.security.allowOpenLanAccess) {
             appendFinding(
