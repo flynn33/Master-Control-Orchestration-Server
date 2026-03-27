@@ -16,6 +16,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <cstdint>
+#include <cwctype>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -76,6 +78,13 @@ struct ServiceInstallationStatus final {
     bool recoveryConfigured = false;
     bool failureActionsOnNonCrash = false;
     bool sidUnrestricted = false;
+    bool running = false;
+    std::string state = "not_installed";
+    DWORD processId = 0;
+    DWORD win32ExitCode = 0;
+    DWORD serviceSpecificExitCode = 0;
+    DWORD checkpoint = 0;
+    DWORD waitHintMilliseconds = 0;
     std::string binaryPath;
 };
 
@@ -254,6 +263,15 @@ bool pathIsWithin(const std::filesystem::path& candidate, const std::filesystem:
     return candidateText == normalizedRoot.wstring() || candidateText.rfind(rootText, 0) == 0;
 }
 
+bool directoryHasEntries(const std::filesystem::path& directory) {
+    std::error_code error;
+    if (!std::filesystem::exists(directory, error) || !std::filesystem::is_directory(directory, error)) {
+        return false;
+    }
+
+    return std::filesystem::directory_iterator(directory, error) != std::filesystem::directory_iterator();
+}
+
 void copyRecursive(const std::filesystem::path& source, const std::filesystem::path& destination) {
     if (samePath(source, destination)) {
         return;
@@ -275,6 +293,37 @@ void copyRecursive(const std::filesystem::path& source, const std::filesystem::p
 void removeDirectoryIfExists(const std::filesystem::path& directory) {
     std::error_code error;
     std::filesystem::remove_all(directory, error);
+}
+
+std::filesystem::path rollbackSnapshotDirectory(const std::filesystem::path& installDirectory) {
+    const auto snapshotName =
+        L"." + installDirectory.filename().wstring() +
+        L".rollback-" + std::to_wstring(GetCurrentProcessId()) +
+        L"-" + std::to_wstring(static_cast<std::uint64_t>(GetTickCount64()));
+    return installDirectory.parent_path() / snapshotName;
+}
+
+bool captureRollbackSnapshot(const std::filesystem::path& installDirectory,
+                             const std::filesystem::path& snapshotDirectory) {
+    removeDirectoryIfExists(snapshotDirectory);
+    if (!directoryHasEntries(installDirectory)) {
+        return false;
+    }
+
+    copyRecursive(installDirectory, snapshotDirectory);
+    return directoryHasEntries(snapshotDirectory);
+}
+
+bool restoreRollbackSnapshot(const std::filesystem::path& installDirectory,
+                             const std::filesystem::path& snapshotDirectory) {
+    if (!directoryHasEntries(snapshotDirectory)) {
+        return false;
+    }
+
+    removeDirectoryIfExists(installDirectory);
+    std::filesystem::create_directories(installDirectory.parent_path());
+    copyRecursive(snapshotDirectory, installDirectory);
+    return directoryHasEntries(installDirectory);
 }
 
 int runProcess(std::wstring commandLine,
@@ -367,6 +416,30 @@ ProcessCaptureResult runProcessCapture(std::wstring commandLine,
     CloseHandle(processInformation.hProcess);
     CloseHandle(readPipe);
     return result;
+}
+
+bool environmentFlagEnabled(const wchar_t* name) {
+    const auto requiredCharacters = GetEnvironmentVariableW(name, nullptr, 0);
+    if (requiredCharacters == 0) {
+        return false;
+    }
+
+    std::wstring value(static_cast<size_t>(requiredCharacters), L'\0');
+    GetEnvironmentVariableW(name, value.data(), requiredCharacters);
+    if (!value.empty() && value.back() == L'\0') {
+        value.pop_back();
+    }
+
+    std::transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](const wchar_t character) { return static_cast<wchar_t>(std::towlower(character)); });
+    return !value.empty() &&
+        value != L"0" &&
+        value != L"false" &&
+        value != L"off" &&
+        value != L"no";
 }
 
 bool writeTextFile(const std::filesystem::path& filePath, const std::string& contents) {
@@ -697,6 +770,64 @@ bool runNetshCommand(const std::wstring& arguments) {
     return runProcess(command, {}, CREATE_NO_WINDOW) == 0;
 }
 
+std::string serviceStateName(const DWORD state) {
+    switch (state) {
+        case SERVICE_STOPPED:
+            return "stopped";
+        case SERVICE_START_PENDING:
+            return "start_pending";
+        case SERVICE_STOP_PENDING:
+            return "stop_pending";
+        case SERVICE_RUNNING:
+            return "running";
+        case SERVICE_CONTINUE_PENDING:
+            return "continue_pending";
+        case SERVICE_PAUSE_PENDING:
+            return "pause_pending";
+        case SERVICE_PAUSED:
+            return "paused";
+        default:
+            return "unknown";
+    }
+}
+
+bool queryServiceProcessStatus(SC_HANDLE service, SERVICE_STATUS_PROCESS& status) {
+    DWORD bytesNeeded = 0;
+    return QueryServiceStatusEx(
+               service,
+               SC_STATUS_PROCESS_INFO,
+               reinterpret_cast<LPBYTE>(&status),
+               sizeof(status),
+               &bytesNeeded) != 0;
+}
+
+bool waitForServiceState(SC_HANDLE service, const DWORD targetState, const DWORD timeoutMilliseconds) {
+    constexpr DWORD kPollMilliseconds = 500;
+    DWORD elapsedMilliseconds = 0;
+
+    while (elapsedMilliseconds <= timeoutMilliseconds) {
+        SERVICE_STATUS_PROCESS status{};
+        if (!queryServiceProcessStatus(service, status)) {
+            return false;
+        }
+
+        if (status.dwCurrentState == targetState) {
+            return true;
+        }
+
+        if ((targetState == SERVICE_RUNNING && status.dwCurrentState == SERVICE_STOPPED) ||
+            (targetState == SERVICE_STOPPED && status.dwCurrentState == SERVICE_RUNNING && elapsedMilliseconds > 0)) {
+            return false;
+        }
+
+        Sleep(kPollMilliseconds);
+        elapsedMilliseconds += kPollMilliseconds;
+    }
+
+    SERVICE_STATUS_PROCESS status{};
+    return queryServiceProcessStatus(service, status) && status.dwCurrentState == targetState;
+}
+
 void removeFirewallRules() {
     runNetshCommand(L"delete rule name=\"" + std::wstring(kBrowserRuleName) + L"\"");
     runNetshCommand(L"delete rule name=\"" + std::wstring(kBeaconRuleName) + L"\"");
@@ -740,29 +871,10 @@ bool stopServiceIfPresent() {
     }
 
     SERVICE_STATUS_PROCESS status{};
-    DWORD bytesNeeded = 0;
-    if (QueryServiceStatusEx(
-            service,
-            SC_STATUS_PROCESS_INFO,
-            reinterpret_cast<LPBYTE>(&status),
-            sizeof(status),
-            &bytesNeeded) != 0 &&
-        status.dwCurrentState == SERVICE_RUNNING) {
+    if (queryServiceProcessStatus(service, status) && status.dwCurrentState == SERVICE_RUNNING) {
         SERVICE_STATUS serviceStatus{};
         ControlService(service, SERVICE_CONTROL_STOP, &serviceStatus);
-
-        for (int attempt = 0; attempt < 60; ++attempt) {
-            Sleep(500);
-            if (QueryServiceStatusEx(
-                    service,
-                    SC_STATUS_PROCESS_INFO,
-                    reinterpret_cast<LPBYTE>(&status),
-                    sizeof(status),
-                    &bytesNeeded) == 0 ||
-                status.dwCurrentState == SERVICE_STOPPED) {
-                break;
-            }
-        }
+        waitForServiceState(service, SERVICE_STOPPED, 30000);
     }
 
     CloseServiceHandle(service);
@@ -847,6 +959,17 @@ ServiceInstallationStatus queryServiceInstallationStatus() {
             sizeof(serviceSidInfo),
             &bytesNeeded) != 0) {
         status.sidUnrestricted = serviceSidInfo.dwServiceSidType == SERVICE_SID_TYPE_UNRESTRICTED;
+    }
+
+    SERVICE_STATUS_PROCESS processStatus{};
+    if (queryServiceProcessStatus(service, processStatus)) {
+        status.running = processStatus.dwCurrentState == SERVICE_RUNNING;
+        status.state = serviceStateName(processStatus.dwCurrentState);
+        status.processId = processStatus.dwProcessId;
+        status.win32ExitCode = processStatus.dwWin32ExitCode;
+        status.serviceSpecificExitCode = processStatus.dwServiceSpecificExitCode;
+        status.checkpoint = processStatus.dwCheckPoint;
+        status.waitHintMilliseconds = processStatus.dwWaitHint;
     }
 
     CloseServiceHandle(service);
@@ -970,17 +1093,14 @@ bool startServiceIfPresent() {
     }
 
     SERVICE_STATUS_PROCESS status{};
-    DWORD bytesNeeded = 0;
-    bool success = QueryServiceStatusEx(
-                       service,
-                       SC_STATUS_PROCESS_INFO,
-                       reinterpret_cast<LPBYTE>(&status),
-                       sizeof(status),
-                       &bytesNeeded) != 0 &&
+    bool success = queryServiceProcessStatus(service, status) &&
         status.dwCurrentState == SERVICE_RUNNING;
 
     if (!success) {
         success = StartServiceW(service, 0, nullptr) != 0 || GetLastError() == ERROR_SERVICE_ALREADY_RUNNING;
+        if (success) {
+            success = waitForServiceState(service, SERVICE_RUNNING, 30000);
+        }
     }
 
     CloseServiceHandle(service);
@@ -1043,7 +1163,9 @@ bool scheduleDeferredInstallRemoval(const std::filesystem::path& installDirector
     return true;
 }
 
-bool validateInstalledApplication(const std::filesystem::path& installDirectory, const bool jsonOutput) {
+bool validateInstalledApplication(const std::filesystem::path& installDirectory,
+                                  const bool jsonOutput,
+                                  const bool emitOutput = true) {
     std::vector<std::wstring> issues;
     auto appendIssue = [&issues](std::wstring issue) {
         issues.push_back(std::move(issue));
@@ -1134,6 +1256,11 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
                 if (!serviceStatus.sidUnrestricted) {
                     appendIssue(L"Windows service SID type is not configured as unrestricted.");
                 }
+                if (!serviceStatus.running) {
+                    appendIssue(
+                        L"Windows service is registered but not currently running (state: " +
+                        wideFromUtf8(serviceStatus.state) + L").");
+                }
                 if (!state->serviceBinary.empty() && !serviceStatus.binaryPath.empty()) {
                     const auto expectedBinary = normalizeServiceBinaryPath(state->serviceBinary);
                     const auto registeredBinary = normalizeServiceBinaryPath(serviceStatus.binaryPath);
@@ -1191,6 +1318,13 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
             { "serviceRecoveryConfigured", serviceStatus.recoveryConfigured },
             { "serviceFailureActionsOnNonCrash", serviceStatus.failureActionsOnNonCrash },
             { "serviceSidUnrestricted", serviceStatus.sidUnrestricted },
+            { "serviceRunning", serviceStatus.running },
+            { "serviceState", serviceStatus.state },
+            { "serviceProcessId", serviceStatus.processId },
+            { "serviceWin32ExitCode", serviceStatus.win32ExitCode },
+            { "serviceSpecificExitCode", serviceStatus.serviceSpecificExitCode },
+            { "serviceCheckpoint", serviceStatus.checkpoint },
+            { "serviceWaitHintMs", serviceStatus.waitHintMilliseconds },
             { "serviceBinaryPath", serviceStatus.binaryPath },
             { "uninstallRegistered", uninstallStatus.registered },
             { "uninstallDisplayVersion", uninstallStatus.displayVersion },
@@ -1218,7 +1352,13 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
             payload["uninstallRegistrationManaged"] = state->uninstallRegistrationManaged;
         }
 
-        std::cout << payload.dump(2) << '\n';
+        if (emitOutput) {
+            std::cout << payload.dump(2) << '\n';
+        }
+        return issues.empty();
+    }
+
+    if (!emitOutput) {
         return issues.empty();
     }
 
@@ -1267,6 +1407,13 @@ void showDetectedEnvironment(const bool jsonOutput) {
             { "serviceRecoveryConfigured", serviceStatus.recoveryConfigured },
             { "serviceFailureActionsOnNonCrash", serviceStatus.failureActionsOnNonCrash },
             { "serviceSidUnrestricted", serviceStatus.sidUnrestricted },
+            { "serviceRunning", serviceStatus.running },
+            { "serviceState", serviceStatus.state },
+            { "serviceProcessId", serviceStatus.processId },
+            { "serviceWin32ExitCode", serviceStatus.win32ExitCode },
+            { "serviceSpecificExitCode", serviceStatus.serviceSpecificExitCode },
+            { "serviceCheckpoint", serviceStatus.checkpoint },
+            { "serviceWaitHintMs", serviceStatus.waitHintMilliseconds },
             { "serviceBinaryPath", serviceStatus.binaryPath },
             { "uninstallRegistered", uninstallStatus.registered },
             { "uninstallDisplayVersion", uninstallStatus.displayVersion },
@@ -1431,49 +1578,226 @@ bool installLike(const std::wstring& mode,
                  const std::filesystem::path& installDirectory,
                  const IntegrationOptions& options) {
     const auto payloadLayout = resolvePayloadLayout();
+    const bool hadExistingInstall = directoryHasEntries(installDirectory);
+    std::optional<std::filesystem::path> rollbackDirectory;
+    if ((mode == L"repair" || mode == L"upgrade") && hadExistingInstall) {
+        rollbackDirectory = rollbackSnapshotDirectory(installDirectory);
+        if (!captureRollbackSnapshot(installDirectory, *rollbackDirectory)) {
+            std::wcerr << L"Failed to capture a rollback snapshot for "
+                       << installDirectory.c_str() << L".\n";
+            return false;
+        }
+    }
+
     std::filesystem::create_directories(installDirectory);
 
     if (options.manageService) {
         stopServiceIfPresent();
     }
 
+    std::optional<InstallationState> stagedState;
+    const auto rollbackOrCleanup = [&]() {
+        if (!rollbackDirectory.has_value()) {
+            bool cleanupSuccess = true;
+            if (options.manageService) {
+                cleanupSuccess = uninstallService() && cleanupSuccess;
+            }
+            if (options.manageFirewall) {
+                removeFirewallRules();
+            }
+            if (stagedState.has_value() && (options.manageShortcuts || stagedState->shortcutsManaged)) {
+                removeShortcuts(*stagedState);
+            }
+            if (options.manageUninstallRegistration) {
+                cleanupSuccess = unregisterUninstallEntry() && cleanupSuccess;
+            }
+
+            std::error_code error;
+            std::filesystem::remove(installStatePath(installDirectory), error);
+            removeDirectoryIfExists(installDirectory);
+            return cleanupSuccess;
+        }
+
+        bool rollbackSuccess = true;
+        if (options.manageService) {
+            rollbackSuccess = stopServiceIfPresent() && rollbackSuccess;
+        }
+
+        rollbackSuccess = restoreRollbackSnapshot(installDirectory, *rollbackDirectory) && rollbackSuccess;
+
+        const auto restoredState = readInstallationState(installDirectory);
+        if (!restoredState.has_value()) {
+            return false;
+        }
+
+        if (options.manageService || restoredState->serviceManaged) {
+            if (restoredState->serviceManaged) {
+                rollbackSuccess =
+                    installOrUpdateService(installDirectory / "MasterControlServiceHost.exe") &&
+                    startServiceIfPresent() &&
+                    rollbackSuccess;
+            } else {
+                rollbackSuccess = uninstallService() && rollbackSuccess;
+            }
+        }
+
+        if (options.manageFirewall || restoredState->firewallManaged) {
+            if (restoredState->firewallManaged) {
+                rollbackSuccess = configureFirewallRules(*restoredState) && rollbackSuccess;
+            } else {
+                removeFirewallRules();
+            }
+        }
+
+        if (options.manageShortcuts || restoredState->shortcutsManaged) {
+            removeShortcuts(*restoredState);
+            if (restoredState->shortcutsManaged) {
+                rollbackSuccess = configureShortcuts(*restoredState) && rollbackSuccess;
+            }
+        }
+
+        if (options.manageUninstallRegistration || restoredState->uninstallRegistrationManaged) {
+            if (restoredState->uninstallRegistrationManaged) {
+                rollbackSuccess = registerUninstallEntry(*restoredState) && rollbackSuccess;
+            } else {
+                rollbackSuccess = unregisterUninstallEntry() && rollbackSuccess;
+            }
+        }
+
+        return rollbackSuccess;
+    };
+
+    const auto failInstall = [&](const std::wstring& message) {
+        const bool rollbackAttempted = rollbackDirectory.has_value();
+        const bool rollbackRestored = rollbackOrCleanup();
+
+        if (options.jsonOutput) {
+            const auto currentState = readInstallationState(installDirectory);
+            const auto serviceStatus = queryServiceInstallationStatus();
+            const auto uninstallStatus = queryUninstallRegistrationStatus();
+            const auto shortcutStatus = queryShortcutInstallationStatus(currentState);
+            const auto firewallStatus = queryFirewallRuleStatus();
+            nlohmann::json payload = {
+                { "action", utf8FromWide(mode) },
+                { "succeeded", false },
+                { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
+                { "installDirectory", installDirectory.string() },
+                { "error", utf8FromWide(message) },
+                { "rollbackAttempted", rollbackAttempted },
+                { "rollbackRestored", rollbackRestored },
+                { "installStatePresent", currentState.has_value() },
+                { "serviceRegistered", serviceStatus.registered },
+                { "serviceRunning", serviceStatus.running },
+                { "serviceState", serviceStatus.state },
+                { "uninstallRegistered", uninstallStatus.registered },
+                { "shellShortcutPresent", shortcutStatus.shellShortcutPresent },
+                { "dashboardShortcutPresent", shortcutStatus.dashboardShortcutPresent },
+                { "browserFirewallRulePresent", firewallStatus.browserRulePresent },
+                { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent }
+            };
+            if (rollbackDirectory.has_value() && !rollbackRestored) {
+                payload["rollbackSnapshotPath"] = rollbackDirectory->string();
+            }
+            std::cout << payload.dump(2) << '\n';
+        } else {
+            std::wcerr << message << L'\n';
+            if (!rollbackRestored) {
+                if (rollbackDirectory.has_value()) {
+                    std::wcerr << L"Rollback failed. Backup preserved at "
+                               << rollbackDirectory->c_str() << L'\n';
+                } else {
+                    std::wcerr << L"Failed to clean up the partial installation state.\n";
+                }
+            } else if (rollbackDirectory.has_value()) {
+                std::wcerr << L"Previous installation restored from rollback snapshot.\n";
+            }
+        }
+
+        if (rollbackDirectory.has_value() && rollbackRestored) {
+            removeDirectoryIfExists(*rollbackDirectory);
+        }
+        return false;
+    };
+
     stagePayload(payloadLayout, installDirectory);
     const auto configuration = ensureConfigurationPresent();
-    const auto state = buildInstallationState(installDirectory, configuration, options);
-    if (!writeInstallationState(state, installDirectory)) {
-        std::wcerr << L"Failed to write installation state.\n";
-        return false;
+    stagedState = buildInstallationState(installDirectory, configuration, options);
+    if (!writeInstallationState(*stagedState, installDirectory)) {
+        return failInstall(L"Failed to write installation state.");
     }
 
-    if (options.manageFirewall && !configureFirewallRules(state)) {
-        std::wcerr << L"Failed to configure firewall rules.\n";
-        return false;
+    if (environmentFlagEnabled(L"MASTERCONTROL_BOOTSTRAPPER_TEST_FAIL_AFTER_STAGE")) {
+        return failInstall(L"Simulated bootstrapper failure after staging payload and installation state.");
     }
 
-    if (options.manageShortcuts && !configureShortcuts(state)) {
-        std::wcerr << L"Failed to create shortcuts.\n";
-        return false;
+    if (options.manageFirewall && !configureFirewallRules(*stagedState)) {
+        return failInstall(L"Failed to configure firewall rules.");
     }
 
-    if (options.manageUninstallRegistration && !registerUninstallEntry(state)) {
-        std::wcerr << L"Failed to register the uninstall entry.\n";
-        return false;
+    if (options.manageShortcuts && !configureShortcuts(*stagedState)) {
+        return failInstall(L"Failed to create shortcuts.");
+    }
+
+    if (options.manageUninstallRegistration && !registerUninstallEntry(*stagedState)) {
+        return failInstall(L"Failed to register the uninstall entry.");
     }
 
     if (options.manageService) {
         if (!installOrUpdateService(installDirectory / "MasterControlServiceHost.exe")) {
-            std::wcerr << L"Failed to install Windows service.\n";
-            return false;
+            return failInstall(L"Failed to install Windows service.");
         }
         if (!startServiceIfPresent()) {
-            std::wcerr << L"Failed to start Windows service.\n";
-            return false;
+            return failInstall(L"Failed to start Windows service.");
         }
     }
 
-    if (!validateInstalledApplication(installDirectory, false)) {
-        std::wcerr << L"Post-" << mode << L" validation failed.\n";
-        return false;
+    if (!validateInstalledApplication(installDirectory, false, false)) {
+        return failInstall(L"Post-" + mode + L" validation failed.");
+    }
+
+    if (rollbackDirectory.has_value()) {
+        removeDirectoryIfExists(*rollbackDirectory);
+    }
+
+    if (options.jsonOutput) {
+        const auto state = *stagedState;
+        const auto serviceStatus = queryServiceInstallationStatus();
+        const auto uninstallStatus = queryUninstallRegistrationStatus();
+        const auto shortcutStatus = queryShortcutInstallationStatus(stagedState);
+        const auto firewallStatus = queryFirewallRuleStatus();
+        nlohmann::json payload = {
+            { "action", utf8FromWide(mode) },
+            { "succeeded", true },
+            { "validated", true },
+            { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
+            { "installDirectory", installDirectory.string() },
+            { "browserUrl", state.browserUrl },
+            { "configPath", state.configPath },
+            { "dataDirectory", state.dataDirectory },
+            { "browserPort", state.browserPort },
+            { "beaconPort", state.beaconPort },
+            { "serviceManaged", state.serviceManaged },
+            { "firewallManaged", state.firewallManaged },
+            { "shortcutsManaged", state.shortcutsManaged },
+            { "uninstallRegistrationManaged", state.uninstallRegistrationManaged },
+            { "serviceRegistered", serviceStatus.registered },
+            { "serviceAutoStart", serviceStatus.autoStart },
+            { "serviceDelayedAutoStart", serviceStatus.delayedAutoStart },
+            { "serviceRecoveryConfigured", serviceStatus.recoveryConfigured },
+            { "serviceFailureActionsOnNonCrash", serviceStatus.failureActionsOnNonCrash },
+            { "serviceSidUnrestricted", serviceStatus.sidUnrestricted },
+            { "serviceRunning", serviceStatus.running },
+            { "serviceState", serviceStatus.state },
+            { "serviceProcessId", serviceStatus.processId },
+            { "serviceBinaryPath", serviceStatus.binaryPath },
+            { "uninstallRegistered", uninstallStatus.registered },
+            { "shellShortcutPresent", shortcutStatus.shellShortcutPresent },
+            { "dashboardShortcutPresent", shortcutStatus.dashboardShortcutPresent },
+            { "browserFirewallRulePresent", firewallStatus.browserRulePresent },
+            { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent }
+        };
+        std::cout << payload.dump(2) << '\n';
+        return true;
     }
 
     const wchar_t* action =
@@ -1482,8 +1806,8 @@ bool installLike(const std::wstring& mode,
         L"Installed";
     std::wcout << action
                << L" Master Control Program at " << installDirectory.c_str() << L'\n';
-    std::wcout << L"Configuration path: " << wideFromUtf8(state.configPath) << L'\n';
-    std::wcout << L"Browser URL: " << wideFromUtf8(state.browserUrl) << L'\n';
+    std::wcout << L"Configuration path: " << wideFromUtf8(stagedState->configPath) << L'\n';
+    std::wcout << L"Browser URL: " << wideFromUtf8(stagedState->browserUrl) << L'\n';
     return true;
 }
 
@@ -1529,6 +1853,39 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
         } else {
             removeDirectoryIfExists(installDirectory);
         }
+    }
+
+    if (options.jsonOutput) {
+        const auto serviceStatus = queryServiceInstallationStatus();
+        const auto uninstallStatus = queryUninstallRegistrationStatus();
+        const auto shortcutStatus = queryShortcutInstallationStatus(state);
+        const auto firewallStatus = queryFirewallRuleStatus();
+        std::error_code fileError;
+        const auto installStatePresent = std::filesystem::exists(installStatePath(installDirectory), fileError);
+        const auto installDirectoryPresent = std::filesystem::exists(installDirectory, fileError);
+        const auto dataDirectoryPresent =
+            !state.dataDirectory.empty() && std::filesystem::exists(std::filesystem::path(state.dataDirectory), fileError);
+        nlohmann::json payload = {
+            { "action", "uninstall" },
+            { "succeeded", true },
+            { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
+            { "installDirectory", installDirectory.string() },
+            { "purgeInstallDirectory", options.purgeInstallDirectory },
+            { "purgeData", options.purgeData },
+            { "installDirectoryPresent", installDirectoryPresent },
+            { "dataDirectoryPresent", dataDirectoryPresent },
+            { "installStatePresent", installStatePresent },
+            { "serviceRegistered", serviceStatus.registered },
+            { "serviceRunning", serviceStatus.running },
+            { "serviceState", serviceStatus.state },
+            { "uninstallRegistered", uninstallStatus.registered },
+            { "shellShortcutPresent", shortcutStatus.shellShortcutPresent },
+            { "dashboardShortcutPresent", shortcutStatus.dashboardShortcutPresent },
+            { "browserFirewallRulePresent", firewallStatus.browserRulePresent },
+            { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent }
+        };
+        std::cout << payload.dump(2) << '\n';
+        return true;
     }
 
     std::wcout << L"Uninstalled Master Control Program integrations.\n";
@@ -1584,7 +1941,7 @@ void printUsage() {
         << L"  --skip-uninstall-registration Skip Programs and Features registration/removal\n"
         << L"  --purge-install-dir           Remove the install directory during uninstall\n"
         << L"  --purge-data                  Remove ProgramData configuration and state during uninstall\n"
-        << L"  --json                        Emit machine-readable JSON for detect, preflight, and validate\n";
+        << L"  --json                        Emit machine-readable JSON for detect, preflight, validate, install, repair, upgrade, and uninstall\n";
 }
 
 } // namespace

@@ -2906,8 +2906,11 @@ int main() {
         success &= expect(
             detectJson.is_object() &&
                 !detectJson.value("serviceRegistered", true) &&
+                !detectJson.value("serviceRunning", true) &&
                 !detectJson.value("serviceDelayedAutoStart", true) &&
                 !detectJson.value("serviceRecoveryConfigured", true) &&
+                detectJson.value("serviceState", std::string{}) == "not_installed" &&
+                detectJson.value("serviceProcessId", 1) == 0 &&
                 detectJson.contains("uninstallRegistered") &&
                 detectJson.contains("browserFirewallRulePresent") &&
                 detectJson.contains("beaconFirewallRulePresent"),
@@ -2927,8 +2930,11 @@ int main() {
         success &= expect(
             validateJson.is_object() &&
                 !validateJson.value("serviceRegistered", true) &&
+                !validateJson.value("serviceRunning", true) &&
                 !validateJson.value("serviceAutoStart", true) &&
                 !validateJson.value("serviceRecoveryConfigured", true) &&
+                validateJson.value("serviceState", std::string{}) == "not_installed" &&
+                validateJson.value("serviceProcessId", 1) == 0 &&
                 !validateJson.value("serviceManaged", true) &&
                 !validateJson.value("firewallManaged", true) &&
                 !validateJson.value("shortcutsManaged", true) &&
@@ -2958,9 +2964,48 @@ int main() {
         const auto upgradeCommand = L"\"" + bootstrapperBinary.wstring() + L"\" upgrade \"" +
             bootstrapInstallDirectory.wstring() +
             L"\" --skip-service --skip-firewall --skip-shortcuts --skip-uninstall-registration";
+
+        {
+            ScopedEnvironmentOverride rollbackFailureOverride(
+                L"MASTERCONTROL_BOOTSTRAPPER_TEST_FAIL_AFTER_STAGE",
+                L"1");
+            const auto failedUpgradeResult = runProcessWithOutput(upgradeCommand + L" --json", tempRoot);
+            success &= expect(
+                failedUpgradeResult.exitCode != 0,
+                "Bootstrapper upgrade should fail when the post-stage rollback seam is enabled.");
+            const auto failedUpgradeJson = nlohmann::json::parse(failedUpgradeResult.rawOutput, nullptr, false);
+            success &= expect(
+                failedUpgradeJson.is_object() &&
+                    !failedUpgradeJson.value("succeeded", true) &&
+                    failedUpgradeJson.value("action", std::string{}) == "upgrade" &&
+                    failedUpgradeJson.value("rollbackAttempted", false) &&
+                    failedUpgradeJson.value("rollbackRestored", false) &&
+                    failedUpgradeJson.value("installStatePresent", false),
+                "Bootstrapper failed upgrade JSON mode should report that rollback restored the prior installation.");
+        }
+        const auto rolledBackState = readJsonFile(bootstrapInstallStateFile);
         success &= expect(
-            runProcess(upgradeCommand, tempRoot) == 0,
-            "Bootstrapper upgrade should succeed when refreshing an existing installation");
+            rolledBackState.has_value() &&
+                rolledBackState->value("version", std::string{}) == "0.0.0",
+            "Bootstrapper upgrade rollback should restore the previous installation state after a staged failure.");
+        success &= expect(
+            runProcess(validateCommand, tempRoot) == 0,
+            "Bootstrapper validate should succeed after upgrade rollback restores the prior installation.");
+
+        const auto upgradeJsonCommand = upgradeCommand + L" --json";
+        const auto upgradeJsonResult = runProcessWithOutput(upgradeJsonCommand, tempRoot);
+        success &= expect(
+            upgradeJsonResult.exitCode == 0,
+            "Bootstrapper upgrade JSON mode should succeed when refreshing an existing installation");
+        const auto upgradeJson = nlohmann::json::parse(upgradeJsonResult.rawOutput, nullptr, false);
+        success &= expect(
+            upgradeJson.is_object() &&
+                upgradeJson.value("succeeded", false) &&
+                upgradeJson.value("validated", false) &&
+                upgradeJson.value("action", std::string{}) == "upgrade" &&
+                !upgradeJson.value("serviceManaged", true) &&
+                !upgradeJson.value("serviceRegistered", true),
+            "Bootstrapper upgrade JSON mode should report a successful skipped-service refresh.");
         const auto upgradedState = readJsonFile(bootstrapInstallStateFile);
         success &= expect(
             upgradedState.has_value() && upgradedState->value("version", std::string{}) != "0.0.0",
@@ -2997,9 +3042,20 @@ int main() {
         const auto uninstallCommand = L"\"" + bootstrapperBinary.wstring() + L"\" uninstall \"" +
             bootstrapInstallDirectory.wstring() +
             L"\" --purge-install-dir --purge-data --skip-service --skip-firewall --skip-shortcuts --skip-uninstall-registration";
+        const auto uninstallJsonCommand = uninstallCommand + L" --json";
+        const auto uninstallJsonResult = runProcessWithOutput(uninstallJsonCommand, tempRoot);
         success &= expect(
-            runProcess(uninstallCommand, tempRoot) == 0,
-            "Bootstrapper uninstall should succeed when system integrations are skipped");
+            uninstallJsonResult.exitCode == 0,
+            "Bootstrapper uninstall JSON mode should succeed when system integrations are skipped");
+        const auto uninstallJson = nlohmann::json::parse(uninstallJsonResult.rawOutput, nullptr, false);
+        success &= expect(
+            uninstallJson.is_object() &&
+                uninstallJson.value("succeeded", false) &&
+                uninstallJson.value("action", std::string{}) == "uninstall" &&
+                !uninstallJson.value("installDirectoryPresent", true) &&
+                !uninstallJson.value("dataDirectoryPresent", true) &&
+                !uninstallJson.value("serviceRegistered", true),
+            "Bootstrapper uninstall JSON mode should report that skipped integrations and purged paths are gone.");
         success &= expect(
             !std::filesystem::exists(bootstrapInstallDirectory),
             "Bootstrapper uninstall should remove the install directory when requested");
