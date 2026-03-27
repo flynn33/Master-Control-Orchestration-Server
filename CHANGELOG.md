@@ -5,6 +5,13 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.1.26] - 2026-03-27
+### Summary
+Automated patch release for Master Control Program.
+
+### Included Changes
+- Add Apple queue execution and cancellation (flynn33)
+
 ## [0.1.25] - 2026-03-22
 ### Summary
 Automated patch release for Master Control Program.

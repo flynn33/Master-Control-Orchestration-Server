@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.25",
-  "current_tag": "v0.1.25",
-  "released_at": "2026-03-22",
-  "last_release_commit": "342c1e3176db7526792e975888127897be4faba0",
+  "current_version": "0.1.26",
+  "current_tag": "v0.1.26",
+  "released_at": "2026-03-27",
+  "last_release_commit": "811f3331d841c02842052e466db5af405cd2c4d3",
   "history": [
+    {
+      "version": "0.1.26",
+      "tag": "v0.1.26",
+      "released_at": "2026-03-27",
+      "commit": "811f3331d841c02842052e466db5af405cd2c4d3",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add Apple queue execution and cancellation (flynn33)"
+      ]
+    },
     {
       "version": "0.1.25",
       "tag": "v0.1.25",
