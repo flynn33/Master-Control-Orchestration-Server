@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.26",
-  "current_tag": "v0.1.26",
+  "current_version": "0.1.27",
+  "current_tag": "v0.1.27",
   "released_at": "2026-03-27",
-  "last_release_commit": "811f3331d841c02842052e466db5af405cd2c4d3",
+  "last_release_commit": "ed3445c8553856ce8a80ec83465677d068646642",
   "history": [
+    {
+      "version": "0.1.27",
+      "tag": "v0.1.27",
+      "released_at": "2026-03-27",
+      "commit": "ed3445c8553856ce8a80ec83465677d068646642",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add Apple readiness drill-down surfaces (flynn33)"
+      ]
+    },
     {
       "version": "0.1.26",
       "tag": "v0.1.26",
