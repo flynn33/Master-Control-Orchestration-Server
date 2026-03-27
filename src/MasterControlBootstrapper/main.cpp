@@ -12,6 +12,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <array>
+#include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -74,6 +77,29 @@ struct ServiceInstallationStatus final {
     bool failureActionsOnNonCrash = false;
     bool sidUnrestricted = false;
     std::string binaryPath;
+};
+
+struct UninstallRegistrationStatus final {
+    bool registered = false;
+    std::string displayVersion;
+    std::string installLocation;
+    std::string uninstallCommand;
+};
+
+struct ShortcutInstallationStatus final {
+    bool shellShortcutPresent = false;
+    bool dashboardShortcutPresent = false;
+};
+
+struct FirewallRuleStatus final {
+    bool browserRulePresent = false;
+    bool beaconRulePresent = false;
+};
+
+struct ProcessCaptureResult final {
+    bool launched = false;
+    int exitCode = 1;
+    std::string output;
 };
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -281,6 +307,68 @@ int runProcess(std::wstring commandLine,
     return static_cast<int>(exitCode);
 }
 
+ProcessCaptureResult runProcessCapture(std::wstring commandLine,
+                                       const std::filesystem::path& workingDirectory = {},
+                                       const DWORD creationFlags = CREATE_NO_WINDOW) {
+    ProcessCaptureResult result;
+
+    SECURITY_ATTRIBUTES securityAttributes{};
+    securityAttributes.nLength = sizeof(securityAttributes);
+    securityAttributes.bInheritHandle = TRUE;
+
+    HANDLE readPipe = nullptr;
+    HANDLE writePipe = nullptr;
+    if (!CreatePipe(&readPipe, &writePipe, &securityAttributes, 0)) {
+        return result;
+    }
+    SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOW startupInfo{};
+    startupInfo.cb = sizeof(startupInfo);
+    startupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startupInfo.hStdOutput = writePipe;
+    startupInfo.hStdError = writePipe;
+
+    PROCESS_INFORMATION processInformation{};
+    if (CreateProcessW(
+            nullptr,
+            commandLine.data(),
+            nullptr,
+            nullptr,
+            TRUE,
+            creationFlags,
+            nullptr,
+            workingDirectory.empty() ? nullptr : workingDirectory.wstring().c_str(),
+            &startupInfo,
+            &processInformation) == 0) {
+        CloseHandle(readPipe);
+        CloseHandle(writePipe);
+        return result;
+    }
+
+    result.launched = true;
+    CloseHandle(processInformation.hThread);
+    CloseHandle(writePipe);
+
+    WaitForSingleObject(processInformation.hProcess, INFINITE);
+
+    std::array<char, 4096> buffer{};
+    DWORD bytesRead = 0;
+    while (ReadFile(readPipe, buffer.data(), static_cast<DWORD>(buffer.size()), &bytesRead, nullptr) != 0 &&
+           bytesRead > 0) {
+        result.output.append(buffer.data(), static_cast<size_t>(bytesRead));
+    }
+
+    DWORD exitCode = 1;
+    GetExitCodeProcess(processInformation.hProcess, &exitCode);
+    result.exitCode = static_cast<int>(exitCode);
+
+    CloseHandle(processInformation.hProcess);
+    CloseHandle(readPipe);
+    return result;
+}
+
 bool writeTextFile(const std::filesystem::path& filePath, const std::string& contents) {
     std::filesystem::create_directories(filePath.parent_path());
     std::ofstream output(filePath, std::ios::binary | std::ios::trunc);
@@ -415,6 +503,98 @@ std::optional<InstallationState> readInstallationState(const std::filesystem::pa
         return json->get<InstallationState>();
     }
     return std::nullopt;
+}
+
+std::optional<std::wstring> queryRegistryStringValue(HKEY key, const wchar_t* name) {
+    DWORD type = 0;
+    DWORD bytesNeeded = 0;
+    if (RegQueryValueExW(key, name, nullptr, &type, nullptr, &bytesNeeded) != ERROR_SUCCESS ||
+        type != REG_SZ ||
+        bytesNeeded == 0) {
+        return std::nullopt;
+    }
+
+    std::wstring value(bytesNeeded / sizeof(wchar_t), L'\0');
+    if (RegQueryValueExW(
+            key,
+            name,
+            nullptr,
+            &type,
+            reinterpret_cast<LPBYTE>(value.data()),
+            &bytesNeeded) != ERROR_SUCCESS) {
+        return std::nullopt;
+    }
+
+    if (!value.empty() && value.back() == L'\0') {
+        value.pop_back();
+    }
+    return value;
+}
+
+UninstallRegistrationStatus queryUninstallRegistrationStatus() {
+    UninstallRegistrationStatus status;
+
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, kUninstallRegistryKey, 0, KEY_READ, &key) != ERROR_SUCCESS) {
+        return status;
+    }
+
+    status.registered = true;
+    if (const auto displayVersion = queryRegistryStringValue(key, L"DisplayVersion"); displayVersion.has_value()) {
+        status.displayVersion = utf8FromWide(*displayVersion);
+    }
+    if (const auto installLocation = queryRegistryStringValue(key, L"InstallLocation"); installLocation.has_value()) {
+        status.installLocation = utf8FromWide(*installLocation);
+    }
+    if (const auto uninstallCommand = queryRegistryStringValue(key, L"UninstallString"); uninstallCommand.has_value()) {
+        status.uninstallCommand = utf8FromWide(*uninstallCommand);
+    }
+
+    RegCloseKey(key);
+    return status;
+}
+
+ShortcutInstallationStatus queryShortcutInstallationStatus(const std::optional<InstallationState>& state) {
+    ShortcutInstallationStatus status;
+    if (!state.has_value()) {
+        return status;
+    }
+
+    std::error_code error;
+    status.shellShortcutPresent =
+        std::filesystem::exists(std::filesystem::path(state->shellShortcutPath), error) &&
+        std::filesystem::is_regular_file(std::filesystem::path(state->shellShortcutPath), error);
+    error.clear();
+    status.dashboardShortcutPresent =
+        std::filesystem::exists(std::filesystem::path(state->dashboardShortcutPath), error) &&
+        std::filesystem::is_regular_file(std::filesystem::path(state->dashboardShortcutPath), error);
+    return status;
+}
+
+bool firewallRuleExists(const std::wstring& ruleName) {
+    auto result = runProcessCapture(
+        L"netsh.exe advfirewall firewall show rule name=\"" + std::wstring(ruleName) + L"\"",
+        {},
+        CREATE_NO_WINDOW);
+    if (!result.launched || result.exitCode != 0) {
+        return false;
+    }
+
+    auto output = result.output;
+    std::transform(
+        output.begin(),
+        output.end(),
+        output.begin(),
+        [](const unsigned char character) { return static_cast<char>(std::tolower(character)); });
+    return output.find("rule name:") != std::string::npos &&
+        output.find("no rules match") == std::string::npos;
+}
+
+FirewallRuleStatus queryFirewallRuleStatus() {
+    FirewallRuleStatus status;
+    status.browserRulePresent = firewallRuleExists(kBrowserRuleName);
+    status.beaconRulePresent = firewallRuleExists(kBeaconRuleName);
+    return status;
 }
 
 bool setRegistryStringValue(HKEY key, const wchar_t* name, const std::wstring& value) {
@@ -907,6 +1087,9 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
     checkFile(installDirectory / "share" / "MasterControlProgram" / "web" / "index.html", L"Browser dashboard asset");
 
     const auto serviceStatus = queryServiceInstallationStatus();
+    const auto uninstallStatus = queryUninstallRegistrationStatus();
+    const auto shortcutStatus = queryShortcutInstallationStatus(state);
+    const auto firewallStatus = queryFirewallRuleStatus();
     if (state.has_value()) {
         const auto expectedInstallDirectory = std::filesystem::path(state->installDirectory);
         if (!expectedInstallDirectory.empty() && expectedInstallDirectory != installDirectory) {
@@ -962,6 +1145,38 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
                 }
             }
         }
+
+        if (state->shortcutsManaged) {
+            if (!shortcutStatus.shellShortcutPresent) {
+                appendIssue(L"Shell shortcut integration is expected but the Start Menu shell shortcut is missing.");
+            }
+            if (!shortcutStatus.dashboardShortcutPresent) {
+                appendIssue(L"Browser dashboard shortcut integration is expected but the dashboard shortcut is missing.");
+            }
+        }
+
+        if (state->uninstallRegistrationManaged) {
+            if (!uninstallStatus.registered) {
+                appendIssue(L"Programs and Features registration is expected but the uninstall entry is missing.");
+            } else if (!state->installDirectory.empty() && !uninstallStatus.installLocation.empty()) {
+                const auto expectedUninstallInstallDirectory = normalizeServiceBinaryPath(state->installDirectory);
+                const auto registeredInstallDirectory = normalizeServiceBinaryPath(uninstallStatus.installLocation);
+                if (expectedUninstallInstallDirectory != registeredInstallDirectory) {
+                    appendIssue(
+                        L"Uninstall registration points to a different install location: " +
+                        registeredInstallDirectory.wstring());
+                }
+            }
+        }
+
+        if (state->firewallManaged) {
+            if (state->allowOpenLanAccess && !firewallStatus.browserRulePresent) {
+                appendIssue(L"Browser firewall access is expected but the inbound browser rule is missing.");
+            }
+            if (state->beaconEnabled && !firewallStatus.beaconRulePresent) {
+                appendIssue(L"Beacon firewall access is expected but the inbound beacon rule is missing.");
+            }
+        }
     }
 
     if (jsonOutput) {
@@ -976,7 +1191,15 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
             { "serviceRecoveryConfigured", serviceStatus.recoveryConfigured },
             { "serviceFailureActionsOnNonCrash", serviceStatus.failureActionsOnNonCrash },
             { "serviceSidUnrestricted", serviceStatus.sidUnrestricted },
-            { "serviceBinaryPath", serviceStatus.binaryPath }
+            { "serviceBinaryPath", serviceStatus.binaryPath },
+            { "uninstallRegistered", uninstallStatus.registered },
+            { "uninstallDisplayVersion", uninstallStatus.displayVersion },
+            { "uninstallInstallLocation", uninstallStatus.installLocation },
+            { "uninstallCommand", uninstallStatus.uninstallCommand },
+            { "shellShortcutPresent", shortcutStatus.shellShortcutPresent },
+            { "dashboardShortcutPresent", shortcutStatus.dashboardShortcutPresent },
+            { "browserFirewallRulePresent", firewallStatus.browserRulePresent },
+            { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent }
         };
         for (const auto& issue : issues) {
             payload["issues"].push_back(utf8FromWide(issue));
@@ -1024,6 +1247,8 @@ void showDetectedEnvironment(const bool jsonOutput) {
     const auto configuration = MasterControl::buildDefaultConfiguration();
     if (jsonOutput) {
         const auto serviceStatus = queryServiceInstallationStatus();
+        const auto uninstallStatus = queryUninstallRegistrationStatus();
+        const auto firewallStatus = queryFirewallRuleStatus();
         const nlohmann::json payload = {
             { "detected", true },
             { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
@@ -1042,7 +1267,12 @@ void showDetectedEnvironment(const bool jsonOutput) {
             { "serviceRecoveryConfigured", serviceStatus.recoveryConfigured },
             { "serviceFailureActionsOnNonCrash", serviceStatus.failureActionsOnNonCrash },
             { "serviceSidUnrestricted", serviceStatus.sidUnrestricted },
-            { "serviceBinaryPath", serviceStatus.binaryPath }
+            { "serviceBinaryPath", serviceStatus.binaryPath },
+            { "uninstallRegistered", uninstallStatus.registered },
+            { "uninstallDisplayVersion", uninstallStatus.displayVersion },
+            { "uninstallInstallLocation", uninstallStatus.installLocation },
+            { "browserFirewallRulePresent", firewallStatus.browserRulePresent },
+            { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent }
         };
         std::cout << payload.dump(2) << '\n';
         return;

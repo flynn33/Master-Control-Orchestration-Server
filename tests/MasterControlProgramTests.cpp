@@ -2889,7 +2889,10 @@ int main() {
             detectJson.is_object() &&
                 !detectJson.value("serviceRegistered", true) &&
                 !detectJson.value("serviceDelayedAutoStart", true) &&
-                !detectJson.value("serviceRecoveryConfigured", true),
+                !detectJson.value("serviceRecoveryConfigured", true) &&
+                detectJson.contains("uninstallRegistered") &&
+                detectJson.contains("browserFirewallRulePresent") &&
+                detectJson.contains("beaconFirewallRulePresent"),
             "Bootstrapper detect JSON mode should report that the Windows service is not installed in the skipped-service test flow.");
         const auto validateJsonResult = runProcessWithOutput(validateJsonCommand, tempRoot);
         success &= expect(
@@ -2911,8 +2914,13 @@ int main() {
                 !validateJson.value("serviceManaged", true) &&
                 !validateJson.value("firewallManaged", true) &&
                 !validateJson.value("shortcutsManaged", true) &&
-                !validateJson.value("uninstallRegistrationManaged", true),
-            "Bootstrapper validate JSON mode should report that service policy is absent when installation skipped service registration.");
+                !validateJson.value("uninstallRegistrationManaged", true) &&
+                validateJson.contains("uninstallRegistered") &&
+                validateJson.contains("shellShortcutPresent") &&
+                validateJson.contains("dashboardShortcutPresent") &&
+                validateJson.contains("browserFirewallRulePresent") &&
+                validateJson.contains("beaconFirewallRulePresent"),
+            "Bootstrapper validate JSON mode should publish integration status while reporting that managed integrations were intentionally skipped.");
         const auto installedState = readJsonFile(bootstrapInstallStateFile);
         success &= expect(
             installedState.has_value() &&
