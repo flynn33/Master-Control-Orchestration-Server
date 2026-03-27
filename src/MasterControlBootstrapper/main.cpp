@@ -1289,6 +1289,144 @@ void showDetectedEnvironment(const bool jsonOutput) {
     std::cout << "Seeded BLADE endpoints: " << configuration.activeProfile.seededEndpoints.size() << '\n';
 }
 
+bool isProcessElevated() {
+    return IsUserAnAdmin() != FALSE;
+}
+
+bool probeWritableInstallTarget(const std::filesystem::path& installDirectory) {
+    std::error_code error;
+
+    if (std::filesystem::exists(installDirectory, error)) {
+        const auto probeFile =
+            installDirectory / (L".mastercontrol-write-probe-" + std::to_wstring(GetCurrentProcessId()) + L".tmp");
+        if (!writeTextFile(probeFile, "probe")) {
+            return false;
+        }
+        std::filesystem::remove(probeFile, error);
+        return true;
+    }
+
+    const auto parentDirectory = installDirectory.parent_path();
+    if (parentDirectory.empty() ||
+        !std::filesystem::exists(parentDirectory, error) ||
+        !std::filesystem::is_directory(parentDirectory, error)) {
+        return false;
+    }
+
+    const auto probeDirectory =
+        parentDirectory / (L".mastercontrol-install-probe-" + std::to_wstring(GetCurrentProcessId()));
+    if (!std::filesystem::create_directory(probeDirectory, error)) {
+        return false;
+    }
+    std::filesystem::remove(probeDirectory, error);
+    return true;
+}
+
+bool runPreflight(const std::filesystem::path& installDirectory, const IntegrationOptions& options) {
+    std::vector<std::wstring> issues;
+    std::vector<std::wstring> warnings;
+    const auto appendIssue = [&issues](std::wstring issue) { issues.push_back(std::move(issue)); };
+    const auto appendWarning = [&warnings](std::wstring warning) { warnings.push_back(std::move(warning)); };
+
+    const auto elevated = isProcessElevated();
+    std::optional<PayloadLayout> payloadLayout;
+    try {
+        payloadLayout = resolvePayloadLayout();
+    } catch (const std::exception& error) {
+        appendIssue(L"Bootstrapper payload could not be resolved: " + wideFromUtf8(error.what()));
+    }
+
+    if (payloadLayout.has_value()) {
+        if (!std::filesystem::exists(payloadLayout->serviceDirectory / "MasterControlServiceHost.exe")) {
+            appendIssue(L"Bootstrapper payload is missing MasterControlServiceHost.exe.");
+        }
+        if (!std::filesystem::exists(payloadLayout->shellDirectory / "MasterControlShell.exe")) {
+            appendIssue(L"Bootstrapper payload is missing MasterControlShell.exe.");
+        }
+        if (!std::filesystem::exists(payloadLayout->manifestsDirectory / "DashboardUIModule.json")) {
+            appendIssue(L"Bootstrapper payload is missing the Dashboard UI Forsetti manifest.");
+        }
+        if (!std::filesystem::exists(payloadLayout->webDirectory / "index.html")) {
+            appendIssue(L"Bootstrapper payload is missing browser dashboard assets.");
+        }
+    }
+
+    if (!probeWritableInstallTarget(installDirectory)) {
+        appendIssue(L"Install target is not writable: " + installDirectory.wstring());
+    }
+
+    if ((options.manageService || options.manageFirewall || options.manageUninstallRegistration) && !elevated) {
+        appendIssue(L"Administrator elevation is required for the selected service, firewall, or uninstall integrations.");
+    }
+
+    if (options.manageShortcuts) {
+        try {
+            const auto shortcutDirectory = knownFolder(FOLDERID_CommonPrograms) / kProgramsFolderName;
+            if (shortcutDirectory.empty()) {
+                appendIssue(L"Common Programs shortcut folder could not be resolved.");
+            }
+        } catch (const std::exception& error) {
+            appendIssue(L"Common Programs shortcut folder could not be resolved: " + wideFromUtf8(error.what()));
+        }
+    }
+
+    const auto defaultConfiguration = MasterControl::buildDefaultConfiguration();
+    if (options.manageFirewall && !defaultConfiguration.security.allowOpenLanAccess && !defaultConfiguration.beaconEnabled) {
+        appendWarning(L"Firewall integration is enabled, but the default configuration does not currently open browser or beacon LAN access.");
+    }
+
+    if (options.jsonOutput) {
+        nlohmann::json payload = {
+            { "ready", issues.empty() },
+            { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
+            { "installDirectory", installDirectory.string() },
+            { "payloadDetected", payloadLayout.has_value() },
+            { "payloadMode", payloadLayout.has_value() ? (payloadLayout->flatPayload ? "flat" : "build-tree") : "missing" },
+            { "elevated", elevated },
+            { "serviceManaged", options.manageService },
+            { "firewallManaged", options.manageFirewall },
+            { "shortcutsManaged", options.manageShortcuts },
+            { "uninstallRegistrationManaged", options.manageUninstallRegistration },
+            { "issues", nlohmann::json::array() },
+            { "warnings", nlohmann::json::array() }
+        };
+        if (payloadLayout.has_value()) {
+            payload["servicePayloadPath"] = payloadLayout->serviceDirectory.string();
+            payload["shellPayloadPath"] = payloadLayout->shellDirectory.string();
+            payload["manifestsPayloadPath"] = payloadLayout->manifestsDirectory.string();
+            payload["webPayloadPath"] = payloadLayout->webDirectory.string();
+        }
+        for (const auto& issue : issues) {
+            payload["issues"].push_back(utf8FromWide(issue));
+        }
+        for (const auto& warning : warnings) {
+            payload["warnings"].push_back(utf8FromWide(warning));
+        }
+        std::cout << payload.dump(2) << '\n';
+        return issues.empty();
+    }
+
+    if (!issues.empty()) {
+        std::wcerr << L"Master Control Program preflight failed for "
+                   << installDirectory.c_str() << L":\n";
+        for (const auto& issue : issues) {
+            std::wcerr << L"  - " << issue << L'\n';
+        }
+        for (const auto& warning : warnings) {
+            std::wcerr << L"  * warning: " << warning << L'\n';
+        }
+        return false;
+    }
+
+    std::wcout << L"Preflight ready for " << installDirectory.c_str() << L'\n';
+    if (!warnings.empty()) {
+        for (const auto& warning : warnings) {
+            std::wcout << L"  warning: " << warning << L'\n';
+        }
+    }
+    return true;
+}
+
 bool installLike(const std::wstring& mode,
                  const std::filesystem::path& installDirectory,
                  const IntegrationOptions& options) {
@@ -1438,7 +1576,7 @@ std::optional<std::filesystem::path> parseInstallDirectoryArgument(int argc, wch
 
 void printUsage() {
     std::wcout
-        << L"Usage: MasterControlBootstrapper.exe [detect|install|repair|upgrade|validate|uninstall] [installDir] [options]\n"
+        << L"Usage: MasterControlBootstrapper.exe [detect|preflight|install|repair|upgrade|validate|uninstall] [installDir] [options]\n"
         << L"Options:\n"
         << L"  --skip-service                Skip Windows service registration/start\n"
         << L"  --skip-firewall               Skip firewall rule creation/removal\n"
@@ -1446,7 +1584,7 @@ void printUsage() {
         << L"  --skip-uninstall-registration Skip Programs and Features registration/removal\n"
         << L"  --purge-install-dir           Remove the install directory during uninstall\n"
         << L"  --purge-data                  Remove ProgramData configuration and state during uninstall\n"
-        << L"  --json                        Emit machine-readable JSON for detect and validate\n";
+        << L"  --json                        Emit machine-readable JSON for detect, preflight, and validate\n";
 }
 
 } // namespace
@@ -1459,6 +1597,10 @@ int wmain(int argc, wchar_t* argv[]) {
     if (mode == L"detect") {
         showDetectedEnvironment(options.jsonOutput);
         return 0;
+    }
+
+    if (mode == L"preflight") {
+        return runPreflight(installDirectory, options) ? 0 : 1;
     }
 
     if (mode == L"install" || mode == L"repair" || mode == L"upgrade") {

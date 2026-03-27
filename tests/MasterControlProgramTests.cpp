@@ -2870,6 +2870,24 @@ int main() {
         const auto validateCommand = L"\"" + bootstrapperBinary.wstring() + L"\" validate \"" +
             bootstrapInstallDirectory.wstring() + L"\"";
         const auto validateJsonCommand = validateCommand + L" --json";
+        const auto preflightJsonCommand = L"\"" + bootstrapperBinary.wstring() + L"\" preflight \"" +
+            bootstrapInstallDirectory.wstring() +
+            L"\" --skip-service --skip-firewall --skip-shortcuts --skip-uninstall-registration --json";
+        const auto preflightJsonResult = runProcessWithOutput(preflightJsonCommand, tempRoot);
+        success &= expect(
+            preflightJsonResult.exitCode == 0,
+            "Bootstrapper preflight JSON mode should succeed when privileged integrations are intentionally skipped.");
+        const auto preflightJson = nlohmann::json::parse(preflightJsonResult.rawOutput, nullptr, false);
+        success &= expect(
+            preflightJson.is_object() &&
+                preflightJson.value("ready", false) &&
+                preflightJson.value("installDirectory", std::string{}) == bootstrapInstallDirectory.string() &&
+                preflightJson.value("payloadDetected", false) &&
+                !preflightJson.value("serviceManaged", true) &&
+                !preflightJson.value("firewallManaged", true) &&
+                !preflightJson.value("shortcutsManaged", true) &&
+                !preflightJson.value("uninstallRegistrationManaged", true),
+            "Bootstrapper preflight JSON mode should describe a ready skipped-integration install target.");
         success &= expect(
             runProcess(validateCommand, tempRoot) == 0,
             "Bootstrapper validate should succeed after install when the staged payload and state are healthy");
