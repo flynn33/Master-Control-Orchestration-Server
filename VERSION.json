@@ -1,11 +1,22 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.28",
-  "current_tag": "v0.1.28",
+  "current_version": "0.1.29",
+  "current_tag": "v0.1.29",
   "released_at": "2026-03-27",
-  "last_release_commit": "a386cb4161e16cfc2dfeb6437f3e55004447883c",
+  "last_release_commit": "08abcc4c08726ba1507d25e8fd5cbe22ea7f4f81",
   "history": [
+    {
+      "version": "0.1.29",
+      "tag": "v0.1.29",
+      "released_at": "2026-03-27",
+      "commit": "08abcc4c08726ba1507d25e8fd5cbe22ea7f4f81",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Harden deployment workflow and remove gateway assumptions (flynn33)",
+        "Harden bootstrapper deployment validation (flynn33)"
+      ]
+    },
     {
       "version": "0.1.28",
       "tag": "v0.1.28",

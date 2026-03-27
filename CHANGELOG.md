@@ -5,6 +5,14 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.1.29] - 2026-03-27
+### Summary
+Automated patch release for Master Control Program.
+
+### Included Changes
+- Harden deployment workflow and remove gateway assumptions (flynn33)
+- Harden bootstrapper deployment validation (flynn33)
+
 ## [0.1.28] - 2026-03-27
 ### Summary
 Automated patch release for Master Control Program.
