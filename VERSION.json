@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.30",
-  "current_tag": "v0.1.30",
+  "current_version": "0.1.31",
+  "current_tag": "v0.1.31",
   "released_at": "2026-03-27",
-  "last_release_commit": "badd7fdbe3cefc0a584388a425db5dd521aeb5aa",
+  "last_release_commit": "55a085c3a1f721d6cdda9b7d74e2d98f2fe7c2ff",
   "history": [
+    {
+      "version": "0.1.31",
+      "tag": "v0.1.31",
+      "released_at": "2026-03-27",
+      "commit": "55a085c3a1f721d6cdda9b7d74e2d98f2fe7c2ff",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add bootstrapper preflight readiness checks (flynn33)"
+      ]
+    },
     {
       "version": "0.1.30",
       "tag": "v0.1.30",
