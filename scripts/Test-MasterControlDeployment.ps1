@@ -10,7 +10,8 @@ param(
     [string]$Scenario = "auto",
     [switch]$ManagedMutating,
     [switch]$KeepArtifacts,
-    [string]$ReportPath
+    [string]$ReportPath,
+    [string]$SummaryPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,6 +54,7 @@ function Invoke-Bootstrapper {
         }
 
         $argumentLine = New-ArgumentLine -Arguments $Arguments
+        $startedAt = Get-Date
         $process = Start-Process `
             -FilePath $Bootstrapper `
             -ArgumentList $argumentLine `
@@ -61,6 +63,7 @@ function Invoke-Bootstrapper {
             -NoNewWindow `
             -RedirectStandardOutput $stdout `
             -RedirectStandardError $stderr
+        $completedAt = Get-Date
 
         $stdOut = Get-Content $stdout -Raw
         $stdErr = Get-Content $stderr -Raw
@@ -79,6 +82,9 @@ function Invoke-Bootstrapper {
         return [pscustomobject]@{
             arguments = $Arguments
             argumentLine = $argumentLine
+            startedAt = $startedAt.ToString("o")
+            completedAt = $completedAt.ToString("o")
+            durationMs = [int][Math]::Round(($completedAt - $startedAt).TotalMilliseconds)
             exitCode = $process.ExitCode
             stdout = $stdOut
             stderr = $stdErr
@@ -91,6 +97,18 @@ function Invoke-Bootstrapper {
         if (-not [string]::IsNullOrWhiteSpace($stdout) -and (Test-Path $stdout)) { Remove-Item $stdout -Force }
         if (-not [string]::IsNullOrWhiteSpace($stderr) -and (Test-Path $stderr)) { Remove-Item $stderr -Force }
     }
+}
+
+function Capture-DetectSnapshot {
+    param(
+        [string]$Bootstrapper,
+        [hashtable]$Environment = @{}
+    )
+
+    return Invoke-Bootstrapper -Bootstrapper $Bootstrapper -Arguments @(
+        "detect",
+        "--json"
+    ) -Environment $Environment
 }
 
 function New-Expectation {
@@ -121,6 +139,115 @@ function Test-ScenarioSucceeded {
     return $true
 }
 
+function New-DeploymentSummary {
+    param([object]$Report)
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("# Master Control Deployment Acceptance Summary")
+    $lines.Add("")
+    $lines.Add("* Generated: $($Report.generatedAt)")
+    $lines.Add("* Host: $($Report.host.caption) ($($Report.host.version) build $($Report.host.buildNumber))")
+    $lines.Add("* Machine: $($Report.host.machineName)")
+    $lines.Add("* Administrator: $($Report.isAdministrator)")
+    $lines.Add("* Scenario: $($Report.scenario) -> $($Report.effectiveScenario)")
+    $lines.Add("* Managed mutating enabled: $($Report.managedMutating)")
+    $lines.Add("* Overall result: $(if ($Report.succeeded) { 'passed' } else { 'failed' })")
+    $lines.Add("")
+
+    foreach ($scenarioResult in $Report.scenarios) {
+        $lines.Add("## $($scenarioResult.scenario)")
+        $lines.Add("")
+        $lines.Add("* Result: $(if ($scenarioResult.succeeded) { 'passed' } else { 'failed' })")
+        $lines.Add("* Install directory: $($scenarioResult.installDirectory)")
+        $lines.Add("* Data directory: $($scenarioResult.dataDirectory)")
+        if ($scenarioResult.PSObject.Properties.Name -contains "mutating") {
+            $lines.Add("* Mutating flow: $($scenarioResult.mutating)")
+        }
+        if ($scenarioResult.PSObject.Properties.Name -contains "snapshots" -and $scenarioResult.snapshots) {
+            $snapshotNames = @($scenarioResult.snapshots | ForEach-Object { $_.name })
+            if ($snapshotNames.Count -gt 0) {
+                $lines.Add("* Detect snapshots: $([string]::Join(', ', $snapshotNames))")
+            }
+        }
+        $lines.Add("")
+        $lines.Add("### Expectations")
+        $lines.Add("")
+        foreach ($expectation in $scenarioResult.expectations) {
+            $marker = if ($expectation.passed) { "[pass]" } else { "[fail]" }
+            $lines.Add("* $marker $($expectation.message)")
+        }
+        $lines.Add("")
+    }
+
+    return [string]::Join([Environment]::NewLine, $lines)
+}
+
+function Convert-CommandForReport {
+    param(
+        [object]$CommandResult,
+        [string]$ArtifactDirectory,
+        [string]$Name
+    )
+
+    if ($null -eq $CommandResult) {
+        return $null
+    }
+
+    New-Item -ItemType Directory -Force -Path $ArtifactDirectory | Out-Null
+    $stdoutPath = Join-Path $ArtifactDirectory ($Name + "-stdout.txt")
+    $stderrPath = Join-Path $ArtifactDirectory ($Name + "-stderr.txt")
+    Set-Content -Path $stdoutPath -Value $CommandResult.stdout -Encoding UTF8
+    Set-Content -Path $stderrPath -Value $CommandResult.stderr -Encoding UTF8
+
+    return [pscustomobject][ordered]@{
+        name = $Name
+        arguments = @($CommandResult.arguments)
+        argumentLine = $CommandResult.argumentLine
+        startedAt = $CommandResult.startedAt
+        completedAt = $CommandResult.completedAt
+        durationMs = $CommandResult.durationMs
+        exitCode = $CommandResult.exitCode
+        stdoutPath = $stdoutPath
+        stderrPath = $stderrPath
+    }
+}
+
+function Convert-ScenarioForReport {
+    param(
+        [object]$ScenarioResult,
+        [string]$ArtifactRoot
+    )
+
+    $scenarioArtifactDirectory = Join-Path $ArtifactRoot $ScenarioResult.scenario
+    $commands = New-Object System.Collections.ArrayList
+    foreach ($entry in $ScenarioResult.commands.GetEnumerator()) {
+        [void]$commands.Add((Convert-CommandForReport -CommandResult $entry.Value -ArtifactDirectory $scenarioArtifactDirectory -Name $entry.Key))
+    }
+
+    $snapshots = New-Object System.Collections.ArrayList
+    if ($ScenarioResult.PSObject.Properties.Name -contains "snapshots" -and $ScenarioResult.snapshots) {
+        foreach ($entry in $ScenarioResult.snapshots.GetEnumerator()) {
+            [void]$snapshots.Add((Convert-CommandForReport -CommandResult $entry.Value -ArtifactDirectory $scenarioArtifactDirectory -Name ("snapshot-" + $entry.Key)))
+        }
+    }
+
+    $payload = [ordered]@{
+        scenario = $ScenarioResult.scenario
+        installDirectory = $ScenarioResult.installDirectory
+        dataDirectory = $ScenarioResult.dataDirectory
+        commands = $commands
+        snapshots = $snapshots
+        expectations = @($ScenarioResult.expectations)
+        succeeded = $ScenarioResult.succeeded
+    }
+
+    if ($ScenarioResult.PSObject.Properties.Name -contains "mutating") {
+        $payload["mutating"] = $ScenarioResult.mutating
+    }
+
+    return [pscustomobject]$payload
+}
+
 function Run-MixedAcceptance {
     param(
         [string]$Bootstrapper,
@@ -133,6 +260,9 @@ function Run-MixedAcceptance {
 
     $environment = @{
         MASTERCONTROL_DATA_DIR = $dataDirectory
+    }
+    $snapshots = [ordered]@{
+        before = Capture-DetectSnapshot -Bootstrapper $Bootstrapper -Environment $environment
     }
 
     $preflight = Invoke-Bootstrapper -Bootstrapper $Bootstrapper -Arguments @(
@@ -152,6 +282,7 @@ function Run-MixedAcceptance {
         "--skip-uninstall-registration",
         "--json"
     ) -Environment $environment
+    $snapshots.afterInstall = Capture-DetectSnapshot -Bootstrapper $Bootstrapper -Environment $environment
 
     $validate = Invoke-Bootstrapper -Bootstrapper $Bootstrapper -Arguments @(
         "validate",
@@ -167,6 +298,7 @@ function Run-MixedAcceptance {
         "--skip-uninstall-registration",
         "--json"
     ) -Environment $environment
+    $snapshots.afterUpgrade = Capture-DetectSnapshot -Bootstrapper $Bootstrapper -Environment $environment
 
     $repair = Invoke-Bootstrapper -Bootstrapper $Bootstrapper -Arguments @(
         "repair",
@@ -176,6 +308,7 @@ function Run-MixedAcceptance {
         "--skip-uninstall-registration",
         "--json"
     ) -Environment $environment
+    $snapshots.afterRepair = Capture-DetectSnapshot -Bootstrapper $Bootstrapper -Environment $environment
 
     $uninstall = Invoke-Bootstrapper -Bootstrapper $Bootstrapper -Arguments @(
         "uninstall",
@@ -187,6 +320,9 @@ function Run-MixedAcceptance {
         "--skip-uninstall-registration",
         "--json"
     ) -Environment $environment
+    $installDirectoryRemovedAfterUninstall = -not (Test-Path $installDirectory)
+    $dataDirectoryRemovedAfterUninstall = -not (Test-Path $dataDirectory)
+    $snapshots.afterUninstall = Capture-DetectSnapshot -Bootstrapper $Bootstrapper -Environment $environment
 
     $expectations = @(
         (New-Expectation ($preflight.exitCode -eq 0 -and $preflight.json.ready) "Mixed preflight should succeed."),
@@ -195,16 +331,19 @@ function Run-MixedAcceptance {
         (New-Expectation ($upgrade.exitCode -eq 0 -and $upgrade.json.succeeded -and $upgrade.json.validated) "Mixed upgrade should succeed and self-validate."),
         (New-Expectation ($repair.exitCode -eq 0 -and $repair.json.succeeded -and $repair.json.validated) "Mixed repair should succeed and self-validate."),
         (New-Expectation ($uninstall.exitCode -eq 0 -and $uninstall.json.succeeded) "Mixed uninstall should succeed."),
-        (New-Expectation (-not (Test-Path $installDirectory)) "Mixed uninstall should remove the install directory."),
-        (New-Expectation (-not (Test-Path $dataDirectory)) "Mixed uninstall should remove the data directory."),
+        (New-Expectation ($installDirectoryRemovedAfterUninstall) "Mixed uninstall should remove the install directory."),
+        (New-Expectation ($dataDirectoryRemovedAfterUninstall) "Mixed uninstall should remove the data directory."),
         (New-Expectation ($install.json.shellShortcutPresent -and $install.json.dashboardShortcutPresent) "Mixed install should create user shortcut surfaces."),
-        (New-Expectation (-not $uninstall.json.shellShortcutPresent -and -not $uninstall.json.dashboardShortcutPresent) "Mixed uninstall should remove user shortcut surfaces.")
+        (New-Expectation (-not $uninstall.json.shellShortcutPresent -and -not $uninstall.json.dashboardShortcutPresent) "Mixed uninstall should remove user shortcut surfaces."),
+        (New-Expectation ($snapshots.afterInstall.exitCode -eq 0 -and -not $snapshots.afterInstall.json.serviceRegistered -and -not $snapshots.afterInstall.json.uninstallRegistered) "Mixed install should leave managed service and uninstall registration absent."),
+        (New-Expectation ($snapshots.afterUninstall.exitCode -eq 0 -and -not $snapshots.afterUninstall.json.serviceRegistered -and -not $snapshots.afterUninstall.json.uninstallRegistered) "Mixed uninstall should leave managed integrations absent.")
     )
 
     return [pscustomobject]@{
         scenario = "mixed"
         installDirectory = $installDirectory
         dataDirectory = $dataDirectory
+        snapshots = $snapshots
         commands = [ordered]@{
             preflight = $preflight
             install = $install
@@ -233,6 +372,9 @@ function Run-ManagedAcceptance {
     $environment = @{
         MASTERCONTROL_DATA_DIR = $dataDirectory
     }
+    $snapshots = [ordered]@{
+        before = Capture-DetectSnapshot -Bootstrapper $Bootstrapper -Environment $environment
+    }
 
     $preflight = Invoke-Bootstrapper -Bootstrapper $Bootstrapper -Arguments @(
         "preflight",
@@ -260,6 +402,7 @@ function Run-ManagedAcceptance {
                 $installDirectory,
                 "--json"
             ) -Environment $environment
+            $snapshots.afterInstall = Capture-DetectSnapshot -Bootstrapper $Bootstrapper -Environment $environment
             $validate = Invoke-Bootstrapper -Bootstrapper $Bootstrapper -Arguments @(
                 "validate",
                 $installDirectory,
@@ -270,11 +413,13 @@ function Run-ManagedAcceptance {
                 $installDirectory,
                 "--json"
             ) -Environment $environment
+            $snapshots.afterUpgrade = Capture-DetectSnapshot -Bootstrapper $Bootstrapper -Environment $environment
             $repair = Invoke-Bootstrapper -Bootstrapper $Bootstrapper -Arguments @(
                 "repair",
                 $installDirectory,
                 "--json"
             ) -Environment $environment
+            $snapshots.afterRepair = Capture-DetectSnapshot -Bootstrapper $Bootstrapper -Environment $environment
             $uninstall = Invoke-Bootstrapper -Bootstrapper $Bootstrapper -Arguments @(
                 "uninstall",
                 $installDirectory,
@@ -282,6 +427,9 @@ function Run-ManagedAcceptance {
                 "--purge-data",
                 "--json"
             ) -Environment $environment
+            $installDirectoryRemovedAfterUninstall = -not (Test-Path $installDirectory)
+            $dataDirectoryRemovedAfterUninstall = -not (Test-Path $dataDirectory)
+            $snapshots.afterUninstall = Capture-DetectSnapshot -Bootstrapper $Bootstrapper -Environment $environment
 
             $commands.install = $install
             $commands.validate = $validate
@@ -291,12 +439,19 @@ function Run-ManagedAcceptance {
 
             $expectations += @(
                 (New-Expectation ($install.exitCode -eq 0 -and $install.json.succeeded -and $install.json.validated) "Managed install should succeed and self-validate."),
+                (New-Expectation ($install.json.serviceManaged -and $install.json.serviceRegistered -and $install.json.serviceRunning -and $install.json.serviceAutoStart -and $install.json.serviceDelayedAutoStart -and $install.json.serviceRecoveryConfigured -and $install.json.serviceFailureActionsOnNonCrash -and $install.json.serviceSidUnrestricted) "Managed install should register a running auto-start Windows service with recovery and SID policies."),
+                (New-Expectation ($install.json.uninstallRegistered) "Managed install should create Programs and Features registration."),
+                (New-Expectation ($install.json.shellShortcutPresent -and $install.json.dashboardShortcutPresent) "Managed install should create Start Menu shortcut surfaces."),
+                (New-Expectation ($snapshots.afterInstall.exitCode -eq 0 -and $snapshots.afterInstall.json.serviceRegistered -and $snapshots.afterInstall.json.serviceRunning -and $snapshots.afterInstall.json.serviceDelayedAutoStart -and $snapshots.afterInstall.json.serviceRecoveryConfigured -and $snapshots.afterInstall.json.uninstallRegistered) "Managed detect snapshot after install should show service and uninstall registration in place."),
                 (New-Expectation ($validate.exitCode -eq 0 -and $validate.json.valid) "Managed validate should succeed."),
                 (New-Expectation ($upgrade.exitCode -eq 0 -and $upgrade.json.succeeded -and $upgrade.json.validated) "Managed upgrade should succeed and self-validate."),
                 (New-Expectation ($repair.exitCode -eq 0 -and $repair.json.succeeded -and $repair.json.validated) "Managed repair should succeed and self-validate."),
                 (New-Expectation ($uninstall.exitCode -eq 0 -and $uninstall.json.succeeded) "Managed uninstall should succeed."),
-                (New-Expectation (-not (Test-Path $installDirectory)) "Managed uninstall should remove the install directory."),
-                (New-Expectation (-not (Test-Path $dataDirectory)) "Managed uninstall should remove the data directory.")
+                (New-Expectation (-not $uninstall.json.serviceRegistered -and -not $uninstall.json.uninstallRegistered) "Managed uninstall should remove service and Programs and Features registration."),
+                (New-Expectation (-not $uninstall.json.shellShortcutPresent -and -not $uninstall.json.dashboardShortcutPresent) "Managed uninstall should remove Start Menu shortcut surfaces."),
+                (New-Expectation ($snapshots.afterUninstall.exitCode -eq 0 -and -not $snapshots.afterUninstall.json.serviceRegistered -and -not $snapshots.afterUninstall.json.uninstallRegistered) "Managed detect snapshot after uninstall should show service and uninstall registration removed."),
+                (New-Expectation ($installDirectoryRemovedAfterUninstall) "Managed uninstall should remove the install directory."),
+                (New-Expectation ($dataDirectoryRemovedAfterUninstall) "Managed uninstall should remove the data directory.")
             )
         }
     }
@@ -305,6 +460,7 @@ function Run-ManagedAcceptance {
         scenario = "managed"
         installDirectory = $installDirectory
         dataDirectory = $dataDirectory
+        snapshots = $snapshots
         commands = $commands
         expectations = $expectations
         mutating = $RunMutating
@@ -357,13 +513,51 @@ foreach ($scenarioResult in $report.scenarios) {
     }
 }
 
-$reportJson = $report | ConvertTo-Json -Depth 10
+$artifactRoot = if (-not [string]::IsNullOrWhiteSpace($ReportPath)) {
+    [System.IO.Path]::ChangeExtension([System.IO.Path]::GetFullPath($ReportPath), ".artifacts")
+} else {
+    Join-Path $report.root "artifacts"
+}
+
+$reportForSerialization = [pscustomobject][ordered]@{
+    generatedAt = $report.generatedAt
+    bootstrapperPath = $report.bootstrapperPath
+    root = $report.root
+    artifactRoot = $artifactRoot
+    scenario = $report.scenario
+    effectiveScenario = $report.effectiveScenario
+    isAdministrator = $report.isAdministrator
+    managedMutating = $report.managedMutating
+    host = [pscustomobject][ordered]@{
+        caption = $report.host.caption
+        version = $report.host.version
+        buildNumber = $report.host.buildNumber
+        machineName = $report.host.machineName
+    }
+    scenarios = @($report.scenarios | ForEach-Object { Convert-ScenarioForReport -ScenarioResult $_ -ArtifactRoot $artifactRoot })
+    succeeded = $report.succeeded
+}
+
+$reportJson = $reportForSerialization | ConvertTo-Json -Depth 10
 if ($ReportPath) {
     $reportDirectory = Split-Path -Parent $ReportPath
     if ($reportDirectory) {
         New-Item -ItemType Directory -Force -Path $reportDirectory | Out-Null
     }
     Set-Content -Path $ReportPath -Value $reportJson -Encoding UTF8
+}
+
+if (-not [string]::IsNullOrWhiteSpace($ReportPath) -and [string]::IsNullOrWhiteSpace($SummaryPath)) {
+    $resolvedReportPath = [System.IO.Path]::GetFullPath($ReportPath)
+    $SummaryPath = [System.IO.Path]::ChangeExtension($resolvedReportPath, ".md")
+}
+
+if (-not [string]::IsNullOrWhiteSpace($SummaryPath)) {
+    $summaryDirectory = Split-Path -Parent $SummaryPath
+    if ($summaryDirectory) {
+        New-Item -ItemType Directory -Force -Path $summaryDirectory | Out-Null
+    }
+    Set-Content -Path $SummaryPath -Value (New-DeploymentSummary -Report $reportForSerialization) -Encoding UTF8
 }
 
 $reportJson
