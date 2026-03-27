@@ -618,6 +618,71 @@ std::optional<MasterControl::AppleOperationRecord> findAppleOperation(
     return *iterator;
 }
 
+std::optional<MasterControl::AppleOperationRecord> findAppleOperationById(
+    const std::vector<MasterControl::AppleOperationRecord>& operations,
+    const std::string& operationId) {
+    const auto iterator = std::find_if(
+        operations.begin(),
+        operations.end(),
+        [&operationId](const MasterControl::AppleOperationRecord& operation) {
+            return operation.operationId == operationId;
+        });
+    if (iterator == operations.end()) {
+        return std::nullopt;
+    }
+    return *iterator;
+}
+
+bool isTerminalAppleOperationStatus(MasterControl::AppleOperationStatus status) {
+    return status != MasterControl::AppleOperationStatus::Queued &&
+        status != MasterControl::AppleOperationStatus::Running;
+}
+
+std::optional<MasterControl::AppleOperationRecord> waitForAppleOperation(
+    MasterControl::MasterControlApplication& application,
+    MasterControl::PlatformTarget platform,
+    const std::string& toolId,
+    std::chrono::milliseconds timeout = std::chrono::milliseconds(4000)) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto snapshot = application.snapshot();
+        const auto operation = findAppleOperation(snapshot.governance.appleOperations, platform, toolId);
+        if (operation.has_value() && isTerminalAppleOperationStatus(operation->status)) {
+            return operation;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    const auto snapshot = application.snapshot();
+    return findAppleOperation(snapshot.governance.appleOperations, platform, toolId);
+}
+
+std::optional<MasterControl::AppleOperationRecord> waitForAppleOperationById(
+    MasterControl::MasterControlApplication& application,
+    const std::string& operationId,
+    std::chrono::milliseconds timeout = std::chrono::milliseconds(4000)) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto snapshot = application.snapshot();
+        const auto operation = findAppleOperationById(snapshot.governance.appleOperations, operationId);
+        if (operation.has_value() && isTerminalAppleOperationStatus(operation->status)) {
+            return operation;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    const auto snapshot = application.snapshot();
+    return findAppleOperationById(snapshot.governance.appleOperations, operationId);
+}
+
+std::string queuedAppleOperationId(const MasterControl::GovernanceToolResult& result) {
+    const auto json = nlohmann::json::parse(result.rawOutput, nullptr, false);
+    if (json.is_discarded() || !json.is_object()) {
+        return {};
+    }
+    return json.value("operationId", std::string{});
+}
+
 bool hasProviderCapability(const std::vector<MasterControl::ProviderCapabilityDescriptor>& capabilities,
                           const std::string& providerId) {
     return std::any_of(
@@ -1244,6 +1309,9 @@ int main() {
                     const bool exportArchive =
                         std::find(arguments.begin(), arguments.end(), "-exportArchive") != arguments.end();
                     const bool archive = std::find(arguments.begin(), arguments.end(), "archive") != arguments.end();
+                    if (request.body.find("slow-queue") != std::string::npos) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(350));
+                    }
                     return TestHttpResponse{
                         200,
                         "application/json",
@@ -1387,10 +1455,12 @@ int main() {
                 { "configuration", "Debug" }
             } }
         }.dump());
+        const auto macBuildOperationId = queuedAppleOperationId(macBuildExecution);
         success &= expect(
             macBuildExecution.succeeded &&
-                macBuildExecution.status == MasterControl::GovernanceToolStatus::Passed,
-            "Mac build governance execution should run through the Apple companion service.");
+                macBuildExecution.status == MasterControl::GovernanceToolStatus::Passed &&
+                !macBuildOperationId.empty(),
+            "Mac build governance execution should queue through the Apple companion service.");
 
         const auto macSignExecution = application.executeGovernanceToolJson(nlohmann::json{
             { "platform", "macos" },
@@ -1400,10 +1470,12 @@ int main() {
                 { "bundlePath", "/Volumes/Builds/MasterControl/build/MasterControlShell.app" }
             } }
         }.dump());
+        const auto macSignOperationId = queuedAppleOperationId(macSignExecution);
         success &= expect(
             macSignExecution.succeeded &&
-                macSignExecution.status == MasterControl::GovernanceToolStatus::Passed,
-            "Mac signing governance execution should run through the Apple companion service.");
+                macSignExecution.status == MasterControl::GovernanceToolStatus::Passed &&
+                !macSignOperationId.empty(),
+            "Mac signing governance execution should queue through the Apple companion service.");
 
         const auto macNotarizeExecution = application.executeGovernanceToolJson(nlohmann::json{
             { "platform", "macos" },
@@ -1415,10 +1487,12 @@ int main() {
                 { "appSpecificPassword", "app-secret-123" }
             } }
         }.dump());
+        const auto macNotarizeOperationId = queuedAppleOperationId(macNotarizeExecution);
         success &= expect(
             macNotarizeExecution.succeeded &&
-                macNotarizeExecution.status == MasterControl::GovernanceToolStatus::Passed,
-            "Mac notarization governance execution should run through the Apple companion service.");
+                macNotarizeExecution.status == MasterControl::GovernanceToolStatus::Passed &&
+                !macNotarizeOperationId.empty(),
+            "Mac notarization governance execution should queue through the Apple companion service.");
 
         const auto macStapleExecution = application.executeGovernanceToolJson(nlohmann::json{
             { "platform", "macos" },
@@ -1428,22 +1502,23 @@ int main() {
                 { "artifactPath", "/Volumes/Builds/MasterControl/build/MasterControlShell.zip" }
             } }
         }.dump());
+        const auto macStapleOperationId = queuedAppleOperationId(macStapleExecution);
         success &= expect(
             macStapleExecution.succeeded &&
-                macStapleExecution.status == MasterControl::GovernanceToolStatus::Passed,
-            "Mac stapling governance execution should run through the Apple companion service.");
+                macStapleExecution.status == MasterControl::GovernanceToolStatus::Passed &&
+                !macStapleOperationId.empty(),
+            "Mac stapling governance execution should queue through the Apple companion service.");
 
         const auto iosSimulatorExecution = application.executeGovernanceToolJson(nlohmann::json{
             { "platform", "ios" },
             { "toolId", "forsetti.ios.simulator.list" }
         }.dump());
+        const auto iosSimulatorOperationId = queuedAppleOperationId(iosSimulatorExecution);
         success &= expect(
             iosSimulatorExecution.succeeded &&
-                iosSimulatorExecution.status == MasterControl::GovernanceToolStatus::Passed,
-            "iOS simulator inventory should be retrievable through the Apple companion service.");
-        success &= expect(
-            iosSimulatorExecution.rawOutput.find("SimRuntime.iOS-18-2") != std::string::npos,
-            "iOS simulator inventory should include the companion-provided runtime list.");
+                iosSimulatorExecution.status == MasterControl::GovernanceToolStatus::Passed &&
+                !iosSimulatorOperationId.empty(),
+            "iOS simulator inventory should queue through the Apple companion service.");
 
         const auto iosTestExecution = application.executeGovernanceToolJson(nlohmann::json{
             { "platform", "ios" },
@@ -1455,10 +1530,12 @@ int main() {
                 { "destination", "platform=iOS Simulator,name=iPhone 16,OS=18.2" }
             } }
         }.dump());
+        const auto iosTestOperationId = queuedAppleOperationId(iosTestExecution);
         success &= expect(
             iosTestExecution.succeeded &&
-                iosTestExecution.status == MasterControl::GovernanceToolStatus::Passed,
-            "iOS test governance execution should run through the Apple companion service.");
+                iosTestExecution.status == MasterControl::GovernanceToolStatus::Passed &&
+                !iosTestOperationId.empty(),
+            "iOS test governance execution should queue through the Apple companion service.");
 
         const auto iosArchiveExecution = application.executeGovernanceToolJson(nlohmann::json{
             { "platform", "ios" },
@@ -1470,10 +1547,12 @@ int main() {
                 { "archivePath", "/Volumes/Builds/MasterControl/build/MasterControlMobile.xcarchive" }
             } }
         }.dump());
+        const auto iosArchiveOperationId = queuedAppleOperationId(iosArchiveExecution);
         success &= expect(
             iosArchiveExecution.succeeded &&
-                iosArchiveExecution.status == MasterControl::GovernanceToolStatus::Passed,
-            "iOS archive governance execution should run through the Apple companion service.");
+                iosArchiveExecution.status == MasterControl::GovernanceToolStatus::Passed &&
+                !iosArchiveOperationId.empty(),
+            "iOS archive governance execution should queue through the Apple companion service.");
 
         const auto iosExportExecution = application.executeGovernanceToolJson(nlohmann::json{
             { "platform", "ios" },
@@ -1485,10 +1564,12 @@ int main() {
                 { "exportOptionsPlist", "/Volumes/Builds/MasterControl/config/ExportOptions.plist" }
             } }
         }.dump());
+        const auto iosExportOperationId = queuedAppleOperationId(iosExportExecution);
         success &= expect(
             iosExportExecution.succeeded &&
-                iosExportExecution.status == MasterControl::GovernanceToolStatus::Passed,
-            "iOS export governance execution should run through the Apple companion service.");
+                iosExportExecution.status == MasterControl::GovernanceToolStatus::Passed &&
+                !iosExportOperationId.empty(),
+            "iOS export governance execution should queue through the Apple companion service.");
 
         const auto iosDeviceInstallExecution = application.executeGovernanceToolJson(nlohmann::json{
             { "platform", "ios" },
@@ -1499,20 +1580,89 @@ int main() {
                 { "appPath", "/Volumes/Builds/MasterControl/build/ios-export/MasterControlMobile.app" }
             } }
         }.dump());
+        const auto iosDeviceInstallOperationId = queuedAppleOperationId(iosDeviceInstallExecution);
         success &= expect(
             iosDeviceInstallExecution.succeeded &&
-                iosDeviceInstallExecution.status == MasterControl::GovernanceToolStatus::Passed,
-            "iOS device install governance execution should run through the Apple companion service.");
+                iosDeviceInstallExecution.status == MasterControl::GovernanceToolStatus::Passed &&
+                !iosDeviceInstallOperationId.empty(),
+            "iOS device install governance execution should queue through the Apple companion service.");
+
+        const auto completedIosDeviceInstallOperation = waitForAppleOperationById(
+            application,
+            iosDeviceInstallOperationId);
+        success &= expect(
+            completedIosDeviceInstallOperation.has_value() &&
+                completedIosDeviceInstallOperation->status == MasterControl::AppleOperationStatus::Succeeded,
+            "Queued Apple governance execution should finish and publish a terminal iOS device install record.");
+
+        const auto completedIosSimulatorOperation = waitForAppleOperationById(
+            application,
+            iosSimulatorOperationId);
+        success &= expect(
+            completedIosSimulatorOperation.has_value() &&
+                completedIosSimulatorOperation->rawOutput.find("SimRuntime.iOS-18-2") != std::string::npos,
+            "Queued Apple simulator inventory should preserve the companion-provided runtime list.");
+
+        const auto slowMacBuildExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "macos" },
+            { "toolId", "forsetti.macos.build" },
+            { "options", nlohmann::json{
+                { "remoteWorkingDirectory", "/Volumes/Builds/slow-queue" },
+                { "workspace", "MasterControl.xcworkspace" },
+                { "scheme", "SlowQueueBuild" },
+                { "configuration", "Debug" }
+            } }
+        }.dump());
+        const auto slowMacBuildOperationId = queuedAppleOperationId(slowMacBuildExecution);
+        success &= expect(
+            slowMacBuildExecution.succeeded && !slowMacBuildOperationId.empty(),
+            "The Apple queue test should be able to enqueue a slow companion-backed build.");
+
+        const auto cancelTargetExecution = application.executeGovernanceToolJson(nlohmann::json{
+            { "platform", "ios" },
+            { "toolId", "forsetti.ios.export" },
+            { "options", nlohmann::json{
+                { "remoteWorkingDirectory", "/Volumes/Builds/MasterControl" },
+                { "archivePath", "/Volumes/Builds/MasterControl/build/CancelQueue.xcarchive" },
+                { "exportPath", "/Volumes/Builds/MasterControl/build/cancel-queue-export" },
+                { "exportOptionsPlist", "/Volumes/Builds/MasterControl/config/ExportOptions.plist" }
+            } }
+        }.dump());
+        const auto cancelTargetOperationId = queuedAppleOperationId(cancelTargetExecution);
+        success &= expect(
+            cancelTargetExecution.succeeded && !cancelTargetOperationId.empty(),
+            "The Apple queue test should be able to enqueue a second operation for cancellation.");
+
+        const auto cancelQueuedOperation = application.cancelAppleOperationJson(nlohmann::json{
+            { "operationId", cancelTargetOperationId }
+        }.dump());
+        success &= expect(
+            cancelQueuedOperation.succeeded,
+            "Queued Apple governance operations should be cancelable before the worker reaches them.");
+
+        const auto canceledAppleOperation = waitForAppleOperationById(
+            application,
+            cancelTargetOperationId);
+        success &= expect(
+            canceledAppleOperation.has_value() &&
+                canceledAppleOperation->status == MasterControl::AppleOperationStatus::Canceled,
+            "Canceled Apple governance operations should publish a terminal canceled record.");
+
+        const auto completedSlowMacBuildOperation = waitForAppleOperationById(
+            application,
+            slowMacBuildOperationId);
+        success &= expect(
+            completedSlowMacBuildOperation.has_value() &&
+                completedSlowMacBuildOperation->status == MasterControl::AppleOperationStatus::Succeeded,
+            "The Apple queue worker should continue draining queued work after a cancellation.");
 
         snapshot = application.snapshot();
-        const auto macStapleOperation = findAppleOperation(
+        const auto macStapleOperation = findAppleOperationById(
             snapshot.governance.appleOperations,
-            MasterControl::PlatformTarget::MacOS,
-            "forsetti.macos.staple");
-        const auto macNotarizeOperation = findAppleOperation(
+            macStapleOperationId);
+        const auto macNotarizeOperation = findAppleOperationById(
             snapshot.governance.appleOperations,
-            MasterControl::PlatformTarget::MacOS,
-            "forsetti.macos.notarize");
+            macNotarizeOperationId);
         success &= expect(
             macStapleOperation.has_value(),
             "CLU should publish recent Apple macOS distribution operations.");
@@ -1552,10 +1702,9 @@ int main() {
                 macNotarizeOperation->rerunReadinessMessage.find("host notary profile") != std::string::npos,
             "Apple notarization history should mark reruns ready when host defaults can replace redacted credentials.");
 
-        const auto iosExportOperation = findAppleOperation(
+        const auto iosExportOperation = findAppleOperationById(
             snapshot.governance.appleOperations,
-            MasterControl::PlatformTarget::IOS,
-            "forsetti.ios.export");
+            iosExportOperationId);
         success &= expect(
             iosExportOperation.has_value() &&
                 iosExportOperation->status == MasterControl::AppleOperationStatus::Succeeded &&
@@ -1582,10 +1731,9 @@ int main() {
             "Apple host updates should allow the test to remove default notarization credentials.");
 
         snapshot = application.snapshot();
-        const auto blockedReplayNotarizeOperation = findAppleOperation(
+        const auto blockedReplayNotarizeOperation = findAppleOperationById(
             snapshot.governance.appleOperations,
-            MasterControl::PlatformTarget::MacOS,
-            "forsetti.macos.notarize");
+            macNotarizeOperationId);
         success &= expect(
             blockedReplayNotarizeOperation.has_value() &&
                 !blockedReplayNotarizeOperation->rerunReady &&
@@ -1611,10 +1759,9 @@ int main() {
             "Apple host updates should allow the test to restore default notarization credentials.");
 
         snapshot = application.snapshot();
-        const auto restoredReplayNotarizeOperation = findAppleOperation(
+        const auto restoredReplayNotarizeOperation = findAppleOperationById(
             snapshot.governance.appleOperations,
-            MasterControl::PlatformTarget::MacOS,
-            "forsetti.macos.notarize");
+            macNotarizeOperationId);
         success &= expect(
             restoredReplayNotarizeOperation.has_value() &&
                 restoredReplayNotarizeOperation->rerunReady,
@@ -1715,6 +1862,16 @@ int main() {
                         request.body.find("MasterControlMobile.app") != std::string::npos;
                 }),
             "Apple companion service should receive devicectl device install payloads.");
+        success &= expect(
+            std::none_of(
+                companionRequests.begin(),
+                companionRequests.end(),
+                [](const TestHttpRequest& request) {
+                    return request.method == "POST" &&
+                        request.path == "/execute" &&
+                        request.body.find("cancel-queue-export") != std::string::npos;
+                }),
+            "Canceled Apple queue entries should not be dispatched to the companion service.");
 
         const auto appleHostRemoval = application.removeAppleRemoteHostJson(nlohmann::json{
             { "hostId", "apple-host-01" }
@@ -2406,22 +2563,19 @@ int main() {
         success &= expect(restartedApplication.initialize(), "Application should reinitialize after shutdown");
         if (success) {
             const auto restartedSnapshot = restartedApplication.snapshot();
-            const auto restartedMacStapleOperation = findAppleOperation(
+            const auto restartedMacStapleOperation = findAppleOperationById(
                 restartedSnapshot.governance.appleOperations,
-                MasterControl::PlatformTarget::MacOS,
-                "forsetti.macos.staple");
+                macStapleOperationId);
             success &= expect(
                 restartedMacStapleOperation.has_value() &&
                     restartedMacStapleOperation->artifactPath.find("MasterControlShell.zip") != std::string::npos,
                 "Apple governance operation history should survive application restart.");
-            const auto restartedIosExportOperation = findAppleOperation(
+            const auto restartedIosExportOperation = findAppleOperationById(
                 restartedSnapshot.governance.appleOperations,
-                MasterControl::PlatformTarget::IOS,
-                "forsetti.ios.export");
-            const auto restartedMacNotarizeOperation = findAppleOperation(
+                iosExportOperationId);
+            const auto restartedMacNotarizeOperation = findAppleOperationById(
                 restartedSnapshot.governance.appleOperations,
-                MasterControl::PlatformTarget::MacOS,
-                "forsetti.macos.notarize");
+                macNotarizeOperationId);
             success &= expect(
                 restartedIosExportOperation.has_value() &&
                     restartedIosExportOperation->artifactPath.find("ios-export") != std::string::npos,

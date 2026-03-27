@@ -144,6 +144,7 @@ public:
     virtual std::vector<GovernanceToolResult> recentExecutions() const = 0;
     virtual std::vector<AppleOperationRecord> recentAppleOperations() const = 0;
     virtual GovernanceToolResult execute(const GovernanceToolRequest& request) = 0;
+    virtual OperationResult cancelAppleOperation(const std::string& operationId) = 0;
     virtual ~IPlatformGovernanceToolService() = default;
 };
 
@@ -170,6 +171,7 @@ class ICommandLogicUnitService {
 public:
     virtual GovernanceSnapshot currentGovernance() const = 0;
     virtual GovernanceToolResult executeGovernanceTool(const GovernanceToolRequest& request) = 0;
+    virtual OperationResult cancelAppleOperation(const std::string& operationId) = 0;
     virtual ~ICommandLogicUnitService() = default;
 };
 
@@ -216,6 +218,7 @@ public:
     virtual DashboardSnapshot snapshot() = 0;
     virtual GovernanceSnapshot governance() const = 0;
     virtual GovernanceToolResult executeGovernanceToolJson(const std::string& requestBody) = 0;
+    virtual OperationResult cancelAppleOperationJson(const std::string& requestBody) = 0;
     virtual OperationResult applyConfigurationJson(const std::string& requestBody,
                                                    bool confirmUnsafeChanges) = 0;
     virtual OperationResult upsertProviderJson(const std::string& requestBody) = 0;

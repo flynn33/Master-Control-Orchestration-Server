@@ -34,6 +34,8 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -3689,6 +3691,16 @@ public:
         return platformGovernanceToolService_->execute(request);
     }
 
+    OperationResult cancelAppleOperation(const std::string& operationId) override {
+        if (trimCopy(operationId).empty()) {
+            return OperationResult{ false, false, "Apple operation cancellation requires an operationId." };
+        }
+        if (!platformGovernanceToolService_) {
+            return OperationResult{ false, false, "Governance tool service is unavailable." };
+        }
+        return platformGovernanceToolService_->cancelAppleOperation(operationId);
+    }
+
 private:
     static GovernanceProfile loadProfile(std::filesystem::path profileFile) {
         if (!profileFile.empty() && std::filesystem::exists(profileFile)) {
@@ -4860,6 +4872,19 @@ public:
                 recentAppleOperations_ = json.get<std::vector<AppleOperationRecord>>();
             }
         }
+        reconcilePersistedAppleOperations();
+        worker_ = std::thread([this]() { appleWorkerLoop(); });
+    }
+
+    ~PlatformGovernanceToolService() override {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stopWorker_ = true;
+        }
+        workerCv_.notify_all();
+        if (worker_.joinable()) {
+            worker_.join();
+        }
     }
 
     void upsertTool(const GovernanceToolDescriptor& descriptor) override {
@@ -4912,6 +4937,71 @@ public:
         return operations;
     }
 
+    OperationResult cancelAppleOperation(const std::string& operationId) override {
+        OperationResult result;
+        AppleOperationRecord record;
+        bool foundQueued = false;
+        bool foundRunning = false;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            const auto queuedIterator = std::find_if(
+                appleQueue_.begin(),
+                appleQueue_.end(),
+                [&operationId](const AppleQueuedTask& task) {
+                    return task.record.operationId == operationId;
+                });
+            if (queuedIterator != appleQueue_.end()) {
+                record = queuedIterator->record;
+                appleQueue_.erase(queuedIterator);
+                foundQueued = true;
+            } else {
+                const auto persistedIterator = std::find_if(
+                    recentAppleOperations_.begin(),
+                    recentAppleOperations_.end(),
+                    [&operationId](const AppleOperationRecord& candidate) {
+                        return candidate.operationId == operationId;
+                    });
+                if (persistedIterator == recentAppleOperations_.end()) {
+                    result.succeeded = false;
+                    result.message = "Apple operation '" + operationId + "' was not found.";
+                    return result;
+                }
+
+                record = *persistedIterator;
+                foundRunning = runningAppleOperationId_.has_value() &&
+                    *runningAppleOperationId_ == operationId;
+            }
+        }
+
+        if (foundRunning || record.status == AppleOperationStatus::Running) {
+            result.succeeded = false;
+            result.message =
+                "Apple operation '" + operationId +
+                "' is already running. Transport-level interruption is not available yet.";
+            return result;
+        }
+
+        if (!foundQueued && record.status != AppleOperationStatus::Queued) {
+            result.succeeded = false;
+            result.message =
+                "Apple operation '" + operationId + "' is already in terminal state '" +
+                to_string(record.status) + "'.";
+            return result;
+        }
+
+        markAppleOperationCanceled(
+            record,
+            foundQueued
+                ? "Apple governance operation was canceled before execution."
+                : "Apple governance operation was canceled.");
+        recordCanceledExecution(record);
+
+        result.succeeded = true;
+        result.message = "Canceled Apple operation '" + record.displayName + "'.";
+        return result;
+    }
+
     GovernanceToolResult execute(const GovernanceToolRequest& request) override {
         GovernanceToolResult result;
         result.platform = request.platform;
@@ -4929,6 +5019,34 @@ public:
         }
 
         result.displayName = descriptor->displayName;
+        if (descriptor->requiresRemoteToolchain && isQueuedAppleOperationalTool(*descriptor)) {
+            auto appleOperation = queueAppleOperation(*descriptor, request);
+            if (!enqueueAppleOperation(*descriptor, request, appleOperation)) {
+                markAppleOperationCanceled(appleOperation, "Apple governance queue is shutting down.");
+                result.status = GovernanceToolStatus::Failed;
+                result.summary = "Apple governance queue is not accepting new work.";
+                result.completedAtUtc = timestampNowUtc();
+                return result;
+            }
+
+            result.status = GovernanceToolStatus::Passed;
+            result.succeeded = true;
+            result.summary = "Queued " + descriptor->displayName + " for Apple governance execution.";
+            result.completedAtUtc = timestampNowUtc();
+            result.rawOutput = nlohmann::json{
+                { "operationId", appleOperation.operationId },
+                { "status", to_string(appleOperation.status) },
+                { "queuedAtUtc", appleOperation.queuedAtUtc }
+            }.dump(2);
+            result.findings.push_back(makeFinding(
+                descriptor->toolId,
+                descriptor->displayName,
+                "low",
+                "pass",
+                "Apple governance execution was queued for asynchronous processing."));
+            return result;
+        }
+
         std::optional<AppleOperationRecord> appleOperation;
         if (descriptor->requiresRemoteToolchain) {
             appleOperation = queueAppleOperation(*descriptor, request);
@@ -4967,8 +5085,33 @@ public:
     }
 
 private:
+    struct AppleQueuedTask final {
+        GovernanceToolDescriptor descriptor;
+        GovernanceToolRequest request;
+        AppleOperationRecord record;
+    };
+
     static std::string makeKey(const std::string& moduleId, const std::string& toolId) {
         return moduleId + "::" + toolId;
+    }
+
+    static bool isQueuedAppleOperationalTool(const GovernanceToolDescriptor& descriptor) {
+        static const std::set<std::string> queuedToolIds = {
+            "forsetti.macos.build",
+            "forsetti.macos.test",
+            "forsetti.macos.archive",
+            "forsetti.macos.sign",
+            "forsetti.macos.notarize",
+            "forsetti.macos.staple",
+            "forsetti.ios.simulator.list",
+            "forsetti.ios.build",
+            "forsetti.ios.test",
+            "forsetti.ios.archive",
+            "forsetti.ios.export",
+            "forsetti.ios.device.install"
+        };
+        return descriptor.requiresRemoteToolchain &&
+            queuedToolIds.contains(descriptor.toolId);
     }
 
     static GovernanceFinding makeFinding(const std::string& ruleId,
@@ -5450,6 +5593,92 @@ private:
         return record;
     }
 
+    void reconcilePersistedAppleOperations() {
+        bool changed = false;
+        const auto interruptedAtUtc = timestampNowUtc();
+        for (auto& operation : recentAppleOperations_) {
+            const auto previousStatus = operation.status;
+            if (previousStatus != AppleOperationStatus::Queued &&
+                previousStatus != AppleOperationStatus::Running) {
+                continue;
+            }
+
+            operation.status = AppleOperationStatus::Blocked;
+            operation.completedAtUtc = interruptedAtUtc;
+            if (previousStatus == AppleOperationStatus::Running) {
+                operation.summary = "Apple governance operation was interrupted by service restart.";
+                if (operation.errorMessage.empty()) {
+                    operation.errorMessage = "Apple governance operation did not finish before restart.";
+                }
+            } else {
+                operation.summary = "Queued Apple governance operation was interrupted by service restart.";
+                if (operation.errorMessage.empty()) {
+                    operation.errorMessage = "Queued Apple governance operation did not resume after restart.";
+                }
+            }
+            changed = true;
+        }
+
+        if (changed) {
+            writeJsonFile(paths_.appleOperationHistoryFile, recentAppleOperations_);
+        }
+    }
+
+    bool enqueueAppleOperation(const GovernanceToolDescriptor& descriptor,
+                               const GovernanceToolRequest& request,
+                               const AppleOperationRecord& record) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (stopWorker_) {
+                return false;
+            }
+            appleQueue_.push_back(AppleQueuedTask{ descriptor, request, record });
+        }
+        workerCv_.notify_one();
+        return true;
+    }
+
+    void appleWorkerLoop() {
+        for (;;) {
+            AppleQueuedTask task;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                workerCv_.wait(lock, [this]() { return stopWorker_ || !appleQueue_.empty(); });
+                if (stopWorker_ && appleQueue_.empty()) {
+                    return;
+                }
+                task = std::move(appleQueue_.front());
+                appleQueue_.pop_front();
+                runningAppleOperationId_ = task.record.operationId;
+            }
+
+            GovernanceToolResult result;
+            result.platform = task.request.platform;
+            result.toolId = task.request.toolId;
+            result.displayName = task.descriptor.displayName;
+            result.startedAtUtc = timestampNowUtc();
+
+            try {
+                executeAppleRemoteTool(task.descriptor, task.request, result, &task.record);
+            } catch (const std::exception& exception) {
+                result.status = GovernanceToolStatus::Failed;
+                result.summary = exception.what();
+            }
+
+            result.completedAtUtc = timestampNowUtc();
+            completeAppleOperation(task.record, result);
+            recordExecution(result);
+
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (runningAppleOperationId_.has_value() &&
+                    *runningAppleOperationId_ == task.record.operationId) {
+                    runningAppleOperationId_.reset();
+                }
+            }
+        }
+    }
+
     AppleOperationRecord queueAppleOperation(const GovernanceToolDescriptor& descriptor,
                                              const GovernanceToolRequest& request) {
         AppleOperationRecord record;
@@ -5510,6 +5739,39 @@ private:
             record.errorMessage = result.summary;
         }
         persistAppleOperation(record);
+    }
+
+    void markAppleOperationCanceled(AppleOperationRecord& record,
+                                    const std::string& message) {
+        record.status = AppleOperationStatus::Canceled;
+        record.completedAtUtc = timestampNowUtc();
+        record.summary = message;
+        if (record.errorMessage.empty()) {
+            record.errorMessage = message;
+        }
+        persistAppleOperation(record);
+    }
+
+    void recordCanceledExecution(const AppleOperationRecord& record) {
+        GovernanceToolResult result;
+        result.platform = record.platform;
+        result.toolId = record.toolId;
+        result.displayName = record.displayName;
+        result.status = GovernanceToolStatus::Warning;
+        result.succeeded = false;
+        result.summary = record.summary;
+        result.startedAtUtc = record.startedAtUtc.empty() ? record.queuedAtUtc : record.startedAtUtc;
+        result.completedAtUtc = record.completedAtUtc.empty() ? timestampNowUtc() : record.completedAtUtc;
+        result.routeReason = record.routeReason;
+        result.diagnosticSummary = record.diagnosticSummary;
+        result.readinessIssues = record.readinessIssues;
+        result.findings.push_back(makeFinding(
+            record.toolId,
+            record.displayName,
+            "medium",
+            "warning",
+            record.summary));
+        recordExecution(result);
     }
 
     static AppleOperationStatus mapAppleOperationStatus(const GovernanceToolResult& result) {
@@ -6499,9 +6761,14 @@ private:
     AppPaths paths_;
     std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService_;
     mutable std::mutex mutex_;
+    std::condition_variable workerCv_;
     std::map<std::string, GovernanceToolDescriptor> toolsByKey_;
     std::vector<GovernanceToolResult> recentExecutions_;
     std::vector<AppleOperationRecord> recentAppleOperations_;
+    std::deque<AppleQueuedTask> appleQueue_;
+    std::optional<std::string> runningAppleOperationId_;
+    bool stopWorker_ = false;
+    std::thread worker_;
 };
 
 class BeaconService final : public IBeaconService {
@@ -6715,6 +6982,11 @@ public:
             nlohmann::json::parse(requestBody).get<GovernanceToolRequest>());
     }
 
+    OperationResult cancelAppleOperationJson(const std::string& requestBody) override {
+        const auto request = nlohmann::json::parse(requestBody).get<AppleOperationCancelRequest>();
+        return commandLogicUnitService_->cancelAppleOperation(request.operationId);
+    }
+
     OperationResult applyConfigurationJson(const std::string& requestBody,
                                            bool confirmUnsafeChanges) override {
         return configurationService_->update(nlohmann::json::parse(requestBody).get<AppConfiguration>(), confirmUnsafeChanges);
@@ -6844,16 +7116,26 @@ private:
     uint16_t port_;
     RequestHandler handler_;
     std::atomic<bool> running_{ false };
+    std::atomic<bool> startupComplete_{ false };
+    std::atomic<bool> startupSucceeded_{ false };
     std::thread worker_;
     SOCKET listenSocket_ = INVALID_SOCKET;
+    std::mutex startupMutex_;
+    std::condition_variable startupCv_;
 };
 
 bool SimpleHttpServer::start() {
     if (running_.exchange(true)) {
         return true;
     }
+
+    startupComplete_ = false;
+    startupSucceeded_ = false;
     worker_ = std::thread([this]() { run(); });
-    return true;
+
+    std::unique_lock<std::mutex> lock(startupMutex_);
+    startupCv_.wait(lock, [this]() { return startupComplete_.load(); });
+    return startupSucceeded_.load();
 }
 
 void SimpleHttpServer::stop() {
@@ -6938,6 +7220,12 @@ void SimpleHttpServer::run() {
     const auto portText = std::to_string(port_);
     if (getaddrinfo(bindAddress_.c_str(), portText.c_str(), &hints, &results) != 0) {
         running_ = false;
+        {
+            std::lock_guard<std::mutex> lock(startupMutex_);
+            startupSucceeded_ = false;
+            startupComplete_ = true;
+        }
+        startupCv_.notify_all();
         return;
     }
 
@@ -6962,8 +7250,21 @@ void SimpleHttpServer::run() {
     freeaddrinfo(results);
     if (listenSocket_ == INVALID_SOCKET) {
         running_ = false;
+        {
+            std::lock_guard<std::mutex> lock(startupMutex_);
+            startupSucceeded_ = false;
+            startupComplete_ = true;
+        }
+        startupCv_.notify_all();
         return;
     }
+
+    {
+        std::lock_guard<std::mutex> lock(startupMutex_);
+        startupSucceeded_ = true;
+        startupComplete_ = true;
+    }
+    startupCv_.notify_all();
 
     while (running_) {
         SOCKET client = accept(listenSocket_, nullptr, nullptr);
@@ -7033,6 +7334,7 @@ public:
     std::string browserUrl() const;
     DashboardSnapshot snapshot() { return adminApiService_->snapshot(); }
     GovernanceToolResult executeGovernanceToolJson(const std::string& requestBody) { return adminApiService_->executeGovernanceToolJson(requestBody); }
+    OperationResult cancelAppleOperationJson(const std::string& requestBody) { return adminApiService_->cancelAppleOperationJson(requestBody); }
     OperationResult applyConfigurationJson(const std::string& requestBody, bool confirmUnsafeChanges) { return adminApiService_->applyConfigurationJson(requestBody, confirmUnsafeChanges); }
     OperationResult upsertProviderJson(const std::string& requestBody) { return adminApiService_->upsertProviderJson(requestBody); }
     OperationResult upsertProviderCredentialsJson(const std::string& requestBody) { return adminApiService_->upsertProviderCredentialsJson(requestBody); }
@@ -7186,7 +7488,16 @@ bool MasterControlApplication::Impl::initialize() {
         currentConfiguration.bindAddress == "0.0.0.0" ? "0.0.0.0" : currentConfiguration.bindAddress,
         currentConfiguration.browserPort,
         [this](const HttpRequest& request) { return handleHttpRequest(request); });
-    httpServer_->start();
+    if (!httpServer_->start()) {
+        httpServer_.reset();
+        if (beaconService_) {
+            beaconService_->stop();
+        }
+        if (runtime_) {
+            runtime_->shutdown();
+        }
+        return false;
+    }
     initialized_ = true;
     return true;
 }
@@ -7629,6 +7940,10 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const auto result = adminApiService_->executeGovernanceToolJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
+        if (request.method == "POST" && request.path == "/api/clu/apple-operations/cancel") {
+            const auto result = adminApiService_->cancelAppleOperationJson(request.body);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
         if (request.method == "POST" && request.path == "/api/install/package") {
             const auto result = adminApiService_->installPackageJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
@@ -7706,6 +8021,10 @@ DashboardSnapshot MasterControlApplication::snapshot() {
 
 GovernanceToolResult MasterControlApplication::executeGovernanceToolJson(const std::string& requestBody) {
     return impl_->executeGovernanceToolJson(requestBody);
+}
+
+OperationResult MasterControlApplication::cancelAppleOperationJson(const std::string& requestBody) {
+    return impl_->cancelAppleOperationJson(requestBody);
 }
 
 OperationResult MasterControlApplication::applyConfigurationJson(const std::string& requestBody, bool confirmUnsafeChanges) {

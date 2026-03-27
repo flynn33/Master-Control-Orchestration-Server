@@ -103,7 +103,8 @@ enum class AppleOperationStatus {
     Running,
     Succeeded,
     Failed,
-    Blocked
+    Blocked,
+    Canceled
 };
 
 struct HostTelemetrySnapshot final {
@@ -521,6 +522,10 @@ struct AppleOperationRecord final {
     std::vector<std::string> redactedRequestOptionKeys;
     bool rerunReady = false;
     std::string rerunReadinessMessage;
+};
+
+struct AppleOperationCancelRequest final {
+    std::string operationId;
 };
 
 struct GovernanceSnapshot final {
@@ -1088,6 +1093,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     redactedRequestOptionKeys,
     rerunReady,
     rerunReadinessMessage)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    AppleOperationCancelRequest,
+    operationId)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GovernanceSnapshot,

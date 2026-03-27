@@ -154,7 +154,8 @@ std::string to_string(AppleOperationStatus value) {
         { AppleOperationStatus::Running, "running" },
         { AppleOperationStatus::Succeeded, "succeeded" },
         { AppleOperationStatus::Failed, "failed" },
-        { AppleOperationStatus::Blocked, "blocked" }
+        { AppleOperationStatus::Blocked, "blocked" },
+        { AppleOperationStatus::Canceled, "canceled" }
     });
 }
 
@@ -270,7 +271,8 @@ AppleOperationStatus appleOperationStatusFromString(const std::string& value) {
         { AppleOperationStatus::Running, "running" },
         { AppleOperationStatus::Succeeded, "succeeded" },
         { AppleOperationStatus::Failed, "failed" },
-        { AppleOperationStatus::Blocked, "blocked" }
+        { AppleOperationStatus::Blocked, "blocked" },
+        { AppleOperationStatus::Canceled, "canceled" }
     });
 }
 
