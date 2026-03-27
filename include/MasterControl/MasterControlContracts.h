@@ -170,6 +170,7 @@ public:
 class ICommandLogicUnitService {
 public:
     virtual GovernanceSnapshot currentGovernance() const = 0;
+    virtual GovernanceEnforcementDecision enforceAction(const GovernanceEnforcementRequest& request) const = 0;
     virtual GovernanceToolResult executeGovernanceTool(const GovernanceToolRequest& request) = 0;
     virtual OperationResult cancelAppleOperation(const std::string& operationId) = 0;
     virtual ~ICommandLogicUnitService() = default;

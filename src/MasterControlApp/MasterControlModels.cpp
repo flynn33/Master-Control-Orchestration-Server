@@ -159,6 +159,15 @@ std::string to_string(AppleOperationStatus value) {
     });
 }
 
+std::string to_string(GovernanceActionKind value) {
+    return enumToString(value, {
+        { GovernanceActionKind::Unknown, "unknown" },
+        { GovernanceActionKind::ProviderExecution, "provider_execution" },
+        { GovernanceActionKind::ProviderAutonomyEnable, "provider_autonomy_enable" },
+        { GovernanceActionKind::RemoteInstall, "remote_install" }
+    });
+}
+
 EndpointKind endpointKindFromString(const std::string& value) {
     return enumFromString<EndpointKind>(value, {
         { EndpointKind::Host, "host" },
@@ -276,6 +285,15 @@ AppleOperationStatus appleOperationStatusFromString(const std::string& value) {
     });
 }
 
+GovernanceActionKind governanceActionKindFromString(const std::string& value) {
+    return enumFromString<GovernanceActionKind>(value, {
+        { GovernanceActionKind::Unknown, "unknown" },
+        { GovernanceActionKind::ProviderExecution, "provider_execution" },
+        { GovernanceActionKind::ProviderAutonomyEnable, "provider_autonomy_enable" },
+        { GovernanceActionKind::RemoteInstall, "remote_install" }
+    });
+}
+
 void to_json(nlohmann::json& json, EndpointKind value) {
     json = to_string(value);
 }
@@ -378,6 +396,14 @@ void to_json(nlohmann::json& json, AppleOperationStatus value) {
 
 void from_json(const nlohmann::json& json, AppleOperationStatus& value) {
     value = appleOperationStatusFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, GovernanceActionKind value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, GovernanceActionKind& value) {
+    value = governanceActionKindFromString(json.get<std::string>());
 }
 
 std::string toPrettyJson(const nlohmann::json& json) {

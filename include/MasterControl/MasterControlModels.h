@@ -107,6 +107,13 @@ enum class AppleOperationStatus {
     Canceled
 };
 
+enum class GovernanceActionKind {
+    Unknown,
+    ProviderExecution,
+    ProviderAutonomyEnable,
+    RemoteInstall
+};
+
 struct HostTelemetrySnapshot final {
     double cpuPercent = 0.0;
     double memoryPercent = 0.0;
@@ -528,6 +535,23 @@ struct AppleOperationCancelRequest final {
     std::string operationId;
 };
 
+struct GovernanceEnforcementRequest final {
+    GovernanceActionKind action = GovernanceActionKind::Unknown;
+    std::string targetId;
+    std::string providerId;
+    std::string source;
+    bool allowUntrustedExecution = false;
+};
+
+struct GovernanceEnforcementDecision final {
+    GovernanceActionKind action = GovernanceActionKind::Unknown;
+    bool allowed = true;
+    std::string posture = "pass";
+    std::string message;
+    std::string ruleId;
+    std::vector<std::string> blockingFindings;
+};
+
 struct GovernanceSnapshot final {
     std::string unitName;
     std::string posture;
@@ -649,6 +673,7 @@ std::string to_string(PlatformTarget value);
 std::string to_string(AppleRemoteTransport value);
 std::string to_string(GovernanceToolStatus value);
 std::string to_string(AppleOperationStatus value);
+std::string to_string(GovernanceActionKind value);
 
 EndpointKind endpointKindFromString(const std::string& value);
 EndpointStatus endpointStatusFromString(const std::string& value);
@@ -663,6 +688,7 @@ PlatformTarget platformTargetFromString(const std::string& value);
 AppleRemoteTransport appleRemoteTransportFromString(const std::string& value);
 GovernanceToolStatus governanceToolStatusFromString(const std::string& value);
 AppleOperationStatus appleOperationStatusFromString(const std::string& value);
+GovernanceActionKind governanceActionKindFromString(const std::string& value);
 
 void to_json(nlohmann::json& json, EndpointKind value);
 void from_json(const nlohmann::json& json, EndpointKind& value);
@@ -702,6 +728,9 @@ void from_json(const nlohmann::json& json, GovernanceToolStatus& value);
 
 void to_json(nlohmann::json& json, AppleOperationStatus value);
 void from_json(const nlohmann::json& json, AppleOperationStatus& value);
+
+void to_json(nlohmann::json& json, GovernanceActionKind value);
+void from_json(const nlohmann::json& json, GovernanceActionKind& value);
 
 std::string toPrettyJson(const nlohmann::json& json);
 std::string timestampNowUtc();
@@ -1097,6 +1126,23 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     AppleOperationCancelRequest,
     operationId)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceEnforcementRequest,
+    action,
+    targetId,
+    providerId,
+    source,
+    allowUntrustedExecution)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceEnforcementDecision,
+    action,
+    allowed,
+    posture,
+    message,
+    ruleId,
+    blockingFindings)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GovernanceSnapshot,

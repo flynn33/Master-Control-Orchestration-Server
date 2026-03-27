@@ -2021,6 +2021,17 @@ int main() {
         snapshot = application.snapshot();
         success &= expect(snapshot.governance.posture == "blocked", "CLU should block unsafe open-LAN posture when security protocols are disabled");
         success &= expect(!snapshot.governance.findings.empty(), "CLU should record findings for blocked security posture");
+        const auto blockedRemoteInstallResult = application.installPackageJson(nlohmann::json{
+            { "kind", "powershell" },
+            { "source", "https://untrusted.example/payload.ps1" },
+            { "allowUntrustedExecution", true }
+        }.dump());
+        success &= expect(
+            !blockedRemoteInstallResult.succeeded,
+            "CLU should block remote installs while runtime posture is blocked.");
+        success &= expect(
+            blockedRemoteInstallResult.message.find("CLU blocked remote install") != std::string::npos,
+            "Blocked remote installs should explain that CLU denied the action.");
 
         auto managedConfiguration = configuration;
         managedConfiguration.aiAutonomyEnabled = true;
@@ -2048,6 +2059,36 @@ int main() {
                 snapshot.security.trustedRemoteHosts[0] == "192.168.1.20" &&
                 snapshot.security.trustedRemoteHosts[1] == "builder-node.local",
             "Managed security update should preserve trusted host ordering");
+
+        auto autonomyDisabledConfiguration = managedConfiguration;
+        autonomyDisabledConfiguration.aiAutonomyEnabled = false;
+        const auto autonomyDisabledResult = application.applyConfigurationJson(
+            nlohmann::json(autonomyDisabledConfiguration).dump(),
+            false);
+        success &= expect(
+            autonomyDisabledResult.succeeded,
+            "Disabling global AI autonomy should succeed for governance enforcement testing.");
+        const auto blockedAutonomyProviderResult = application.upsertProviderJson(nlohmann::json{
+            { "id", "blocked-autonomy-provider" },
+            { "kind", "xai" },
+            { "displayName", "Blocked Autonomy Provider" },
+            { "baseUrl", "https://blocked-autonomy.example.test/v1" },
+            { "modelId", "grok-code-fast-1" },
+            { "enabled", true },
+            { "allowAutonomousControl", true }
+        }.dump());
+        success &= expect(
+            !blockedAutonomyProviderResult.succeeded,
+            "CLU should block provider autonomy enablement when global AI autonomy is disabled.");
+        success &= expect(
+            blockedAutonomyProviderResult.message.find("Enable global AI autonomy") != std::string::npos,
+            "Blocked provider autonomy should explain the global AI autonomy prerequisite.");
+        const auto restoreManagedAutonomyResult = application.applyConfigurationJson(
+            nlohmann::json(managedConfiguration).dump(),
+            false);
+        success &= expect(
+            restoreManagedAutonomyResult.succeeded,
+            "Managed security configuration should restore global AI autonomy after the governance enforcement test.");
 
         const auto invalidProviderResult = application.upsertProviderJson(nlohmann::json{
             { "id", "invalid-provider" },
@@ -2398,6 +2439,56 @@ int main() {
             success &= expect(
                 !findEndpoint(snapshot.endpoints, "swift-tools-mcp").has_value(),
                 "Removing a custom MCP server should remove it from the runtime snapshot.");
+
+            auto blockedExecutionConfiguration = managedConfiguration;
+            blockedExecutionConfiguration.providers = snapshot.providers;
+            blockedExecutionConfiguration.subAgentGroups = snapshot.subAgentGroups;
+            blockedExecutionConfiguration.providerAssignments = snapshot.providerAssignments;
+            blockedExecutionConfiguration.appleRemoteHosts = snapshot.appleRemoteHosts;
+            blockedExecutionConfiguration.security.securityProtocolsEnabled = false;
+            blockedExecutionConfiguration.security.enableTls = false;
+            blockedExecutionConfiguration.security.enableAuthentication = false;
+            blockedExecutionConfiguration.security.allowOpenLanAccess = true;
+
+            const auto blockedExecutionConfigurationResult = application.applyConfigurationJson(
+                nlohmann::json(blockedExecutionConfiguration).dump(),
+                true);
+            success &= expect(
+                blockedExecutionConfigurationResult.succeeded,
+                "Blocked CLU posture configuration should apply after explicit confirmation.");
+
+            snapshot = application.snapshot();
+            success &= expect(
+                snapshot.governance.posture == "blocked",
+                "CLU should report blocked posture before denying provider execution.");
+
+            const auto blockedExecutionRecord = application.executeProviderTaskJson(nlohmann::json{
+                { "targetId", "planner" },
+                { "prompt", "Attempt execution while CLU posture is blocked." },
+                { "allowToolAccess", true },
+                { "maxTurns", 1 }
+            }.dump());
+            success &= expect(
+                blockedExecutionRecord.status == MasterControl::ProviderExecutionStatus::Failed,
+                "CLU should block provider execution while runtime posture is blocked.");
+            success &= expect(
+                blockedExecutionRecord.errorMessage.find("CLU blocked provider execution") != std::string::npos,
+                "Blocked provider execution should explain that CLU denied the run.");
+
+            snapshot = application.snapshot();
+            success &= expect(
+                !snapshot.providerExecutionHistory.empty() &&
+                    snapshot.providerExecutionHistory.front().executionId == blockedExecutionRecord.executionId,
+                "Blocked provider execution should still be persisted to runtime history.");
+
+            blockedExecutionConfiguration.aiAutonomyEnabled = managedConfiguration.aiAutonomyEnabled;
+            blockedExecutionConfiguration.security = managedConfiguration.security;
+            const auto restoreExecutionConfigurationResult = application.applyConfigurationJson(
+                nlohmann::json(blockedExecutionConfiguration).dump(),
+                false);
+            success &= expect(
+                restoreExecutionConfigurationResult.succeeded,
+                "Managed CLU posture should be restorable after blocked provider execution testing.");
         }
 
         {
@@ -2497,6 +2588,63 @@ int main() {
             success &= expect(
                 hasHistoryEntry(snapshot.installHistory, MasterControl::InstallerKind::PowerShell, packageSource),
                 "Local PowerShell package install should be recorded in history");
+
+            auto constrainedResourceConfiguration = managedConfiguration;
+            constrainedResourceConfiguration.providers = snapshot.providers;
+            constrainedResourceConfiguration.subAgentGroups = snapshot.subAgentGroups;
+            constrainedResourceConfiguration.providerAssignments = snapshot.providerAssignments;
+            constrainedResourceConfiguration.appleRemoteHosts = snapshot.appleRemoteHosts;
+            constrainedResourceConfiguration.resourceAllocation = snapshot.resourceAllocation;
+            constrainedResourceConfiguration.resourceAllocation.cpuPercent = 0;
+
+            const auto constrainedResourceResult = application.applyConfigurationJson(
+                nlohmann::json(constrainedResourceConfiguration).dump(),
+                false);
+            success &= expect(
+                constrainedResourceResult.succeeded,
+                "Resource allocation updates should support zero-CPU enforcement testing.");
+
+            const auto blockedResourceExecution = application.executeProviderTaskJson(nlohmann::json{
+                { "targetId", "planner" },
+                { "prompt", "Attempt execution while CPU allocation is disabled." },
+                { "allowToolAccess", true },
+                { "maxTurns", 1 }
+            }.dump());
+            success &= expect(
+                blockedResourceExecution.status == MasterControl::ProviderExecutionStatus::Failed,
+                "Managed provider execution should be blocked when the resource envelope denies CPU allocation.");
+            success &= expect(
+                blockedResourceExecution.errorMessage.find("managed resource policy denies launch") != std::string::npos,
+                "Blocked provider execution should explain that resource policy denied the run.");
+
+            const auto blockedPackageScript = tempRoot / "package-install-blocked.ps1";
+            const auto blockedMarkerFile = tempRoot / "package-install-blocked.ok";
+            writeTextFile(
+                blockedPackageScript,
+                "New-Item -Path (Join-Path $PSScriptRoot 'package-install-blocked.ok') -ItemType File -Force | Out-Null\nexit 0\n");
+
+            const auto blockedPackageResult = application.installPackageJson(nlohmann::json{
+                { "kind", "powershell" },
+                { "localPath", blockedPackageScript.string() },
+                { "arguments", "" }
+            }.dump());
+            success &= expect(
+                !blockedPackageResult.succeeded,
+                "Local managed installs should be blocked when the resource envelope denies CPU allocation.");
+            success &= expect(
+                blockedPackageResult.message.find("managed resource policy denies launch") != std::string::npos,
+                "Blocked installs should explain that resource policy denied the launch.");
+            success &= expect(
+                !std::filesystem::exists(blockedMarkerFile),
+                "Blocked resource-policy installs should not launch the payload.");
+
+            constrainedResourceConfiguration.resourceAllocation = managedConfiguration.resourceAllocation;
+            const auto restoreResourceResult = application.applyConfigurationJson(
+                nlohmann::json(constrainedResourceConfiguration).dump(),
+                false);
+            success &= expect(
+                restoreResourceResult.succeeded,
+                "Managed resource allocation should be restorable after enforcement testing.");
         } else {
             std::cout << "Skipping package import test because pwsh.exe was not found.\n";
         }

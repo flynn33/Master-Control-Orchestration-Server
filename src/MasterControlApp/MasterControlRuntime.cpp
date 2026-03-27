@@ -417,12 +417,74 @@ struct ProcessCaptureResult final {
     int exitCode = -1;
     std::string stdoutText;
     std::string stderrText;
+    bool resourcePolicyApplied = false;
+    std::string resourcePolicySummary;
 };
+
+struct ProcessResourcePolicy final {
+    bool enforce = false;
+    bool denyLaunch = false;
+    DWORD cpuRate = 0;
+    SIZE_T processMemoryLimitBytes = 0;
+    std::string summary;
+    std::string denialMessage;
+};
+
+ProcessResourcePolicy buildProcessResourcePolicy(const std::optional<ResourceAllocationProfile>& profile) {
+    ProcessResourcePolicy policy;
+    if (!profile.has_value()) {
+        return policy;
+    }
+
+    if (profile->cpuPercent <= 0) {
+        policy.denyLaunch = true;
+        policy.denialMessage = "Resource policy denied launch because CPU allocation is 0%.";
+        return policy;
+    }
+    if (profile->memoryPercent <= 0) {
+        policy.denyLaunch = true;
+        policy.denialMessage = "Resource policy denied launch because memory allocation is 0%.";
+        return policy;
+    }
+
+    MEMORYSTATUSEX memoryStatus{};
+    memoryStatus.dwLength = sizeof(memoryStatus);
+    if (GlobalMemoryStatusEx(&memoryStatus) == 0 || memoryStatus.ullTotalPhys == 0) {
+        policy.denyLaunch = true;
+        policy.denialMessage = "Resource policy could not determine total physical memory for process enforcement.";
+        return policy;
+    }
+
+    policy.enforce = true;
+    policy.cpuRate = static_cast<DWORD>((std::clamp)(profile->cpuPercent, 1, 100) * 100);
+
+    const auto memoryLimit = (memoryStatus.ullTotalPhys * static_cast<uint64_t>(profile->memoryPercent)) / 100ULL;
+    if (memoryLimit == 0U) {
+        policy.denyLaunch = true;
+        policy.denialMessage = "Resource policy computed a zero-byte memory ceiling for the process launch.";
+        policy.enforce = false;
+        return policy;
+    }
+    policy.processMemoryLimitBytes = static_cast<SIZE_T>(memoryLimit);
+
+    std::ostringstream summary;
+    summary << "CPU cap " << profile->cpuPercent << "%, memory cap " << profile->memoryPercent << "%.";
+    policy.summary = summary.str();
+    return policy;
+}
 
 ProcessCaptureResult runProcessCapture(const std::wstring& commandLine,
                                        const std::filesystem::path& workingDirectory,
-                                       const std::vector<std::pair<std::wstring, std::wstring>>& environmentOverrides = {}) {
+                                       const std::vector<std::pair<std::wstring, std::wstring>>& environmentOverrides = {},
+                                       const std::optional<ResourceAllocationProfile>& resourceAllocationProfile = std::nullopt) {
     ProcessCaptureResult result;
+    const auto resourcePolicy = buildProcessResourcePolicy(resourceAllocationProfile);
+    result.resourcePolicyApplied = resourcePolicy.enforce;
+    result.resourcePolicySummary = resourcePolicy.summary;
+    if (resourcePolicy.denyLaunch) {
+        result.stderrText = resourcePolicy.denialMessage;
+        return result;
+    }
 
     SECURITY_ATTRIBUTES securityAttributes{};
     securityAttributes.nLength = sizeof(securityAttributes);
@@ -488,7 +550,9 @@ ProcessCaptureResult runProcessCapture(const std::wstring& commandLine,
     PROCESS_INFORMATION processInformation{};
     std::wstring mutableCommandLine = commandLine;
     const std::wstring workingDirectoryWide = workingDirectory.wstring();
-    const DWORD creationFlags = CREATE_NO_WINDOW | (environmentBlock != nullptr ? CREATE_UNICODE_ENVIRONMENT : 0);
+    const DWORD creationFlags = CREATE_NO_WINDOW |
+        (environmentBlock != nullptr ? CREATE_UNICODE_ENVIRONMENT : 0) |
+        (resourcePolicy.enforce ? CREATE_SUSPENDED : 0);
     result.launched = CreateProcessW(
         nullptr,
         mutableCommandLine.data(),
@@ -513,6 +577,73 @@ ProcessCaptureResult runProcessCapture(const std::wstring& commandLine,
         return result;
     }
 
+    HANDLE jobObject = nullptr;
+    if (resourcePolicy.enforce) {
+        jobObject = CreateJobObjectW(nullptr, nullptr);
+        if (jobObject == nullptr) {
+            TerminateProcess(processInformation.hProcess, ERROR_NOT_SUPPORTED);
+            CloseHandle(stdoutRead);
+            CloseHandle(stderrRead);
+            CloseHandle(processInformation.hThread);
+            CloseHandle(processInformation.hProcess);
+            result.launched = false;
+            result.stderrText = "Resource policy could not create a Windows job object.";
+            return result;
+        }
+
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limitInformation{};
+        limitInformation.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+        limitInformation.ProcessMemoryLimit = resourcePolicy.processMemoryLimitBytes;
+        if (!SetInformationJobObject(
+                jobObject,
+                JobObjectExtendedLimitInformation,
+                &limitInformation,
+                sizeof(limitInformation))) {
+            TerminateProcess(processInformation.hProcess, ERROR_NOT_SUPPORTED);
+            CloseHandle(jobObject);
+            CloseHandle(stdoutRead);
+            CloseHandle(stderrRead);
+            CloseHandle(processInformation.hThread);
+            CloseHandle(processInformation.hProcess);
+            result.launched = false;
+            result.stderrText = "Resource policy could not apply the Windows memory limit.";
+            return result;
+        }
+
+        JOBOBJECT_CPU_RATE_CONTROL_INFORMATION cpuInformation{};
+        cpuInformation.ControlFlags = JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
+        cpuInformation.CpuRate = resourcePolicy.cpuRate;
+        if (!SetInformationJobObject(
+                jobObject,
+                JobObjectCpuRateControlInformation,
+                &cpuInformation,
+                sizeof(cpuInformation))) {
+            TerminateProcess(processInformation.hProcess, ERROR_NOT_SUPPORTED);
+            CloseHandle(jobObject);
+            CloseHandle(stdoutRead);
+            CloseHandle(stderrRead);
+            CloseHandle(processInformation.hThread);
+            CloseHandle(processInformation.hProcess);
+            result.launched = false;
+            result.stderrText = "Resource policy could not apply the Windows CPU limit.";
+            return result;
+        }
+
+        if (!AssignProcessToJobObject(jobObject, processInformation.hProcess)) {
+            TerminateProcess(processInformation.hProcess, ERROR_NOT_SUPPORTED);
+            CloseHandle(jobObject);
+            CloseHandle(stdoutRead);
+            CloseHandle(stderrRead);
+            CloseHandle(processInformation.hThread);
+            CloseHandle(processInformation.hProcess);
+            result.launched = false;
+            result.stderrText = "Resource policy could not attach the process to the Windows job object.";
+            return result;
+        }
+
+        ResumeThread(processInformation.hThread);
+    }
+
     auto readPipe = [](HANDLE handle) {
         std::string captured;
         char buffer[4096];
@@ -534,6 +665,9 @@ ProcessCaptureResult runProcessCapture(const std::wstring& commandLine,
 
     CloseHandle(stdoutRead);
     CloseHandle(stderrRead);
+    if (jobObject != nullptr) {
+        CloseHandle(jobObject);
+    }
     CloseHandle(processInformation.hThread);
     CloseHandle(processInformation.hProcess);
     return result;
@@ -2365,13 +2499,15 @@ public:
                              std::shared_ptr<IProviderCredentialStore> providerCredentialStore,
                              std::shared_ptr<IProviderAssignmentService> providerAssignmentService,
                              std::shared_ptr<IRuntimeInventoryService> inventoryService,
-                             std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService)
+                             std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService,
+                             std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService)
         : state_(std::move(state))
         , providerRegistry_(std::move(providerRegistry))
         , providerCredentialStore_(std::move(providerCredentialStore))
         , providerAssignmentService_(std::move(providerAssignmentService))
         , inventoryService_(std::move(inventoryService))
-        , providerExecutionCatalogService_(std::move(providerExecutionCatalogService)) {}
+        , providerExecutionCatalogService_(std::move(providerExecutionCatalogService))
+        , commandLogicUnitService_(std::move(commandLogicUnitService)) {}
 
     std::vector<ProviderExecutionRecord> history() const override {
         std::lock_guard<std::mutex> lock(state_->mutex);
@@ -2410,6 +2546,24 @@ public:
             return record;
         }
         record.targetDisplayName = targetIterator->displayName;
+
+        if (commandLogicUnitService_) {
+            const auto decision = commandLogicUnitService_->enforceAction(GovernanceEnforcementRequest{
+                GovernanceActionKind::ProviderExecution,
+                request.targetId,
+                {},
+                {},
+                false
+            });
+            if (!decision.allowed) {
+                record.errorMessage = decision.message.empty()
+                    ? "CLU blocked provider execution."
+                    : decision.message;
+                record.completedAtUtc = timestampNowUtc();
+                persistRecord(record);
+                return record;
+            }
+        }
 
         const auto assignments = providerAssignmentService_->listAssignments();
         const auto assignmentIterator = std::find_if(
@@ -2863,11 +3017,18 @@ private:
         const auto workingDirectory = request.workingDirectory.empty()
             ? std::filesystem::current_path()
             : std::filesystem::path(wideFromUtf8(request.workingDirectory));
-        const auto process = runProcessCapture(commandLine, workingDirectory, environmentOverrides);
+        const auto process = runProcessCapture(
+            commandLine,
+            workingDirectory,
+            environmentOverrides,
+            currentResourceAllocationProfile());
         record.rawResponse = process.stdoutText.empty() ? process.stderrText : process.stdoutText;
         if (!process.launched) {
             record.status = ProviderExecutionStatus::Failed;
-            record.errorMessage = "Claude Code could not be launched.";
+            record.errorMessage = trimCopy(process.stderrText.empty() ? process.stdoutText : process.stderrText);
+            if (record.errorMessage.empty()) {
+                record.errorMessage = "Claude Code could not be launched.";
+            }
             record.completedAtUtc = timestampNowUtc();
             return record;
         }
@@ -2912,12 +3073,18 @@ private:
         }
     }
 
+    ResourceAllocationProfile currentResourceAllocationProfile() const {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        return state_->configuration.resourceAllocation;
+    }
+
     std::shared_ptr<SharedState> state_;
     std::shared_ptr<IProviderRegistry> providerRegistry_;
     std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
     std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
     std::shared_ptr<IRuntimeInventoryService> inventoryService_;
     std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService_;
+    std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService_;
 };
 
 class InstallerOrchestrator final : public IInstallerOrchestrator, public IBootstrapRepoService, public IZipBundleService {
@@ -2957,7 +3124,7 @@ private:
     int executeBootstrap(const std::filesystem::path& bootstrapPath,
                          const std::string& arguments,
                          const std::filesystem::path& workingDirectory) const;
-    static int executeCommand(const std::wstring& command, const std::filesystem::path& workingDirectory);
+    int executeCommand(const std::wstring& command, const std::filesystem::path& workingDirectory) const;
     void recordHistory(const InstallProvenance& provenance);
 
     std::shared_ptr<SharedState> state_;
@@ -3290,33 +3457,18 @@ int InstallerOrchestrator::executeBootstrap(const std::filesystem::path& bootstr
     return executeCommand(command, workingDirectory);
 }
 
-int InstallerOrchestrator::executeCommand(const std::wstring& command, const std::filesystem::path& workingDirectory) {
-    STARTUPINFOW startupInfo{};
-    startupInfo.cb = sizeof(startupInfo);
-    PROCESS_INFORMATION processInformation{};
-    std::wstring mutableCommand = command;
-
-    if (CreateProcessW(
-            nullptr,
-            mutableCommand.data(),
-            nullptr,
-            nullptr,
-            FALSE,
-            CREATE_NO_WINDOW,
-            nullptr,
-            workingDirectory.empty() ? nullptr : workingDirectory.wstring().c_str(),
-            &startupInfo,
-            &processInformation) == 0) {
-        return static_cast<int>(GetLastError());
+int InstallerOrchestrator::executeCommand(const std::wstring& command, const std::filesystem::path& workingDirectory) const {
+    ResourceAllocationProfile allocationProfile;
+    {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        allocationProfile = state_->configuration.resourceAllocation;
     }
 
-    WaitForSingleObject(processInformation.hProcess, INFINITE);
-
-    DWORD exitCode = 1;
-    GetExitCodeProcess(processInformation.hProcess, &exitCode);
-    CloseHandle(processInformation.hThread);
-    CloseHandle(processInformation.hProcess);
-    return static_cast<int>(exitCode);
+    const auto process = runProcessCapture(command, workingDirectory, {}, allocationProfile);
+    if (!process.launched) {
+        return process.exitCode >= 0 ? process.exitCode : 1;
+    }
+    return process.exitCode;
 }
 
 void InstallerOrchestrator::recordHistory(const InstallProvenance& provenance) {
@@ -3644,6 +3796,104 @@ public:
         }
 
         return snapshot;
+    }
+
+    GovernanceEnforcementDecision enforceAction(const GovernanceEnforcementRequest& request) const override {
+        GovernanceEnforcementDecision decision;
+        decision.action = request.action;
+        decision.allowed = true;
+
+        const auto configuration = configurationService_->current();
+        const auto snapshot = currentGovernance();
+        decision.posture = snapshot.posture;
+
+        const auto blockedFindings = [&snapshot]() {
+            std::vector<GovernanceFinding> findings;
+            for (const auto& finding : snapshot.findings) {
+                if (finding.status == "blocked") {
+                    findings.push_back(finding);
+                }
+            }
+            return findings;
+        }();
+
+        const auto appendBlockedFindingMessages = [&decision, &blockedFindings]() {
+            for (const auto& finding : blockedFindings) {
+                decision.blockingFindings.push_back(finding.title + ": " + finding.message);
+            }
+            if (!blockedFindings.empty()) {
+                decision.ruleId = blockedFindings.front().ruleId;
+            }
+        };
+        const auto resourcePreflightBlock = [&configuration, &decision](const std::string& actionLabel) -> bool {
+            auto resourceMessage = std::string{};
+            if (configuration.resourceAllocation.cpuPercent <= 0) {
+                resourceMessage = "The managed resource envelope denies CPU allocation (0%).";
+            } else if (configuration.resourceAllocation.memoryPercent <= 0) {
+                resourceMessage = "The managed resource envelope denies memory allocation (0%).";
+            }
+
+            if (resourceMessage.empty()) {
+                return false;
+            }
+
+            decision.allowed = false;
+            decision.ruleId = "CLU-C008";
+            decision.blockingFindings.push_back(resourceMessage);
+            decision.message = "CLU blocked " + actionLabel + " because the managed resource policy denies launch. " + resourceMessage;
+            return true;
+        };
+
+        if (request.action == GovernanceActionKind::ProviderExecution) {
+            if (resourcePreflightBlock("provider execution")) {
+                return decision;
+            }
+            if (snapshot.posture == "blocked") {
+                decision.allowed = false;
+                appendBlockedFindingMessages();
+                decision.message = "CLU blocked provider execution because runtime posture is blocked.";
+                if (!decision.blockingFindings.empty()) {
+                    decision.message += " " + decision.blockingFindings.front();
+                }
+            }
+            return decision;
+        }
+
+        if (request.action == GovernanceActionKind::ProviderAutonomyEnable) {
+            if (snapshot.posture == "blocked") {
+                decision.allowed = false;
+                appendBlockedFindingMessages();
+                decision.message = "CLU blocked provider autonomous control while runtime posture is blocked.";
+                if (!decision.blockingFindings.empty()) {
+                    decision.message += " " + decision.blockingFindings.front();
+                }
+                return decision;
+            }
+
+            if (!configuration.aiAutonomyEnabled) {
+                decision.allowed = false;
+                decision.ruleId = "CLU-C004";
+                decision.message = "Enable global AI autonomy before granting provider autonomous control.";
+            }
+            return decision;
+        }
+
+        if (request.action == GovernanceActionKind::RemoteInstall) {
+            if (resourcePreflightBlock("managed install")) {
+                return decision;
+            }
+            if (isRemoteSource(request.source) && snapshot.posture == "blocked") {
+                decision.allowed = false;
+                appendBlockedFindingMessages();
+                decision.message = "CLU blocked remote install while runtime posture is blocked.";
+                if (!decision.blockingFindings.empty()) {
+                    decision.message += " " + decision.blockingFindings.front();
+                }
+            }
+            return decision;
+        }
+
+        return decision;
     }
 
     GovernanceToolResult executeGovernanceTool(const GovernanceToolRequest& request) override {
@@ -4681,7 +4931,17 @@ private:
         arguments.push_back(L"-lc");
         arguments.push_back(wideFromUtf8(buildRemoteShellScript(request)));
 
-        const auto process = runProcessCapture(joinCommandArguments(arguments), std::filesystem::current_path());
+        ResourceAllocationProfile allocationProfile;
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            allocationProfile = state_->configuration.resourceAllocation;
+        }
+
+        const auto process = runProcessCapture(
+            joinCommandArguments(arguments),
+            std::filesystem::current_path(),
+            {},
+            allocationProfile);
         result.launched = process.launched;
         result.exitCode = process.exitCode;
         result.stdoutText = process.stdoutText;
@@ -4863,9 +5123,12 @@ private:
 
 class PlatformGovernanceToolService final : public IPlatformGovernanceToolService {
 public:
-    PlatformGovernanceToolService(AppPaths paths, std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService)
+    PlatformGovernanceToolService(AppPaths paths,
+                                  std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService,
+                                  std::shared_ptr<IConfigurationService> configurationService)
         : paths_(std::move(paths))
-        , appleRemoteHostService_(std::move(appleRemoteHostService)) {
+        , appleRemoteHostService_(std::move(appleRemoteHostService))
+        , configurationService_(std::move(configurationService)) {
         if (std::filesystem::exists(paths_.appleOperationHistoryFile)) {
             const auto json = readJsonFile(paths_.appleOperationHistoryFile);
             if (!json.is_null() && !json.empty()) {
@@ -5871,7 +6134,10 @@ private:
             L"-File",
             scriptPath.wstring()
         });
-        return runProcessCapture(commandLine, workingDirectory);
+        const auto resourceAllocation = configurationService_
+            ? std::optional<ResourceAllocationProfile>(configurationService_->current().resourceAllocation)
+            : std::nullopt;
+        return runProcessCapture(commandLine, workingDirectory, {}, resourceAllocation);
     }
 
     static std::string optionValue(
@@ -6760,6 +7026,7 @@ private:
 
     AppPaths paths_;
     std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService_;
+    std::shared_ptr<IConfigurationService> configurationService_;
     mutable std::mutex mutex_;
     std::condition_variable workerCv_;
     std::map<std::string, GovernanceToolDescriptor> toolsByKey_;
@@ -6993,7 +7260,20 @@ public:
     }
 
     OperationResult upsertProviderJson(const std::string& requestBody) override {
-        return providerRegistry_->upsertProvider(nlohmann::json::parse(requestBody).get<ProviderConnection>());
+        const auto provider = nlohmann::json::parse(requestBody).get<ProviderConnection>();
+        if (provider.allowAutonomousControl && commandLogicUnitService_) {
+            const auto decision = commandLogicUnitService_->enforceAction(GovernanceEnforcementRequest{
+                GovernanceActionKind::ProviderAutonomyEnable,
+                {},
+                provider.id,
+                {},
+                false
+            });
+            if (!decision.allowed) {
+                return OperationResult{ false, false, decision.message };
+            }
+        }
+        return providerRegistry_->upsertProvider(provider);
     }
 
     OperationResult upsertProviderCredentialsJson(const std::string& requestBody) override {
@@ -7045,15 +7325,54 @@ public:
     }
 
     OperationResult installPackageJson(const std::string& requestBody) override {
-        return installerOrchestrator_->installPackage(nlohmann::json::parse(requestBody).get<InstallerPackageSpec>());
+        const auto spec = nlohmann::json::parse(requestBody).get<InstallerPackageSpec>();
+        if (commandLogicUnitService_) {
+            const auto decision = commandLogicUnitService_->enforceAction(GovernanceEnforcementRequest{
+                GovernanceActionKind::RemoteInstall,
+                {},
+                {},
+                !spec.source.empty() ? spec.source : spec.localPath,
+                spec.allowUntrustedExecution
+            });
+            if (!decision.allowed) {
+                return OperationResult{ false, false, decision.message };
+            }
+        }
+        return installerOrchestrator_->installPackage(spec);
     }
 
     OperationResult installRepoJson(const std::string& requestBody) override {
-        return bootstrapRepoService_->installFromRepository(nlohmann::json::parse(requestBody).get<BootstrapRepoSpec>());
+        const auto spec = nlohmann::json::parse(requestBody).get<BootstrapRepoSpec>();
+        if (commandLogicUnitService_) {
+            const auto decision = commandLogicUnitService_->enforceAction(GovernanceEnforcementRequest{
+                GovernanceActionKind::RemoteInstall,
+                {},
+                {},
+                spec.repositoryUrl,
+                spec.allowUntrustedExecution
+            });
+            if (!decision.allowed) {
+                return OperationResult{ false, false, decision.message };
+            }
+        }
+        return bootstrapRepoService_->installFromRepository(spec);
     }
 
     OperationResult installZipJson(const std::string& requestBody) override {
-        return zipBundleService_->installFromZipBundle(nlohmann::json::parse(requestBody).get<ZipBundleSpec>());
+        const auto spec = nlohmann::json::parse(requestBody).get<ZipBundleSpec>();
+        if (commandLogicUnitService_) {
+            const auto decision = commandLogicUnitService_->enforceAction(GovernanceEnforcementRequest{
+                GovernanceActionKind::RemoteInstall,
+                {},
+                {},
+                spec.source,
+                false
+            });
+            if (!decision.allowed) {
+                return OperationResult{ false, false, decision.message };
+            }
+        }
+        return zipBundleService_->installFromZipBundle(spec);
     }
 
 private:
@@ -7420,17 +7739,12 @@ bool MasterControlApplication::Impl::initialize() {
         inventoryService_,
         subAgentGroupService_,
         providerRegistry_);
-    providerExecutionCatalogService_ = std::make_shared<ProviderExecutionCatalogService>();
-    providerExecutionService_ = std::make_shared<ProviderExecutionService>(
-        state_,
-        providerRegistry_,
-        providerCredentialStore_,
-        providerAssignmentService_,
-        inventoryService_,
-        providerExecutionCatalogService_);
     exportService_ = std::make_shared<ExportService>(inventoryService_, configurationService_);
     platformServiceCatalogService_ = std::make_shared<PlatformServiceCatalogService>(configurationService_, telemetryService_);
-    platformGovernanceToolService_ = std::make_shared<PlatformGovernanceToolService>(paths_, appleRemoteHostService_);
+    platformGovernanceToolService_ = std::make_shared<PlatformGovernanceToolService>(
+        paths_,
+        appleRemoteHostService_,
+        configurationService_);
     commandLogicUnitService_ = std::make_shared<CommandLogicUnitService>(
         paths_.cluProfileFile,
         configurationService_,
@@ -7441,6 +7755,15 @@ bool MasterControlApplication::Impl::initialize() {
         appleRemoteHostService_,
         platformServiceCatalogService_,
         platformGovernanceToolService_);
+    providerExecutionCatalogService_ = std::make_shared<ProviderExecutionCatalogService>();
+    providerExecutionService_ = std::make_shared<ProviderExecutionService>(
+        state_,
+        providerRegistry_,
+        providerCredentialStore_,
+        providerAssignmentService_,
+        inventoryService_,
+        providerExecutionCatalogService_,
+        commandLogicUnitService_);
     controlSurfaceService_ = std::make_shared<ModuleControlSurfaceService>();
     beaconService_ = std::make_shared<BeaconService>(configurationService_, telemetryService_, platformServiceCatalogService_);
     registerConfigurationDefaults();
