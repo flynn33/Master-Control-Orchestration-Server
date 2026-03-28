@@ -5,6 +5,13 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.1.38] - 2026-03-28
+### Summary
+Automated patch release for Master Control Program.
+
+### Included Changes
+- Add deployment report comparison tooling (flynn33)
+
 ## [0.1.37] - 2026-03-27
 ### Summary
 Automated patch release for Master Control Program.
