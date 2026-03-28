@@ -42,7 +42,7 @@ BOOL WINAPI consoleControlHandler(const DWORD controlType) {
     return FALSE;
 }
 
-void runConsoleMode() {
+int runConsoleMode() {
     SetConsoleCtrlHandler(consoleControlHandler, TRUE);
 
     g_application = std::make_unique<MasterControl::MasterControlApplication>();
@@ -53,7 +53,7 @@ void runConsoleMode() {
     std::cout << "Master Control Program listening at " << g_application->browserUrl() << '\n';
     const int exitCode = g_application->runInteractive();
     g_application->shutdown();
-    ExitProcess(static_cast<UINT>(exitCode));
+    return exitCode;
 }
 
 void WINAPI serviceMain(DWORD, LPWSTR*) {
@@ -81,8 +81,7 @@ void WINAPI serviceMain(DWORD, LPWSTR*) {
 int wmain(int argc, wchar_t* argv[]) {
     try {
         if (argc > 1 && wcscmp(argv[1], L"--console") == 0) {
-            runConsoleMode();
-            return 0;
+            return runConsoleMode();
         }
 
         SERVICE_TABLE_ENTRYW dispatchTable[] = {
@@ -92,8 +91,7 @@ int wmain(int argc, wchar_t* argv[]) {
 
         if (StartServiceCtrlDispatcherW(dispatchTable) == 0) {
             if (GetLastError() == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
-                runConsoleMode();
-                return 0;
+                return runConsoleMode();
             }
             return 1;
         }
