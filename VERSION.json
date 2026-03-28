@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.42",
-  "current_tag": "v0.1.42",
+  "current_version": "0.1.43",
+  "current_tag": "v0.1.43",
   "released_at": "2026-03-28",
-  "last_release_commit": "e40c5b0f24b3de2e8ff170746c275a13bdf93044",
+  "last_release_commit": "8aaae5cf6beba5d1f7aa3c3c5cce3284c4025486",
   "history": [
+    {
+      "version": "0.1.43",
+      "tag": "v0.1.43",
+      "released_at": "2026-03-28",
+      "commit": "8aaae5cf6beba5d1f7aa3c3c5cce3284c4025486",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add installer desktop logging and launch diagnostics (flynn33)"
+      ]
+    },
     {
       "version": "0.1.42",
       "tag": "v0.1.42",
