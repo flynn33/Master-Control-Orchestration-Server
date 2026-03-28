@@ -8,6 +8,7 @@ param(
     [string]$Root = (Join-Path $env:TEMP ("mastercontrol-deployment-" + [guid]::NewGuid().ToString())),
     [ValidateSet("auto", "mixed", "managed", "both")]
     [string]$Scenario = "auto",
+    [string]$HostLabel = "",
     [switch]$ManagedMutating,
     [switch]$AutoElevateManaged,
     [switch]$KeepArtifacts,
@@ -185,6 +186,9 @@ function New-DeploymentSummary {
     $lines.Add("* Generated: $($Report.generatedAt)")
     $lines.Add("* Host: $($Report.host.caption) ($($Report.host.version) build $($Report.host.buildNumber))")
     $lines.Add("* Machine: $($Report.host.machineName)")
+    if ($Report.PSObject.Properties.Name -contains "hostLabel" -and -not [string]::IsNullOrWhiteSpace($Report.hostLabel)) {
+        $lines.Add("* Host label: $($Report.hostLabel)")
+    }
     $lines.Add("* Administrator: $($Report.isAdministrator)")
     $lines.Add("* Scenario: $($Report.scenario) -> $($Report.effectiveScenario)")
     $lines.Add("* Managed mutating enabled: $($Report.managedMutating)")
@@ -431,6 +435,7 @@ function Invoke-ElevatedManagedAcceptance {
     param(
         [string]$Bootstrapper,
         [string]$ReportPath,
+        [string]$HostLabel,
         [bool]$KeepArtifacts
     )
 
@@ -442,6 +447,7 @@ function Invoke-ElevatedManagedAcceptance {
         "-BootstrapperPath", $Bootstrapper,
         "-Scenario", "managed",
         "-ManagedMutating",
+        "-HostLabel", $HostLabel,
         "-ReportPath", $ReportPath,
         "-SummaryPath", $summaryPath
     )
@@ -779,6 +785,7 @@ $reportForSerialization = [pscustomobject][ordered]@{
     bundlePath = $bundlePath
     scenario = $report.scenario
     effectiveScenario = $report.effectiveScenario
+    hostLabel = $HostLabel
     isAdministrator = $report.isAdministrator
     managedMutating = $report.managedMutating
     autoElevateManaged = [bool]$AutoElevateManaged
@@ -802,9 +809,15 @@ $managedReportPath = if (-not [string]::IsNullOrWhiteSpace($ReportPath)) {
 }
 
 if ($AutoElevateManaged -and -not $isAdministrator -and $effectiveScenario -in @("managed", "both")) {
+    $managedHostLabel = if ([string]::IsNullOrWhiteSpace($HostLabel)) {
+        $env:COMPUTERNAME + "-managed-elevated"
+    } else {
+        $HostLabel + "-managed-elevated"
+    }
     $elevatedManagedAttempt = Invoke-ElevatedManagedAcceptance `
         -Bootstrapper $bootstrapper.Path `
         -ReportPath $managedReportPath `
+        -HostLabel $managedHostLabel `
         -KeepArtifacts:$KeepArtifacts
     $reportForSerialization | Add-Member -NotePropertyName elevatedManagedAttempt -NotePropertyValue $elevatedManagedAttempt
     if (-not $elevatedManagedAttempt.childSucceeded) {
@@ -814,6 +827,11 @@ if ($AutoElevateManaged -and -not $isAdministrator -and $effectiveScenario -in @
 
 $followUpActions = New-Object System.Collections.ArrayList
 if (-not $report.isAdministrator -and $report.effectiveScenario -in @("managed", "both")) {
+    $manualManagedHostLabel = if ([string]::IsNullOrWhiteSpace($HostLabel)) {
+        $env:COMPUTERNAME + "-managed-elevated"
+    } else {
+        $HostLabel + "-managed-elevated"
+    }
     $elevatedCommand = @(
         "powershell.exe",
         "-NoProfile",
@@ -822,6 +840,7 @@ if (-not $report.isAdministrator -and $report.effectiveScenario -in @("managed",
         "-BootstrapperPath", $bootstrapper.Path,
         "-Scenario", "managed",
         "-ManagedMutating",
+        "-HostLabel", $manualManagedHostLabel,
         "-AutoElevateManaged:$false",
         "-ReportPath", $managedReportPath
     ) -join " "
@@ -836,6 +855,11 @@ if ($report.host.caption -notmatch "Windows Server 2022") {
     } else {
         "<server-2022-report-path>"
     }
+    $serverHostLabel = if ([string]::IsNullOrWhiteSpace($HostLabel)) {
+        "server2022"
+    } else {
+        $HostLabel + "-server2022"
+    }
     $serverCommand = @(
         "powershell.exe",
         "-NoProfile",
@@ -843,6 +867,7 @@ if ($report.host.caption -notmatch "Windows Server 2022") {
         "-File", $PSCommandPath,
         "-BootstrapperPath", $bootstrapper.Path,
         "-Scenario", "both",
+        "-HostLabel", $serverHostLabel,
         "-ReportPath", $serverReportPath
     ) -join " "
     [void]$followUpActions.Add("Run the same acceptance harness on a Windows Server 2022 host: $serverCommand")
