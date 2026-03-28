@@ -1975,8 +1975,8 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                      << L"% | Bandwidth " << bandwidthPercent
                      << L"% | Storage " << storagePercent
                      << L"%";
-    if (cpuPercent <= 0 || memoryPercent <= 0) {
-        governanceStream << L"  (managed launches blocked)";
+    if (cpuPercent <= 0 || memoryPercent <= 0 || bandwidthPercent <= 0 || storagePercent <= 0) {
+        governanceStream << L"  (one or more governed launch lanes blocked)";
     }
     governanceStream << L'\n'
                      << L"Apple hosts / operations: "

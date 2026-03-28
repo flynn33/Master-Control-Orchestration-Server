@@ -1269,10 +1269,14 @@ function renderCluView() {
   const filteredAppleOperations = filterAppleOperationsByMode(appleOperations, appleOperationFilter);
   const attentionHosts = appleHosts.filter((host) => safeArray(host.readinessIssues).length || safeArray(host.toolchain?.readinessIssues).length);
   const appleQueueSummary = `${appleOperationCountsSnapshot.queued} queued | ${appleOperationCountsSnapshot.running} running | ${appleOperationCountsSnapshot.attention} attention`;
-  const managedLaunchBlocked = safeNumber(resourceAllocation.cpuPercent, 0) <= 0 || safeNumber(resourceAllocation.memoryPercent, 0) <= 0;
+  const managedLaunchBlocked =
+    safeNumber(resourceAllocation.cpuPercent, 0) <= 0 ||
+    safeNumber(resourceAllocation.memoryPercent, 0) <= 0 ||
+    safeNumber(resourceAllocation.bandwidthPercent, 0) <= 0 ||
+    safeNumber(resourceAllocation.storagePercent, 0) <= 0;
   const resourceEnvelopeValue = `CPU ${safeNumber(resourceAllocation.cpuPercent, 0)}% | RAM ${safeNumber(resourceAllocation.memoryPercent, 0)}%`;
   const resourceEnvelopeDetail = managedLaunchBlocked
-    ? 'managed launches blocked'
+    ? 'one or more governed launch lanes are blocked'
     : `Bandwidth ${safeNumber(resourceAllocation.bandwidthPercent, 0)}% | Storage ${safeNumber(resourceAllocation.storagePercent, 0)}%`;
   const appleFilterDescription = ({
     attention: 'failed and blocked operations',

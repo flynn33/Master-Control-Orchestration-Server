@@ -2722,7 +2722,103 @@ int main() {
                 false);
             success &= expect(
                 restoreResourceResult.succeeded,
-                "Managed resource allocation should be restorable after enforcement testing.");
+                "Managed resource allocation should be restorable after CPU enforcement testing.");
+
+            constrainedResourceConfiguration.resourceAllocation = managedConfiguration.resourceAllocation;
+            constrainedResourceConfiguration.resourceAllocation.bandwidthPercent = 0;
+            const auto constrainedBandwidthResult = application.applyConfigurationJson(
+                nlohmann::json(constrainedResourceConfiguration).dump(),
+                false);
+            success &= expect(
+                constrainedBandwidthResult.succeeded,
+                "Resource allocation updates should support zero-bandwidth enforcement testing.");
+
+            snapshot = application.snapshot();
+            success &= expect(
+                snapshot.governance.posture == "blocked",
+                "CLU should report blocked posture when the managed resource envelope denies bandwidth allocation.");
+            success &= expect(
+                std::any_of(
+                    snapshot.governance.findings.begin(),
+                    snapshot.governance.findings.end(),
+                    [](const auto& finding) {
+                        return finding.ruleId == "CLU-C008" &&
+                            finding.message.find("bandwidth allocation is set to 0%") != std::string::npos;
+                    }),
+                "CLU should publish a managed resource envelope finding when bandwidth allocation is zero.");
+
+            const auto blockedBandwidthExecution = application.executeProviderTaskJson(nlohmann::json{
+                { "targetId", "planner" },
+                { "prompt", "Attempt execution while bandwidth allocation is disabled." },
+                { "allowToolAccess", true },
+                { "maxTurns", 1 }
+            }.dump());
+            success &= expect(
+                blockedBandwidthExecution.status == MasterControl::ProviderExecutionStatus::Failed,
+                "Governed provider execution should be blocked when the resource envelope denies bandwidth allocation.");
+            success &= expect(
+                blockedBandwidthExecution.errorMessage.find("bandwidth allocation") != std::string::npos,
+                "Blocked provider execution should explain that bandwidth allocation denied the run.");
+
+            constrainedResourceConfiguration.resourceAllocation = managedConfiguration.resourceAllocation;
+            const auto restoreBandwidthResult = application.applyConfigurationJson(
+                nlohmann::json(constrainedResourceConfiguration).dump(),
+                false);
+            success &= expect(
+                restoreBandwidthResult.succeeded,
+                "Managed resource allocation should be restorable after bandwidth enforcement testing.");
+
+            constrainedResourceConfiguration.resourceAllocation = managedConfiguration.resourceAllocation;
+            constrainedResourceConfiguration.resourceAllocation.storagePercent = 0;
+            const auto constrainedStorageResult = application.applyConfigurationJson(
+                nlohmann::json(constrainedResourceConfiguration).dump(),
+                false);
+            success &= expect(
+                constrainedStorageResult.succeeded,
+                "Resource allocation updates should support zero-storage enforcement testing.");
+
+            snapshot = application.snapshot();
+            success &= expect(
+                snapshot.governance.posture == "blocked",
+                "CLU should report blocked posture when the managed resource envelope denies storage allocation.");
+            success &= expect(
+                std::any_of(
+                    snapshot.governance.findings.begin(),
+                    snapshot.governance.findings.end(),
+                    [](const auto& finding) {
+                        return finding.ruleId == "CLU-C008" &&
+                            finding.message.find("storage allocation is set to 0%") != std::string::npos;
+                    }),
+                "CLU should publish a managed resource envelope finding when storage allocation is zero.");
+
+            const auto blockedStoragePackageScript = tempRoot / "package-install-storage-blocked.ps1";
+            const auto blockedStorageMarkerFile = tempRoot / "package-install-storage-blocked.ok";
+            writeTextFile(
+                blockedStoragePackageScript,
+                "New-Item -Path (Join-Path $PSScriptRoot 'package-install-storage-blocked.ok') -ItemType File -Force | Out-Null\nexit 0\n");
+
+            const auto blockedStoragePackageResult = application.installPackageJson(nlohmann::json{
+                { "kind", "powershell" },
+                { "localPath", blockedStoragePackageScript.string() },
+                { "arguments", "" }
+            }.dump());
+            success &= expect(
+                !blockedStoragePackageResult.succeeded,
+                "Local managed installs should be blocked when the resource envelope denies storage allocation.");
+            success &= expect(
+                blockedStoragePackageResult.message.find("storage allocation") != std::string::npos,
+                "Blocked installs should explain that storage allocation denied the launch.");
+            success &= expect(
+                !std::filesystem::exists(blockedStorageMarkerFile),
+                "Blocked storage-policy installs should not launch the payload.");
+
+            constrainedResourceConfiguration.resourceAllocation = managedConfiguration.resourceAllocation;
+            const auto finalRestoreResourceResult = application.applyConfigurationJson(
+                nlohmann::json(constrainedResourceConfiguration).dump(),
+                false);
+            success &= expect(
+                finalRestoreResourceResult.succeeded,
+                "Managed resource allocation should be restorable after storage enforcement testing.");
         } else {
             std::cout << "Skipping package import test because pwsh.exe was not found.\n";
         }

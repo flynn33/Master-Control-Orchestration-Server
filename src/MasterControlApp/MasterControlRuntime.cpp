@@ -430,20 +430,34 @@ struct ProcessResourcePolicy final {
     std::string denialMessage;
 };
 
-ProcessResourcePolicy buildProcessResourcePolicy(const std::optional<ResourceAllocationProfile>& profile) {
+std::optional<std::string> resourceEnvelopeDenialMessage(const ResourceAllocationProfile& profile,
+                                                         bool requiresNetwork) {
+    if (profile.cpuPercent <= 0) {
+        return "Resource policy denied launch because CPU allocation is 0%.";
+    }
+    if (profile.memoryPercent <= 0) {
+        return "Resource policy denied launch because memory allocation is 0%.";
+    }
+    if (profile.storagePercent <= 0) {
+        return "Resource policy denied launch because storage allocation is 0%.";
+    }
+    if (requiresNetwork && profile.bandwidthPercent <= 0) {
+        return "Resource policy denied launch because bandwidth allocation is 0% for network-governed work.";
+    }
+    return std::nullopt;
+}
+
+ProcessResourcePolicy buildProcessResourcePolicy(const std::optional<ResourceAllocationProfile>& profile,
+                                                 bool requiresNetwork) {
     ProcessResourcePolicy policy;
     if (!profile.has_value()) {
         return policy;
     }
 
-    if (profile->cpuPercent <= 0) {
+    if (const auto denialMessage = resourceEnvelopeDenialMessage(*profile, requiresNetwork);
+        denialMessage.has_value()) {
         policy.denyLaunch = true;
-        policy.denialMessage = "Resource policy denied launch because CPU allocation is 0%.";
-        return policy;
-    }
-    if (profile->memoryPercent <= 0) {
-        policy.denyLaunch = true;
-        policy.denialMessage = "Resource policy denied launch because memory allocation is 0%.";
+        policy.denialMessage = *denialMessage;
         return policy;
     }
 
@@ -468,7 +482,13 @@ ProcessResourcePolicy buildProcessResourcePolicy(const std::optional<ResourceAll
     policy.processMemoryLimitBytes = static_cast<SIZE_T>(memoryLimit);
 
     std::ostringstream summary;
-    summary << "CPU cap " << profile->cpuPercent << "%, memory cap " << profile->memoryPercent << "%.";
+    summary << "CPU cap " << profile->cpuPercent
+            << "%, memory cap " << profile->memoryPercent
+            << "%, storage envelope " << profile->storagePercent << "%";
+    if (requiresNetwork) {
+        summary << ", bandwidth envelope " << profile->bandwidthPercent << "%";
+    }
+    summary << '.';
     policy.summary = summary.str();
     return policy;
 }
@@ -476,9 +496,10 @@ ProcessResourcePolicy buildProcessResourcePolicy(const std::optional<ResourceAll
 ProcessCaptureResult runProcessCapture(const std::wstring& commandLine,
                                        const std::filesystem::path& workingDirectory,
                                        const std::vector<std::pair<std::wstring, std::wstring>>& environmentOverrides = {},
-                                       const std::optional<ResourceAllocationProfile>& resourceAllocationProfile = std::nullopt) {
+                                       const std::optional<ResourceAllocationProfile>& resourceAllocationProfile = std::nullopt,
+                                       bool requiresNetwork = false) {
     ProcessCaptureResult result;
-    const auto resourcePolicy = buildProcessResourcePolicy(resourceAllocationProfile);
+    const auto resourcePolicy = buildProcessResourcePolicy(resourceAllocationProfile, requiresNetwork);
     result.resourcePolicyApplied = resourcePolicy.enforce;
     result.resourcePolicySummary = resourcePolicy.summary;
     if (resourcePolicy.denyLaunch) {
@@ -3021,7 +3042,8 @@ private:
             commandLine,
             workingDirectory,
             environmentOverrides,
-            currentResourceAllocationProfile());
+            currentResourceAllocationProfile(),
+            true);
         record.rawResponse = process.stdoutText.empty() ? process.stderrText : process.stdoutText;
         if (!process.launched) {
             record.status = ProviderExecutionStatus::Failed;
@@ -3637,8 +3659,8 @@ public:
             "CLU-C008",
             "Managed Resource Envelope",
             "high",
-            "Managed launches are blocked when the enforced CPU or memory envelope is zero.",
-            "CLU preflights provider execution and managed install actions against the configured local CPU and memory envelope before spawning governed workloads."
+            "Governed work is blocked when the enforced CPU, memory, bandwidth, or storage envelope is denied.",
+            "CLU preflights provider execution and managed install actions against the configured local CPU, memory, bandwidth, and storage envelope before spawning governed workloads."
         });
 
         const auto configuration = configurationService_->current();
@@ -3709,6 +3731,22 @@ public:
                 "blocked",
                 "Managed execution is blocked because memory allocation is set to 0%. Raise the memory envelope before running governed providers or installs.");
             snapshot.recommendedActions.push_back("Increase memory allocation above 0% to re-enable CLU-governed provider execution and managed installs.");
+        }
+
+        if (configuration.resourceAllocation.bandwidthPercent <= 0) {
+            appendFinding(
+                "CLU-C008",
+                "blocked",
+                "Governed network execution is blocked because bandwidth allocation is set to 0%. Raise the bandwidth envelope before running provider routes or remote installs.");
+            snapshot.recommendedActions.push_back("Increase bandwidth allocation above 0% to re-enable governed provider routes and remote installs.");
+        }
+
+        if (configuration.resourceAllocation.storagePercent <= 0) {
+            appendFinding(
+                "CLU-C008",
+                "blocked",
+                "Managed execution is blocked because storage allocation is set to 0%. Raise the storage envelope before running governed providers or installs.");
+            snapshot.recommendedActions.push_back("Increase storage allocation above 0% to re-enable CLU-governed provider execution and managed installs.");
         }
 
         if (!configuration.security.securityProtocolsEnabled && configuration.security.allowOpenLanAccess) {
@@ -3858,12 +3896,17 @@ public:
                 decision.ruleId = blockedFindings.front().ruleId;
             }
         };
-        const auto resourcePreflightBlock = [&configuration, &decision](const std::string& actionLabel) -> bool {
+        const auto resourcePreflightBlock = [&configuration, &decision](const std::string& actionLabel,
+                                                                       bool requiresNetwork) -> bool {
             auto resourceMessage = std::string{};
             if (configuration.resourceAllocation.cpuPercent <= 0) {
                 resourceMessage = "The managed resource envelope denies CPU allocation (0%).";
             } else if (configuration.resourceAllocation.memoryPercent <= 0) {
                 resourceMessage = "The managed resource envelope denies memory allocation (0%).";
+            } else if (configuration.resourceAllocation.storagePercent <= 0) {
+                resourceMessage = "The managed resource envelope denies storage allocation (0%).";
+            } else if (requiresNetwork && configuration.resourceAllocation.bandwidthPercent <= 0) {
+                resourceMessage = "The managed resource envelope denies bandwidth allocation (0%) for network-governed work.";
             }
 
             if (resourceMessage.empty()) {
@@ -3878,7 +3921,7 @@ public:
         };
 
         if (request.action == GovernanceActionKind::ProviderExecution) {
-            if (resourcePreflightBlock("provider execution")) {
+            if (resourcePreflightBlock("provider execution", true)) {
                 return decision;
             }
             if (snapshot.posture == "blocked") {
@@ -3912,7 +3955,7 @@ public:
         }
 
         if (request.action == GovernanceActionKind::RemoteInstall) {
-            if (resourcePreflightBlock("managed install")) {
+            if (resourcePreflightBlock("managed install", isRemoteSource(request.source))) {
                 return decision;
             }
             if (isRemoteSource(request.source) && snapshot.posture == "blocked") {
@@ -4974,7 +5017,8 @@ private:
             joinCommandArguments(arguments),
             std::filesystem::current_path(),
             {},
-            allocationProfile);
+            allocationProfile,
+            true);
         result.launched = process.launched;
         result.exitCode = process.exitCode;
         result.stdoutText = process.stdoutText;
@@ -6170,7 +6214,7 @@ private:
         const auto resourceAllocation = configurationService_
             ? std::optional<ResourceAllocationProfile>(configurationService_->current().resourceAllocation)
             : std::nullopt;
-        return runProcessCapture(commandLine, workingDirectory, {}, resourceAllocation);
+        return runProcessCapture(commandLine, workingDirectory, {}, resourceAllocation, false);
     }
 
     static std::string optionValue(
