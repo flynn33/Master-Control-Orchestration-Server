@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.39",
-  "current_tag": "v0.1.39",
+  "current_version": "0.1.40",
+  "current_tag": "v0.1.40",
   "released_at": "2026-03-28",
-  "last_release_commit": "ac462f885e54e3be95de7118f8ed4080ee283e3d",
+  "last_release_commit": "50377748597e38210966d954fe0ca18f4a67fd2c",
   "history": [
+    {
+      "version": "0.1.40",
+      "tag": "v0.1.40",
+      "released_at": "2026-03-28",
+      "commit": "50377748597e38210966d954fe0ca18f4a67fd2c",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Enforce bandwidth and storage resource gates (flynn33)"
+      ]
+    },
     {
       "version": "0.1.39",
       "tag": "v0.1.39",
