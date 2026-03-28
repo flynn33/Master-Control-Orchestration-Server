@@ -8,6 +8,7 @@ param(
     [string]$Preset = "release",
     [string]$Version = "",
     [string]$OutputRoot = "",
+    [string]$AcceptanceReportPath = "",
     [switch]$SkipBuild,
     [switch]$SkipTests,
     [switch]$KeepStage
@@ -101,10 +102,13 @@ $ctest = Resolve-FirstPath -Candidates @(
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $versionDocument = Get-Content (Join-Path $repoRoot "VERSION.json") -Raw | ConvertFrom-Json
     $Version = $versionDocument.current_version
+} else {
+    $versionDocument = Get-Content (Join-Path $repoRoot "VERSION.json") -Raw | ConvertFrom-Json
 }
 
 $normalizedVersion = if ($Version.StartsWith("v")) { $Version.Substring(1) } else { $Version }
 $versionTag = "v$normalizedVersion"
+$gitCommitFull = (git -C $repoRoot rev-parse HEAD).Trim()
 $gitCommit = (git -C $repoRoot rev-parse --short HEAD).Trim()
 
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
@@ -165,6 +169,7 @@ Quick start
 1. Extract this package to a writable local folder.
 2. Open PowerShell in the extracted folder.
 3. Run a preflight check before installing.
+4. If included, review RELEASE-READINESS.md before target-host deployment validation.
 
 Fully managed install (requires Administrator)
 .\MasterControlBootstrapper.exe preflight "C:\Program Files\Master Control Program" --json
@@ -208,6 +213,9 @@ $metadata = [pscustomobject][ordered]@{
     version = $normalizedVersion
     versionTag = $versionTag
     commit = $gitCommit
+    commitFull = $gitCommitFull
+    lastReleaseCommit = $versionDocument.last_release_commit
+    sourceMatchesLastReleaseCommit = ($gitCommitFull -eq $versionDocument.last_release_commit)
     preset = $Preset
     configuration = $configuration
     stageDirectory = $stageDirectory
@@ -224,6 +232,30 @@ $metadata = [pscustomobject][ordered]@{
 }
 $metadata | ConvertTo-Json -Depth 8 | Set-Content -Path $metadataPath -Encoding UTF8
 
+if (-not [string]::IsNullOrWhiteSpace($AcceptanceReportPath)) {
+    $readinessScriptPath = Join-Path $PSScriptRoot "Get-MasterControlReleaseReadiness.ps1"
+    $stageReadinessJsonPath = Join-Path $stageDirectory "RELEASE-READINESS.json"
+    $stageReadinessSummaryPath = Join-Path $stageDirectory "RELEASE-READINESS.md"
+
+    $readinessResult = Invoke-CapturedProcess -FilePath "powershell.exe" -Arguments @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $readinessScriptPath,
+        "-PackageMetadataPath", $metadataPath,
+        "-AcceptanceReportPath", $AcceptanceReportPath,
+        "-OutputPath", $stageReadinessJsonPath,
+        "-SummaryPath", $stageReadinessSummaryPath
+    )
+
+    if ($readinessResult.exitCode -ne 0) {
+        throw "Packaged release readiness generation failed: $($readinessResult.stderr)$($readinessResult.stdout)"
+    }
+
+    $metadata | Add-Member -NotePropertyName readinessJsonPath -NotePropertyValue $stageReadinessJsonPath
+    $metadata | Add-Member -NotePropertyName readinessSummaryPath -NotePropertyValue $stageReadinessSummaryPath
+    $metadata | ConvertTo-Json -Depth 8 | Set-Content -Path $metadataPath -Encoding UTF8
+}
+
 if (Test-Path $zipPath) {
     Remove-Item -Path $zipPath -Force
 }
@@ -239,4 +271,6 @@ Compress-Archive -Path $stageDirectory -DestinationPath $zipPath -Force
     bootstrapperPath = (Join-Path $stageDirectory "MasterControlBootstrapper.exe")
     packageMetadataPath = $metadataPath
     installInstructionsPath = $instructionsPath
+    readinessJsonPath = if ($metadata.PSObject.Properties.Name -contains "readinessJsonPath") { $metadata.readinessJsonPath } else { "" }
+    readinessSummaryPath = if ($metadata.PSObject.Properties.Name -contains "readinessSummaryPath") { $metadata.readinessSummaryPath } else { "" }
 } | ConvertTo-Json -Depth 6
