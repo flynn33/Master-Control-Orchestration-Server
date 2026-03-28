@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.41",
-  "current_tag": "v0.1.41",
+  "current_version": "0.1.42",
+  "current_tag": "v0.1.42",
   "released_at": "2026-03-28",
-  "last_release_commit": "437158c4044216b729b4c3681736f88e74e9e098",
+  "last_release_commit": "e40c5b0f24b3de2e8ff170746c275a13bdf93044",
   "history": [
+    {
+      "version": "0.1.42",
+      "tag": "v0.1.42",
+      "released_at": "2026-03-28",
+      "commit": "e40c5b0f24b3de2e8ff170746c275a13bdf93044",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Bundle release readiness into packages (flynn33)"
+      ]
+    },
     {
       "version": "0.1.41",
       "tag": "v0.1.41",

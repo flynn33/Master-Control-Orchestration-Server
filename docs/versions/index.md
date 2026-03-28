@@ -1,9 +1,10 @@
 # Version Index
 
-Current tracked release: `v0.1.41`
+Current tracked release: `v0.1.42`
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| [v0.1.42](v0.1.42.md) | 2026-03-28 | Automated patch release for Master Control Program. |
 | [v0.1.41](v0.1.41.md) | 2026-03-28 | Automated patch release for Master Control Program. |
 | [v0.1.40](v0.1.40.md) | 2026-03-28 | Automated patch release for Master Control Program. |
 | [v0.1.39](v0.1.39.md) | 2026-03-28 | Automated patch release for Master Control Program. |
