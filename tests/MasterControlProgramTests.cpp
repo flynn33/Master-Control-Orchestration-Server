@@ -2920,7 +2920,9 @@ int main() {
     success &= expect(std::filesystem::exists(bootstrapperBinary), "Bootstrapper binary should exist for installer validation");
     if (success) {
         const auto bootstrapInstallDirectory = tempRoot / "bootstrapper-install";
+        const auto failedBootstrapInstallDirectory = tempRoot / "bootstrapper-install-failed";
         const auto bootstrapDataDirectory = tempRoot / "bootstrapper-data";
+        const auto bootstrapLogDirectory = tempRoot / "bootstrapper-desktop";
         const auto bootstrapConfigurationFile = bootstrapDataDirectory / "config" / "master-control-program.json";
         const auto bootstrapInstallStateFile = bootstrapInstallDirectory / "installation-state.json";
         const auto readJsonFile = [](const std::filesystem::path& path) -> std::optional<nlohmann::json> {
@@ -2935,8 +2937,35 @@ int main() {
                 return std::nullopt;
             }
         };
+        const auto findBootstrapperLog = [&](const std::string& action,
+                                             const std::string& outcome) -> std::optional<std::filesystem::path> {
+            std::optional<std::filesystem::path> match;
+            std::error_code error;
+            if (!std::filesystem::exists(bootstrapLogDirectory, error)) {
+                return std::nullopt;
+            }
+
+            const auto prefix = std::string("MasterControlProgram-") + action + "-" + outcome + "-";
+            for (const auto& entry : std::filesystem::directory_iterator(bootstrapLogDirectory, error)) {
+                if (error || !entry.is_regular_file()) {
+                    continue;
+                }
+
+                const auto fileName = entry.path().filename().string();
+                if (fileName.rfind(prefix, 0) != 0 || entry.path().extension() != ".txt") {
+                    continue;
+                }
+
+                if (!match.has_value() || entry.last_write_time() > std::filesystem::last_write_time(*match, error)) {
+                    match = entry.path();
+                }
+            }
+
+            return match;
+        };
 
         ScopedEnvironmentOverride bootstrapDataOverride(L"MASTERCONTROL_DATA_DIR", bootstrapDataDirectory.wstring());
+        ScopedEnvironmentOverride bootstrapLogOverride(L"MASTERCONTROL_BOOTSTRAPPER_LOG_DIR", bootstrapLogDirectory.wstring());
 
         const auto installCommand = L"\"" + bootstrapperBinary.wstring() + L"\" install \"" +
             bootstrapInstallDirectory.wstring() +
@@ -2963,6 +2992,19 @@ int main() {
         success &= expect(
             std::filesystem::exists(bootstrapConfigurationFile),
             "Bootstrapper install should seed configuration in the configured data directory");
+        const auto successfulInstallLogPath = findBootstrapperLog("install", "succeeded");
+        success &= expect(
+            successfulInstallLogPath.has_value(),
+            "Bootstrapper install should write a success log to the desktop report directory.");
+        if (successfulInstallLogPath.has_value()) {
+            const auto successfulInstallLog = readFileUtf8(*successfulInstallLogPath);
+            success &= expect(
+                successfulInstallLog.has_value() &&
+                    successfulInstallLog->find("Action: install") != std::string::npos &&
+                    successfulInstallLog->find("Succeeded: true") != std::string::npos &&
+                    successfulInstallLog->find(bootstrapInstallDirectory.string()) != std::string::npos,
+                "Bootstrapper install success log should describe the installed target and success state.");
+        }
         const auto validateCommand = L"\"" + bootstrapperBinary.wstring() + L"\" validate \"" +
             bootstrapInstallDirectory.wstring() + L"\"";
         const auto validateJsonCommand = validateCommand + L" --json";
@@ -3055,6 +3097,32 @@ int main() {
             auto downgradedState = *installedState;
             downgradedState["version"] = "0.0.0";
             writeTextFile(bootstrapInstallStateFile, downgradedState.dump(2));
+        }
+
+        {
+            ScopedEnvironmentOverride installFailureOverride(
+                L"MASTERCONTROL_BOOTSTRAPPER_TEST_FAIL_AFTER_STAGE",
+                L"1");
+            const auto failedInstallCommand = L"\"" + bootstrapperBinary.wstring() + L"\" install \"" +
+                failedBootstrapInstallDirectory.wstring() +
+                L"\" --skip-service --skip-firewall --skip-shortcuts --skip-uninstall-registration --json";
+            const auto failedInstallResult = runProcessWithOutput(failedInstallCommand, tempRoot);
+            success &= expect(
+                failedInstallResult.exitCode != 0,
+                "Bootstrapper install should fail when the post-stage rollback seam is enabled.");
+            const auto failedInstallLogPath = findBootstrapperLog("install", "failed");
+            success &= expect(
+                failedInstallLogPath.has_value(),
+                "Bootstrapper install failure should write a failure log to the desktop report directory.");
+            if (failedInstallLogPath.has_value()) {
+                const auto failedInstallLog = readFileUtf8(*failedInstallLogPath);
+                success &= expect(
+                    failedInstallLog.has_value() &&
+                        failedInstallLog->find("Action: install") != std::string::npos &&
+                        failedInstallLog->find("Succeeded: false") != std::string::npos &&
+                        failedInstallLog->find("Simulated bootstrapper failure after staging payload and installation state.") != std::string::npos,
+                    "Bootstrapper install failure log should capture the failure reason.");
+            }
         }
 
         const auto upgradeCommand = L"\"" + bootstrapperBinary.wstring() + L"\" upgrade \"" +

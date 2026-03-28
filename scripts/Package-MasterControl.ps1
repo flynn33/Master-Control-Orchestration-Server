@@ -39,6 +39,29 @@ function Resolve-FirstPath {
     throw "$Label was not found."
 }
 
+function Resolve-VcRuntimeDirectory {
+    $redistRoots = @(
+        "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Redist\MSVC",
+        "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Redist\MSVC"
+    )
+
+    foreach ($root in $redistRoots) {
+        if (-not (Test-Path $root)) {
+            continue
+        }
+
+        $candidates = @(Get-ChildItem -Path $root -Directory | Sort-Object Name -Descending)
+        foreach ($candidate in $candidates) {
+            $crtDirectory = Join-Path $candidate.FullName "x64\Microsoft.VC143.CRT"
+            if (Test-Path $crtDirectory) {
+                return $crtDirectory
+            }
+        }
+    }
+
+    throw "Microsoft VC++ x64 runtime directory was not found."
+}
+
 function Invoke-DevShell {
     param([string[]]$Commands)
 
@@ -98,6 +121,7 @@ $ctest = Resolve-FirstPath -Candidates @(
     "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe",
     "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe"
 ) -Label "ctest.exe"
+$vcRuntimeDirectory = Resolve-VcRuntimeDirectory
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $versionDocument = Get-Content (Join-Path $repoRoot "VERSION.json") -Raw | ConvertFrom-Json
@@ -125,6 +149,7 @@ $zipPath = Join-Path $OutputRoot ($packageName + ".zip")
 $validationPath = Join-Path $OutputRoot ($packageName + ".preflight.json")
 $metadataPath = Join-Path $stageDirectory "PACKAGE-METADATA.json"
 $instructionsPath = Join-Path $stageDirectory "INSTALL.txt"
+$installLauncherPath = Join-Path $stageDirectory "Install-MasterControlProgram.ps1"
 $validationTarget = Join-Path $OutputRoot ($packageName + ".validation-target")
 
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
@@ -158,6 +183,66 @@ Invoke-DevShell -Commands @(
     "`"$cmake`" --install `"$binaryDir`" --config $configuration --prefix `"$stageDirectory`""
 )
 
+$vcRuntimeFiles = @(Get-ChildItem -Path $vcRuntimeDirectory -Filter *.dll -File | Sort-Object Name)
+foreach ($vcRuntimeFile in $vcRuntimeFiles) {
+    Copy-Item -Path $vcRuntimeFile.FullName -Destination (Join-Path $stageDirectory $vcRuntimeFile.Name) -Force
+}
+
+$installLauncher = @'
+param(
+    [string]$InstallDirectory = "C:\Program Files\Master Control Program",
+    [switch]$SkipService,
+    [switch]$SkipFirewall,
+    [switch]$SkipShortcuts,
+    [switch]$SkipUninstallRegistration
+)
+
+$ErrorActionPreference = "Continue"
+$desktopDirectory = if (-not [string]::IsNullOrWhiteSpace($env:MASTERCONTROL_BOOTSTRAPPER_LOG_DIR)) {
+    $env:MASTERCONTROL_BOOTSTRAPPER_LOG_DIR
+} else {
+    [Environment]::GetFolderPath("Desktop")
+}
+$timestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
+$logPath = Join-Path $desktopDirectory ("MasterControlProgram-install-launcher-" + $timestamp + ".txt")
+$bootstrapperPath = Join-Path $PSScriptRoot "MasterControlBootstrapper.exe"
+$arguments = @("install", $InstallDirectory, "--json")
+if ($SkipService) { $arguments += "--skip-service" }
+if ($SkipFirewall) { $arguments += "--skip-firewall" }
+if ($SkipShortcuts) { $arguments += "--skip-shortcuts" }
+if ($SkipUninstallRegistration) { $arguments += "--skip-uninstall-registration" }
+
+try {
+    $result = & $bootstrapperPath @arguments 2>&1 | Out-String
+    $exitCode = $LASTEXITCODE
+} catch {
+    $result = if ($null -ne $_.Exception) { $_.Exception.ToString() } else { $_.ToString() }
+    $exitCode = 1
+}
+
+New-Item -ItemType Directory -Force -Path $desktopDirectory | Out-Null
+@(
+    "Master Control Program Install Launcher",
+    "",
+    "GeneratedAt: $(Get-Date -Format o)",
+    "BootstrapperPath: $bootstrapperPath",
+    "InstallDirectory: $InstallDirectory",
+    "ExitCode: $exitCode",
+    "",
+    "Output",
+    "------",
+    ($result.TrimEnd())
+) | Set-Content -Path $logPath -Encoding UTF8
+
+Write-Host "Install launcher log written to $logPath"
+if (-not [string]::IsNullOrWhiteSpace($result)) {
+    Write-Output $result.TrimEnd()
+}
+
+exit $exitCode
+'@
+Set-Content -Path $installLauncherPath -Value $installLauncher -Encoding UTF8
+
 $instructions = @"
 Master Control Program $versionTag
 
@@ -168,14 +253,18 @@ Commit: $gitCommit
 Quick start
 1. Extract this package to a writable local folder.
 2. Open PowerShell in the extracted folder.
-3. Run a preflight check before installing.
-4. If included, review RELEASE-READINESS.md before target-host deployment validation.
+3. Keep the bundled VC++ runtime DLL files beside the executables.
+4. Prefer .\Install-MasterControlProgram.ps1 for install attempts because it always writes a desktop log.
+5. Run a preflight check before installing.
+6. If included, review RELEASE-READINESS.md before target-host deployment validation.
 
 Fully managed install (requires Administrator)
+.\Install-MasterControlProgram.ps1 -InstallDirectory "C:\Program Files\Master Control Program"
 .\MasterControlBootstrapper.exe preflight "C:\Program Files\Master Control Program" --json
 .\MasterControlBootstrapper.exe install "C:\Program Files\Master Control Program" --json
 
 Non-admin test install
+.\Install-MasterControlProgram.ps1 -InstallDirectory "$env:LOCALAPPDATA\MasterControlProgram" -SkipService -SkipFirewall -SkipUninstallRegistration
 .\MasterControlBootstrapper.exe preflight "$env:LOCALAPPDATA\MasterControlProgram" --skip-service --skip-firewall --skip-uninstall-registration --json
 .\MasterControlBootstrapper.exe install "$env:LOCALAPPDATA\MasterControlProgram" --skip-service --skip-firewall --skip-uninstall-registration --json
 
@@ -222,10 +311,14 @@ $metadata = [pscustomobject][ordered]@{
     zipPath = $zipPath
     validationPath = $validationPath
     bootstrapperPath = (Join-Path $stageDirectory "MasterControlBootstrapper.exe")
+    installLauncherPath = $installLauncherPath
     serviceHostPath = (Join-Path $stageDirectory "MasterControlServiceHost.exe")
     shellPath = (Join-Path $stageDirectory "MasterControlShell.exe")
     manifestRoot = (Join-Path $stageDirectory "share\MasterControlProgram\ForsettiManifests")
     webRoot = (Join-Path $stageDirectory "share\MasterControlProgram\web")
+    vcRuntimeDirectory = $vcRuntimeDirectory
+    vcRuntimeBundled = ($vcRuntimeFiles.Count -gt 0)
+    vcRuntimeFiles = @($vcRuntimeFiles | ForEach-Object { $_.Name })
     fileCount = $stageFiles.Count
     packageSizeBytes = ($stageFiles | Measure-Object -Property Length -Sum).Sum
     packagedPreflight = $preflightJson
@@ -271,6 +364,9 @@ Compress-Archive -Path $stageDirectory -DestinationPath $zipPath -Force
     bootstrapperPath = (Join-Path $stageDirectory "MasterControlBootstrapper.exe")
     packageMetadataPath = $metadataPath
     installInstructionsPath = $instructionsPath
+    installLauncherPath = $installLauncherPath
+    vcRuntimeDirectory = $vcRuntimeDirectory
+    vcRuntimeFiles = @($vcRuntimeFiles | ForEach-Object { $_.Name })
     readinessJsonPath = if ($metadata.PSObject.Properties.Name -contains "readinessJsonPath") { $metadata.readinessJsonPath } else { "" }
     readinessSummaryPath = if ($metadata.PSObject.Properties.Name -contains "readinessSummaryPath") { $metadata.readinessSummaryPath } else { "" }
 } | ConvertTo-Json -Depth 6

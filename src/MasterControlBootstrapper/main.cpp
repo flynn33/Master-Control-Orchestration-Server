@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cwctype>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -34,6 +35,7 @@ constexpr wchar_t kDashboardShortcutName[] = L"Master Control Dashboard.url";
 constexpr wchar_t kInstallStateFileName[] = L"installation-state.json";
 constexpr wchar_t kBrowserRuleName[] = L"Master Control Program - Browser Access";
 constexpr wchar_t kBeaconRuleName[] = L"Master Control Program - Beacon Discovery";
+constexpr wchar_t kBootstrapperLogDirectoryEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_LOG_DIR";
 
 #ifndef MASTERCONTROL_BOOTSTRAPPER_VERSION
 #define MASTERCONTROL_BOOTSTRAPPER_VERSION "0.1.0"
@@ -423,10 +425,10 @@ ProcessCaptureResult runProcessCapture(std::wstring commandLine,
     return result;
 }
 
-bool environmentFlagEnabled(const wchar_t* name) {
+std::optional<std::wstring> readEnvironmentVariable(const wchar_t* name) {
     const auto requiredCharacters = GetEnvironmentVariableW(name, nullptr, 0);
     if (requiredCharacters == 0) {
-        return false;
+        return std::nullopt;
     }
 
     std::wstring value(static_cast<size_t>(requiredCharacters), L'\0');
@@ -435,16 +437,28 @@ bool environmentFlagEnabled(const wchar_t* name) {
         value.pop_back();
     }
 
+    if (value.empty()) {
+        return std::nullopt;
+    }
+
+    return value;
+}
+
+bool environmentFlagEnabled(const wchar_t* name) {
+    auto value = readEnvironmentVariable(name);
+    if (!value.has_value()) {
+        return false;
+    }
+
     std::transform(
-        value.begin(),
-        value.end(),
-        value.begin(),
+        value->begin(),
+        value->end(),
+        value->begin(),
         [](const wchar_t character) { return static_cast<wchar_t>(std::towlower(character)); });
-    return !value.empty() &&
-        value != L"0" &&
-        value != L"false" &&
-        value != L"off" &&
-        value != L"no";
+    return *value != L"0" &&
+        *value != L"false" &&
+        *value != L"off" &&
+        *value != L"no";
 }
 
 bool writeTextFile(const std::filesystem::path& filePath, const std::string& contents) {
@@ -456,6 +470,97 @@ bool writeTextFile(const std::filesystem::path& filePath, const std::string& con
 
     output << contents;
     return output.good();
+}
+
+std::string localTimestampForDisplay() {
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    char buffer[64]{};
+    sprintf_s(
+        buffer,
+        "%04u-%02u-%02u %02u:%02u:%02u.%03u",
+        now.wYear,
+        now.wMonth,
+        now.wDay,
+        now.wHour,
+        now.wMinute,
+        now.wSecond,
+        now.wMilliseconds);
+    return buffer;
+}
+
+std::string localTimestampForFileName() {
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    char buffer[64]{};
+    sprintf_s(
+        buffer,
+        "%04u%02u%02u-%02u%02u%02u-%03u-%lu",
+        now.wYear,
+        now.wMonth,
+        now.wDay,
+        now.wHour,
+        now.wMinute,
+        now.wSecond,
+        now.wMilliseconds,
+        GetCurrentProcessId());
+    return buffer;
+}
+
+std::filesystem::path bootstrapperLogDirectory() {
+    if (const auto overrideDirectory = readEnvironmentVariable(kBootstrapperLogDirectoryEnv); overrideDirectory.has_value()) {
+        return std::filesystem::path(*overrideDirectory);
+    }
+
+    try {
+        return knownFolder(FOLDERID_Desktop);
+    } catch (...) {
+        return executableDirectory();
+    }
+}
+
+void writeBootstrapperActionLog(const std::wstring& mode,
+                                const bool succeeded,
+                                const std::filesystem::path& installDirectory,
+                                const IntegrationOptions& options,
+                                const nlohmann::json& payload) {
+    try {
+        std::wstring action = mode;
+        std::transform(
+            action.begin(),
+            action.end(),
+            action.begin(),
+            [](const wchar_t character) {
+                if (character == L' ' || character == L'\\' || character == L'/' || character == L':') {
+                    return L'-';
+                }
+                return static_cast<wchar_t>(std::towlower(character));
+            });
+
+        const auto logDirectory = bootstrapperLogDirectory();
+        const auto logPath = logDirectory /
+            (L"MasterControlProgram-" + action + L"-" + wideFromUtf8(succeeded ? "succeeded" : "failed") +
+             L"-" + wideFromUtf8(localTimestampForFileName()) + L".txt");
+
+        std::ostringstream output;
+        output << "Master Control Program Bootstrapper Log\r\n\r\n";
+        output << "GeneratedAt: " << localTimestampForDisplay() << "\r\n";
+        output << "Action: " << utf8FromWide(mode) << "\r\n";
+        output << "Succeeded: " << (succeeded ? "true" : "false") << "\r\n";
+        output << "InstallDirectory: " << installDirectory.string() << "\r\n";
+        output << "BootstrapperPath: " << utf8FromWide(executablePath().wstring()) << "\r\n";
+        output << "ManageService: " << (options.manageService ? "true" : "false") << "\r\n";
+        output << "ManageFirewall: " << (options.manageFirewall ? "true" : "false") << "\r\n";
+        output << "ManageShortcuts: " << (options.manageShortcuts ? "true" : "false") << "\r\n";
+        output << "ManageUninstallRegistration: " << (options.manageUninstallRegistration ? "true" : "false") << "\r\n";
+        output << "PurgeInstallDirectory: " << (options.purgeInstallDirectory ? "true" : "false") << "\r\n";
+        output << "PurgeData: " << (options.purgeData ? "true" : "false") << "\r\n";
+        output << "\r\nDetails\r\n-------\r\n";
+        output << payload.dump(2) << "\r\n";
+
+        writeTextFile(logPath, output.str());
+    } catch (...) {
+    }
 }
 
 std::optional<nlohmann::json> readJsonFile(const std::filesystem::path& filePath) {
@@ -1678,6 +1783,15 @@ bool installLike(const std::wstring& mode,
     const auto failInstall = [&](const std::wstring& message) {
         const bool rollbackAttempted = rollbackDirectory.has_value();
         const bool rollbackRestored = rollbackOrCleanup();
+        nlohmann::json payload = {
+            { "action", utf8FromWide(mode) },
+            { "succeeded", false },
+            { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
+            { "installDirectory", installDirectory.string() },
+            { "error", utf8FromWide(message) },
+            { "rollbackAttempted", rollbackAttempted },
+            { "rollbackRestored", rollbackRestored }
+        };
 
         if (options.jsonOutput) {
             const auto currentState = readInstallationState(installDirectory);
@@ -1685,29 +1799,25 @@ bool installLike(const std::wstring& mode,
             const auto uninstallStatus = queryUninstallRegistrationStatus();
             const auto shortcutStatus = queryShortcutInstallationStatus(currentState);
             const auto firewallStatus = queryFirewallRuleStatus();
-            nlohmann::json payload = {
-                { "action", utf8FromWide(mode) },
-                { "succeeded", false },
-                { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
-                { "installDirectory", installDirectory.string() },
-                { "error", utf8FromWide(message) },
-                { "rollbackAttempted", rollbackAttempted },
-                { "rollbackRestored", rollbackRestored },
-                { "installStatePresent", currentState.has_value() },
-                { "serviceRegistered", serviceStatus.registered },
-                { "serviceRunning", serviceStatus.running },
-                { "serviceState", serviceStatus.state },
-                { "uninstallRegistered", uninstallStatus.registered },
-                { "shellShortcutPresent", shortcutStatus.shellShortcutPresent },
-                { "dashboardShortcutPresent", shortcutStatus.dashboardShortcutPresent },
-                { "browserFirewallRulePresent", firewallStatus.browserRulePresent },
-                { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent }
-            };
+            payload["installStatePresent"] = currentState.has_value();
+            payload["serviceRegistered"] = serviceStatus.registered;
+            payload["serviceRunning"] = serviceStatus.running;
+            payload["serviceState"] = serviceStatus.state;
+            payload["uninstallRegistered"] = uninstallStatus.registered;
+            payload["shellShortcutPresent"] = shortcutStatus.shellShortcutPresent;
+            payload["dashboardShortcutPresent"] = shortcutStatus.dashboardShortcutPresent;
+            payload["browserFirewallRulePresent"] = firewallStatus.browserRulePresent;
+            payload["beaconFirewallRulePresent"] = firewallStatus.beaconRulePresent;
             if (rollbackDirectory.has_value() && !rollbackRestored) {
                 payload["rollbackSnapshotPath"] = rollbackDirectory->string();
             }
+            writeBootstrapperActionLog(mode, false, installDirectory, options, payload);
             std::cout << payload.dump(2) << '\n';
         } else {
+            if (rollbackDirectory.has_value() && !rollbackRestored) {
+                payload["rollbackSnapshotPath"] = rollbackDirectory->string();
+            }
+            writeBootstrapperActionLog(mode, false, installDirectory, options, payload);
             std::wcerr << message << L'\n';
             if (!rollbackRestored) {
                 if (rollbackDirectory.has_value()) {
@@ -1767,47 +1877,50 @@ bool installLike(const std::wstring& mode,
         removeDirectoryIfExists(*rollbackDirectory);
     }
 
+    nlohmann::json payload = {
+        { "action", utf8FromWide(mode) },
+        { "succeeded", true },
+        { "validated", true },
+        { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
+        { "installDirectory", installDirectory.string() }
+    };
+
     if (options.jsonOutput) {
         const auto state = *stagedState;
         const auto serviceStatus = queryServiceInstallationStatus();
         const auto uninstallStatus = queryUninstallRegistrationStatus();
         const auto shortcutStatus = queryShortcutInstallationStatus(stagedState);
         const auto firewallStatus = queryFirewallRuleStatus();
-        nlohmann::json payload = {
-            { "action", utf8FromWide(mode) },
-            { "succeeded", true },
-            { "validated", true },
-            { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
-            { "installDirectory", installDirectory.string() },
-            { "browserUrl", state.browserUrl },
-            { "configPath", state.configPath },
-            { "dataDirectory", state.dataDirectory },
-            { "browserPort", state.browserPort },
-            { "beaconPort", state.beaconPort },
-            { "serviceManaged", state.serviceManaged },
-            { "firewallManaged", state.firewallManaged },
-            { "shortcutsManaged", state.shortcutsManaged },
-            { "uninstallRegistrationManaged", state.uninstallRegistrationManaged },
-            { "serviceRegistered", serviceStatus.registered },
-            { "serviceAutoStart", serviceStatus.autoStart },
-            { "serviceDelayedAutoStart", serviceStatus.delayedAutoStart },
-            { "serviceRecoveryConfigured", serviceStatus.recoveryConfigured },
-            { "serviceFailureActionsOnNonCrash", serviceStatus.failureActionsOnNonCrash },
-            { "serviceSidUnrestricted", serviceStatus.sidUnrestricted },
-            { "serviceRunning", serviceStatus.running },
-            { "serviceState", serviceStatus.state },
-            { "serviceProcessId", serviceStatus.processId },
-            { "serviceBinaryPath", serviceStatus.binaryPath },
-            { "uninstallRegistered", uninstallStatus.registered },
-            { "shellShortcutPresent", shortcutStatus.shellShortcutPresent },
-            { "dashboardShortcutPresent", shortcutStatus.dashboardShortcutPresent },
-            { "browserFirewallRulePresent", firewallStatus.browserRulePresent },
-            { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent }
-        };
+        payload["browserUrl"] = state.browserUrl;
+        payload["configPath"] = state.configPath;
+        payload["dataDirectory"] = state.dataDirectory;
+        payload["browserPort"] = state.browserPort;
+        payload["beaconPort"] = state.beaconPort;
+        payload["serviceManaged"] = state.serviceManaged;
+        payload["firewallManaged"] = state.firewallManaged;
+        payload["shortcutsManaged"] = state.shortcutsManaged;
+        payload["uninstallRegistrationManaged"] = state.uninstallRegistrationManaged;
+        payload["serviceRegistered"] = serviceStatus.registered;
+        payload["serviceAutoStart"] = serviceStatus.autoStart;
+        payload["serviceDelayedAutoStart"] = serviceStatus.delayedAutoStart;
+        payload["serviceRecoveryConfigured"] = serviceStatus.recoveryConfigured;
+        payload["serviceFailureActionsOnNonCrash"] = serviceStatus.failureActionsOnNonCrash;
+        payload["serviceSidUnrestricted"] = serviceStatus.sidUnrestricted;
+        payload["serviceRunning"] = serviceStatus.running;
+        payload["serviceState"] = serviceStatus.state;
+        payload["serviceProcessId"] = serviceStatus.processId;
+        payload["serviceBinaryPath"] = serviceStatus.binaryPath;
+        payload["uninstallRegistered"] = uninstallStatus.registered;
+        payload["shellShortcutPresent"] = shortcutStatus.shellShortcutPresent;
+        payload["dashboardShortcutPresent"] = shortcutStatus.dashboardShortcutPresent;
+        payload["browserFirewallRulePresent"] = firewallStatus.browserRulePresent;
+        payload["beaconFirewallRulePresent"] = firewallStatus.beaconRulePresent;
+        writeBootstrapperActionLog(mode, true, installDirectory, options, payload);
         std::cout << payload.dump(2) << '\n';
         return true;
     }
 
+    writeBootstrapperActionLog(mode, true, installDirectory, options, payload);
     const wchar_t* action =
         mode == L"repair" ? L"Repaired" :
         mode == L"upgrade" ? L"Upgraded" :
@@ -1827,9 +1940,40 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
         configuration,
         options));
 
-    if (options.manageService && !uninstallService()) {
-        std::wcerr << L"Failed to uninstall Windows service.\n";
+    const auto failUninstall = [&](const std::wstring& message) {
+        const auto serviceStatus = queryServiceInstallationStatus();
+        const auto uninstallStatus = queryUninstallRegistrationStatus();
+        const auto shortcutStatus = queryShortcutInstallationStatus(state);
+        const auto firewallStatus = queryFirewallRuleStatus();
+        nlohmann::json payload = {
+            { "action", "uninstall" },
+            { "succeeded", false },
+            { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
+            { "installDirectory", installDirectory.string() },
+            { "error", utf8FromWide(message) },
+            { "purgeInstallDirectory", options.purgeInstallDirectory },
+            { "purgeData", options.purgeData },
+            { "serviceRegistered", serviceStatus.registered },
+            { "serviceRunning", serviceStatus.running },
+            { "serviceState", serviceStatus.state },
+            { "uninstallRegistered", uninstallStatus.registered },
+            { "shellShortcutPresent", shortcutStatus.shellShortcutPresent },
+            { "dashboardShortcutPresent", shortcutStatus.dashboardShortcutPresent },
+            { "browserFirewallRulePresent", firewallStatus.browserRulePresent },
+            { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent }
+        };
+        writeBootstrapperActionLog(L"uninstall", false, installDirectory, options, payload);
+
+        if (options.jsonOutput) {
+            std::cout << payload.dump(2) << '\n';
+        } else {
+            std::wcerr << message << L'\n';
+        }
         return false;
+    };
+
+    if (options.manageService && !uninstallService()) {
+        return failUninstall(L"Failed to uninstall Windows service.");
     }
 
     if (options.manageFirewall) {
@@ -1855,43 +1999,44 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
         const auto currentExecutable = executablePath();
         if (pathIsWithin(currentExecutable, installDirectory)) {
             if (!scheduleDeferredInstallRemoval(installDirectory)) {
-                std::wcerr << L"Failed to schedule deferred removal of the installation directory.\n";
-                return false;
+                return failUninstall(L"Failed to schedule deferred removal of the installation directory.");
             }
         } else {
             removeDirectoryIfExists(installDirectory);
         }
     }
 
+    const auto serviceStatus = queryServiceInstallationStatus();
+    const auto uninstallStatus = queryUninstallRegistrationStatus();
+    const auto shortcutStatus = queryShortcutInstallationStatus(state);
+    const auto firewallStatus = queryFirewallRuleStatus();
+    std::error_code fileError;
+    const auto installStatePresent = std::filesystem::exists(installStatePath(installDirectory), fileError);
+    const auto installDirectoryPresent = std::filesystem::exists(installDirectory, fileError);
+    const auto dataDirectoryPresent =
+        !state.dataDirectory.empty() && std::filesystem::exists(std::filesystem::path(state.dataDirectory), fileError);
+    nlohmann::json payload = {
+        { "action", "uninstall" },
+        { "succeeded", true },
+        { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
+        { "installDirectory", installDirectory.string() },
+        { "purgeInstallDirectory", options.purgeInstallDirectory },
+        { "purgeData", options.purgeData },
+        { "installDirectoryPresent", installDirectoryPresent },
+        { "dataDirectoryPresent", dataDirectoryPresent },
+        { "installStatePresent", installStatePresent },
+        { "serviceRegistered", serviceStatus.registered },
+        { "serviceRunning", serviceStatus.running },
+        { "serviceState", serviceStatus.state },
+        { "uninstallRegistered", uninstallStatus.registered },
+        { "shellShortcutPresent", shortcutStatus.shellShortcutPresent },
+        { "dashboardShortcutPresent", shortcutStatus.dashboardShortcutPresent },
+        { "browserFirewallRulePresent", firewallStatus.browserRulePresent },
+        { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent }
+    };
+    writeBootstrapperActionLog(L"uninstall", true, installDirectory, options, payload);
+
     if (options.jsonOutput) {
-        const auto serviceStatus = queryServiceInstallationStatus();
-        const auto uninstallStatus = queryUninstallRegistrationStatus();
-        const auto shortcutStatus = queryShortcutInstallationStatus(state);
-        const auto firewallStatus = queryFirewallRuleStatus();
-        std::error_code fileError;
-        const auto installStatePresent = std::filesystem::exists(installStatePath(installDirectory), fileError);
-        const auto installDirectoryPresent = std::filesystem::exists(installDirectory, fileError);
-        const auto dataDirectoryPresent =
-            !state.dataDirectory.empty() && std::filesystem::exists(std::filesystem::path(state.dataDirectory), fileError);
-        nlohmann::json payload = {
-            { "action", "uninstall" },
-            { "succeeded", true },
-            { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
-            { "installDirectory", installDirectory.string() },
-            { "purgeInstallDirectory", options.purgeInstallDirectory },
-            { "purgeData", options.purgeData },
-            { "installDirectoryPresent", installDirectoryPresent },
-            { "dataDirectoryPresent", dataDirectoryPresent },
-            { "installStatePresent", installStatePresent },
-            { "serviceRegistered", serviceStatus.registered },
-            { "serviceRunning", serviceStatus.running },
-            { "serviceState", serviceStatus.state },
-            { "uninstallRegistered", uninstallStatus.registered },
-            { "shellShortcutPresent", shortcutStatus.shellShortcutPresent },
-            { "dashboardShortcutPresent", shortcutStatus.dashboardShortcutPresent },
-            { "browserFirewallRulePresent", firewallStatus.browserRulePresent },
-            { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent }
-        };
         std::cout << payload.dump(2) << '\n';
         return true;
     }
