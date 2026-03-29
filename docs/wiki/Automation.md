@@ -10,7 +10,7 @@
 
 ## Current Automation Baseline
 
-- Current tracked release: `v0.1.45`
+- Current tracked release: `v0.1.46`
 - Agent commit prefix: `chore(agents):`
 - Maintainer workflow runs on pushes to `main` and on manual dispatch.
 - Wiki pages are synchronized from `docs/wiki/*.md` to the GitHub wiki repository.

@@ -2,7 +2,7 @@
 
 Welcome to the maintained wiki for `master-control-dashboard`.
 
-- Current release: `v0.1.45`
+- Current release: `v0.1.46`
 - Release date: `2026-03-29`
 - Summary: Automated patch release for Master Control Program.
 
