@@ -194,7 +194,8 @@ param(
     [switch]$SkipService,
     [switch]$SkipFirewall,
     [switch]$SkipShortcuts,
-    [switch]$SkipUninstallRegistration
+    [switch]$SkipUninstallRegistration,
+    [switch]$ElevatedRelay
 )
 
 $ErrorActionPreference = "Continue"
@@ -212,27 +213,125 @@ if ($SkipFirewall) { $arguments += "--skip-firewall" }
 if ($SkipShortcuts) { $arguments += "--skip-shortcuts" }
 if ($SkipUninstallRegistration) { $arguments += "--skip-uninstall-registration" }
 
+function Test-IsAdministrator {
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+        return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch {
+        return $false
+    }
+}
+
+function Test-PathRequiresElevation {
+    param([string]$Path)
+
+    try {
+        $candidate = [System.IO.Path]::GetFullPath($Path)
+    } catch {
+        $candidate = $Path
+    }
+
+    $roots = @(
+        [Environment]::GetFolderPath("ProgramFiles"),
+        [Environment]::GetFolderPath("ProgramFilesX86"),
+        $env:ProgramW6432,
+        $env:ProgramFiles,
+        [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+    foreach ($root in $roots) {
+        try {
+            $normalizedRoot = [System.IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
+            $normalizedCandidate = $candidate.TrimEnd('\') + '\'
+            if ($normalizedCandidate.StartsWith($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $true
+            }
+        } catch {
+        }
+    }
+
+    return $false
+}
+
+function Write-LauncherLog {
+    param(
+        [string]$Result,
+        [int]$ExitCode,
+        [bool]$IsAdministrator,
+        [bool]$RequiresElevation,
+        [bool]$ElevationAttempted,
+        [bool]$ProgramFilesProtectedTarget,
+        [bool]$ManagedIntegrationsRequested
+    )
+
+    New-Item -ItemType Directory -Force -Path $desktopDirectory | Out-Null
+    @(
+        "Master Control Program Install Launcher",
+        "",
+        "GeneratedAt: $(Get-Date -Format o)",
+        "BootstrapperPath: $bootstrapperPath",
+        "InstallDirectory: $InstallDirectory",
+        "IsAdministrator: $IsAdministrator",
+        "RequiresElevation: $RequiresElevation",
+        "ElevationAttempted: $ElevationAttempted",
+        "ManagedIntegrationsRequested: $ManagedIntegrationsRequested",
+        "ProgramFilesProtectedTarget: $ProgramFilesProtectedTarget",
+        "ElevatedRelay: $ElevatedRelay",
+        "ExitCode: $ExitCode",
+        "",
+        "Output",
+        "------",
+        ($Result.TrimEnd())
+    ) | Set-Content -Path $logPath -Encoding UTF8
+}
+
+$isAdministrator = Test-IsAdministrator
+$programFilesProtectedTarget = Test-PathRequiresElevation -Path $InstallDirectory
+$managedIntegrationsRequested = (-not $SkipService) -or (-not $SkipFirewall) -or (-not $SkipUninstallRegistration)
+$requiresElevation = $programFilesProtectedTarget -or $managedIntegrationsRequested
+$elevationAttempted = $false
+
 try {
-    $result = & $bootstrapperPath @arguments 2>&1 | Out-String
-    $exitCode = $LASTEXITCODE
+    if ($requiresElevation -and -not $isAdministrator -and -not $ElevatedRelay) {
+        $elevationAttempted = $true
+        $relayArguments = @(
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-File", $PSCommandPath,
+            "-InstallDirectory", $InstallDirectory,
+            "-ElevatedRelay"
+        )
+
+        if ($SkipService) { $relayArguments += "-SkipService" }
+        if ($SkipFirewall) { $relayArguments += "-SkipFirewall" }
+        if ($SkipShortcuts) { $relayArguments += "-SkipShortcuts" }
+        if ($SkipUninstallRegistration) { $relayArguments += "-SkipUninstallRegistration" }
+
+        $process = Start-Process -FilePath "powershell.exe" -ArgumentList $relayArguments -Verb RunAs -Wait -PassThru
+        $exitCode = $process.ExitCode
+        $result = @"
+Launcher detected that this install requires elevation and delegated to an elevated PowerShell process.
+ChildExitCode: $exitCode
+If the elevated process wrote its own launcher/bootstrapper log, check the desktop for the newer file.
+"@
+    } else {
+        $result = & $bootstrapperPath @arguments 2>&1 | Out-String
+        $exitCode = $LASTEXITCODE
+    }
 } catch {
     $result = if ($null -ne $_.Exception) { $_.Exception.ToString() } else { $_.ToString() }
     $exitCode = 1
 }
 
-New-Item -ItemType Directory -Force -Path $desktopDirectory | Out-Null
-@(
-    "Master Control Program Install Launcher",
-    "",
-    "GeneratedAt: $(Get-Date -Format o)",
-    "BootstrapperPath: $bootstrapperPath",
-    "InstallDirectory: $InstallDirectory",
-    "ExitCode: $exitCode",
-    "",
-    "Output",
-    "------",
-    ($result.TrimEnd())
-) | Set-Content -Path $logPath -Encoding UTF8
+Write-LauncherLog `
+    -Result $result `
+    -ExitCode $exitCode `
+    -IsAdministrator $isAdministrator `
+    -RequiresElevation $requiresElevation `
+    -ElevationAttempted $elevationAttempted `
+    -ProgramFilesProtectedTarget $programFilesProtectedTarget `
+    -ManagedIntegrationsRequested $managedIntegrationsRequested
 
 Write-Host "Install launcher log written to $logPath"
 if (-not [string]::IsNullOrWhiteSpace($result)) {
@@ -254,7 +353,7 @@ Quick start
 1. Extract this package to a writable local folder.
 2. Open PowerShell in the extracted folder.
 3. Keep the bundled VC++ runtime DLL files beside the executables.
-4. Prefer .\Install-MasterControlProgram.ps1 for install attempts because it always writes a desktop log.
+4. Prefer .\Install-MasterControlProgram.ps1 for install attempts because it always writes a desktop log and will request elevation for the default managed install path.
 5. Run a preflight check before installing.
 6. If included, review RELEASE-READINESS.md before target-host deployment validation.
 

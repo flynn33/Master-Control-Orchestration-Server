@@ -206,24 +206,52 @@ std::filesystem::path executableDirectory() {
     return executablePath().parent_path();
 }
 
-std::filesystem::path defaultInstallDirectory() {
-    PWSTR programFilesPath = nullptr;
-    SHGetKnownFolderPath(FOLDERID_ProgramFiles, KF_FLAG_DEFAULT, nullptr, &programFilesPath);
-    std::filesystem::path path(programFilesPath);
-    CoTaskMemFree(programFilesPath);
-    return path / "Master Control Program";
-}
+std::optional<std::wstring> readEnvironmentVariable(const wchar_t* name);
 
-std::filesystem::path knownFolder(REFKNOWNFOLDERID folderId) {
+std::optional<std::filesystem::path> tryKnownFolder(REFKNOWNFOLDERID folderId) {
     PWSTR path = nullptr;
     const HRESULT result = SHGetKnownFolderPath(folderId, KF_FLAG_DEFAULT, nullptr, &path);
     if (FAILED(result) || path == nullptr) {
-        throw std::runtime_error("Failed to resolve a known folder path.");
+        if (path != nullptr) {
+            CoTaskMemFree(path);
+        }
+        return std::nullopt;
     }
 
     std::filesystem::path output(path);
     CoTaskMemFree(path);
     return output;
+}
+
+std::filesystem::path defaultInstallDirectory() {
+    if (const auto programFilesPath = tryKnownFolder(FOLDERID_ProgramFiles); programFilesPath.has_value()) {
+        return *programFilesPath / "Master Control Program";
+    }
+
+    if (const auto programFilesPath = readEnvironmentVariable(L"ProgramW6432"); programFilesPath.has_value() &&
+                                                                              !programFilesPath->empty()) {
+        return std::filesystem::path(*programFilesPath) / "Master Control Program";
+    }
+
+    if (const auto programFilesPath = readEnvironmentVariable(L"ProgramFiles"); programFilesPath.has_value() &&
+                                                                             !programFilesPath->empty()) {
+        return std::filesystem::path(*programFilesPath) / "Master Control Program";
+    }
+
+    if (const auto systemDrive = readEnvironmentVariable(L"SystemDrive"); systemDrive.has_value() &&
+                                                                          !systemDrive->empty()) {
+        return std::filesystem::path(*systemDrive) / "Program Files" / "Master Control Program";
+    }
+
+    return executableDirectory() / "Master Control Program";
+}
+
+std::filesystem::path knownFolder(REFKNOWNFOLDERID folderId) {
+    if (const auto path = tryKnownFolder(folderId); path.has_value()) {
+        return *path;
+    }
+
+    throw std::runtime_error("Failed to resolve a known folder path.");
 }
 
 std::filesystem::path preferredShortcutDirectory() {
@@ -561,6 +589,36 @@ void writeBootstrapperActionLog(const std::wstring& mode,
         writeTextFile(logPath, output.str());
     } catch (...) {
     }
+}
+
+bool shouldWriteBootstrapperActionLog(const std::wstring& mode) {
+    return mode == L"install" || mode == L"repair" || mode == L"upgrade" || mode == L"uninstall";
+}
+
+int reportBootstrapperStartupFailure(const std::wstring& mode,
+                                     const std::filesystem::path& installDirectory,
+                                     const IntegrationOptions& options,
+                                     const std::string& message) {
+    nlohmann::json payload = {
+        { "action", utf8FromWide(mode) },
+        { "succeeded", false },
+        { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
+        { "installDirectory", installDirectory.string() },
+        { "stage", "startup" },
+        { "message", message }
+    };
+
+    if (shouldWriteBootstrapperActionLog(mode)) {
+        writeBootstrapperActionLog(mode, false, installDirectory, options, payload);
+    }
+
+    if (options.jsonOutput) {
+        std::cout << payload.dump(2) << '\n';
+    } else {
+        std::wcerr << wideFromUtf8(message) << L'\n';
+    }
+
+    return 1;
 }
 
 std::optional<nlohmann::json> readJsonFile(const std::filesystem::path& filePath) {
@@ -911,6 +969,21 @@ bool queryServiceProcessStatus(SC_HANDLE service, SERVICE_STATUS_PROCESS& status
                &bytesNeeded) != 0;
 }
 
+bool waitForProcessExit(const DWORD processId, const DWORD timeoutMilliseconds) {
+    if (processId == 0) {
+        return true;
+    }
+
+    HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, processId);
+    if (process == nullptr) {
+        return GetLastError() == ERROR_INVALID_PARAMETER;
+    }
+
+    const auto waitResult = WaitForSingleObject(process, timeoutMilliseconds);
+    CloseHandle(process);
+    return waitResult == WAIT_OBJECT_0;
+}
+
 bool waitForServiceState(SC_HANDLE service, const DWORD targetState, const DWORD timeoutMilliseconds) {
     constexpr DWORD kPollMilliseconds = 500;
     DWORD elapsedMilliseconds = 0;
@@ -936,6 +1009,59 @@ bool waitForServiceState(SC_HANDLE service, const DWORD targetState, const DWORD
 
     SERVICE_STATUS_PROCESS status{};
     return queryServiceProcessStatus(service, status) && status.dwCurrentState == targetState;
+}
+
+bool stopServiceHandle(SC_HANDLE service, const DWORD timeoutMilliseconds = 30000) {
+    SERVICE_STATUS_PROCESS status{};
+    if (!queryServiceProcessStatus(service, status)) {
+        return false;
+    }
+
+    const DWORD originalProcessId = status.dwProcessId;
+    if (status.dwCurrentState != SERVICE_STOPPED) {
+        if (status.dwCurrentState != SERVICE_STOP_PENDING) {
+            SERVICE_STATUS serviceStatus{};
+            if (ControlService(service, SERVICE_CONTROL_STOP, &serviceStatus) == 0) {
+                const auto error = GetLastError();
+                if (error != ERROR_SERVICE_NOT_ACTIVE) {
+                    return false;
+                }
+            }
+        }
+
+        if (!waitForServiceState(service, SERVICE_STOPPED, timeoutMilliseconds)) {
+            return false;
+        }
+    }
+
+    return waitForProcessExit(originalProcessId, timeoutMilliseconds);
+}
+
+bool waitForServiceRemoval(const DWORD timeoutMilliseconds) {
+    constexpr DWORD kPollMilliseconds = 500;
+    DWORD elapsedMilliseconds = 0;
+
+    while (elapsedMilliseconds <= timeoutMilliseconds) {
+        SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+        if (scm == nullptr) {
+            return false;
+        }
+
+        SC_HANDLE service = OpenServiceW(scm, kServiceName, SERVICE_QUERY_STATUS);
+        if (service == nullptr) {
+            const auto error = GetLastError();
+            CloseServiceHandle(scm);
+            return error == ERROR_SERVICE_DOES_NOT_EXIST;
+        }
+
+        CloseServiceHandle(service);
+        CloseServiceHandle(scm);
+
+        Sleep(kPollMilliseconds);
+        elapsedMilliseconds += kPollMilliseconds;
+    }
+
+    return false;
 }
 
 void removeFirewallRules() {
@@ -980,16 +1106,10 @@ bool stopServiceIfPresent() {
         return true;
     }
 
-    SERVICE_STATUS_PROCESS status{};
-    if (queryServiceProcessStatus(service, status) && status.dwCurrentState == SERVICE_RUNNING) {
-        SERVICE_STATUS serviceStatus{};
-        ControlService(service, SERVICE_CONTROL_STOP, &serviceStatus);
-        waitForServiceState(service, SERVICE_STOPPED, 30000);
-    }
-
+    const bool success = stopServiceHandle(service);
     CloseServiceHandle(service);
     CloseServiceHandle(scm);
-    return true;
+    return success;
 }
 
 ServiceInstallationStatus queryServiceInstallationStatus() {
@@ -1230,12 +1350,11 @@ bool uninstallService() {
         return true;
     }
 
-    SERVICE_STATUS status{};
-    ControlService(service, SERVICE_CONTROL_STOP, &status);
-    const bool success = DeleteService(service) != 0 || GetLastError() == ERROR_SERVICE_MARKED_FOR_DELETE;
+    bool success = stopServiceHandle(service);
+    success = (DeleteService(service) != 0 || GetLastError() == ERROR_SERVICE_MARKED_FOR_DELETE) && success;
     CloseServiceHandle(service);
     CloseServiceHandle(scm);
-    return success;
+    return success && waitForServiceRemoval(30000);
 }
 
 bool scheduleDeferredInstallRemoval(const std::filesystem::path& installDirectory) {
@@ -1935,15 +2054,15 @@ bool installLike(const std::wstring& mode,
 bool uninstallApplication(const std::filesystem::path& installDirectory,
                           const IntegrationOptions& options) {
     const auto configuration = ensureConfigurationPresent();
-    const auto state = readInstallationState(installDirectory).value_or(buildInstallationState(
-        installDirectory,
-        configuration,
-        options));
+    auto state = readInstallationState(installDirectory);
+    if (!state.has_value()) {
+        state = buildInstallationState(installDirectory, configuration, options);
+    }
 
     const auto failUninstall = [&](const std::wstring& message) {
         const auto serviceStatus = queryServiceInstallationStatus();
         const auto uninstallStatus = queryUninstallRegistrationStatus();
-        const auto shortcutStatus = queryShortcutInstallationStatus(state);
+        const auto shortcutStatus = queryShortcutInstallationStatus(*state);
         const auto firewallStatus = queryFirewallRuleStatus();
         nlohmann::json payload = {
             { "action", "uninstall" },
@@ -1981,7 +2100,7 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
     }
 
     if (options.manageShortcuts) {
-        removeShortcuts(state);
+        removeShortcuts(*state);
     }
 
     if (options.manageUninstallRegistration) {
@@ -1992,7 +2111,7 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
     std::filesystem::remove(installStatePath(installDirectory), error);
 
     if (options.purgeData) {
-        removeDirectoryIfExists(std::filesystem::path(state.dataDirectory));
+        removeDirectoryIfExists(std::filesystem::path(state->dataDirectory));
     }
 
     if (options.purgeInstallDirectory) {
@@ -2008,13 +2127,13 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
 
     const auto serviceStatus = queryServiceInstallationStatus();
     const auto uninstallStatus = queryUninstallRegistrationStatus();
-    const auto shortcutStatus = queryShortcutInstallationStatus(state);
+    const auto shortcutStatus = queryShortcutInstallationStatus(*state);
     const auto firewallStatus = queryFirewallRuleStatus();
     std::error_code fileError;
     const auto installStatePresent = std::filesystem::exists(installStatePath(installDirectory), fileError);
     const auto installDirectoryPresent = std::filesystem::exists(installDirectory, fileError);
     const auto dataDirectoryPresent =
-        !state.dataDirectory.empty() && std::filesystem::exists(std::filesystem::path(state.dataDirectory), fileError);
+        !state->dataDirectory.empty() && std::filesystem::exists(std::filesystem::path(state->dataDirectory), fileError);
     nlohmann::json payload = {
         { "action", "uninstall" },
         { "succeeded", true },
@@ -2046,7 +2165,7 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
         std::wcout << L"Install directory removal requested for " << installDirectory.c_str() << L'\n';
     }
     if (options.purgeData) {
-        std::wcout << L"ProgramData state removed from " << wideFromUtf8(state.dataDirectory) << L'\n';
+        std::wcout << L"ProgramData state removed from " << wideFromUtf8(state->dataDirectory) << L'\n';
     }
     return true;
 }
@@ -2101,30 +2220,44 @@ void printUsage() {
 
 int wmain(int argc, wchar_t* argv[]) {
     const std::wstring mode = argc > 1 ? argv[1] : L"detect";
-    const auto installDirectory = parseInstallDirectoryArgument(argc, argv).value_or(defaultInstallDirectory());
     const auto options = parseOptions(argc, argv, 2);
+    const auto parsedInstallDirectory = parseInstallDirectoryArgument(argc, argv);
 
-    if (mode == L"detect") {
-        showDetectedEnvironment(options.jsonOutput);
-        return 0;
+    try {
+        const auto installDirectory = parsedInstallDirectory.has_value() ? *parsedInstallDirectory : defaultInstallDirectory();
+
+        if (mode == L"detect") {
+            showDetectedEnvironment(options.jsonOutput);
+            return 0;
+        }
+
+        if (mode == L"preflight") {
+            return runPreflight(installDirectory, options) ? 0 : 1;
+        }
+
+        if (mode == L"install" || mode == L"repair" || mode == L"upgrade") {
+            return installLike(mode, installDirectory, options) ? 0 : 1;
+        }
+
+        if (mode == L"validate") {
+            return validateInstalledApplication(installDirectory, options.jsonOutput) ? 0 : 1;
+        }
+
+        if (mode == L"uninstall") {
+            return uninstallApplication(installDirectory, options) ? 0 : 1;
+        }
+
+        printUsage();
+        return 1;
+    } catch (const std::exception& error) {
+        const auto installDirectory = parsedInstallDirectory.has_value() ? *parsedInstallDirectory : executableDirectory();
+        return reportBootstrapperStartupFailure(mode, installDirectory, options, error.what());
+    } catch (...) {
+        const auto installDirectory = parsedInstallDirectory.has_value() ? *parsedInstallDirectory : executableDirectory();
+        return reportBootstrapperStartupFailure(
+            mode,
+            installDirectory,
+            options,
+            "Master Control Bootstrapper encountered an unexpected startup failure.");
     }
-
-    if (mode == L"preflight") {
-        return runPreflight(installDirectory, options) ? 0 : 1;
-    }
-
-    if (mode == L"install" || mode == L"repair" || mode == L"upgrade") {
-        return installLike(mode, installDirectory, options) ? 0 : 1;
-    }
-
-    if (mode == L"validate") {
-        return validateInstalledApplication(installDirectory, options.jsonOutput) ? 0 : 1;
-    }
-
-    if (mode == L"uninstall") {
-        return uninstallApplication(installDirectory, options) ? 0 : 1;
-    }
-
-    printUsage();
-    return 1;
 }
