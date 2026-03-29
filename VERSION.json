@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.47",
-  "current_tag": "v0.1.47",
+  "current_version": "0.1.48",
+  "current_tag": "v0.1.48",
   "released_at": "2026-03-29",
-  "last_release_commit": "a27e7b3e03f0338c01cb94d30046af5f231ecaac",
+  "last_release_commit": "0d78829c22bed9d3f66d44fc534925c1c6059972",
   "history": [
+    {
+      "version": "0.1.48",
+      "tag": "v0.1.48",
+      "released_at": "2026-03-29",
+      "commit": "0d78829c22bed9d3f66d44fc534925c1c6059972",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Delete .claude directory (Jim Daley)"
+      ]
+    },
     {
       "version": "0.1.47",
       "tag": "v0.1.47",
