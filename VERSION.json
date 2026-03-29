@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.43",
-  "current_tag": "v0.1.43",
-  "released_at": "2026-03-28",
-  "last_release_commit": "8aaae5cf6beba5d1f7aa3c3c5cce3284c4025486",
+  "current_version": "0.1.44",
+  "current_tag": "v0.1.44",
+  "released_at": "2026-03-29",
+  "last_release_commit": "24c03ca696fb0ef13004151ddd4ac229c3be1a52",
   "history": [
+    {
+      "version": "0.1.44",
+      "tag": "v0.1.44",
+      "released_at": "2026-03-29",
+      "commit": "24c03ca696fb0ef13004151ddd4ac229c3be1a52",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Fix managed installer lifecycle and elevation flow (flynn33)"
+      ]
+    },
     {
       "version": "0.1.43",
       "tag": "v0.1.43",

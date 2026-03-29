@@ -4,8 +4,8 @@ Master Control Program is a Forsetti-compliant Windows control plane for MCP ser
 
 ## Current Release
 
-- Version: `v0.1.43`
-- Release date: `2026-03-28`
+- Version: `v0.1.44`
+- Release date: `2026-03-29`
 - Summary: Automated patch release for Master Control Program.
 
 ## Highlights
