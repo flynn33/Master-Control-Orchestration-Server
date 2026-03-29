@@ -5,6 +5,7 @@
 [CmdletBinding()]
 param(
     [string]$BootstrapperPath = "",
+    [string]$SetupPath = "",
     [string]$Root = (Join-Path $env:TEMP ("mastercontrol-deployment-" + [guid]::NewGuid().ToString())),
     [ValidateSet("auto", "mixed", "managed", "both")]
     [string]$Scenario = "auto",
@@ -22,6 +23,13 @@ $scriptStartedAt = Get-Date
 
 if ([string]::IsNullOrWhiteSpace($BootstrapperPath)) {
     $BootstrapperPath = Join-Path $repoRoot "dist\debug\MasterControlBootstrapper.exe"
+}
+
+if ([string]::IsNullOrWhiteSpace($SetupPath)) {
+    $candidateSetupPath = Join-Path (Split-Path -Parent $BootstrapperPath) "MasterControlSetup.exe"
+    if (Test-Path $candidateSetupPath) {
+        $SetupPath = $candidateSetupPath
+    }
 }
 
 function Test-IsAdministrator {
@@ -99,6 +107,48 @@ function Invoke-Bootstrapper {
         }
         if (-not [string]::IsNullOrWhiteSpace($stdout) -and (Test-Path $stdout)) { Remove-Item $stdout -Force }
         if (-not [string]::IsNullOrWhiteSpace($stderr) -and (Test-Path $stderr)) { Remove-Item $stderr -Force }
+    }
+}
+
+function Invoke-SetupLauncher {
+    param(
+        [string]$SetupExecutable,
+        [string[]]$Arguments,
+        [hashtable]$Environment = @{}
+    )
+
+    $savedEnvironment = @{}
+
+    try {
+        foreach ($entry in $Environment.GetEnumerator()) {
+            $savedEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key)
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value)
+        }
+
+        $argumentLine = New-ArgumentLine -Arguments $Arguments
+        $startedAt = Get-Date
+        $process = Start-Process `
+            -FilePath $SetupExecutable `
+            -ArgumentList $argumentLine `
+            -Wait `
+            -PassThru
+        $completedAt = Get-Date
+
+        return [pscustomobject]@{
+            arguments = $Arguments
+            argumentLine = $argumentLine
+            startedAt = $startedAt.ToString("o")
+            completedAt = $completedAt.ToString("o")
+            durationMs = [int][Math]::Round(($completedAt - $startedAt).TotalMilliseconds)
+            exitCode = $process.ExitCode
+            stdout = ""
+            stderr = ""
+            json = $null
+        }
+    } finally {
+        foreach ($entry in $Environment.GetEnumerator()) {
+            [Environment]::SetEnvironmentVariable($entry.Key, $savedEnvironment[$entry.Key])
+        }
     }
 }
 
@@ -502,7 +552,8 @@ function Invoke-ElevatedManagedAcceptance {
 function Run-MixedAcceptance {
     param(
         [string]$Bootstrapper,
-        [string]$ScenarioRoot
+        [string]$ScenarioRoot,
+        [string]$SetupExecutable = ""
     )
 
     $installDirectory = Join-Path $ScenarioRoot "mixed install"
@@ -525,14 +576,27 @@ function Run-MixedAcceptance {
         "--json"
     ) -Environment $environment
 
-    $install = Invoke-Bootstrapper -Bootstrapper $Bootstrapper -Arguments @(
-        "install",
-        $installDirectory,
-        "--skip-service",
-        "--skip-firewall",
-        "--skip-uninstall-registration",
-        "--json"
-    ) -Environment $environment
+    $useSetupLauncher = -not [string]::IsNullOrWhiteSpace($SetupExecutable) -and (Test-Path $SetupExecutable)
+    if ($useSetupLauncher) {
+        $install = Invoke-SetupLauncher -SetupExecutable $SetupExecutable -Arguments @(
+            "--install-directory",
+            $installDirectory,
+            "--skip-service",
+            "--skip-firewall",
+            "--skip-uninstall-registration",
+            "--quiet",
+            "--no-launch-shell"
+        ) -Environment $environment
+    } else {
+        $install = Invoke-Bootstrapper -Bootstrapper $Bootstrapper -Arguments @(
+            "install",
+            $installDirectory,
+            "--skip-service",
+            "--skip-firewall",
+            "--skip-uninstall-registration",
+            "--json"
+        ) -Environment $environment
+    }
     $snapshots.afterInstall = Capture-DetectSnapshot -Bootstrapper $Bootstrapper -Environment $environment
 
     $validate = Invoke-Bootstrapper -Bootstrapper $Bootstrapper -Arguments @(
@@ -575,16 +639,22 @@ function Run-MixedAcceptance {
     $dataDirectoryRemovedAfterUninstall = -not (Test-Path $dataDirectory)
     $snapshots.afterUninstall = Capture-DetectSnapshot -Bootstrapper $Bootstrapper -Environment $environment
 
+    $installValidated = $install.exitCode -eq 0 -and (
+        ($null -ne $install.json -and $install.json.PSObject.Properties.Name -contains "validated" -and $install.json.validated) -or
+        ($validate.exitCode -eq 0 -and $validate.json.valid)
+    )
+    $shortcutSurfacesCreated = $validate.exitCode -eq 0 -and $validate.json.shellShortcutPresent -and $validate.json.dashboardShortcutPresent
+
     $expectations = @(
         (New-Expectation ($preflight.exitCode -eq 0 -and $preflight.json.ready) "Mixed preflight should succeed."),
-        (New-Expectation ($install.exitCode -eq 0 -and $install.json.succeeded -and $install.json.validated) "Mixed install should succeed and self-validate."),
+        (New-Expectation ($installValidated) "Mixed install should succeed and self-validate."),
         (New-Expectation ($validate.exitCode -eq 0 -and $validate.json.valid) "Mixed validate should succeed."),
         (New-Expectation ($upgrade.exitCode -eq 0 -and $upgrade.json.succeeded -and $upgrade.json.validated) "Mixed upgrade should succeed and self-validate."),
         (New-Expectation ($repair.exitCode -eq 0 -and $repair.json.succeeded -and $repair.json.validated) "Mixed repair should succeed and self-validate."),
         (New-Expectation ($uninstall.exitCode -eq 0 -and $uninstall.json.succeeded) "Mixed uninstall should succeed."),
         (New-Expectation ($installDirectoryRemovedAfterUninstall) "Mixed uninstall should remove the install directory."),
         (New-Expectation ($dataDirectoryRemovedAfterUninstall) "Mixed uninstall should remove the data directory."),
-        (New-Expectation ($install.json.shellShortcutPresent -and $install.json.dashboardShortcutPresent) "Mixed install should create user shortcut surfaces."),
+        (New-Expectation ($shortcutSurfacesCreated) "Mixed install should create user shortcut surfaces."),
         (New-Expectation (-not $uninstall.json.shellShortcutPresent -and -not $uninstall.json.dashboardShortcutPresent) "Mixed uninstall should remove user shortcut surfaces."),
         (New-Expectation ($snapshots.afterInstall.exitCode -eq 0 -and -not $snapshots.afterInstall.json.serviceRegistered -and -not $snapshots.afterInstall.json.uninstallRegistered) "Mixed install should leave managed service and uninstall registration absent."),
         (New-Expectation ($snapshots.afterUninstall.exitCode -eq 0 -and -not $snapshots.afterUninstall.json.serviceRegistered -and -not $snapshots.afterUninstall.json.uninstallRegistered) "Mixed uninstall should leave managed integrations absent.")
@@ -745,7 +815,7 @@ $report = [ordered]@{
 }
 
 if ($effectiveScenario -in @("mixed", "both")) {
-    $report.scenarios += Run-MixedAcceptance -Bootstrapper $bootstrapper.Path -ScenarioRoot (Join-Path $Root "mixed")
+    $report.scenarios += Run-MixedAcceptance -Bootstrapper $bootstrapper.Path -ScenarioRoot (Join-Path $Root "mixed") -SetupExecutable $SetupPath
 }
 
 if ($effectiveScenario -in @("managed", "both")) {

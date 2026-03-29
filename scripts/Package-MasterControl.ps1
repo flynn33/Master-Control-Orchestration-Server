@@ -150,6 +150,7 @@ $validationPath = Join-Path $OutputRoot ($packageName + ".preflight.json")
 $metadataPath = Join-Path $stageDirectory "PACKAGE-METADATA.json"
 $instructionsPath = Join-Path $stageDirectory "INSTALL.txt"
 $installLauncherPath = Join-Path $stageDirectory "Install-MasterControlProgram.ps1"
+$setupPath = Join-Path $stageDirectory "MasterControlSetup.exe"
 $validationTarget = Join-Path $OutputRoot ($packageName + ".validation-target")
 
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
@@ -361,18 +362,21 @@ Commit: $gitCommit
 
 Quick start
 1. Extract this package to a writable local folder.
-2. Open PowerShell in the extracted folder.
-3. Keep the bundled VC++ runtime DLL files beside the executables.
-4. Prefer .\Install-MasterControlProgram.ps1 for install attempts because it always writes a desktop log and will request elevation for the default managed install path.
-5. Run a preflight check before installing.
-6. If included, review RELEASE-READINESS.md before target-host deployment validation.
+2. Keep the bundled VC++ runtime DLL files beside the executables.
+3. Prefer .\MasterControlSetup.exe for the standard interactive install experience.
+4. Use .\Install-MasterControlProgram.ps1 as the diagnostic fallback because it always writes a desktop log and will request elevation for the default managed install path.
+5. Open PowerShell only when you need the bootstrapper or fallback launcher directly.
+6. Run a preflight check before installing.
+7. If included, review RELEASE-READINESS.md before target-host deployment validation.
 
 Fully managed install (requires Administrator)
+.\MasterControlSetup.exe
 .\Install-MasterControlProgram.ps1 -InstallDirectory "C:\Program Files\Master Control Program"
 .\MasterControlBootstrapper.exe preflight "C:\Program Files\Master Control Program" --json
 .\MasterControlBootstrapper.exe install "C:\Program Files\Master Control Program" --json
 
 Non-admin test install
+.\MasterControlSetup.exe --install-directory "$env:LOCALAPPDATA\MasterControlProgram" --skip-service --skip-firewall --skip-uninstall-registration --quiet
 .\Install-MasterControlProgram.ps1 -InstallDirectory "$env:LOCALAPPDATA\MasterControlProgram" -SkipService -SkipFirewall -SkipUninstallRegistration
 .\MasterControlBootstrapper.exe preflight "$env:LOCALAPPDATA\MasterControlProgram" --skip-service --skip-firewall --skip-uninstall-registration --json
 .\MasterControlBootstrapper.exe install "$env:LOCALAPPDATA\MasterControlProgram" --skip-service --skip-firewall --skip-uninstall-registration --json
@@ -420,6 +424,7 @@ $metadata = [pscustomobject][ordered]@{
     zipPath = $zipPath
     validationPath = $validationPath
     bootstrapperPath = (Join-Path $stageDirectory "MasterControlBootstrapper.exe")
+    setupPath = $setupPath
     installLauncherPath = $installLauncherPath
     serviceHostPath = (Join-Path $stageDirectory "MasterControlServiceHost.exe")
     shellPath = (Join-Path $stageDirectory "MasterControlShell.exe")
@@ -471,6 +476,7 @@ Compress-Archive -Path $stageDirectory -DestinationPath $zipPath -Force
     zipPath = $zipPath
     validationPath = $validationPath
     bootstrapperPath = (Join-Path $stageDirectory "MasterControlBootstrapper.exe")
+    setupPath = $setupPath
     packageMetadataPath = $metadataPath
     installInstructionsPath = $instructionsPath
     installLauncherPath = $installLauncherPath
