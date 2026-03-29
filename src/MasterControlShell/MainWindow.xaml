@@ -7,7 +7,7 @@
     xmlns:local="using:MasterControlShell"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="Master Control Program">
+    Title="Master Control Orchestration Server">
     <Grid x:Name="RootGrid" Background="{StaticResource ShellBackgroundBrush}" Loaded="RootGrid_Loaded">
         <Grid>
             <Rectangle Fill="{StaticResource ShellBackgroundBrush}" />
@@ -39,8 +39,8 @@
                             </Border>
 
                             <StackPanel Spacing="4">
-                                <TextBlock Text="MASTER CONTROL PROGRAM" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                                <TextBlock Text="WinUI command shell for telemetry, MCP orchestration, provider routing, import/export operations, and LAN gateway control." Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBlock Text="MASTER CONTROL ORCHESTRATION SERVER" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                <TextBlock Text="Windows command shell for guided setup, telemetry, MCP orchestration, provider routing, governance, and runtime control." Style="{StaticResource ShellLabelTextStyle}" />
                             </StackPanel>
                         </StackPanel>
 
@@ -126,6 +126,37 @@
                                                 <Button x:Name="OpenDashboardButton" Grid.Row="1" Click="OpenDashboardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Dashboard" />
                                                 <Button x:Name="OpenConfigButton" Grid.Row="1" Grid.Column="1" Click="OpenConfigButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Config" />
                                                 <Button x:Name="OpenDataButton" Grid.Row="1" Grid.Column="2" Click="OpenDataButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Data" />
+                                            </Grid>
+                                        </StackPanel>
+
+                                        <StackPanel Spacing="10">
+                                            <TextBlock Text="GUIDED SETUP WIZARDS" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                            <Grid ColumnSpacing="12" RowSpacing="12">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <Button x:Name="GuidedProviderWizardButton" Click="GuidedProviderWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Provider" />
+                                                <Button x:Name="GuidedMcpWizardButton" Grid.Column="1" Click="GuidedMcpWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New MCP Server" />
+                                                <Button x:Name="GuidedSubAgentWizardButton" Grid.Column="2" Click="GuidedSubAgentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent" />
+                                                <Button x:Name="GuidedAppleHostWizardButton" Grid.Row="1" Click="GuidedAppleHostWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Apple Host" />
+                                                <Button x:Name="GuidedProviderAssignmentWizardButton" Grid.Row="1" Grid.Column="1" Click="GuidedProviderAssignmentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Assign Provider" />
+                                                <Button x:Name="GuidedImportWizardButton" Grid.Row="1" Grid.Column="2" Click="GuidedImportWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Guided Import" />
+
+                                                <Border Grid.Row="2" Grid.ColumnSpan="3" Padding="12,10" Background="#1200F6FF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="14">
+                                                    <TextBlock
+                                                        x:Name="GuidedWorkflowStatusText"
+                                                        Style="{StaticResource ShellLabelTextStyle}"
+                                                        Text="Use guided setup to create provider routes, Apple hosts, MCP servers, imports, assignments, and specialist lanes without digging through raw admin forms."
+                                                        TextWrapping="WrapWholeWords" />
+                                                </Border>
                                             </Grid>
                                         </StackPanel>
                                     </StackPanel>

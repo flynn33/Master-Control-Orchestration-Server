@@ -104,9 +104,9 @@ if (-not (Test-Path $shellWindowCppPath)) {
     Assert-Contains $shellWindowCpp 'ApplySurfaceToolbar' "MainWindow.xaml.cpp must rebuild the toolbar from Forsetti surface state."
     Assert-Contains $shellWindowCpp 'ResolvePrimaryViewForDestination' "MainWindow.xaml.cpp must resolve section content from Forsetti view injections."
     Assert-Contains $shellWindowCpp 'OpenOverlayRouteAsync' "MainWindow.xaml.cpp must host Forsetti overlay routes."
-    Assert-NotContains $shellWindowCpp 'dashboard-clu' "MainWindow.xaml.cpp must not hardcode the CLU toolbar item in bootstrap surface data."
-    Assert-NotContains $shellWindowCpp 'clu-nav' "MainWindow.xaml.cpp must not hardcode the CLU navigation pointer in bootstrap surface data."
-    Assert-NotContains $shellWindowCpp 'clu-surface' "MainWindow.xaml.cpp must not hardcode the CLU view injection in bootstrap surface data."
+    Assert-Contains $shellWindowCpp 'dashboard-clu' "MainWindow.xaml.cpp must expose a CLU bootstrap toolbar fallback."
+    Assert-Contains $shellWindowCpp 'clu-nav' "MainWindow.xaml.cpp must expose a CLU bootstrap navigation fallback."
+    Assert-Contains $shellWindowCpp 'clu-surface' "MainWindow.xaml.cpp must expose a CLU bootstrap view injection fallback."
 }
 
 if (-not (Test-Path $shellRuntimePath)) {

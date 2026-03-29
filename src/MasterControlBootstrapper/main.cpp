@@ -36,6 +36,8 @@ constexpr wchar_t kInstallStateFileName[] = L"installation-state.json";
 constexpr wchar_t kBrowserRuleName[] = L"Master Control Program - Browser Access";
 constexpr wchar_t kBeaconRuleName[] = L"Master Control Program - Beacon Discovery";
 constexpr wchar_t kBootstrapperLogDirectoryEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_LOG_DIR";
+constexpr wchar_t kBootstrapperServiceNameEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_SERVICE_NAME";
+constexpr wchar_t kBootstrapperUninstallRegistryKeyEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_UNINSTALL_KEY";
 
 #ifndef MASTERCONTROL_BOOTSTRAPPER_VERSION
 #define MASTERCONTROL_BOOTSTRAPPER_VERSION "0.1.0"
@@ -207,6 +209,9 @@ std::filesystem::path executableDirectory() {
 }
 
 std::optional<std::wstring> readEnvironmentVariable(const wchar_t* name);
+
+std::wstring configuredServiceName();
+std::wstring configuredUninstallRegistryKey();
 
 std::optional<std::filesystem::path> tryKnownFolder(REFKNOWNFOLDERID folderId) {
     PWSTR path = nullptr;
@@ -470,6 +475,20 @@ std::optional<std::wstring> readEnvironmentVariable(const wchar_t* name) {
     }
 
     return value;
+}
+
+std::wstring configuredServiceName() {
+    if (const auto overrideName = readEnvironmentVariable(kBootstrapperServiceNameEnv); overrideName.has_value()) {
+        return *overrideName;
+    }
+    return kServiceName;
+}
+
+std::wstring configuredUninstallRegistryKey() {
+    if (const auto overrideKey = readEnvironmentVariable(kBootstrapperUninstallRegistryKeyEnv); overrideKey.has_value()) {
+        return *overrideKey;
+    }
+    return kUninstallRegistryKey;
 }
 
 bool environmentFlagEnabled(const wchar_t* name) {
@@ -776,7 +795,8 @@ UninstallRegistrationStatus queryUninstallRegistrationStatus() {
     UninstallRegistrationStatus status;
 
     HKEY key = nullptr;
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, kUninstallRegistryKey, 0, KEY_READ, &key) != ERROR_SUCCESS) {
+    const auto uninstallRegistryKey = configuredUninstallRegistryKey();
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, uninstallRegistryKey.c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS) {
         return status;
     }
 
@@ -861,9 +881,10 @@ bool setRegistryDwordValue(HKEY key, const wchar_t* name, const DWORD value) {
 
 bool registerUninstallEntry(const InstallationState& state) {
     HKEY key = nullptr;
+    const auto uninstallRegistryKey = configuredUninstallRegistryKey();
     if (RegCreateKeyExW(
             HKEY_LOCAL_MACHINE,
-            kUninstallRegistryKey,
+            uninstallRegistryKey.c_str(),
             0,
             nullptr,
             0,
@@ -892,7 +913,8 @@ bool registerUninstallEntry(const InstallationState& state) {
 }
 
 bool unregisterUninstallEntry() {
-    const auto result = RegDeleteTreeW(HKEY_LOCAL_MACHINE, kUninstallRegistryKey);
+    const auto uninstallRegistryKey = configuredUninstallRegistryKey();
+    const auto result = RegDeleteTreeW(HKEY_LOCAL_MACHINE, uninstallRegistryKey.c_str());
     return result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND;
 }
 
@@ -1042,12 +1064,13 @@ bool waitForServiceRemoval(const DWORD timeoutMilliseconds) {
     DWORD elapsedMilliseconds = 0;
 
     while (elapsedMilliseconds <= timeoutMilliseconds) {
+        const auto serviceName = configuredServiceName();
         SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
         if (scm == nullptr) {
             return false;
         }
 
-        SC_HANDLE service = OpenServiceW(scm, kServiceName, SERVICE_QUERY_STATUS);
+        SC_HANDLE service = OpenServiceW(scm, serviceName.c_str(), SERVICE_QUERY_STATUS);
         if (service == nullptr) {
             const auto error = GetLastError();
             CloseServiceHandle(scm);
@@ -1100,7 +1123,8 @@ bool stopServiceIfPresent() {
         return false;
     }
 
-    SC_HANDLE service = OpenServiceW(scm, kServiceName, SERVICE_STOP | SERVICE_QUERY_STATUS);
+    const auto serviceName = configuredServiceName();
+    SC_HANDLE service = OpenServiceW(scm, serviceName.c_str(), SERVICE_STOP | SERVICE_QUERY_STATUS);
     if (service == nullptr) {
         CloseServiceHandle(scm);
         return true;
@@ -1120,7 +1144,8 @@ ServiceInstallationStatus queryServiceInstallationStatus() {
         return status;
     }
 
-    SC_HANDLE service = OpenServiceW(scm, kServiceName, SERVICE_QUERY_CONFIG | SERVICE_QUERY_STATUS);
+    const auto serviceName = configuredServiceName();
+    SC_HANDLE service = OpenServiceW(scm, serviceName.c_str(), SERVICE_QUERY_CONFIG | SERVICE_QUERY_STATUS);
     if (service == nullptr) {
         CloseServiceHandle(scm);
         return status;
@@ -1258,11 +1283,12 @@ bool installOrUpdateService(const std::filesystem::path& serviceBinary) {
         return false;
     }
 
+    const auto serviceName = configuredServiceName();
     const std::wstring binaryPath = L"\"" + serviceBinary.wstring() + L"\"";
     SC_HANDLE service = CreateServiceW(
         scm,
-        kServiceName,
-        L"Master Control Program",
+        serviceName.c_str(),
+        serviceName.c_str(),
         SERVICE_ALL_ACCESS,
         SERVICE_WIN32_OWN_PROCESS,
         SERVICE_AUTO_START,
@@ -1275,7 +1301,7 @@ bool installOrUpdateService(const std::filesystem::path& serviceBinary) {
         nullptr);
 
     if (service == nullptr) {
-        service = OpenServiceW(scm, kServiceName, SERVICE_ALL_ACCESS);
+        service = OpenServiceW(scm, serviceName.c_str(), SERVICE_ALL_ACCESS);
         if (service == nullptr) {
             CloseServiceHandle(scm);
             return false;
@@ -1316,7 +1342,8 @@ bool startServiceIfPresent() {
         return false;
     }
 
-    SC_HANDLE service = OpenServiceW(scm, kServiceName, SERVICE_START | SERVICE_QUERY_STATUS);
+    const auto serviceName = configuredServiceName();
+    SC_HANDLE service = OpenServiceW(scm, serviceName.c_str(), SERVICE_START | SERVICE_QUERY_STATUS);
     if (service == nullptr) {
         CloseServiceHandle(scm);
         return false;
@@ -1344,7 +1371,8 @@ bool uninstallService() {
         return false;
     }
 
-    SC_HANDLE service = OpenServiceW(scm, kServiceName, SERVICE_STOP | DELETE | SERVICE_QUERY_STATUS);
+    const auto serviceName = configuredServiceName();
+    SC_HANDLE service = OpenServiceW(scm, serviceName.c_str(), SERVICE_STOP | DELETE | SERVICE_QUERY_STATUS);
     if (service == nullptr) {
         CloseServiceHandle(scm);
         return true;

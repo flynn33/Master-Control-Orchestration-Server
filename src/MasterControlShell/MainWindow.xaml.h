@@ -24,6 +24,12 @@ struct MainWindow : MainWindowT<MainWindow> {
     void OpenDashboardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void OpenConfigButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void OpenDataButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void GuidedProviderWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void GuidedMcpWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void GuidedSubAgentWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void GuidedAppleHostWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void GuidedProviderAssignmentWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void GuidedImportWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void SurfaceToolbarButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
 
 private:
@@ -48,6 +54,12 @@ private:
     winrt::Windows::Foundation::IAsyncAction RefreshAsync();
     winrt::Windows::Foundation::IAsyncAction RunServiceActionAsync(bool start);
     winrt::Windows::Foundation::IAsyncAction HandleOpenDashboardAsync();
+    winrt::Windows::Foundation::IAsyncAction ShowProviderWizardAsync();
+    winrt::Windows::Foundation::IAsyncAction ShowMcpServerWizardAsync();
+    winrt::Windows::Foundation::IAsyncAction ShowSubAgentWizardAsync();
+    winrt::Windows::Foundation::IAsyncAction ShowAppleHostWizardAsync();
+    winrt::Windows::Foundation::IAsyncAction ShowProviderAssignmentWizardAsync();
+    winrt::Windows::Foundation::IAsyncAction ShowImportWizardAsync();
     winrt::Windows::Foundation::IAsyncAction OpenOverlayRouteAsync(std::wstring routeId);
     winrt::Windows::Foundation::IAsyncAction ShowDialogAsync(winrt::hstring const& title, winrt::hstring const& message);
 

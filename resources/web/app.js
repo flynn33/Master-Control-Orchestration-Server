@@ -618,7 +618,7 @@ const state = {
 
 function currentConfig() {
   return {
-    instanceName: state.config?.instanceName || 'Master Control Program',
+    instanceName: state.config?.instanceName || 'Master Control Orchestration Server',
     bindAddress: state.config?.bindAddress || '0.0.0.0',
     browserPort: safeNumber(state.config?.browserPort, 7300),
     beaconPort: safeNumber(state.config?.beaconPort, 7301),

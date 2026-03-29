@@ -47,7 +47,7 @@ std::wstring describeException() {
 
 void showStartupFailure(const std::wstring& message) {
     writeStartupLog(message);
-    MessageBoxW(nullptr, message.c_str(), L"Master Control Program", MB_OK | MB_ICONERROR);
+        MessageBoxW(nullptr, message.c_str(), L"Master Control Orchestration Server", MB_OK | MB_ICONERROR);
 }
 
 } // namespace

@@ -77,6 +77,21 @@ std::filesystem::path sourceRepoRoot() {
     return std::filesystem::path(__FILE__).parent_path().parent_path();
 }
 
+uint16_t isolatedTestBrowserPort() {
+    return static_cast<uint16_t>(46000 + (GetCurrentProcessId() % 1000));
+}
+
+void writeIsolatedAppConfiguration(const std::filesystem::path& configurationFile, const uint16_t browserPort) {
+    auto configuration = MasterControl::buildDefaultConfiguration();
+    configuration.browserPort = browserPort;
+    for (auto& endpoint : configuration.activeProfile.seededEndpoints) {
+        if (endpoint.id == "browser-gateway") {
+            endpoint.port = browserPort;
+        }
+    }
+    writeTextFile(configurationFile, nlohmann::json(configuration).dump(2));
+}
+
 std::string utf8FromWide(const std::wstring& input) {
     if (input.empty()) {
         return {};
@@ -1020,6 +1035,7 @@ int main() {
     {
         ScopedEnvironmentOverride dataDirectoryOverride(L"MASTERCONTROL_DATA_DIR", (tempRoot / "data").wstring());
         const auto appPaths = MasterControl::resolveAppPaths();
+        writeIsolatedAppConfiguration(appPaths.configurationFile, isolatedTestBrowserPort());
 
         MasterControl::MasterControlApplication application;
         success &= expect(application.initialize(), "Application should initialize");
@@ -2963,9 +2979,14 @@ int main() {
 
             return match;
         };
+        const auto bootstrapperServiceName = L"MasterControlProgramTests-" + std::to_wstring(GetCurrentProcessId());
+        const auto bootstrapperUninstallKey =
+            L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + bootstrapperServiceName;
 
         ScopedEnvironmentOverride bootstrapDataOverride(L"MASTERCONTROL_DATA_DIR", bootstrapDataDirectory.wstring());
         ScopedEnvironmentOverride bootstrapLogOverride(L"MASTERCONTROL_BOOTSTRAPPER_LOG_DIR", bootstrapLogDirectory.wstring());
+        ScopedEnvironmentOverride bootstrapServiceNameOverride(L"MASTERCONTROL_BOOTSTRAPPER_SERVICE_NAME", bootstrapperServiceName);
+        ScopedEnvironmentOverride bootstrapUninstallKeyOverride(L"MASTERCONTROL_BOOTSTRAPPER_UNINSTALL_KEY", bootstrapperUninstallKey);
 
         const auto installCommand = L"\"" + bootstrapperBinary.wstring() + L"\" install \"" +
             bootstrapInstallDirectory.wstring() +

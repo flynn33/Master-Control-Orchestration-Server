@@ -22,6 +22,7 @@ add_executable(MasterControlSetup WIN32
 
 target_link_libraries(MasterControlSetup PRIVATE
     advapi32
+    comctl32
     shell32
     user32
     ole32

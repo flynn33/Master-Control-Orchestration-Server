@@ -226,7 +226,7 @@ std::vector<RuntimeEndpoint> buildBladeCompatibilityEndpointsForHost(std::string
     std::vector<RuntimeEndpoint> endpoints;
 
     endpoints.push_back(makeEndpoint("aggregator-gateway", "Aggregator Gateway", EndpointKind::Gateway, host, 7200, "/health", "Unified MCP tool gateway"));
-    endpoints.push_back(makeEndpoint("browser-gateway", "Browser Gateway", EndpointKind::BrowserGateway, host, 7300, "/", "Master Control Program browser surface"));
+    endpoints.push_back(makeEndpoint("browser-gateway", "Browser Gateway", EndpointKind::BrowserGateway, host, 7300, "/", "Master Control Orchestration Server browser surface"));
     endpoints.push_back(makeEndpoint("client-tracker", "Client Tracker", EndpointKind::MCPServer, host, 7120, "/api/clients", "LAN client tracker"));
     endpoints.push_back(makeEndpoint("metrics", "Metrics", EndpointKind::MCPServer, host, 7121, "/api/metrics", "Host metrics feed"));
 
@@ -365,7 +365,7 @@ AppConfiguration buildDefaultConfiguration() {
     const auto environment = detectLocalEnvironment();
 
     AppConfiguration configuration;
-    configuration.instanceName = "Master Control Program";
+    configuration.instanceName = "Master Control Orchestration Server";
     configuration.bindAddress = "0.0.0.0";
     configuration.browserPort = 7300;
     configuration.beaconPort = 7301;
