@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.48",
-  "current_tag": "v0.1.48",
+  "current_version": "0.1.49",
+  "current_tag": "v0.1.49",
   "released_at": "2026-03-29",
-  "last_release_commit": "0d78829c22bed9d3f66d44fc534925c1c6059972",
+  "last_release_commit": "4d69fe95b55864dbacb800587c6aa3cb75e24cc8",
   "history": [
+    {
+      "version": "0.1.49",
+      "tag": "v0.1.49",
+      "released_at": "2026-03-29",
+      "commit": "4d69fe95b55864dbacb800587c6aa3cb75e24cc8",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "feat(wiki): overhaul wiki generation with comprehensive pages (flynn33)"
+      ]
+    },
     {
       "version": "0.1.48",
       "tag": "v0.1.48",

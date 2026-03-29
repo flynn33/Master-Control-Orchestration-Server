@@ -69,7 +69,7 @@ gh workflow run repository-maintenance-agents.yml
 
 | Property | Value |
 | --- | --- |
-| Current tracked release | `v0.1.48` |
+| Current tracked release | `v0.1.49` |
 | Agent commit prefix | `chore(agents):` |
 | Wiki source directory | `docs/wiki/` |
 | Wiki sync target | `github.com/{repo}.wiki.git` |

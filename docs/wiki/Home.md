@@ -10,7 +10,7 @@ one connection.
 
 | Field | Value |
 | --- | --- |
-| Version | `v0.1.48` |
+| Version | `v0.1.49` |
 | Released | `2026-03-29` |
 | Summary | Automated patch release for Master Control Program. |
 

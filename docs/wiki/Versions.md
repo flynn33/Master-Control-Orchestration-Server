@@ -8,7 +8,7 @@ appropriate bump level (patch, minor, or major).
 
 | Property | Value |
 | --- | --- |
-| Version | `v0.1.48` |
+| Version | `v0.1.49` |
 | Released | `2026-03-29` |
 | Summary | Automated patch release for Master Control Program. |
 
@@ -29,6 +29,7 @@ Versions are tracked in `VERSION.json` and tagged as GitHub Releases.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| `v0.1.49` | `2026-03-29` | Automated patch release for Master Control Program. |
 | `v0.1.48` | `2026-03-29` | Automated patch release for Master Control Program. |
 | `v0.1.47` | `2026-03-29` | Automated patch release for Master Control Program. |
 | `v0.1.46` | `2026-03-29` | Automated patch release for Master Control Program. |
@@ -43,6 +44,5 @@ Versions are tracked in `VERSION.json` and tagged as GitHub Releases.
 | `v0.1.37` | `2026-03-27` | Automated patch release for Master Control Program. |
 | `v0.1.36` | `2026-03-27` | Automated patch release for Master Control Program. |
 | `v0.1.35` | `2026-03-27` | Automated patch release for Master Control Program. |
-| `v0.1.34` | `2026-03-27` | Automated patch release for Master Control Program. |
 
 See also: [Automation](Automation) | [Operations](Operations)
