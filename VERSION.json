@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.46",
-  "current_tag": "v0.1.46",
+  "current_version": "0.1.47",
+  "current_tag": "v0.1.47",
   "released_at": "2026-03-29",
-  "last_release_commit": "fe1eb1b8768153f5918b980a5b5de4acc86ced7e",
+  "last_release_commit": "a27e7b3e03f0338c01cb94d30046af5f231ecaac",
   "history": [
+    {
+      "version": "0.1.47",
+      "tag": "v0.1.47",
+      "released_at": "2026-03-29",
+      "commit": "a27e7b3e03f0338c01cb94d30046af5f231ecaac",
+      "summary": "Automated patch release for Master Control Program.",
+      "entries": [
+        "Add guided setup wizards and shell fixes (flynn33)"
+      ]
+    },
     {
       "version": "0.1.46",
       "tag": "v0.1.46",
