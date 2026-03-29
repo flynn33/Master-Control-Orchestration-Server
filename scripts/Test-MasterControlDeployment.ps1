@@ -505,8 +505,8 @@ function Run-MixedAcceptance {
         [string]$ScenarioRoot
     )
 
-    $installDirectory = Join-Path $ScenarioRoot "mixed-install"
-    $dataDirectory = Join-Path $ScenarioRoot "mixed-data"
+    $installDirectory = Join-Path $ScenarioRoot "mixed install"
+    $dataDirectory = Join-Path $ScenarioRoot "mixed data"
     New-Item -ItemType Directory -Force -Path $ScenarioRoot, $dataDirectory | Out-Null
 
     $environment = @{
@@ -616,8 +616,8 @@ function Run-ManagedAcceptance {
         [bool]$RunMutating
     )
 
-    $installDirectory = Join-Path $ScenarioRoot "managed-install"
-    $dataDirectory = Join-Path $ScenarioRoot "managed-data"
+    $installDirectory = Join-Path $ScenarioRoot "managed install"
+    $dataDirectory = Join-Path $ScenarioRoot "managed data"
     New-Item -ItemType Directory -Force -Path $ScenarioRoot, $dataDirectory | Out-Null
 
     $environment = @{

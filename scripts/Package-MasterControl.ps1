@@ -254,6 +254,15 @@ function Test-PathRequiresElevation {
     return $false
 }
 
+function ConvertTo-PowerShellLiteralArgument {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    return "'" + ($Value -replace "'", "''") + "'"
+}
+
 function Write-LauncherLog {
     param(
         [string]$Result,
@@ -295,20 +304,21 @@ $elevationAttempted = $false
 try {
     if ($requiresElevation -and -not $isAdministrator -and -not $ElevatedRelay) {
         $elevationAttempted = $true
-        $relayArguments = @(
-            "-NoProfile",
-            "-ExecutionPolicy", "Bypass",
-            "-File", $PSCommandPath,
-            "-InstallDirectory", $InstallDirectory,
+        $relayCommand = @(
+            "&",
+            (ConvertTo-PowerShellLiteralArgument -Value $PSCommandPath),
+            "-InstallDirectory",
+            (ConvertTo-PowerShellLiteralArgument -Value $InstallDirectory),
             "-ElevatedRelay"
         )
 
-        if ($SkipService) { $relayArguments += "-SkipService" }
-        if ($SkipFirewall) { $relayArguments += "-SkipFirewall" }
-        if ($SkipShortcuts) { $relayArguments += "-SkipShortcuts" }
-        if ($SkipUninstallRegistration) { $relayArguments += "-SkipUninstallRegistration" }
+        if ($SkipService) { $relayCommand += "-SkipService" }
+        if ($SkipFirewall) { $relayCommand += "-SkipFirewall" }
+        if ($SkipShortcuts) { $relayCommand += "-SkipShortcuts" }
+        if ($SkipUninstallRegistration) { $relayCommand += "-SkipUninstallRegistration" }
 
-        $process = Start-Process -FilePath "powershell.exe" -ArgumentList $relayArguments -Verb RunAs -Wait -PassThru
+        $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(($relayCommand -join " ")))
+        $process = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) -Verb RunAs -Wait -PassThru
         $exitCode = $process.ExitCode
         $result = @"
 Launcher detected that this install requires elevation and delegated to an elevated PowerShell process.
