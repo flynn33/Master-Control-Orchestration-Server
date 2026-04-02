@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.51",
-  "current_tag": "v0.1.51",
+  "current_version": "0.1.52",
+  "current_tag": "v0.1.52",
   "released_at": "2026-04-02",
-  "last_release_commit": "98e7851c123c43ecfd9427105d4011fe975ffcfd",
+  "last_release_commit": "1b7a2daebf18b3382a280704716863ea9736de36",
   "history": [
+    {
+      "version": "0.1.52",
+      "tag": "v0.1.52",
+      "released_at": "2026-04-02",
+      "commit": "1b7a2daebf18b3382a280704716863ea9736de36",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Document the Command Logic Unit module (flynn33)"
+      ]
+    },
     {
       "version": "0.1.51",
       "tag": "v0.1.51",

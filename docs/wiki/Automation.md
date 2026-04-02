@@ -40,7 +40,7 @@ sync_docs.py --sync-wiki
 
 | Property | Value |
 | --- | --- |
-| Current tracked release | `v0.1.51` |
+| Current tracked release | `v0.1.52` |
 | Agent commit prefix | `chore(agents):` |
 | Wiki source directory | `docs/wiki/` |
 | Wiki sync target | `github.com/{repo}.wiki.git` |
