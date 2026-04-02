@@ -1002,6 +1002,21 @@ EntitlementStateDocument buildDefaultEntitlementStateDocument() {
     };
 }
 
+const std::set<std::string>& protectedForsettiModuleIds() {
+    static const std::set<std::string> moduleIds = {
+        "com.mastercontrol.configuration",
+        "com.mastercontrol.runtime-inventory",
+        "com.mastercontrol.provider-integration",
+        "com.mastercontrol.command-logic-unit",
+        "com.mastercontrol.dashboard-ui"
+    };
+    return moduleIds;
+}
+
+bool isProtectedForsettiModule(const std::string& moduleId) {
+    return protectedForsettiModuleIds().find(moduleId) != protectedForsettiModuleIds().end();
+}
+
 GovernanceProfile buildFallbackGovernanceProfile() {
     return GovernanceProfile{
         "Command Logic Unit",
@@ -1154,6 +1169,35 @@ public:
     }
 
     void restorePurchases() override {
+        refreshEntitlements();
+    }
+
+    [[nodiscard]] EntitlementStateDocument currentStateDocument() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        EntitlementStateDocument state;
+        state.unlockedModuleIDs.assign(unlockedModuleIDs_.begin(), unlockedModuleIDs_.end());
+        state.unlockedProductIDs.assign(unlockedProductIDs_.begin(), unlockedProductIDs_.end());
+        return state;
+    }
+
+    void setModuleUnlocked(const std::string& moduleId, const bool unlocked) {
+        ensureStateFile();
+        auto stateJson = readJsonFile(filePath_);
+        auto state = stateJson.empty()
+            ? defaultState_
+            : stateJson.get<EntitlementStateDocument>();
+
+        auto& moduleIds = state.unlockedModuleIDs;
+        moduleIds.erase(
+            std::remove(moduleIds.begin(), moduleIds.end(), moduleId),
+            moduleIds.end());
+        if (unlocked) {
+            moduleIds.push_back(moduleId);
+        }
+
+        std::sort(moduleIds.begin(), moduleIds.end());
+        moduleIds.erase(std::unique(moduleIds.begin(), moduleIds.end()), moduleIds.end());
+        writeJsonFile(filePath_, state);
         refreshEntitlements();
     }
 
@@ -7766,6 +7810,8 @@ private:
     void registerConfigurationDefaults();
     void createForsettiRuntime();
     void activateDefaultModules();
+    nlohmann::json forsettiModuleCatalog() const;
+    OperationResult manageForsettiModule(const std::string& moduleId, const std::string& action);
     HttpResponse handleHttpRequest(const HttpRequest& request);
     HttpResponse staticFileResponse(std::string path) const;
 
@@ -7803,6 +7849,7 @@ private:
     std::shared_ptr<IAdminApiService> adminApiService_;
     std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager_;
     std::shared_ptr<Forsetti::IEntitlementProvider> entitlementProvider_;
+    std::shared_ptr<FileBackedEntitlementProvider> fileBackedEntitlementProvider_;
     std::unique_ptr<Forsetti::ForsettiRuntime> runtime_;
     std::unique_ptr<SimpleHttpServer> httpServer_;
     std::atomic<bool> stopRequested_{ false };
@@ -7992,9 +8039,10 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
     services->registerService<IForsettiSurfaceService>(surfaceService_);
     auto compatibilityPolicy = std::make_shared<Forsetti::AllowAllCapabilityPolicy>();
     auto checker = std::make_shared<Forsetti::CompatibilityChecker>(Forsetti::SemVer{ 0, 1, 0 }, compatibilityPolicy);
-    entitlementProvider_ = std::make_shared<FileBackedEntitlementProvider>(
+    fileBackedEntitlementProvider_ = std::make_shared<FileBackedEntitlementProvider>(
         paths_.entitlementsFile,
         buildDefaultEntitlementStateDocument());
+    entitlementProvider_ = fileBackedEntitlementProvider_;
     auto activationStore = std::make_shared<JsonActivationStore>(paths_.dataDirectory / "state" / "activation-state.json");
 
     auto registry = Forsetti::ForsettiStaticModuleRegistry::buildRegistry([](Forsetti::ModuleRegistry& registry) {
@@ -8047,6 +8095,121 @@ void MasterControlApplication::Impl::activateDefaultModules() {
             }
         }
     }
+}
+
+nlohmann::json MasterControlApplication::Impl::forsettiModuleCatalog() const {
+    nlohmann::json modules = nlohmann::json::array();
+    if (!runtime_) {
+        return nlohmann::json{
+            { "succeeded", false },
+            { "message", "Forsetti runtime is not initialized." },
+            { "modules", modules }
+        };
+    }
+
+    for (const auto& [moduleId, manifest] : runtime_->moduleManager().manifestsByID()) {
+        std::vector<std::string> supportedPlatforms;
+        supportedPlatforms.reserve(manifest.supportedPlatforms.size());
+        for (const auto platform : manifest.supportedPlatforms) {
+            supportedPlatforms.push_back(Forsetti::to_string(platform));
+        }
+
+        std::vector<std::string> capabilitiesRequested;
+        capabilitiesRequested.reserve(manifest.capabilitiesRequested.size());
+        for (const auto capability : manifest.capabilitiesRequested) {
+            capabilitiesRequested.push_back(Forsetti::to_string(capability));
+        }
+
+        const auto active = runtime_->moduleManager().isModuleActive(moduleId);
+        const auto unlocked = entitlementProvider_ && entitlementProvider_->isUnlocked(moduleId);
+        const auto protectedModule = isProtectedForsettiModule(moduleId);
+
+        std::string recommendedAction = unlocked ? (active ? "update" : "enable") : "install";
+        std::string statusSummary = active
+            ? "Active in the current Forsetti runtime."
+            : (unlocked ? "Unlocked but inactive. Enable or update to bring it online." : "Locked until installed through entitlements.");
+        if (protectedModule) {
+            statusSummary += " Core orchestration module protections are enabled.";
+        }
+
+        modules.push_back(nlohmann::json{
+            { "moduleId", moduleId },
+            { "displayName", manifest.displayName },
+            { "moduleType", Forsetti::to_string(manifest.moduleType) },
+            { "version", manifest.moduleVersion.toString() },
+            { "entryPoint", manifest.entryPoint },
+            { "supportedPlatforms", supportedPlatforms },
+            { "capabilitiesRequested", capabilitiesRequested },
+            { "active", active },
+            { "unlocked", unlocked },
+            { "protectedModule", protectedModule },
+            { "recommendedAction", recommendedAction },
+            { "statusSummary", statusSummary }
+        });
+    }
+
+    return nlohmann::json{
+        { "succeeded", true },
+        { "message", "Forsetti module catalog loaded." },
+        { "modules", modules }
+    };
+}
+
+OperationResult MasterControlApplication::Impl::manageForsettiModule(const std::string& moduleId,
+                                                                    const std::string& action) {
+    if (!runtime_) {
+        return OperationResult{ false, false, "Forsetti runtime is not initialized." };
+    }
+    if (!fileBackedEntitlementProvider_) {
+        return OperationResult{ false, false, "Forsetti entitlement management is unavailable." };
+    }
+    if (moduleId.empty()) {
+        return OperationResult{ false, false, "Select a Forsetti module before applying an action." };
+    }
+
+    const auto manifestIterator = runtime_->moduleManager().manifestsByID().find(moduleId);
+    if (manifestIterator == runtime_->moduleManager().manifestsByID().end()) {
+        return OperationResult{ false, false, "The selected Forsetti module was not found." };
+    }
+
+    const auto normalizedAction = trimCopy(action);
+    if (normalizedAction.empty()) {
+        return OperationResult{ false, false, "Select a Forsetti module action before continuing." };
+    }
+    if ((normalizedAction == "disable" || normalizedAction == "remove") && isProtectedForsettiModule(moduleId)) {
+        return OperationResult{ false, false, "Core orchestration modules cannot be disabled from the guided module wizard." };
+    }
+
+    try {
+        if (normalizedAction == "install" || normalizedAction == "enable") {
+            fileBackedEntitlementProvider_->setModuleUnlocked(moduleId, true);
+            if (!runtime_->moduleManager().isModuleActive(moduleId)) {
+                runtime_->activateModule(moduleId);
+            }
+            return OperationResult{ true, false, "Forsetti module is now installed and active." };
+        }
+
+        if (normalizedAction == "update" || normalizedAction == "reload") {
+            fileBackedEntitlementProvider_->setModuleUnlocked(moduleId, true);
+            if (runtime_->moduleManager().isModuleActive(moduleId)) {
+                runtime_->deactivateModule(moduleId);
+            }
+            runtime_->activateModule(moduleId);
+            return OperationResult{ true, false, "Forsetti module was refreshed in the live runtime." };
+        }
+
+        if (normalizedAction == "disable" || normalizedAction == "remove") {
+            if (runtime_->moduleManager().isModuleActive(moduleId)) {
+                runtime_->deactivateModule(moduleId);
+            }
+            fileBackedEntitlementProvider_->setModuleUnlocked(moduleId, false);
+            return OperationResult{ true, false, "Forsetti module was disabled and removed from the unlocked set." };
+        }
+    } catch (const std::exception& exception) {
+        return OperationResult{ false, false, exception.what() };
+    }
+
+    return OperationResult{ false, false, "Unknown Forsetti module action." };
 }
 
 HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest& request) {
@@ -8214,6 +8377,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "GET" && request.path == "/api/forsetti/surface") {
             return jsonResponse(surfaceService_->currentSurface());
         }
+        if (request.method == "GET" && request.path == "/api/forsetti/modules") {
+            return jsonResponse(forsettiModuleCatalog());
+        }
         if (request.method == "GET" && request.path == "/api/install/history") {
             return jsonResponse(installerOrchestrator_->history());
         }
@@ -8348,6 +8514,13 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "POST" && request.path == "/api/providers/execute") {
             const auto result = adminApiService_->executeProviderTaskJson(request.body);
             return jsonResponse(result, result.status == ProviderExecutionStatus::Succeeded ? 200 : 400);
+        }
+        if (request.method == "POST" && request.path == "/api/forsetti/modules/state") {
+            const auto payload = request.body.empty() ? nlohmann::json::object() : nlohmann::json::parse(request.body);
+            const auto result = manageForsettiModule(
+                payload.value("moduleId", std::string{}),
+                payload.value("action", std::string{}));
+            return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         if (request.method == "POST" && request.path == "/api/clu/execute") {
             const auto result = adminApiService_->executeGovernanceToolJson(request.body);

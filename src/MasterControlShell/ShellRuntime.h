@@ -218,6 +218,27 @@ struct ShellAppleOperationRecord final {
     std::wstring rerunReadinessMessage;
 };
 
+struct ShellForsettiModule final {
+    std::wstring moduleId;
+    std::wstring displayName;
+    std::wstring moduleType;
+    std::wstring version;
+    std::wstring entryPoint;
+    std::vector<std::wstring> supportedPlatforms;
+    std::vector<std::wstring> capabilitiesRequested;
+    bool active = false;
+    bool unlocked = false;
+    bool protectedModule = false;
+    std::wstring recommendedAction;
+    std::wstring statusSummary;
+};
+
+struct ShellForsettiModuleCatalogResult final {
+    bool succeeded = false;
+    std::wstring message;
+    std::vector<ShellForsettiModule> modules;
+};
+
 struct ShellOperationResult final {
     bool succeeded = false;
     bool requiresConfirmation = false;
@@ -406,6 +427,9 @@ public:
     [[nodiscard]] ShellOperationResult UpsertSubAgentGroup(const ShellSubAgentGroupDefinition& group) const;
     [[nodiscard]] ShellOperationResult RemoveSubAgentGroup(const std::wstring& groupId) const;
     [[nodiscard]] ShellOperationResult UpsertProviderAssignment(const ShellProviderAssignment& assignment) const;
+    [[nodiscard]] ShellForsettiModuleCatalogResult FetchForsettiModules() const;
+    [[nodiscard]] ShellOperationResult ManageForsettiModule(const std::wstring& moduleId,
+                                                           const std::wstring& action) const;
     [[nodiscard]] ShellProviderExecutionRecord ExecuteProviderTask(const ShellProviderExecutionRequest& request) const;
     [[nodiscard]] ShellOperationResult ExecuteGovernanceTool(const std::wstring& platform,
                                                             const std::wstring& toolId,

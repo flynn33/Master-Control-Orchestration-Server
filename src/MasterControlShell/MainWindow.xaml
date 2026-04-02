@@ -136,6 +136,7 @@
                                                     <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
                                                 </Grid.RowDefinitions>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*" />
@@ -143,18 +144,20 @@
                                                     <ColumnDefinition Width="*" />
                                                 </Grid.ColumnDefinitions>
 
-                                                <Button x:Name="GuidedProviderWizardButton" Click="GuidedProviderWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Provider" />
+                                                <Button x:Name="GuidedProviderWizardButton" Click="GuidedProviderWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Connect AI Model" />
                                                 <Button x:Name="GuidedMcpWizardButton" Grid.Column="1" Click="GuidedMcpWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New MCP Server" />
                                                 <Button x:Name="GuidedSubAgentWizardButton" Grid.Column="2" Click="GuidedSubAgentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent" />
-                                                <Button x:Name="GuidedAppleHostWizardButton" Grid.Row="1" Click="GuidedAppleHostWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Apple Host" />
-                                                <Button x:Name="GuidedProviderAssignmentWizardButton" Grid.Row="1" Grid.Column="1" Click="GuidedProviderAssignmentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Assign Provider" />
-                                                <Button x:Name="GuidedImportWizardButton" Grid.Row="1" Grid.Column="2" Click="GuidedImportWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Guided Import" />
+                                                <Button x:Name="GuidedSubAgentGroupWizardButton" Grid.Row="1" Click="GuidedSubAgentGroupWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent Group" />
+                                                <Button x:Name="GuidedAppleHostWizardButton" Grid.Row="1" Grid.Column="1" Click="GuidedAppleHostWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Apple Host" />
+                                                <Button x:Name="GuidedProviderAssignmentWizardButton" Grid.Row="1" Grid.Column="2" Click="GuidedProviderAssignmentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Assign Responsibility" />
+                                                <Button x:Name="GuidedForsettiModuleWizardButton" Grid.Row="2" Click="GuidedForsettiModuleWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Forsetti Modules" />
+                                                <Button x:Name="GuidedImportWizardButton" Grid.Row="2" Grid.Column="1" Click="GuidedImportWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Guided Import" />
 
-                                                <Border Grid.Row="2" Grid.ColumnSpan="3" Padding="12,10" Background="#1200F6FF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="14">
+                                                <Border Grid.Row="3" Grid.ColumnSpan="3" Padding="12,10" Background="#1200F6FF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="14">
                                                     <TextBlock
                                                         x:Name="GuidedWorkflowStatusText"
                                                         Style="{StaticResource ShellLabelTextStyle}"
-                                                        Text="Use guided setup to create provider routes, Apple hosts, MCP servers, imports, assignments, and specialist lanes without digging through raw admin forms."
+                                                        Text="Use guided setup to connect models, assign orchestration responsibilities, deploy MCP and sub-agent lanes, and manage Forsetti modules without digging through raw admin forms."
                                                         TextWrapping="WrapWholeWords" />
                                                 </Border>
                                             </Grid>

@@ -101,6 +101,23 @@ std::string narrowFromWide(const std::wstring& input) {
     return output;
 }
 
+std::wstring trimWideCopy(std::wstring value) {
+    value.erase(
+        value.begin(),
+        std::find_if(
+            value.begin(),
+            value.end(),
+            [](wchar_t character) { return iswspace(character) == 0; }));
+    value.erase(
+        std::find_if(
+            value.rbegin(),
+            value.rend(),
+            [](wchar_t character) { return iswspace(character) == 0; })
+            .base(),
+        value.end());
+    return value;
+}
+
 std::string jsonStringOr(const JsonObject& object, const wchar_t* key, const std::string& fallback = {}) {
     if (!object.HasKey(key)) {
         return fallback;
@@ -1253,6 +1270,75 @@ std::wstring governanceExecutionRow(const JsonObject& object) {
     return stream.str();
 }
 
+ShellForsettiModule forsettiModuleFromJson(const JsonObject& object) {
+    ShellForsettiModule module;
+    module.moduleId = wideFromUtf8(jsonStringOr(object, L"moduleId", ""));
+    module.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
+    module.moduleType = wideFromUtf8(jsonStringOr(object, L"moduleType", "service"));
+    module.version = wideFromUtf8(jsonStringOr(object, L"version", "0.0.0"));
+    module.entryPoint = wideFromUtf8(jsonStringOr(object, L"entryPoint", ""));
+    module.supportedPlatforms = jsonStringArrayOr(object, L"supportedPlatforms");
+    module.capabilitiesRequested = jsonStringArrayOr(object, L"capabilitiesRequested");
+    module.active = jsonBoolOr(object, L"active");
+    module.unlocked = jsonBoolOr(object, L"unlocked");
+    module.protectedModule = jsonBoolOr(object, L"protectedModule");
+    module.recommendedAction = wideFromUtf8(jsonStringOr(object, L"recommendedAction", ""));
+    module.statusSummary = wideFromUtf8(jsonStringOr(object, L"statusSummary", ""));
+    return module;
+}
+
+ShellForsettiModuleCatalogResult fetchForsettiModulesFromAdminApi(const std::filesystem::path& configurationFile) {
+    std::wstring errorMessage;
+    const auto [host, port] = adminApiEndpoint(configurationFile);
+    const auto response = httpGet(host, port, L"/api/forsetti/modules", errorMessage);
+    if (!response.has_value()) {
+        return ShellForsettiModuleCatalogResult{
+            false,
+            errorMessage.empty() ? L"Unable to load the Forsetti module catalog from the local admin API." : errorMessage,
+            {}
+        };
+    }
+    if (response->statusCode != 200) {
+        return ShellForsettiModuleCatalogResult{
+            false,
+            L"Local admin API rejected the Forsetti module catalog request.",
+            {}
+        };
+    }
+
+    const auto json = parseJsonObject(response->body);
+    if (!json.has_value()) {
+        return ShellForsettiModuleCatalogResult{
+            false,
+            L"Local admin API returned invalid Forsetti module JSON.",
+            {}
+        };
+    }
+
+    ShellForsettiModuleCatalogResult result;
+    result.succeeded = jsonBoolOr(*json, L"succeeded", true);
+    result.message = wideFromUtf8(jsonStringOr(*json, L"message", "Forsetti module catalog loaded."));
+    const auto modules = json->GetNamedArray(L"modules", JsonArray());
+    for (const auto& value : modules) {
+        if (value.ValueType() == JsonValueType::Object) {
+            result.modules.push_back(forsettiModuleFromJson(value.GetObject()));
+        }
+    }
+    if (result.message.empty()) {
+        result.message = result.succeeded
+            ? L"Forsetti module catalog loaded."
+            : L"Forsetti module catalog is unavailable.";
+    }
+    return result;
+}
+
+JsonObject forsettiModuleActionToJson(const std::wstring& moduleId, const std::wstring& action) {
+    JsonObject payload;
+    payload.SetNamedValue(L"moduleId", JsonValue::CreateStringValue(moduleId));
+    payload.SetNamedValue(L"action", JsonValue::CreateStringValue(action));
+    return payload;
+}
+
 void openPathInExplorer(const std::filesystem::path& path) {
     if (std::filesystem::is_regular_file(path)) {
         std::wstring arguments = L"/select,\"" + path.wstring() + L"\"";
@@ -2276,6 +2362,27 @@ ShellOperationResult ShellRuntime::UpsertProviderAssignment(const ShellProviderA
         L"/api/providers/assignments",
         providerAssignmentToJson(assignment),
         L"Unable to update provider ownership through the local admin API.");
+}
+
+ShellForsettiModuleCatalogResult ShellRuntime::FetchForsettiModules() const {
+    return fetchForsettiModulesFromAdminApi(ResolveConfigurationFile());
+}
+
+ShellOperationResult ShellRuntime::ManageForsettiModule(const std::wstring& moduleId, const std::wstring& action) const {
+    if (moduleId.empty()) {
+        return ShellOperationResult{ false, false, L"Select a Forsetti module before applying a module action." };
+    }
+
+    const auto normalizedAction = trimWideCopy(action);
+    if (normalizedAction.empty()) {
+        return ShellOperationResult{ false, false, L"Select a Forsetti module action before continuing." };
+    }
+
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/forsetti/modules/state",
+        forsettiModuleActionToJson(moduleId, normalizedAction),
+        L"Unable to update the Forsetti module state through the local admin API.");
 }
 
 ShellProviderExecutionRecord ShellRuntime::ExecuteProviderTask(const ShellProviderExecutionRequest& request) const {

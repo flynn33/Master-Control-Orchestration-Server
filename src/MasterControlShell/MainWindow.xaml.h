@@ -27,8 +27,10 @@ struct MainWindow : MainWindowT<MainWindow> {
     void GuidedProviderWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void GuidedMcpWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void GuidedSubAgentWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void GuidedSubAgentGroupWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void GuidedAppleHostWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void GuidedProviderAssignmentWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void GuidedForsettiModuleWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void GuidedImportWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void SurfaceToolbarButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
 
@@ -42,6 +44,7 @@ private:
     void ApplySurfaceToolbar(const ::MasterControlShell::ShellSnapshot& snapshot);
     void ApplySectionMetadata(const ::MasterControlShell::ShellSnapshot& snapshot);
     void ApplyCachedSectionSnapshots(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void StartGuidedWorkflow(std::wstring const& workflowId);
     Microsoft::UI::Xaml::FrameworkElement ResolvePrimaryViewForDestination(
         std::wstring const& destinationId,
         const ::MasterControlShell::ShellSnapshot& snapshot);
@@ -57,8 +60,10 @@ private:
     winrt::Windows::Foundation::IAsyncAction ShowProviderWizardAsync();
     winrt::Windows::Foundation::IAsyncAction ShowMcpServerWizardAsync();
     winrt::Windows::Foundation::IAsyncAction ShowSubAgentWizardAsync();
+    winrt::Windows::Foundation::IAsyncAction ShowSubAgentGroupWizardAsync();
     winrt::Windows::Foundation::IAsyncAction ShowAppleHostWizardAsync();
     winrt::Windows::Foundation::IAsyncAction ShowProviderAssignmentWizardAsync();
+    winrt::Windows::Foundation::IAsyncAction ShowForsettiModuleWizardAsync();
     winrt::Windows::Foundation::IAsyncAction ShowImportWizardAsync();
     winrt::Windows::Foundation::IAsyncAction OpenOverlayRouteAsync(std::wstring routeId);
     winrt::Windows::Foundation::IAsyncAction ShowDialogAsync(winrt::hstring const& title, winrt::hstring const& message);

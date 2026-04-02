@@ -80,9 +80,11 @@ CommandLogicUnitSectionControl::CommandLogicUnitSectionControl() {
 }
 
 void CommandLogicUnitSectionControl::AttachRuntime(::MasterControlShell::ShellRuntime* runtime,
-                                                   std::function<void()> refreshRequested) {
+                                                   std::function<void()> refreshRequested,
+                                                   std::function<void(const std::wstring&)> actionRequested) {
     runtime_ = runtime;
     refreshRequested_ = std::move(refreshRequested);
+    actionRequested_ = std::move(actionRequested);
     UpdateOperationState();
 }
 
@@ -97,6 +99,12 @@ void CommandLogicUnitSectionControl::ApplySnapshot(const ::MasterControlShell::S
     CluGatewayCountText().Text(winrt::hstring(std::to_wstring(snapshot.platformGatewayCount)));
     CluGovernanceServerCountText().Text(winrt::hstring(std::to_wstring(snapshot.governanceServerCount)));
     CluEvaluatedText().Text(winrt::hstring(L"Last evaluated: " + snapshot.governanceLastEvaluatedUtc));
+    CluActionSummaryText().Text(winrt::hstring(
+        L"Connected models " + std::to_wstring(snapshot.providers.size()) +
+        L" | Responsibility lanes " + std::to_wstring(snapshot.providerAssignments.size()) +
+        L" | Sub-agent groups " + std::to_wstring(snapshot.subAgentGroups.size()) +
+        L" | MCP lanes " + std::to_wstring(snapshot.endpoints.size()) +
+        L" | Forsetti actions available from CLU quick controls."));
     CluNarrativeText().Text(winrt::hstring(snapshot.governanceNarrative));
     CluDoctrineText().Text(winrt::hstring(snapshot.governanceDoctrine));
 
@@ -114,6 +122,28 @@ void CommandLogicUnitSectionControl::ApplySnapshot(const ::MasterControlShell::S
     RefreshAppleOperationList();
     RefreshAppleOperationSelector();
     UpdateOperationState();
+}
+
+void CommandLogicUnitSectionControl::CluQuickActionButton_Click(
+    Windows::Foundation::IInspectable const& sender,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    const auto button = sender.try_as<Microsoft::UI::Xaml::Controls::Button>();
+    if (button == nullptr) {
+        return;
+    }
+
+    if (!actionRequested_) {
+        AppleOperationStatusText().Text(L"CLU guided actions are not attached to the shell yet.");
+        return;
+    }
+
+    const auto workflowId = std::wstring(winrt::unbox_value_or<winrt::hstring>(button.Tag(), winrt::hstring()).c_str());
+    if (workflowId.empty()) {
+        AppleOperationStatusText().Text(L"CLU could not resolve the selected guided action.");
+        return;
+    }
+
+    actionRequested_(workflowId);
 }
 
 void CommandLogicUnitSectionControl::AppleOperationFilterSelector_SelectionChanged(

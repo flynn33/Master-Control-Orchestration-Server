@@ -15,8 +15,11 @@ struct CommandLogicUnitSectionControl : CommandLogicUnitSectionControlT<CommandL
     CommandLogicUnitSectionControl();
 
     void AttachRuntime(::MasterControlShell::ShellRuntime* runtime,
-                       std::function<void()> refreshRequested);
+                       std::function<void()> refreshRequested,
+                       std::function<void(const std::wstring&)> actionRequested);
     void ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void CluQuickActionButton_Click(Windows::Foundation::IInspectable const&,
+                                    Microsoft::UI::Xaml::RoutedEventArgs const&);
     void AppleOperationFilterSelector_SelectionChanged(Windows::Foundation::IInspectable const&,
                                                        Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
     void AppleOperationSelector_SelectionChanged(Windows::Foundation::IInspectable const&,
@@ -36,6 +39,7 @@ private:
 
     ::MasterControlShell::ShellRuntime* runtime_ = nullptr;
     std::function<void()> refreshRequested_;
+    std::function<void(const std::wstring&)> actionRequested_;
     std::vector<::MasterControlShell::ShellAppleOperationRecord> appleOperations_;
     std::wstring selectedAppleOperationId_;
     std::wstring selectedAppleOperationFilter_ = L"attention";

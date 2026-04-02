@@ -113,6 +113,17 @@ std::wstring trimCopy(const std::wstring& value) {
     return std::wstring(begin, end);
 }
 
+std::wstring joinValues(const std::vector<std::wstring>& values, const wchar_t* separator = L", ") {
+    std::wstring result;
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (index > 0) {
+            result += separator;
+        }
+        result += values[index];
+    }
+    return result;
+}
+
 void setElementVisibility(const UIElement& element, const bool visible) {
     element.Visibility(visible ? Visibility::Visible : Visibility::Collapsed);
 }
@@ -187,7 +198,7 @@ SectionMetadata metadataForDestination(const std::wstring& destinationId, const 
         return { L"RUNTIME", title, L"Inspect MCP runtime lanes, platform gateway inventory, Apple remote hosts, and the current operational map exposed by the service." };
     }
     if (destinationId == kCluDestination) {
-        return { L"CLU", title, L"Inspect the Command Logic Unit governance profile, Apple production operations, and operator-visible control rules." };
+        return { L"CLU", title, L"Inspect the Command Logic Unit governance profile, launch guided setup wizards, and manage Apple production operations plus operator-visible control rules." };
     }
     if (destinationId == kProvidersDestination) {
         return { L"PROVIDERS", title, L"Review provider adapters, autonomous control posture, and the current agent service envelope." };
@@ -325,7 +336,8 @@ void applyBadge(const Border& border,
 void attachInteractiveRuntime(const FrameworkElement& view,
                               const std::wstring& viewId,
                               ::MasterControlShell::ShellRuntime& runtime,
-                              std::function<void()> refreshRequested) {
+                              std::function<void()> refreshRequested,
+                              std::function<void(const std::wstring&)> actionRequested) {
     if (viewId == kRuntimeView) {
         const auto typed = view.as<winrt::MasterControlShell::RuntimeSectionControl>();
         winrt::get_self<winrt::MasterControlShell::implementation::RuntimeSectionControl>(typed)->AttachRuntime(&runtime, std::move(refreshRequested));
@@ -333,7 +345,10 @@ void attachInteractiveRuntime(const FrameworkElement& view,
     }
     if (viewId == kCluView) {
         const auto typed = view.as<winrt::MasterControlShell::CommandLogicUnitSectionControl>();
-        winrt::get_self<winrt::MasterControlShell::implementation::CommandLogicUnitSectionControl>(typed)->AttachRuntime(&runtime, std::move(refreshRequested));
+        winrt::get_self<winrt::MasterControlShell::implementation::CommandLogicUnitSectionControl>(typed)->AttachRuntime(
+            &runtime,
+            std::move(refreshRequested),
+            std::move(actionRequested));
         return;
     }
     if (viewId == kProvidersView) {
@@ -478,33 +493,61 @@ void MainWindow::OpenDataButton_Click(IInspectable const&, RoutedEventArgs const
 }
 
 void MainWindow::GuidedProviderWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
-    auto ignored = ShowProviderWizardAsync();
-    (void)ignored;
+    StartGuidedWorkflow(L"connect-model");
 }
 
 void MainWindow::GuidedMcpWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
-    auto ignored = ShowMcpServerWizardAsync();
-    (void)ignored;
+    StartGuidedWorkflow(L"new-mcp");
 }
 
 void MainWindow::GuidedSubAgentWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
-    auto ignored = ShowSubAgentWizardAsync();
-    (void)ignored;
+    StartGuidedWorkflow(L"new-subagent");
+}
+
+void MainWindow::GuidedSubAgentGroupWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
+    StartGuidedWorkflow(L"new-subagent-group");
 }
 
 void MainWindow::GuidedAppleHostWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
-    auto ignored = ShowAppleHostWizardAsync();
-    (void)ignored;
+    StartGuidedWorkflow(L"new-apple-host");
 }
 
 void MainWindow::GuidedProviderAssignmentWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
-    auto ignored = ShowProviderAssignmentWizardAsync();
-    (void)ignored;
+    StartGuidedWorkflow(L"assign-responsibility");
+}
+
+void MainWindow::GuidedForsettiModuleWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
+    StartGuidedWorkflow(L"manage-forsetti-modules");
 }
 
 void MainWindow::GuidedImportWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
-    auto ignored = ShowImportWizardAsync();
-    (void)ignored;
+    StartGuidedWorkflow(L"guided-import");
+}
+
+void MainWindow::StartGuidedWorkflow(std::wstring const& workflowId) {
+    IAsyncAction action{ nullptr };
+    if (workflowId == L"connect-model") {
+        action = ShowProviderWizardAsync();
+    } else if (workflowId == L"new-mcp") {
+        action = ShowMcpServerWizardAsync();
+    } else if (workflowId == L"new-subagent") {
+        action = ShowSubAgentWizardAsync();
+    } else if (workflowId == L"new-subagent-group") {
+        action = ShowSubAgentGroupWizardAsync();
+    } else if (workflowId == L"new-apple-host") {
+        action = ShowAppleHostWizardAsync();
+    } else if (workflowId == L"assign-responsibility") {
+        action = ShowProviderAssignmentWizardAsync();
+    } else if (workflowId == L"manage-forsetti-modules") {
+        action = ShowForsettiModuleWizardAsync();
+    } else if (workflowId == L"guided-import") {
+        action = ShowImportWizardAsync();
+    } else {
+        UpdateStatusBar(winrt::hstring(std::wstring(L"Unknown guided workflow request: ") + workflowId), InfoBarSeverity::Warning);
+        return;
+    }
+
+    (void)action;
 }
 
 void MainWindow::SurfaceToolbarButton_Click(IInspectable const& sender, RoutedEventArgs const&) {
@@ -760,6 +803,11 @@ FrameworkElement MainWindow::CreateViewForViewId(const std::wstring& viewId, con
             [weakThis]() {
                 if (const auto self = weakThis.get()) {
                     self->RefreshAsync();
+                }
+            },
+            [weakThis](const std::wstring& workflowId) {
+                if (const auto self = weakThis.get()) {
+                    self->StartGuidedWorkflow(workflowId);
                 }
             });
     }
@@ -1167,6 +1215,169 @@ IAsyncAction MainWindow::ShowSubAgentWizardAsync() {
     co_await dialog.ShowAsync();
 }
 
+IAsyncAction MainWindow::ShowSubAgentGroupWizardAsync() {
+    ContentDialog dialog;
+    dialog.Title(box_value(L"New Sub-Agent Group Wizard"));
+    dialog.CloseButtonText(L"Close");
+    dialog.XamlRoot(RootGrid().XamlRoot());
+
+    ScrollViewer scrollViewer;
+    scrollViewer.HorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
+    scrollViewer.VerticalScrollBarVisibility(ScrollBarVisibility::Auto);
+    scrollViewer.MaxHeight(640);
+
+    StackPanel root;
+    root.Spacing(14);
+    root.Width(560);
+
+    TextBlock intro;
+    intro.Style(Application::Current().Resources().Lookup(box_value(L"ShellBodyTextStyle")).try_as<Style>());
+    intro.Text(L"Step 1: name the specialist group. Step 2: explain what this group is responsible for. Step 3: select the sub-agent members that should work together when CLU routes multi-model execution.");
+    intro.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(intro);
+
+    const auto addLabel = [&root](std::wstring const& text) {
+        TextBlock label;
+        label.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+        label.Text(winrt::hstring(text));
+        root.Children().Append(label);
+    };
+
+    TextBox idBox;
+    idBox.PlaceholderText(L"coding-squad");
+    root.Children().Append([&]() {
+        addLabel(L"Step 1. Group ID");
+        return idBox;
+    }());
+
+    TextBox displayNameBox;
+    displayNameBox.PlaceholderText(L"Coding Squad");
+    root.Children().Append([&]() {
+        addLabel(L"Display Name");
+        return displayNameBox;
+    }());
+
+    TextBox descriptionBox;
+    descriptionBox.AcceptsReturn(true);
+    descriptionBox.Height(96);
+    descriptionBox.TextWrapping(TextWrapping::Wrap);
+    descriptionBox.PlaceholderText(L"Describe the work this group owns, such as coding, review, test automation, or release packaging.");
+    root.Children().Append([&]() {
+        addLabel(L"Step 2. Responsibility Summary");
+        return descriptionBox;
+    }());
+
+    ListBox memberSelector;
+    memberSelector.SelectionMode(Microsoft::UI::Xaml::Controls::SelectionMode::Multiple);
+    memberSelector.MaxHeight(220);
+    memberSelector.BorderThickness(Thickness{ 1.0, 1.0, 1.0, 1.0 });
+    memberSelector.BorderBrush(Application::Current().Resources().Lookup(box_value(L"ShellTileEdgeBrush")).try_as<Brush>());
+    memberSelector.Background(Application::Current().Resources().Lookup(box_value(L"ShellPanelDeepBrush")).try_as<Brush>());
+
+    size_t eligibleMemberCount = 0;
+    for (const auto& target : currentSnapshot_.providerAssignmentTargets) {
+        const auto normalizedKind = uppercase(target.kind);
+        if (normalizedKind.find(L"SUB") == std::wstring::npos) {
+            continue;
+        }
+
+        Microsoft::UI::Xaml::Controls::ListBoxItem item;
+        std::wstring label = target.displayName.empty() ? target.targetId : target.displayName;
+        if (!target.description.empty()) {
+            label += L"  |  " + target.description;
+        } else if (!target.kind.empty()) {
+            label += L"  |  " + target.kind;
+        }
+        item.Content(box_value(winrt::hstring(label)));
+        item.Tag(box_value(winrt::hstring(target.targetId)));
+        memberSelector.Items().Append(item);
+        ++eligibleMemberCount;
+    }
+
+    root.Children().Append([&]() {
+        addLabel(L"Step 3. Sub-Agent Members");
+        return memberSelector;
+    }());
+
+    TextBlock memberHintText;
+    memberHintText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
+    memberHintText.TextWrapping(TextWrapping::WrapWholeWords);
+    memberHintText.Text(
+        eligibleMemberCount == 0
+            ? L"Create sub-agents first, then come back here to group them for shared responsibility routing."
+            : L"Select the sub-agents that belong in this group. You can save the group first and refine membership later.");
+    root.Children().Append(memberHintText);
+
+    TextBlock statusText;
+    statusText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
+    statusText.Text(L"Use groups to make provider responsibilities obvious, such as routing planning to one model and coding to a mixed specialist squad.");
+    statusText.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(statusText);
+
+    Button createButton;
+    createButton.Content(box_value(L"Create Sub-Agent Group"));
+    createButton.Style(Application::Current().Resources().Lookup(box_value(L"ShellCommandButtonStyle")).try_as<Style>());
+    root.Children().Append(createButton);
+
+    scrollViewer.Content(root);
+    dialog.Content(scrollViewer);
+
+    createButton.Click([this, dialog, createButton, statusText, idBox, displayNameBox, descriptionBox, memberSelector](IInspectable const&, RoutedEventArgs const&) {
+        auto ignored = [this, dialog, createButton, statusText, idBox, displayNameBox, descriptionBox, memberSelector]() -> IAsyncAction {
+            const auto id = trimCopy(std::wstring(idBox.Text().c_str()));
+            const auto displayName = trimCopy(std::wstring(displayNameBox.Text().c_str()));
+            const auto description = trimCopy(std::wstring(descriptionBox.Text().c_str()));
+            if (id.empty() || displayName.empty()) {
+                statusText.Text(L"Group ID and display name are required.");
+                co_return;
+            }
+
+            std::vector<std::wstring> members;
+            members.reserve(memberSelector.SelectedItems().Size());
+            for (const auto& selected : memberSelector.SelectedItems()) {
+                const auto item = selected.try_as<Microsoft::UI::Xaml::Controls::ListBoxItem>();
+                if (item == nullptr) {
+                    continue;
+                }
+                const auto targetId = trimCopy(std::wstring(winrt::unbox_value_or<hstring>(item.Tag(), hstring()).c_str()));
+                if (!targetId.empty()) {
+                    members.push_back(targetId);
+                }
+            }
+
+            createButton.IsEnabled(false);
+            statusText.Text(L"Saving the sub-agent group through the local admin API.");
+
+            ::MasterControlShell::ShellSubAgentGroupDefinition group;
+            group.groupId = id;
+            group.displayName = displayName;
+            group.description = description;
+            group.memberTargetIds = std::move(members);
+
+            winrt::apartment_context uiThread;
+            co_await winrt::resume_background();
+            const auto result = runtime_.UpsertSubAgentGroup(group);
+            co_await uiThread;
+
+            statusText.Text(winrt::hstring(result.message));
+            if (!result.succeeded) {
+                createButton.IsEnabled(true);
+                GuidedWorkflowStatusText().Text(L"Sub-agent group wizard needs attention. Review the wizard message and try again.");
+                co_return;
+            }
+
+            GuidedWorkflowStatusText().Text(winrt::hstring(L"Created sub-agent group '" + displayName + L"' for CLU routing and model responsibility mapping."));
+            SetCurrentDestination(kProvidersDestination);
+            auto refreshIgnored = RefreshAsync();
+            (void)refreshIgnored;
+            dialog.Hide();
+        }();
+        (void)ignored;
+    });
+
+    co_await dialog.ShowAsync();
+}
+
 IAsyncAction MainWindow::ShowMcpServerWizardAsync() {
     ContentDialog dialog;
     dialog.Title(box_value(L"New MCP Server Wizard"));
@@ -1357,7 +1568,7 @@ IAsyncAction MainWindow::ShowMcpServerWizardAsync() {
 
 IAsyncAction MainWindow::ShowProviderWizardAsync() {
     ContentDialog dialog;
-    dialog.Title(box_value(L"New Provider Wizard"));
+    dialog.Title(box_value(L"Connect AI Model Wizard"));
     dialog.CloseButtonText(L"Close");
     dialog.XamlRoot(RootGrid().XamlRoot());
 
@@ -1372,7 +1583,7 @@ IAsyncAction MainWindow::ShowProviderWizardAsync() {
 
     TextBlock intro;
     intro.Style(Application::Current().Resources().Lookup(box_value(L"ShellBodyTextStyle")).try_as<Style>());
-    intro.Text(L"Step 1: pick the provider module. Step 2: confirm the route identity and defaults. Step 3: add credentials and optionally assign the route to an orchestration lane.");
+    intro.Text(L"Step 1: choose the AI model connector. Step 2: confirm the route identity and defaults. Step 3: add credentials and optionally assign that model to a planning, coding, or specialist responsibility lane.");
     intro.TextWrapping(TextWrapping::WrapWholeWords);
     root.Children().Append(intro);
 
@@ -1394,7 +1605,7 @@ IAsyncAction MainWindow::ShowProviderWizardAsync() {
         capabilitySelector.SelectedIndex(0);
     }
     root.Children().Append([&]() {
-        addLabel(L"Step 1. Provider Module");
+        addLabel(L"Step 1. AI Model Connector");
         return capabilitySelector;
     }());
 
@@ -1452,7 +1663,7 @@ IAsyncAction MainWindow::ShowProviderWizardAsync() {
     }
     assignmentSelector.SelectedIndex(0);
     root.Children().Append([&]() {
-        addLabel(L"Step 3. Assign this route to");
+        addLabel(L"Step 3. Assign this model to");
         return assignmentSelector;
     }());
 
@@ -1485,12 +1696,12 @@ IAsyncAction MainWindow::ShowProviderWizardAsync() {
 
     TextBlock statusText;
     statusText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
-    statusText.Text(L"Start with the provider module, then fill in only the route details you need for a working setup.");
+    statusText.Text(L"Connect one or more model routes here, then let CLU and provider assignments split planning, coding, review, and specialist work between them.");
     statusText.TextWrapping(TextWrapping::WrapWholeWords);
     root.Children().Append(statusText);
 
     Button createButton;
-    createButton.Content(box_value(L"Create Provider Route"));
+    createButton.Content(box_value(L"Connect AI Model"));
     createButton.Style(Application::Current().Resources().Lookup(box_value(L"ShellCommandButtonStyle")).try_as<Style>());
     root.Children().Append(createButton);
 
@@ -1616,7 +1827,7 @@ IAsyncAction MainWindow::ShowProviderWizardAsync() {
             }
 
             createButton.IsEnabled(false);
-            statusText.Text(L"Creating the provider route through the local admin API.");
+            statusText.Text(L"Connecting the AI model route through the local admin API.");
 
             winrt::apartment_context uiThread;
             co_await winrt::resume_background();
@@ -1625,7 +1836,7 @@ IAsyncAction MainWindow::ShowProviderWizardAsync() {
                 co_await uiThread;
                 statusText.Text(winrt::hstring(providerResult.message));
                 createButton.IsEnabled(true);
-                GuidedWorkflowStatusText().Text(L"Provider wizard needs attention. Review the wizard message and try again.");
+                GuidedWorkflowStatusText().Text(L"AI model connection wizard needs attention. Review the wizard message and try again.");
                 co_return;
             }
 
@@ -1635,7 +1846,7 @@ IAsyncAction MainWindow::ShowProviderWizardAsync() {
                     co_await uiThread;
                     statusText.Text(winrt::hstring(credentialsResult.message));
                     createButton.IsEnabled(true);
-                    GuidedWorkflowStatusText().Text(L"Provider route was created, but credential setup still needs attention.");
+                    GuidedWorkflowStatusText().Text(L"AI model route was connected, but credential setup still needs attention.");
                     co_return;
                 }
             }
@@ -1646,13 +1857,13 @@ IAsyncAction MainWindow::ShowProviderWizardAsync() {
                     co_await uiThread;
                     statusText.Text(winrt::hstring(assignmentResult.message));
                     createButton.IsEnabled(true);
-                    GuidedWorkflowStatusText().Text(L"Provider route was created, but assignment still needs attention.");
+                    GuidedWorkflowStatusText().Text(L"AI model route was connected, but responsibility assignment still needs attention.");
                     co_return;
                 }
             }
             co_await uiThread;
 
-            GuidedWorkflowStatusText().Text(winrt::hstring(L"Created provider route '" + displayName + L"'."));
+            GuidedWorkflowStatusText().Text(winrt::hstring(L"Connected AI model route '" + displayName + L"'."));
             SetCurrentDestination(kProvidersDestination);
             auto refreshIgnored = RefreshAsync();
             (void)refreshIgnored;
@@ -2005,7 +2216,7 @@ IAsyncAction MainWindow::ShowAppleHostWizardAsync() {
 
 IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
     ContentDialog dialog;
-    dialog.Title(box_value(L"Provider Assignment Wizard"));
+    dialog.Title(box_value(L"Assign Responsibility Wizard"));
     dialog.CloseButtonText(L"Close");
     dialog.XamlRoot(RootGrid().XamlRoot());
 
@@ -2020,7 +2231,7 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
 
     TextBlock intro;
     intro.Style(Application::Current().Resources().Lookup(box_value(L"ShellBodyTextStyle")).try_as<Style>());
-    intro.Text(L"Step 1: choose the provider route. Step 2: choose the orchestration lane that should own it. Step 3: save the assignment so CLU and provider execution agree on routing.");
+    intro.Text(L"Step 1: choose the connected AI model. Step 2: choose the planning, coding, review, or specialist lane that should own it. Step 3: save the responsibility mapping so CLU and provider execution agree on routing.");
     intro.TextWrapping(TextWrapping::WrapWholeWords);
     root.Children().Append(intro);
 
@@ -2042,7 +2253,7 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
         providerSelector.SelectedIndex(0);
     }
     root.Children().Append([&]() {
-        addLabel(L"Step 1. Provider Route");
+        addLabel(L"Step 1. Connected AI Model");
         return providerSelector;
     }());
 
@@ -2061,7 +2272,7 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
         targetSelector.SelectedIndex(0);
     }
     root.Children().Append([&]() {
-        addLabel(L"Step 2. Orchestration Target");
+        addLabel(L"Step 2. Responsibility Lane");
         return targetSelector;
     }());
 
@@ -2072,12 +2283,12 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
 
     TextBlock statusText;
     statusText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
-    statusText.Text(L"Use this wizard when you want a role, specialist group, or sub-agent lane to take ownership of a provider.");
+    statusText.Text(L"Use this wizard when you want ChatGPT on planning, Claude Code on coding, or any other model-to-responsibility split across CLU lanes.");
     statusText.TextWrapping(TextWrapping::WrapWholeWords);
     root.Children().Append(statusText);
 
     Button createButton;
-    createButton.Content(box_value(L"Save Assignment"));
+    createButton.Content(box_value(L"Assign Responsibility"));
     createButton.Style(Application::Current().Resources().Lookup(box_value(L"ShellCommandButtonStyle")).try_as<Style>());
     root.Children().Append(createButton);
 
@@ -2090,9 +2301,9 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
 
         const auto& provider = currentSnapshot_.providers[static_cast<size_t>(providerSelector.SelectedIndex())];
         const auto& target = currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(targetSelector.SelectedIndex())];
-        std::wstring summary = L"This will assign ";
+        std::wstring summary = L"This will assign AI model ";
         summary += provider.displayName.empty() ? provider.id : provider.displayName;
-        summary += L" to ";
+        summary += L" to responsibility lane ";
         summary += target.displayName.empty() ? target.targetId : target.displayName;
         if (!target.kind.empty()) {
             summary += L" (" + target.kind + L")";
@@ -2126,7 +2337,7 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
             const auto& target = currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(targetSelector.SelectedIndex())];
 
             createButton.IsEnabled(false);
-            statusText.Text(L"Saving provider ownership through the local admin API.");
+            statusText.Text(L"Saving model responsibility through the local admin API.");
 
             winrt::apartment_context uiThread;
             co_await winrt::resume_background();
@@ -2141,15 +2352,227 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
             statusText.Text(winrt::hstring(result.message));
             if (!result.succeeded) {
                 createButton.IsEnabled(true);
-                GuidedWorkflowStatusText().Text(L"Provider assignment wizard needs attention. Review the message inside the wizard and try again.");
+                GuidedWorkflowStatusText().Text(L"Responsibility assignment wizard needs attention. Review the message inside the wizard and try again.");
                 co_return;
             }
 
-            GuidedWorkflowStatusText().Text(winrt::hstring(L"Assigned provider '" +
+            GuidedWorkflowStatusText().Text(winrt::hstring(L"Assigned AI model '" +
                 (provider.displayName.empty() ? provider.id : provider.displayName) +
                 L"' to " +
                 (target.displayName.empty() ? target.targetId : target.displayName) + L"."));
             SetCurrentDestination(kProvidersDestination);
+            auto refreshIgnored = RefreshAsync();
+            (void)refreshIgnored;
+            dialog.Hide();
+        }();
+        (void)ignored;
+    });
+
+    co_await dialog.ShowAsync();
+}
+
+IAsyncAction MainWindow::ShowForsettiModuleWizardAsync() {
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+    const auto catalog = runtime_.FetchForsettiModules();
+    co_await uiThread;
+
+    if (!catalog.succeeded) {
+        co_await ShowDialogAsync(L"Forsetti Module Wizard", winrt::hstring(catalog.message.empty()
+            ? L"Unable to read the current Forsetti module catalog."
+            : catalog.message));
+        co_return;
+    }
+
+    ContentDialog dialog;
+    dialog.Title(box_value(L"Manage Forsetti Modules"));
+    dialog.CloseButtonText(L"Close");
+    dialog.XamlRoot(RootGrid().XamlRoot());
+
+    ScrollViewer scrollViewer;
+    scrollViewer.HorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
+    scrollViewer.VerticalScrollBarVisibility(ScrollBarVisibility::Auto);
+    scrollViewer.MaxHeight(660);
+
+    StackPanel root;
+    root.Spacing(14);
+    root.Width(580);
+
+    TextBlock intro;
+    intro.Style(Application::Current().Resources().Lookup(box_value(L"ShellBodyTextStyle")).try_as<Style>());
+    intro.Text(L"Step 1: choose the Forsetti module you want to manage. Step 2: review its status, capabilities, and supported platforms. Step 3: install, enable, update, or disable it through the local module runtime.");
+    intro.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(intro);
+
+    const auto addLabel = [&root](std::wstring const& text) {
+        TextBlock label;
+        label.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+        label.Text(winrt::hstring(text));
+        root.Children().Append(label);
+    };
+
+    ComboBox moduleSelector;
+    for (const auto& module : catalog.modules) {
+        ComboBoxItem item;
+        std::wstring label = module.displayName.empty() ? module.moduleId : module.displayName;
+        label += L"  |  ";
+        label += module.statusSummary.empty() ? (module.active ? L"active" : L"inactive") : module.statusSummary;
+        item.Content(box_value(winrt::hstring(label)));
+        item.Tag(box_value(winrt::hstring(module.moduleId)));
+        moduleSelector.Items().Append(item);
+    }
+    if (moduleSelector.Items().Size() > 0) {
+        moduleSelector.SelectedIndex(0);
+    }
+    root.Children().Append([&]() {
+        addLabel(L"Step 1. Forsetti Module");
+        return moduleSelector;
+    }());
+
+    ComboBox actionSelector;
+    const auto appendAction = [&actionSelector](const wchar_t* label, const wchar_t* tag) {
+        ComboBoxItem item;
+        item.Content(box_value(label));
+        item.Tag(box_value(tag));
+        actionSelector.Items().Append(item);
+    };
+    appendAction(L"Install or Enable", L"install");
+    appendAction(L"Update or Reload", L"update");
+    appendAction(L"Disable or Remove", L"disable");
+    actionSelector.SelectedIndex(0);
+    root.Children().Append([&]() {
+        addLabel(L"Step 3. Module Action");
+        return actionSelector;
+    }());
+
+    Border detailCard;
+    detailCard.Background(Application::Current().Resources().Lookup(box_value(L"ShellPanelDeepBrush")).try_as<Brush>());
+    detailCard.BorderBrush(Application::Current().Resources().Lookup(box_value(L"ShellTileEdgeBrush")).try_as<Brush>());
+    detailCard.BorderThickness(Thickness{ 1.0, 1.0, 1.0, 1.0 });
+    detailCard.CornerRadius(CornerRadius{ 16.0, 16.0, 16.0, 16.0 });
+    detailCard.Padding(Thickness{ 16.0, 14.0, 16.0, 14.0 });
+
+    TextBlock detailText;
+    detailText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
+    detailText.TextWrapping(TextWrapping::WrapWholeWords);
+    detailCard.Child(detailText);
+    root.Children().Append([&]() {
+        addLabel(L"Step 2. Module Status");
+        return detailCard;
+    }());
+
+    TextBlock statusText;
+    statusText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
+    statusText.Text(L"Use this wizard when you want to install add-on Forsetti modules, refresh updated modules, or temporarily disable non-core modules.");
+    statusText.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(statusText);
+
+    Button createButton;
+    createButton.Content(box_value(L"Apply Module Action"));
+    createButton.Style(Application::Current().Resources().Lookup(box_value(L"ShellCommandButtonStyle")).try_as<Style>());
+    createButton.IsEnabled(!catalog.modules.empty());
+    root.Children().Append(createButton);
+
+    const auto updateModuleDetails = [&, this]() {
+        const auto index = moduleSelector.SelectedIndex();
+        if (index < 0 || index >= static_cast<int>(catalog.modules.size())) {
+            detailText.Text(L"No Forsetti module is selected.");
+            createButton.IsEnabled(false);
+            return;
+        }
+
+        const auto& module = catalog.modules[static_cast<size_t>(index)];
+        std::wstring details = module.displayName.empty() ? module.moduleId : module.displayName;
+        if (!module.version.empty()) {
+            details += L"\nVersion: " + module.version;
+        }
+        if (!module.moduleType.empty()) {
+            details += L"\nType: " + module.moduleType;
+        }
+        if (!module.entryPoint.empty()) {
+            details += L"\nEntry point: " + module.entryPoint;
+        }
+        details += L"\nStatus: ";
+        details += module.statusSummary.empty() ? (module.active ? L"active" : L"inactive") : module.statusSummary;
+        details += L"\nUnlocked: ";
+        details += module.unlocked ? L"yes" : L"no";
+        details += L"\nProtected: ";
+        details += module.protectedModule ? L"yes" : L"no";
+        if (!module.supportedPlatforms.empty()) {
+            details += L"\nPlatforms: " + joinValues(module.supportedPlatforms);
+        }
+        if (!module.capabilitiesRequested.empty()) {
+            details += L"\nCapabilities: " + joinValues(module.capabilitiesRequested);
+        }
+        if (!module.recommendedAction.empty()) {
+            details += L"\nRecommended action: " + module.recommendedAction;
+        }
+        detailText.Text(winrt::hstring(details));
+
+        const auto recommended = uppercase(module.recommendedAction);
+        if (recommended.find(L"UPDATE") != std::wstring::npos || recommended.find(L"RELOAD") != std::wstring::npos) {
+            actionSelector.SelectedIndex(1);
+        } else if (recommended.find(L"DISABLE") != std::wstring::npos || recommended.find(L"REMOVE") != std::wstring::npos) {
+            actionSelector.SelectedIndex(2);
+        } else {
+            actionSelector.SelectedIndex(0);
+        }
+
+        createButton.IsEnabled(!module.protectedModule || actionSelector.SelectedIndex() != 2);
+    };
+
+    moduleSelector.SelectionChanged([&](IInspectable const&, Controls::SelectionChangedEventArgs const&) {
+        updateModuleDetails();
+    });
+    actionSelector.SelectionChanged([&](IInspectable const&, Controls::SelectionChangedEventArgs const&) {
+        const auto moduleIndex = moduleSelector.SelectedIndex();
+        if (moduleIndex < 0 || moduleIndex >= static_cast<int>(catalog.modules.size())) {
+            createButton.IsEnabled(false);
+            return;
+        }
+        const auto& module = catalog.modules[static_cast<size_t>(moduleIndex)];
+        createButton.IsEnabled(!module.protectedModule || actionSelector.SelectedIndex() != 2);
+    });
+    updateModuleDetails();
+
+    scrollViewer.Content(root);
+    dialog.Content(scrollViewer);
+
+    createButton.Click([this, dialog, createButton, statusText, moduleSelector, actionSelector, catalog](IInspectable const&, RoutedEventArgs const&) {
+        auto ignored = [this, dialog, createButton, statusText, moduleSelector, actionSelector, catalog]() -> IAsyncAction {
+            const auto moduleIndex = moduleSelector.SelectedIndex();
+            if (moduleIndex < 0 || moduleIndex >= static_cast<int>(catalog.modules.size())) {
+                statusText.Text(L"Select a Forsetti module before applying a module action.");
+                co_return;
+            }
+
+            const auto actionItem = actionSelector.SelectedItem().try_as<ComboBoxItem>();
+            const auto action = trimCopy(std::wstring(actionItem == nullptr
+                ? L""
+                : winrt::unbox_value_or<hstring>(actionItem.Tag(), hstring()).c_str()));
+            if (action.empty()) {
+                statusText.Text(L"Choose a Forsetti module action before continuing.");
+                co_return;
+            }
+
+            const auto& module = catalog.modules[static_cast<size_t>(moduleIndex)];
+            createButton.IsEnabled(false);
+            statusText.Text(L"Applying the Forsetti module action through the local admin API.");
+
+            winrt::apartment_context uiThread;
+            co_await winrt::resume_background();
+            const auto result = runtime_.ManageForsettiModule(module.moduleId, action);
+            co_await uiThread;
+
+            statusText.Text(winrt::hstring(result.message));
+            if (!result.succeeded) {
+                createButton.IsEnabled(true);
+                GuidedWorkflowStatusText().Text(L"Forsetti module wizard needs attention. Review the module message and try again.");
+                co_return;
+            }
+
+            GuidedWorkflowStatusText().Text(winrt::hstring(L"Applied '" + action + L"' to Forsetti module '" +
+                (module.displayName.empty() ? module.moduleId : module.displayName) + L"'."));
             auto refreshIgnored = RefreshAsync();
             (void)refreshIgnored;
             dialog.Hide();
