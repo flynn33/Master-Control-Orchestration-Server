@@ -6,7 +6,7 @@ Master Control Orchestration Server is a Forsetti-compliant Windows orchestratio
 
 | Field | Value |
 | --- | --- |
-| Version | `v0.1.52` |
+| Version | `v0.1.53` |
 | Released | `2026-04-02` |
 | Summary | Automated patch release for Master Control Orchestration Server. |
 
