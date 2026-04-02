@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.50",
-  "current_tag": "v0.1.50",
+  "current_version": "0.1.51",
+  "current_tag": "v0.1.51",
   "released_at": "2026-04-02",
-  "last_release_commit": "6d95bf7a6ab7be8ad4b89b4bfd791fb0ee6ac976",
+  "last_release_commit": "98e7851c123c43ecfd9427105d4011fe975ffcfd",
   "history": [
+    {
+      "version": "0.1.51",
+      "tag": "v0.1.51",
+      "released_at": "2026-04-02",
+      "commit": "98e7851c123c43ecfd9427105d4011fe975ffcfd",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Add guided CLU setup and Forsetti module wizards (flynn33)"
+      ]
+    },
     {
       "version": "0.1.50",
       "tag": "v0.1.50",
