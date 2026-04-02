@@ -2,8 +2,10 @@
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 
+#include <ShObjIdl.h>
 #include <ShlObj.h>
 #include <Windows.h>
+#include <commctrl.h>
 #include <shellapi.h>
 
 #include <filesystem>
@@ -24,11 +26,26 @@ constexpr wchar_t kDefaultInstallLeaf[] = L"Master Control Orchestration Server"
 
 struct LauncherOptions final {
     std::filesystem::path installDirectory;
+    bool installDirectoryExplicit = false;
     bool quiet = false;
     bool autoLaunchShell = false;
     bool noLaunchShell = false;
     std::vector<std::wstring> bootstrapperArguments;
 };
+
+enum class InstallDirectoryPromptResult {
+    confirmed,
+    canceled,
+    failed
+};
+
+struct ProgressWindow final {
+    HWND handle = nullptr;
+    HWND statusLabel = nullptr;
+    HWND progressBar = nullptr;
+};
+
+constexpr wchar_t kProgressWindowClassName[] = L"MasterControlOrchestrationServerSetupProgressWindow";
 
 std::wstring formatWindowsMessage(const DWORD errorCode) {
     LPWSTR buffer = nullptr;
@@ -319,6 +336,249 @@ std::wstring usageText() {
         L"  --no-launch-shell                 Do not prompt to launch the shell.\n";
 }
 
+std::filesystem::path existingDirectoryForPicker(const std::filesystem::path& candidate) {
+    std::error_code error;
+    auto current = candidate;
+    while (!current.empty()) {
+        if (std::filesystem::exists(current, error) && std::filesystem::is_directory(current, error)) {
+            return current;
+        }
+
+        const auto parent = current.parent_path();
+        if (parent == current) {
+            break;
+        }
+        current = parent;
+    }
+
+    if (const auto folder = tryKnownFolder(FOLDERID_ProgramFiles); folder.has_value()) {
+        return *folder;
+    }
+
+    return executableDirectory();
+}
+
+bool leafMatchesDefaultInstallName(const std::filesystem::path& path) {
+    const auto leaf = path.filename().wstring();
+    return !_wcsicmp(leaf.c_str(), kDefaultInstallLeaf);
+}
+
+InstallDirectoryPromptResult browseForInstallDirectory(std::filesystem::path& installDirectory, std::wstring& errorMessage) {
+    IFileOpenDialog* dialog = nullptr;
+    const HRESULT createResult = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
+    if (FAILED(createResult) || dialog == nullptr) {
+        errorMessage = L"Failed to open the folder picker.\n\n" + formatWindowsMessage(HRESULT_CODE(createResult));
+        return InstallDirectoryPromptResult::failed;
+    }
+
+    auto releaseDialog = [&dialog]() {
+        if (dialog != nullptr) {
+            dialog->Release();
+            dialog = nullptr;
+        }
+    };
+
+    DWORD dialogOptions = 0;
+    dialog->GetOptions(&dialogOptions);
+    dialog->SetOptions(dialogOptions | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+    dialog->SetTitle(L"Choose Install Location");
+    dialog->SetOkButtonLabel(L"Install Here");
+
+    const auto initialDirectory = existingDirectoryForPicker(installDirectory.parent_path());
+    IShellItem* initialFolder = nullptr;
+    if (SUCCEEDED(SHCreateItemFromParsingName(initialDirectory.c_str(), nullptr, IID_PPV_ARGS(&initialFolder))) &&
+        initialFolder != nullptr) {
+        dialog->SetFolder(initialFolder);
+        initialFolder->Release();
+    }
+
+    const HRESULT showResult = dialog->Show(nullptr);
+    if (showResult == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
+        releaseDialog();
+        return InstallDirectoryPromptResult::canceled;
+    }
+
+    if (FAILED(showResult)) {
+        errorMessage = L"Failed to show the folder picker.\n\n" + formatWindowsMessage(HRESULT_CODE(showResult));
+        releaseDialog();
+        return InstallDirectoryPromptResult::failed;
+    }
+
+    IShellItem* resultItem = nullptr;
+    const HRESULT resultItemStatus = dialog->GetResult(&resultItem);
+    if (FAILED(resultItemStatus) || resultItem == nullptr) {
+        errorMessage = L"Failed to read the selected install location.\n\n" + formatWindowsMessage(HRESULT_CODE(resultItemStatus));
+        releaseDialog();
+        return InstallDirectoryPromptResult::failed;
+    }
+
+    PWSTR selectedFolder = nullptr;
+    const HRESULT selectedFolderStatus = resultItem->GetDisplayName(SIGDN_FILESYSPATH, &selectedFolder);
+    resultItem->Release();
+    releaseDialog();
+
+    if (FAILED(selectedFolderStatus) || selectedFolder == nullptr) {
+        errorMessage = L"Failed to resolve the selected install location.\n\n" + formatWindowsMessage(HRESULT_CODE(selectedFolderStatus));
+        return InstallDirectoryPromptResult::failed;
+    }
+
+    const std::filesystem::path selectedPath(selectedFolder);
+    CoTaskMemFree(selectedFolder);
+
+    installDirectory = leafMatchesDefaultInstallName(selectedPath)
+        ? selectedPath
+        : selectedPath / kDefaultInstallLeaf;
+    return InstallDirectoryPromptResult::confirmed;
+}
+
+InstallDirectoryPromptResult promptForInstallDirectory(LauncherOptions& options, std::wstring& errorMessage) {
+    while (true) {
+        const std::wstring prompt =
+            L"Install Master Control Orchestration Server to:\n\n" + options.installDirectory.wstring() +
+            L"\n\nYes = Install here\nNo = Choose a different folder\nCancel = Exit setup";
+        const int choice = MessageBoxW(
+            nullptr,
+            prompt.c_str(),
+            L"Master Control Orchestration Server Setup",
+            MB_ICONQUESTION | MB_YESNOCANCEL | MB_SETFOREGROUND);
+
+        if (choice == IDYES) {
+            return InstallDirectoryPromptResult::confirmed;
+        }
+
+        if (choice == IDCANCEL) {
+            return InstallDirectoryPromptResult::canceled;
+        }
+
+        const auto browseResult = browseForInstallDirectory(options.installDirectory, errorMessage);
+        if (browseResult == InstallDirectoryPromptResult::failed) {
+            return browseResult;
+        }
+    }
+}
+
+LRESULT CALLBACK progressWindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+    case WM_CLOSE:
+        return 0;
+    default:
+        return DefWindowProcW(windowHandle, message, wParam, lParam);
+    }
+}
+
+void centerWindowOnScreen(HWND windowHandle) {
+    RECT windowRect{};
+    if (!GetWindowRect(windowHandle, &windowRect)) {
+        return;
+    }
+
+    RECT workArea{};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0);
+    const int windowWidth = windowRect.right - windowRect.left;
+    const int windowHeight = windowRect.bottom - windowRect.top;
+    const int horizontalInset = (((workArea.right - workArea.left) - windowWidth) / 2);
+    const int verticalInset = (((workArea.bottom - workArea.top) - windowHeight) / 2);
+    const int x = static_cast<int>(workArea.left) + (horizontalInset > 0 ? horizontalInset : 0);
+    const int y = static_cast<int>(workArea.top) + (verticalInset > 0 ? verticalInset : 0);
+    SetWindowPos(windowHandle, nullptr, x, y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
+}
+
+ProgressWindow createProgressWindow(const LauncherOptions& options) {
+    INITCOMMONCONTROLSEX controls{};
+    controls.dwSize = sizeof(controls);
+    controls.dwICC = ICC_PROGRESS_CLASS;
+    InitCommonControlsEx(&controls);
+
+    WNDCLASSW windowClass{};
+    windowClass.lpfnWndProc = progressWindowProc;
+    windowClass.hInstance = GetModuleHandleW(nullptr);
+    windowClass.hCursor = LoadCursor(nullptr, IDC_WAIT);
+    windowClass.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+    windowClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    windowClass.lpszClassName = kProgressWindowClassName;
+    RegisterClassW(&windowClass);
+
+    ProgressWindow progressWindow{};
+    progressWindow.handle = CreateWindowExW(
+        WS_EX_DLGMODALFRAME,
+        kProgressWindowClassName,
+        L"Master Control Orchestration Server Setup",
+        WS_CAPTION | WS_POPUP | WS_SYSMENU,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        520,
+        190,
+        nullptr,
+        nullptr,
+        GetModuleHandleW(nullptr),
+        nullptr);
+
+    if (progressWindow.handle == nullptr) {
+        return progressWindow;
+    }
+
+    const HFONT guiFont = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+    const auto header = CreateWindowW(
+        L"STATIC",
+        L"Installing Master Control Orchestration Server",
+        WS_CHILD | WS_VISIBLE,
+        20,
+        20,
+        460,
+        24,
+        progressWindow.handle,
+        nullptr,
+        GetModuleHandleW(nullptr),
+        nullptr);
+
+    const std::wstring detailText =
+        L"Installing to:\n" + options.installDirectory.wstring() + L"\n\nPlease wait while setup completes.";
+    progressWindow.statusLabel = CreateWindowW(
+        L"STATIC",
+        detailText.c_str(),
+        WS_CHILD | WS_VISIBLE,
+        20,
+        52,
+        460,
+        60,
+        progressWindow.handle,
+        nullptr,
+        GetModuleHandleW(nullptr),
+        nullptr);
+
+    progressWindow.progressBar = CreateWindowExW(
+        0,
+        PROGRESS_CLASSW,
+        nullptr,
+        WS_CHILD | WS_VISIBLE | PBS_MARQUEE,
+        20,
+        124,
+        460,
+        24,
+        progressWindow.handle,
+        nullptr,
+        GetModuleHandleW(nullptr),
+        nullptr);
+
+    SendMessageW(header, WM_SETFONT, reinterpret_cast<WPARAM>(guiFont), TRUE);
+    SendMessageW(progressWindow.statusLabel, WM_SETFONT, reinterpret_cast<WPARAM>(guiFont), TRUE);
+    SendMessageW(progressWindow.progressBar, PBM_SETMARQUEE, TRUE, 50);
+
+    centerWindowOnScreen(progressWindow.handle);
+    ShowWindow(progressWindow.handle, SW_SHOWNORMAL);
+    UpdateWindow(progressWindow.handle);
+    return progressWindow;
+}
+
+void destroyProgressWindow(ProgressWindow& progressWindow) {
+    if (progressWindow.handle != nullptr) {
+        DestroyWindow(progressWindow.handle);
+        progressWindow.handle = nullptr;
+        progressWindow.statusLabel = nullptr;
+        progressWindow.progressBar = nullptr;
+    }
+}
+
 std::optional<LauncherOptions> parseArguments(int argc, wchar_t* argv[], std::wstring& errorMessage) {
     LauncherOptions options;
     options.installDirectory = defaultInstallDirectory();
@@ -334,6 +594,7 @@ std::optional<LauncherOptions> parseArguments(int argc, wchar_t* argv[], std::ws
             }
             options.installDirectory = std::filesystem::path(argv[++index]);
             installDirectorySet = true;
+            options.installDirectoryExplicit = true;
             continue;
         }
 
@@ -372,6 +633,7 @@ std::optional<LauncherOptions> parseArguments(int argc, wchar_t* argv[], std::ws
 
         options.installDirectory = std::filesystem::path(argument);
         installDirectorySet = true;
+        options.installDirectoryExplicit = true;
     }
 
     options.bootstrapperArguments.emplace_back(options.installDirectory.wstring());
@@ -381,6 +643,7 @@ std::optional<LauncherOptions> parseArguments(int argc, wchar_t* argv[], std::ws
 bool launchProcess(const std::filesystem::path& executable,
                    const std::vector<std::wstring>& arguments,
                    const bool elevate,
+                   const LauncherOptions* options,
                    DWORD& exitCode,
                    std::wstring& errorMessage) {
     SHELLEXECUTEINFOW executeInfo{};
@@ -401,11 +664,35 @@ bool launchProcess(const std::filesystem::path& executable,
         return false;
     }
 
-    const auto waitResult = WaitForSingleObject(executeInfo.hProcess, INFINITE);
-    if (waitResult != WAIT_OBJECT_0) {
+    ProgressWindow progressWindow{};
+    if (options != nullptr && !options->quiet) {
+        progressWindow = createProgressWindow(*options);
+    }
+
+    auto cleanupProgressWindow = [&progressWindow]() {
+        destroyProgressWindow(progressWindow);
+    };
+
+    for (;;) {
+        const HANDLE waitHandle = executeInfo.hProcess;
+        const DWORD waitResult = MsgWaitForMultipleObjects(1, &waitHandle, FALSE, 100, QS_ALLINPUT);
+        if (waitResult == WAIT_OBJECT_0) {
+            break;
+        }
+
+        if (waitResult == WAIT_OBJECT_0 + 1) {
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+            continue;
+        }
+
         const DWORD error = GetLastError();
         exitCode = error;
         errorMessage = formatWindowsMessage(error);
+        cleanupProgressWindow();
         CloseHandle(executeInfo.hProcess);
         return false;
     }
@@ -413,16 +700,26 @@ bool launchProcess(const std::filesystem::path& executable,
     if (!GetExitCodeProcess(executeInfo.hProcess, &exitCode)) {
         const DWORD error = GetLastError();
         errorMessage = formatWindowsMessage(error);
+        cleanupProgressWindow();
         CloseHandle(executeInfo.hProcess);
         return false;
     }
 
+    cleanupProgressWindow();
     CloseHandle(executeInfo.hProcess);
     return true;
 }
 
 void showMessage(const UINT flags, const std::wstring& title, const std::wstring& text) {
     MessageBoxW(nullptr, text.c_str(), title.c_str(), flags | MB_SETFOREGROUND);
+}
+
+[[noreturn]] void exitSetupProcess(const int exitCode, const bool shouldUninitializeCom) {
+    if (shouldUninitializeCom) {
+        CoUninitialize();
+    }
+
+    ExitProcess(static_cast<UINT>(exitCode));
 }
 
 bool maybeLaunchShell(const LauncherOptions& options) {
@@ -458,23 +755,44 @@ bool maybeLaunchShell(const LauncherOptions& options) {
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+    const HRESULT comInitialization = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const bool shouldUninitializeCom = SUCCEEDED(comInitialization);
+
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv == nullptr) {
         showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", L"Failed to read launcher arguments.");
-        return 1;
+        exitSetupProcess(1, shouldUninitializeCom);
     }
 
     const std::filesystem::path logPath = launcherLogPath();
 
     std::wstring parseError;
-    const auto options = parseArguments(argc, argv, parseError);
+    auto options = parseArguments(argc, argv, parseError);
     LocalFree(argv);
 
     if (!options.has_value()) {
         writeLauncherLog(logPath, LauncherOptions{}, isAdministrator(), false, false, 2, parseError + L"\n\n" + usageText(), false);
         showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", parseError + L"\n\n" + usageText());
-        return 2;
+        exitSetupProcess(2, shouldUninitializeCom);
+    }
+
+    if (!options->quiet && !options->installDirectoryExplicit) {
+        std::wstring installPromptError;
+        const auto promptResult = promptForInstallDirectory(*options, installPromptError);
+        if (promptResult == InstallDirectoryPromptResult::failed) {
+            const std::wstring message = installPromptError + L"\n\nSetup will now exit.";
+            writeLauncherLog(logPath, *options, isAdministrator(), false, false, 4, installPromptError, false);
+            showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", message);
+            exitSetupProcess(4, shouldUninitializeCom);
+        }
+
+        if (promptResult == InstallDirectoryPromptResult::canceled) {
+            writeLauncherLog(logPath, *options, isAdministrator(), false, false, 0, L"Setup canceled before install started.", false);
+            exitSetupProcess(0, shouldUninitializeCom);
+        }
+
+        options->bootstrapperArguments.back() = options->installDirectory.wstring();
     }
 
     const auto bootstrapperPath = executableDirectory() / kBootstrapperName;
@@ -482,7 +800,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         const std::wstring message = L"Required installer engine was not found:\n" + bootstrapperPath.wstring();
         writeLauncherLog(logPath, *options, isAdministrator(), false, false, 3, message, false);
         showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", message);
-        return 3;
+        exitSetupProcess(3, shouldUninitializeCom);
     }
 
     const bool administrator = isAdministrator();
@@ -494,12 +812,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
 
     DWORD exitCode = 1;
     std::wstring launchMessage;
-    if (!launchProcess(bootstrapperPath, options->bootstrapperArguments, elevationAttempted, exitCode, launchMessage)) {
+    if (!launchProcess(bootstrapperPath, options->bootstrapperArguments, elevationAttempted, &(*options), exitCode, launchMessage)) {
         const std::wstring message =
             L"Failed to start the installer engine.\n\n" + launchMessage + L"\n\nA launcher log was written to:\n" + logPath.wstring();
         writeLauncherLog(logPath, *options, administrator, requiresElevation, elevationAttempted, exitCode, launchMessage, false);
         showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", message);
-        return static_cast<int>(exitCode == 0 ? 1 : exitCode);
+        exitSetupProcess(static_cast<int>(exitCode == 0 ? 1 : exitCode), shouldUninitializeCom);
     }
 
     const bool launchedShell = (exitCode == 0) ? maybeLaunchShell(*options) : false;
@@ -514,7 +832,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             L"Master Control Orchestration Server installation failed.\n\nReview the desktop logs for details.\n\nLauncher log:\n" +
             logPath.wstring();
         showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", message);
-        return static_cast<int>(exitCode);
+        exitSetupProcess(static_cast<int>(exitCode), shouldUninitializeCom);
     }
 
     if (!options->quiet && !launchedShell) {
@@ -524,5 +842,5 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             L"Master Control Orchestration Server installed successfully.\n\nA launcher log was written to:\n" + logPath.wstring());
     }
 
-    return 0;
+    exitSetupProcess(0, shouldUninitializeCom);
 }

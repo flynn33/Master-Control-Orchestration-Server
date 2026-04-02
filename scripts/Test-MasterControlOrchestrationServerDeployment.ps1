@@ -37,6 +37,75 @@ function Test-IsAdministrator {
         IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-DesktopDirectories {
+    $directories = New-Object System.Collections.Generic.List[string]
+
+    $primaryDesktop = Join-Path $env:USERPROFILE "Desktop"
+    if (Test-Path $primaryDesktop) {
+        $directories.Add($primaryDesktop)
+    }
+
+    $oneDriveDesktop = Join-Path $env:USERPROFILE "OneDrive\\Desktop"
+    if ((Test-Path $oneDriveDesktop) -and -not $directories.Contains($oneDriveDesktop)) {
+        $directories.Add($oneDriveDesktop)
+    }
+
+    return @($directories)
+}
+
+function Resolve-SetupLauncherLoggedExitCode {
+    param(
+        [datetime]$StartedAt
+    )
+
+    foreach ($desktopDirectory in Get-DesktopDirectories) {
+        $candidateLogs = Get-ChildItem $desktopDirectory -Filter "MasterControlOrchestrationServer-setup-launcher-*.txt" -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -ge $StartedAt.AddSeconds(-5) } |
+            Sort-Object LastWriteTime -Descending
+
+        foreach ($candidate in $candidateLogs) {
+            $content = Get-Content $candidate.FullName -Raw -ErrorAction SilentlyContinue
+            if ($content -match "(?m)^ExitCode:\s*(\d+)\s*$") {
+                return [pscustomobject]@{
+                    path = $candidate.FullName
+                    exitCode = [int]$Matches[1]
+                }
+            }
+        }
+    }
+
+    return $null
+}
+
+function New-AcceptanceEnvironment {
+    param(
+        [string]$DataDirectory,
+        [string]$ScenarioName
+    )
+
+    $normalizedScenarioName = if ([string]::IsNullOrWhiteSpace($ScenarioName)) {
+        "default"
+    } else {
+        (($ScenarioName -replace "[^A-Za-z0-9_-]", "-").Trim("-"))
+    }
+
+    if ([string]::IsNullOrWhiteSpace($normalizedScenarioName)) {
+        $normalizedScenarioName = "default"
+    }
+
+    if ($normalizedScenarioName.Length -gt 24) {
+        $normalizedScenarioName = $normalizedScenarioName.Substring(0, 24)
+    }
+
+    $identitySuffix = [guid]::NewGuid().ToString("N").Substring(0, 8)
+
+    return @{
+        MASTERCONTROL_DATA_DIR = $DataDirectory
+        MASTERCONTROL_BOOTSTRAPPER_SERVICE_NAME = "MasterControlProgram.Acceptance.$normalizedScenarioName.$identitySuffix"
+        MASTERCONTROL_BOOTSTRAPPER_UNINSTALL_KEY = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MasterControlProgram.Acceptance.$normalizedScenarioName.$identitySuffix"
+    }
+}
+
 function New-ArgumentLine {
     param([string[]]$Arguments)
 
@@ -117,6 +186,9 @@ function Invoke-SetupLauncher {
         [hashtable]$Environment = @{}
     )
 
+    $stdout = [System.IO.Path]::GetTempFileName()
+    $stderr = [System.IO.Path]::GetTempFileName()
+    $wrapperPath = Join-Path $env:TEMP ("mastercontrol-setup-wrapper-" + [guid]::NewGuid().ToString("N") + ".cmd")
     $savedEnvironment = @{}
 
     try {
@@ -126,13 +198,38 @@ function Invoke-SetupLauncher {
         }
 
         $argumentLine = New-ArgumentLine -Arguments $Arguments
+        $wrapperLines = @(
+            "@echo off",
+            "setlocal",
+            ('"{0}" {1}' -f $SetupExecutable, $argumentLine),
+            "exit /b %ERRORLEVEL%"
+        )
+        Set-Content -Path $wrapperPath -Value $wrapperLines -Encoding Ascii
+
         $startedAt = Get-Date
         $process = Start-Process `
-            -FilePath $SetupExecutable `
-            -ArgumentList $argumentLine `
+            -FilePath "cmd.exe" `
+            -ArgumentList ('/c "{0}"' -f $wrapperPath) `
             -Wait `
-            -PassThru
+            -PassThru `
+            -NoNewWindow `
+            -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr
         $completedAt = Get-Date
+
+        $stdOut = Get-Content $stdout -Raw
+        $stdErr = Get-Content $stderr -Raw
+        $resolvedExitCode = $process.ExitCode
+        $launcherLog = $null
+        if ($resolvedExitCode -ne 0) {
+            $launcherLog = Resolve-SetupLauncherLoggedExitCode -StartedAt $startedAt
+            if ($null -ne $launcherLog) {
+                $resolvedExitCode = $launcherLog.exitCode
+                if ($launcherLog.exitCode -ne $process.ExitCode) {
+                    $stdErr = ($stdErr + [Environment]::NewLine + "Launcher log override: $($launcherLog.path) -> exit code $($launcherLog.exitCode)").Trim()
+                }
+            }
+        }
 
         return [pscustomobject]@{
             arguments = $Arguments
@@ -140,15 +237,18 @@ function Invoke-SetupLauncher {
             startedAt = $startedAt.ToString("o")
             completedAt = $completedAt.ToString("o")
             durationMs = [int][Math]::Round(($completedAt - $startedAt).TotalMilliseconds)
-            exitCode = $process.ExitCode
-            stdout = ""
-            stderr = ""
+            exitCode = $resolvedExitCode
+            stdout = $stdOut
+            stderr = $stdErr
             json = $null
         }
     } finally {
         foreach ($entry in $Environment.GetEnumerator()) {
             [Environment]::SetEnvironmentVariable($entry.Key, $savedEnvironment[$entry.Key])
         }
+        if (Test-Path $wrapperPath) { Remove-Item $wrapperPath -Force }
+        if (-not [string]::IsNullOrWhiteSpace($stdout) -and (Test-Path $stdout)) { Remove-Item $stdout -Force }
+        if (-not [string]::IsNullOrWhiteSpace($stderr) -and (Test-Path $stderr)) { Remove-Item $stderr -Force }
     }
 }
 
@@ -560,9 +660,7 @@ function Run-MixedAcceptance {
     $dataDirectory = Join-Path $ScenarioRoot "mixed data"
     New-Item -ItemType Directory -Force -Path $ScenarioRoot, $dataDirectory | Out-Null
 
-    $environment = @{
-        MASTERCONTROL_DATA_DIR = $dataDirectory
-    }
+    $environment = New-AcceptanceEnvironment -DataDirectory $dataDirectory -ScenarioName "mixed"
     $snapshots = [ordered]@{
         before = Capture-DetectSnapshot -Bootstrapper $Bootstrapper -Environment $environment
     }
@@ -690,9 +788,7 @@ function Run-ManagedAcceptance {
     $dataDirectory = Join-Path $ScenarioRoot "managed data"
     New-Item -ItemType Directory -Force -Path $ScenarioRoot, $dataDirectory | Out-Null
 
-    $environment = @{
-        MASTERCONTROL_DATA_DIR = $dataDirectory
-    }
+    $environment = New-AcceptanceEnvironment -DataDirectory $dataDirectory -ScenarioName "managed"
     $snapshots = [ordered]@{
         before = Capture-DetectSnapshot -Bootstrapper $Bootstrapper -Environment $environment
     }
