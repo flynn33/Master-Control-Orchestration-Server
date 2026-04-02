@@ -18,7 +18,13 @@ Master Control Orchestration Server is a Forsetti-compliant Windows orchestratio
 | Platform lanes | 6 | Windows, macOS, and iOS gateway plus governance lanes |
 | AI providers | 3 | Codex, Claude Code, and xAI routing in the current build |
 | Install flow | 2 | Native setup launcher plus diagnostic PowerShell fallback |
-| Governance | 1 core lane | CLU plus platform governance execution and resource enforcement |
+| Governance | 1 core module | Command Logic Unit (CLU) plus platform governance execution and resource enforcement |
+
+## Command Logic Unit
+
+- CLU is a Forsetti service module with manifest ID `com.mastercontrol.command-logic-unit`.
+- It coordinates governance posture, rule evaluation, model-to-responsibility routing, Apple operations, and platform governance execution.
+- The shell and browser surfaces read CLU state from the runtime instead of duplicating governance logic locally.
 
 ## Wiki Pages
 

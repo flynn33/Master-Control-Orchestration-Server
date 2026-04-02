@@ -7,6 +7,13 @@
 - `src/MasterControlShell` provides the WinUI 3 operator shell
 - `src/MasterControlBootstrapper` owns install, preflight, validate, repair, upgrade, and uninstall flows
 
+### Forsetti Governance Modules
+- `DashboardUIModule` remains the single UI host under Forsetti rules
+- `CommandLogicUnitModule` is the orchestration and governance coordinator for the product
+- the CLU manifest lives at `src/MasterControlModules/Resources/ForsettiManifests/CommandLogicUnitModule.json`
+- CLU publishes governance posture, findings, rules, role routing, Apple operation controls, and platform-governance execution state into the shared runtime
+- CLU is intentionally a service module, not a second UI shell
+
 ### Deployment Layout
 - install root contains the service host, shell, bootstrapper, setup launcher, and shared payload assets
 - staged Forsetti manifests are installed under `share/MasterControlOrchestrationServer/ForsettiManifests`
@@ -28,6 +35,7 @@
 - Windows governance executes local Forsetti and architecture validation
 - macOS and iOS governance route through Apple remote hosts using SSH or companion-service transport
 - Apple operations support readiness, build, test, archive, export, install, sign, notarize, staple, replay, and persisted history
+- provider responsibility routing also flows through CLU, so planning, coding, review, and specialist lanes can be assigned to different AI models
 
 ### Installer And Packaging
 - `Package-MasterControlOrchestrationServer.ps1` builds staged release packages, bundles CRT dependencies, writes metadata, and emits install instructions

@@ -15,6 +15,7 @@ Master Control Orchestration Server is a Forsetti-compliant Windows orchestratio
 
 - Windows Service host, WinUI 3 operator shell, and browser admin surface backed by the same local runtime.
 - Guided setup workflows for providers, MCP servers, sub-agents, Apple hosts, imports, and assignment flows.
+- Command Logic Unit (CLU) Forsetti module for governance, responsibility routing, and platform-governance execution.
 - CLU governance, platform gateway lanes, platform governance lanes, and Apple remote-host execution support.
 - Release packaging, setup launcher, bootstrapper validation, and deployment acceptance tooling in-repo.
 
@@ -63,9 +64,15 @@ cmake --install build\debug --config Debug --prefix dist\debug
 - `src/MasterControlServiceHost` runs the orchestration runtime as a Windows service or console host
 - `src/MasterControlShell` provides the WinUI 3 operator shell
 - `src/MasterControlBootstrapper` owns install, preflight, validate, repair, upgrade, and uninstall flows
-- install root contains the service host, shell, bootstrapper, setup launcher, and shared payload assets
-- staged Forsetti manifests are installed under `share/MasterControlOrchestrationServer/ForsettiManifests`
-- staged browser assets are installed under `share/MasterControlOrchestrationServer/web`
+- `DashboardUIModule` remains the single UI host under Forsetti rules
+- `CommandLogicUnitModule` is the orchestration and governance coordinator for the product
+- the CLU manifest lives at `src/MasterControlModules/Resources/ForsettiManifests/CommandLogicUnitModule.json`
+
+### Command Logic Unit (CLU)
+- CLU is a first-class Forsetti service module, not just a navigation label in the shell.
+- Manifest: `src/MasterControlModules/Resources/ForsettiManifests/CommandLogicUnitModule.json`
+- Module ID: `com.mastercontrol.command-logic-unit`
+- Responsibilities: governance posture, rule evaluation, provider responsibility routing, Apple operations, and platform governance execution.
 
 ## Primary Documents
 

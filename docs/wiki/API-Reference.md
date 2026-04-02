@@ -25,6 +25,8 @@ This page documents the current HTTP and MCP-style routes exposed by the shared 
 | `/api/clu/execute` | `POST` | Execute a CLU governance operation |
 | `/api/clu/apple-operations/cancel` | `POST` | Cancel a queued Apple operation |
 
+The CLU endpoints are backed by the `CommandLogicUnitModule` Forsetti service module (`com.mastercontrol.command-logic-unit`), which owns governance posture and responsibility routing inside the runtime.
+
 ## Platform Services
 
 | Route | Method | Purpose |

@@ -26,6 +26,14 @@ The product ships as a Windows service, a WinUI 3 desktop shell, and a browser-b
 - resource governance and controlled local process execution
 - deployment acceptance, release packaging, and readiness reporting
 
+### Command Logic Unit Module
+- the Command Logic Unit, or CLU, is a first-class Forsetti service module rather than a UI-only concept
+- module manifest: `src/MasterControlModules/Resources/ForsettiManifests/CommandLogicUnitModule.json`
+- module ID: `com.mastercontrol.command-logic-unit`
+- CLU is responsible for governance posture, rule evaluation, provider responsibility routing, and platform-specific governance execution
+- CLU is also the operator-facing coordination lane for guided setup, Apple governance operations, and model-to-role assignment
+- the WinUI shell and browser surface both read CLU state from the runtime instead of reimplementing governance logic on their own
+
 ### Current Build State
 - feature-complete for the current build
 - locally validated for Forsetti compliance, build health, and repo-native tests
