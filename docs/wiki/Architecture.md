@@ -1,138 +1,112 @@
-# Master Control Program Architecture
+# Master Control Orchestration Server Architecture
 
-Master Control Program is composed of four primary surfaces: a Windows Service host, a WinUI 3
-desktop shell, a browser-based real-time dashboard, and an MCP aggregator gateway. All
-surfaces share the same service APIs and operate on the MASTER-CONTROL server.
+This page reflects the current repository-backed architecture rather than the retired external aggregator design.
 
-## System Overview
+### What It Is
+Forsetti-compliant Windows orchestration server for MCP services, AI coding agents, provider routing, CLU governance, imports, exports, and operator control.
+The product ships as a Windows service, a WinUI 3 desktop shell, and a browser-based admin surface backed by the same local runtime.
 
-```
-                          +---------------------+
-                          |   Remote Claude     |
-                          |   Code Instances    |
-                          +--------+------------+
-                                   |
-                            HTTPS :8443
-                                   |
-                          +--------v------------+
-                          |   Caddy Reverse     |
-                          |   Proxy (:8080/8443)|
-                          +--+-----+--------+---+
-                             |     |        |
-              +--------------+  +--+---+  +-+---------+
-              |                 |      |  |           |
-    +---------v---+   +---------v-+  +-v--v------+  +v-----------+
-    |  Dashboard  |   | Aggregator|  | 18 Blade  |  | 7 Sub-     |
-    |  SPA :18000 |   | GW :7200  |  | Servers   |  | Agents     |
-    +---------+---+   +-----+-----+  | :7101-18  |  | :7201-07   |
-              |             |         +-----------+  +------------+
-              +------+------+
-                     |
-              +------v------+
-              |  Service    |
-              |  Host       |
-              +-------------+
-```
+### Core Objective
+- make setup fast through guided workflows instead of low-level manual editing
+- host and govern MCP servers, providers, sub-agents, and platform governance lanes from one control plane
+- provide a desktop-first and browser-accessible operations surface for telemetry, runtime control, and deployment visibility
+- package the product so it can be installed, validated, upgraded, repaired, and uninstalled with repo-owned tooling
 
-## Browser Dashboard
+### Major Product Surfaces
+1. Windows service host for orchestration, telemetry, configuration, imports, governance, and browser APIs
+2. WinUI 3 shell for guided setup, CLU control, runtime operations, provider configuration, and security posture
+3. Browser admin UI backed by the same service APIs and Forsetti surface model
+4. Bootstrapper and setup launcher for install, validate, repair, upgrade, and uninstall flows
 
-Real-time monitoring dashboard for the entire BLADE MCP infrastructure. The dashboard
-is a single 81KB HTML page served by a Node.js static server through Caddy.
+### Major Functional Areas
+- Forsetti module architecture with manifest-driven composition
+- CLU governance and policy enforcement
+- provider routing for Codex, Claude Code, and xAI
+- custom MCP server authoring and custom sub-agent authoring
+- Windows, macOS, and iOS gateway/governance lanes
+- Apple remote-host readiness, execution, signing, notarization, export, install, and history flows
+- resource governance and controlled local process execution
+- deployment acceptance, release packaging, and readiness reporting
 
-| Property | Value |
-| --- | --- |
-| URL | `http://192.168.1.3:8080/dashboard/` |
-| Source | `D:\mcp\dashboard\index.html` (81KB single-file SPA) |
-| Config | `D:\mcp\dashboard\config.json` (25 backend endpoints) |
-| Server | Node.js static server on port 18000 via `serve.ps1` |
-| Stack | Pure HTML/CSS/JS, no build step, no dependencies |
-| Layout | CSS Grid responsive, designed for 1920x1080 (works down to ~1200px) |
+### Current Build State
+- feature-complete for the current build
+- locally validated for Forsetti compliance, build health, and repo-native tests
+- installer and setup flows validated on Windows 11
+- Windows Server 2022 acceptance remains the main external validation gap
 
-### Dashboard Sections
+### Current Focus
+- remove naming and packaging drift so product identity, docs, and release artifacts align
+- keep guided setup as the primary operator path
+- preserve deployment stability while polishing the end-user install and operations experience
 
-| Section | Data Source | Update Method |
-| --- | --- | --- |
-| System Metrics | `/api/metrics`, `/api/metrics/history` | SSE via `/api/metrics/stream` |
-| MCP Server Grid | 18 blade server status endpoints | 5-second polling |
-| Sub-Agent Grid | `/api/sub-agents` (WATCHTOWER aggregated) | 5-second polling |
-| Agent Communication | `/api/agent-comm` | 5-second polling |
-| Task Coordination | `/api/coordination` | 5-second polling |
-| Event Bus | `/api/event-bus` | 5-second polling |
-| Memory Beacon | `/api/memory-beacon` | 5-second polling |
+### Runtime Composition
+- `src/MasterControlApp` hosts the shared application runtime, configuration, governance, Apple execution, and browser APIs
+- `src/MasterControlModules` provides Forsetti modules and manifests
+- `src/MasterControlServiceHost` runs the orchestration runtime as a Windows service or console host
+- `src/MasterControlShell` provides the WinUI 3 operator shell
+- `src/MasterControlBootstrapper` owns install, preflight, validate, repair, upgrade, and uninstall flows
 
-The metrics charts use custom canvas rendering with a 60-point rolling window.
-Real-time CPU, RAM, and network data streams over Server-Sent Events while all
-other sections poll on a 5-second interval.
+### Deployment Layout
+- install root contains the service host, shell, bootstrapper, setup launcher, and shared payload assets
+- staged Forsetti manifests are installed under `share/MasterControlOrchestrationServer/ForsettiManifests`
+- staged browser assets are installed under `share/MasterControlOrchestrationServer/web`
+- CLU governance resources are installed under `share/MasterControlOrchestrationServer/clu`
 
-## Aggregator Gateway
+### Runtime Data
+- persistent state lives under ProgramData unless overridden by environment configuration
+- configuration, install history, entitlements, provider credentials, and Apple operation history are repo-defined runtime artifacts
+- runtime exports and work directories are created under the resolved data root
 
-A single MCP server on port 7200 that proxies every tool from all blade servers
-and sub-agents. Remote Claude Code instances need only one connection to access
-the full 96+ tool catalog.
+### Control Surfaces
+- WinUI 3 shell hosts guided setup, CLU, telemetry, runtime, provider, import, export, security, and settings views
+- browser UI mirrors the same runtime-backed control plane concepts through the service API
+- modules publish capabilities through Forsetti services instead of directly owning UI shells
 
-| Property | Value |
-| --- | --- |
-| HTTPS endpoint | `https://192.168.1.3:8443/mcp/gateway` |
-| HTTP endpoint | `http://192.168.1.3:8080/mcp/gateway` |
-| Health check | `http://192.168.1.3:7200/health` |
-| Built-in dashboard | `http://192.168.1.3:7200/dashboard` |
-| Memory footprint | ~95MB RAM |
+### Governance And Platform Lanes
+- CLU routes governance through platform-specific lanes
+- Windows governance executes local Forsetti and architecture validation
+- macOS and iOS governance route through Apple remote hosts using SSH or companion-service transport
+- Apple operations support readiness, build, test, archive, export, install, sign, notarize, staple, replay, and persisted history
 
-### How It Works
+### Installer And Packaging
+- `Package-MasterControlOrchestrationServer.ps1` builds staged release packages, bundles CRT dependencies, writes metadata, and emits install instructions
+- `MasterControlOrchestrationServerSetup.exe` is the standard interactive entry point
+- `Install-MasterControlOrchestrationServer.ps1` is the diagnostic fallback entry point with desktop logging
+- deployment harness scripts validate mixed and managed install lifecycles and write acceptance bundles
 
-1. On startup, connects to all 25 backends and runs `tools/list` on each.
-2. Builds a unified tool registry by merging all discovered tool schemas.
-3. Routes incoming tool calls by name to the correct backend server.
-4. Maintains persistent sessions with auto-reinit on expiry.
-5. Refreshes every 5 minutes to pick up new or recovered backends.
-6. Uses a low-level MCP Server class that passes JSON Schema verbatim.
+### Validation Baseline
+- Forsetti compliance is enforced by `scripts/check-mastercontrol-forsetti.ps1`
+- repo-native validation uses local Debug builds plus `ctest`
+- packaged deployment acceptance exists for install, validate, upgrade, repair, and uninstall
+- current external validation gap is Windows Server 2022 acceptance
 
-### Key Files
+### Purpose
+Master Control Orchestration Server hosts platform-aware gateway and governance lanes inside the Forsetti framework so agents and operators can work through one orchestration surface while still targeting Windows, macOS, and iOS workflows correctly.
 
-| File | Purpose |
-| --- | --- |
-| `D:\Sub-Agents\aggregator\index.js` | Main server entry point |
-| `D:\Sub-Agents\aggregator\discovery.js` | Backend discovery and SSE parser |
-| `D:\Sub-Agents\aggregator\proxy.js` | Tool call routing with retry logic |
-| `D:\mcp\config\Caddyfile` | Caddy routes for `/mcp/gateway*` |
+### Gateway Model
+- gateway modules are Forsetti modules inside the product, not external sidecars
+- clients discover the product through platform-specific gateway surfaces
+- the current architecture keeps the gateway logic inside the local runtime and service APIs rather than a separate legacy aggregator deployment
 
-## WinUI 3 Desktop Shell
+### Governance Model
+- CLU is the governance coordinator
+- platform governance flows are routed by target platform instead of host OS alone
+- governance tools execute through framework contracts instead of direct module-to-module shortcuts
+- the UI reads governance state through the framework and does not become a second governance engine
 
-Authored desktop application with Tron-inspired visuals for direct operator
-control of the platform.
+### Current Platform Lanes
+- Windows gateway and Windows governance lane
+- macOS gateway and macOS governance lane
+- iOS gateway and iOS governance lane
 
-### Shell Panels
+### Apple Execution Fabric
+- Apple hosts can be selected per host using SSH or companion-service transport
+- readiness includes Xcode, SDK, simulator, device control, signing, and notarization state
+- operations include build, test, archive, export, install, sign, notarize, staple, replay, and history
 
-| Panel | Source File | Purpose |
-| --- | --- | --- |
-| Overview | `OverviewSectionControl.xaml` | System summary and status |
-| Telemetry | `TelemetrySectionControl.xaml` | Live metrics and charts |
-| Imports | `ImportsSectionControl.xaml` | MSI/EXE/PS1/Git bootstrap import flows |
-| Exports | `ExportsSectionControl.xaml` | Configuration and data export |
-| Providers | `ProvidersSectionControl.xaml` | Provider integration management |
-| Runtime | `RuntimeSectionControl.xaml` | Runtime inventory and control |
-| Security | `SecuritySectionControl.xaml` | Security configuration |
-| Settings | `SettingsSectionControl.xaml` | Application settings |
-| Command Logic | `CommandLogicUnitSectionControl.xaml` | Command execution interface |
+### Deployment Direction
+- Windows remains the primary hosted runtime for the orchestration server
+- platform lanes remain module-driven and Forsetti-compliant
+- deployment work is currently focused on installer polish, identity alignment, and target-host validation rather than new gateway topology changes
 
-## Repository Modules
-
-| Module | Location | Purpose |
-| --- | --- | --- |
-| **MasterControlServiceHost** | `src/MasterControlServiceHost/` | Windows Service entry point that boots the runtime |
-| **MasterControlShell** | `src/MasterControlShell/` | WinUI 3 desktop shell with all section panels |
-| **MasterControlBootstrapper** | `src/MasterControlBootstrapper/` | Install, detection, and setup flows |
-| **MasterControlApp** | `src/MasterControlApp/` | Shared runtime, defaults, and model implementations |
-| **MasterControlModules** | `src/MasterControlModules/` | Forsetti-aligned module discovery and composition |
-
-### Shared Headers (`include/MasterControl/`)
-
-| Header | Purpose |
-| --- | --- |
-| `MasterControlContracts.h` | Interface contracts and abstract definitions |
-| `MasterControlDefaults.h` | Default configuration values |
-| `MasterControlModels.h` | Data models and structured types |
-| `MasterControlModules.h` | Module discovery and registration |
-| `MasterControlRuntime.h` | Runtime lifecycle and service management |
-
-See also: [Infrastructure](Infrastructure) | [Sub-Agents](Sub-Agents) | [API Reference](API-Reference)
+See also: [Infrastructure](Infrastructure) | [API Reference](API-Reference) | [Operations](Operations)

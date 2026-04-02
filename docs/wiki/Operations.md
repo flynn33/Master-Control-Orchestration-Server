@@ -1,91 +1,61 @@
-# Master Control Program Operations
+# Master Control Orchestration Server Operations
 
-Build, test, deploy, and manage the platform.
+Build, validate, package, install, and support the current product from the repository-owned tooling.
 
-## Build
-
-The project uses CMake with preset-based configuration. Debug builds are the
-standard development target.
+## Local Build And Validation
 
 ```powershell
-# Configure (first time or after CMakeLists.txt changes)
 cmake --preset debug
-
-# Build
 cmake --build build\debug --config Debug
-```
-
-## Test
-
-Tests run through CTest with verbose output on failure.
-
-```powershell
 ctest --test-dir build\debug -C Debug --output-on-failure
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-mastercontrol-forsetti.ps1
 ```
 
-## Install
-
-Install produces a distributable layout under `dist\debug\`.
+## Staging And Packaging
 
 ```powershell
 cmake --install build\debug --config Debug --prefix dist\debug
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release
 ```
 
-## Run the Bootstrapper
+## Preferred Install Entry Points
 
-The bootstrapper handles environment detection, import flows, and initial setup.
+| Entry point | Role |
+| --- | --- |
+| `MasterControlOrchestrationServerSetup.exe` | Standard interactive Windows installer entry point |
+| `Install-MasterControlOrchestrationServer.ps1` | Diagnostic fallback with desktop logging |
+| `MasterControlBootstrapper.exe` | Core lifecycle engine for `preflight`, `install`, `validate`, `upgrade`, `repair`, and `uninstall` |
 
-```powershell
-# Detect the current environment
-dist\debug\MasterControlBootstrapper.exe detect
-```
+## Deployment Validation Scripts
 
-## Dashboard Access
+| Script | Purpose |
+| --- | --- |
+| `scripts/Build-MasterControlOrchestrationServer.ps1` | Configure, build, test, and stage local artifacts |
+| `scripts/Test-MasterControlOrchestrationServerDeployment.ps1` | End-to-end deployment acceptance harness |
+| `scripts/Compare-MasterControlOrchestrationServerDeploymentReports.ps1` | Compare acceptance reports across hosts |
+| `scripts/Invoke-MasterControlOrchestrationServerDeploymentMatrix.ps1` | Drive labeled deployment-matrix runs |
+| `scripts/Get-MasterControlOrchestrationServerReleaseReadiness.ps1` | Build release-readiness markdown |
 
-| Surface | URL | Notes |
-| --- | --- | --- |
-| Browser dashboard | `http://192.168.1.3:8080/dashboard/` | Real-time metrics and server status |
-| Gateway dashboard | `http://192.168.1.3:7200/dashboard` | Aggregator gateway status |
-| Gateway health | `http://192.168.1.3:7200/health` | JSON health check |
-| HTTPS gateway | `https://192.168.1.3:8443/mcp/gateway` | Remote MCP connection point |
+## Installed Runtime Surfaces
 
-## Service Management
+| Surface | Typical path |
+| --- | --- |
+| Windows service host | `MasterControlServiceHost.exe` |
+| Desktop shell | `MasterControlShell.exe` |
+| Browser admin UI | `http://127.0.0.1:7300/` after local install |
 
-### Sub-Agents
+## Compatibility Notes
 
-```powershell
-# Start all 7 sub-agents
-D:\Sub-Agents\Start-SubAgents.ps1
+- The public product name is `Master Control Orchestration Server`.
+- The legacy Windows service name remains `MasterControlProgram` for upgrade compatibility.
+- The legacy uninstall registry key also remains `...\Uninstall\MasterControlProgram` for upgrade compatibility.
 
-# Stop all 7 sub-agents
-D:\Sub-Agents\Stop-SubAgents.ps1
-```
+## Standard Operator Flow
 
-### Dashboard Server
+1. Build and validate locally.
+2. Package a release artifact.
+3. Install via `MasterControlOrchestrationServerSetup.exe`.
+4. Verify service, browser UI, and desktop shell launch behavior.
+5. Run deployment acceptance and review readiness artifacts.
 
-```powershell
-# Start the Node.js static server on port 18000
-D:\mcp\dashboard\serve.ps1
-```
-
-## Push Guard
-
-The repository includes a pre-push hook that rejects commits declaring AI
-contributors. This is enforced at two levels:
-
-1. **Local hook**: Enable with `scripts\Enable-GitHooks.ps1`. The pre-push
-   hook inspects staged commits and blocks any that list AI contributors.
-2. **GitHub workflow**: The `AI Contributor Guard` workflow runs on `push` and
-   `pull_request` events, mirroring the same rule server-side.
-
-## Development Workflow
-
-The standard local development loop:
-
-1. Make changes in `src/` or `include/`.
-2. Build: `cmake --build build\debug --config Debug`
-3. Test: `ctest --test-dir build\debug -C Debug --output-on-failure`
-4. Commit and push to `main`.
-5. GitHub agents automatically update CHANGELOG, README, wiki, and version.
-
-See also: [Automation](Automation) | [Remote Client](Remote-Client)
+See also: [API Reference](API-Reference) | [Automation](Automation) | [Versions](Versions)

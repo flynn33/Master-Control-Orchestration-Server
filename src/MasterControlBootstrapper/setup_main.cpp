@@ -1,4 +1,4 @@
-// Master Control Program
+// Master Control Orchestration Server
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 
@@ -20,7 +20,7 @@ namespace {
 constexpr wchar_t kBootstrapperName[] = L"MasterControlBootstrapper.exe";
 constexpr wchar_t kShellBinaryName[] = L"MasterControlShell.exe";
 constexpr wchar_t kLogDirectoryEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_LOG_DIR";
-constexpr wchar_t kDefaultInstallLeaf[] = L"Master Control Program";
+constexpr wchar_t kDefaultInstallLeaf[] = L"Master Control Orchestration Server";
 
 struct LauncherOptions final {
     std::filesystem::path installDirectory;
@@ -269,7 +269,7 @@ std::wstring currentTimestamp() {
 
 std::filesystem::path launcherLogPath() {
     const auto timestamp = currentTimestamp();
-    return desktopDirectory() / std::filesystem::path(L"MasterControlProgram-setup-launcher-" + timestamp + L".txt");
+    return desktopDirectory() / std::filesystem::path(L"MasterControlOrchestrationServer-setup-launcher-" + timestamp + L".txt");
 }
 
 bool writeLauncherLog(const std::filesystem::path& logPath,
@@ -288,7 +288,7 @@ bool writeLauncherLog(const std::filesystem::path& logPath,
         return false;
     }
 
-    output << L"Master Control Program Setup Launcher\r\n\r\n";
+    output << L"Master Control Orchestration Server Setup Launcher\r\n\r\n";
     output << L"GeneratedAt: " << currentTimestamp().c_str() << L"\r\n";
     output << L"BootstrapperPath: " << (executableDirectory() / kBootstrapperName).wstring() << L"\r\n";
     output << L"InstallDirectory: " << options.installDirectory.wstring() << L"\r\n";
@@ -307,7 +307,7 @@ bool writeLauncherLog(const std::filesystem::path& logPath,
 std::wstring usageText() {
     return
         L"Usage:\n"
-        L"  MasterControlSetup.exe [install-directory] [options]\n\n"
+        L"  MasterControlOrchestrationServerSetup.exe [install-directory] [options]\n\n"
         L"Options:\n"
         L"  --install-directory <path>        Override the install directory.\n"
         L"  --skip-service                    Skip Windows service registration.\n"
@@ -434,8 +434,8 @@ bool maybeLaunchShell(const LauncherOptions& options) {
     if (!options.quiet && !launchShell) {
         const int result = MessageBoxW(
             nullptr,
-            L"Master Control Program installed successfully.\n\nLaunch the desktop shell now?",
-            L"Master Control Program Setup",
+            L"Master Control Orchestration Server installed successfully.\n\nLaunch the desktop shell now?",
+            L"Master Control Orchestration Server Setup",
             MB_ICONQUESTION | MB_YESNO | MB_SETFOREGROUND);
         launchShell = (result == IDYES);
     }
@@ -461,7 +461,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv == nullptr) {
-        showMessage(MB_ICONERROR | MB_OK, L"Master Control Program Setup", L"Failed to read launcher arguments.");
+        showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", L"Failed to read launcher arguments.");
         return 1;
     }
 
@@ -473,7 +473,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
 
     if (!options.has_value()) {
         writeLauncherLog(logPath, LauncherOptions{}, isAdministrator(), false, false, 2, parseError + L"\n\n" + usageText(), false);
-        showMessage(MB_ICONERROR | MB_OK, L"Master Control Program Setup", parseError + L"\n\n" + usageText());
+        showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", parseError + L"\n\n" + usageText());
         return 2;
     }
 
@@ -481,7 +481,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     if (!std::filesystem::exists(bootstrapperPath)) {
         const std::wstring message = L"Required installer engine was not found:\n" + bootstrapperPath.wstring();
         writeLauncherLog(logPath, *options, isAdministrator(), false, false, 3, message, false);
-        showMessage(MB_ICONERROR | MB_OK, L"Master Control Program Setup", message);
+        showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", message);
         return 3;
     }
 
@@ -498,7 +498,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         const std::wstring message =
             L"Failed to start the installer engine.\n\n" + launchMessage + L"\n\nA launcher log was written to:\n" + logPath.wstring();
         writeLauncherLog(logPath, *options, administrator, requiresElevation, elevationAttempted, exitCode, launchMessage, false);
-        showMessage(MB_ICONERROR | MB_OK, L"Master Control Program Setup", message);
+        showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", message);
         return static_cast<int>(exitCode == 0 ? 1 : exitCode);
     }
 
@@ -511,17 +511,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
 
     if (exitCode != 0) {
         const std::wstring message =
-            L"Master Control Program installation failed.\n\nReview the desktop logs for details.\n\nLauncher log:\n" +
+            L"Master Control Orchestration Server installation failed.\n\nReview the desktop logs for details.\n\nLauncher log:\n" +
             logPath.wstring();
-        showMessage(MB_ICONERROR | MB_OK, L"Master Control Program Setup", message);
+        showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", message);
         return static_cast<int>(exitCode);
     }
 
     if (!options->quiet && !launchedShell) {
         showMessage(
             MB_ICONINFORMATION | MB_OK,
-            L"Master Control Program Setup",
-            L"Master Control Program installed successfully.\n\nA launcher log was written to:\n" + logPath.wstring());
+            L"Master Control Orchestration Server Setup",
+            L"Master Control Orchestration Server installed successfully.\n\nA launcher log was written to:\n" + logPath.wstring());
     }
 
     return 0;

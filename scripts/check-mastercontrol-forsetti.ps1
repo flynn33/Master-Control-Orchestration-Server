@@ -1,4 +1,4 @@
-# Master Control Program - Forsetti compliance guardrails
+# Master Control Orchestration Server - Forsetti compliance guardrails
 # Copyright (c) 2026 James Daley. All Rights Reserved.
 # Proprietary and Confidential.
 

@@ -1,6 +1,4 @@
-# Master Control Orchestration Server Remote Client
-
-This page tracks the current remote-agent onboarding direction rather than the retired Blade gateway plugin workflow.
+## Remote Client Onboarding - Plan & Status
 
 ### Objective
 Remote coding agents such as Claude Code and Codex should be able to discover Master Control Orchestration Server on the LAN, select the correct platform gateway, and receive a ready-to-apply configuration without manual editing.
@@ -25,5 +23,3 @@ Master Control Orchestration Server now publishes platform-aware gateway lanes a
 - add guided client-onboarding export bundles from the shell and browser
 - document the exact client configuration format for Claude Code and Codex
 - validate onboarding against real Windows, macOS, and iOS-adjacent client setups
-
-See also: [Architecture](Architecture) | [API Reference](API-Reference)

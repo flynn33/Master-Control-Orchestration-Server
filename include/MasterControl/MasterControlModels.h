@@ -1,4 +1,4 @@
-// Master Control Program
+// Master Control Orchestration Server
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 
@@ -644,7 +644,7 @@ struct DashboardSnapshot final {
 };
 
 struct AppConfiguration final {
-    std::string instanceName = "Master Control Program";
+    std::string instanceName = "Master Control Orchestration Server";
     std::string bindAddress = "0.0.0.0";
     uint16_t browserPort = 7300;
     uint16_t beaconPort = 7301;

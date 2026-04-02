@@ -1,6 +1,4 @@
-# Master Control Orchestration Server Infrastructure
-
-This page tracks the deployment model and installer shape that currently ship from this repository.
+## Deployment Overview
 
 ### Product Shape
 Master Control Orchestration Server ships as:
@@ -32,5 +30,3 @@ Master Control Orchestration Server ships as:
 - shell/browser launch behavior
 - package integrity and readiness metadata
 - upgrade, repair, rollback, and uninstall behavior
-
-See also: [Architecture](Architecture) | [Operations](Operations) | [Remote Client](Remote-Client)

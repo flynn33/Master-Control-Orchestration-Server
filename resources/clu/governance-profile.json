@@ -6,7 +6,7 @@
       "id": "clu-constitution",
       "title": "CLU Constitution",
       "category": "constitution",
-      "summary": "Defines the non-negotiable operating principles for agentic work inside Master Control Program.",
+      "summary": "Defines the non-negotiable operating principles for agentic work inside Master Control Orchestration Server.",
       "content": "Contract before action. Scope is binding. Truthfulness is mandatory. Governance overrides convenience. Documentation is part of delivery. Compliance must be measurable. Release and operational integrity are non-negotiable."
     },
     {
@@ -42,7 +42,7 @@
       "title": "CLU Vision",
       "category": "vision",
       "summary": "Provide a command-grade governance lane for local MCP and sub-agent orchestration.",
-      "content": "CLU exists so Master Control Program can host AI-enabled orchestration without collapsing into unchecked autonomy, undocumented drift, or opaque security tradeoffs."
+      "content": "CLU exists so Master Control Orchestration Server can host AI-enabled orchestration without collapsing into unchecked autonomy, undocumented drift, or opaque security tradeoffs."
     }
   ],
   "roles": [

@@ -1,17 +1,17 @@
-# Master Control Program
+# Master Control Orchestration Server
 # Copyright (c) 2026 James Daley. All Rights Reserved.
 # Proprietary and Confidential.
 
-add_executable(MasterControlProgramTests
-    MasterControlProgramTests.cpp
+add_executable(MasterControlOrchestrationServerTests
+    MasterControlOrchestrationServerTests.cpp
 )
 
-target_link_libraries(MasterControlProgramTests PRIVATE
+target_link_libraries(MasterControlOrchestrationServerTests PRIVATE
     MasterControlApp
     ws2_32
 )
 
 add_test(
-    NAME MasterControlProgramTests
-    COMMAND $<TARGET_FILE:MasterControlProgramTests>
+    NAME MasterControlOrchestrationServerTests
+    COMMAND $<TARGET_FILE:MasterControlOrchestrationServerTests>
 )

@@ -1,4 +1,4 @@
-# Master Control Program Versions
+# Master Control Orchestration Server Versions
 
 The project uses semantic versioning with automated version bumps on every
 push to `main`. The version agent analyzes commit history to determine the
@@ -10,7 +10,7 @@ appropriate bump level (patch, minor, or major).
 | --- | --- |
 | Version | `v0.1.49` |
 | Released | `2026-03-29` |
-| Summary | Automated patch release for Master Control Program. |
+| Summary | Automated patch release for Master Control Orchestration Server. |
 
 ## Versioning Scheme
 
@@ -29,20 +29,20 @@ Versions are tracked in `VERSION.json` and tagged as GitHub Releases.
 
 | Version | Date | Summary |
 | --- | --- | --- |
-| `v0.1.49` | `2026-03-29` | Automated patch release for Master Control Program. |
-| `v0.1.48` | `2026-03-29` | Automated patch release for Master Control Program. |
-| `v0.1.47` | `2026-03-29` | Automated patch release for Master Control Program. |
-| `v0.1.46` | `2026-03-29` | Automated patch release for Master Control Program. |
-| `v0.1.45` | `2026-03-29` | Automated patch release for Master Control Program. |
-| `v0.1.44` | `2026-03-29` | Automated patch release for Master Control Program. |
-| `v0.1.43` | `2026-03-28` | Automated patch release for Master Control Program. |
-| `v0.1.42` | `2026-03-28` | Automated patch release for Master Control Program. |
-| `v0.1.41` | `2026-03-28` | Automated patch release for Master Control Program. |
-| `v0.1.40` | `2026-03-28` | Automated patch release for Master Control Program. |
-| `v0.1.39` | `2026-03-28` | Automated patch release for Master Control Program. |
-| `v0.1.38` | `2026-03-28` | Automated patch release for Master Control Program. |
-| `v0.1.37` | `2026-03-27` | Automated patch release for Master Control Program. |
-| `v0.1.36` | `2026-03-27` | Automated patch release for Master Control Program. |
-| `v0.1.35` | `2026-03-27` | Automated patch release for Master Control Program. |
+| `v0.1.49` | `2026-03-29` | Automated patch release for Master Control Orchestration Server. |
+| `v0.1.48` | `2026-03-29` | Automated patch release for Master Control Orchestration Server. |
+| `v0.1.47` | `2026-03-29` | Automated patch release for Master Control Orchestration Server. |
+| `v0.1.46` | `2026-03-29` | Automated patch release for Master Control Orchestration Server. |
+| `v0.1.45` | `2026-03-29` | Automated patch release for Master Control Orchestration Server. |
+| `v0.1.44` | `2026-03-29` | Automated patch release for Master Control Orchestration Server. |
+| `v0.1.43` | `2026-03-28` | Automated patch release for Master Control Orchestration Server. |
+| `v0.1.42` | `2026-03-28` | Automated patch release for Master Control Orchestration Server. |
+| `v0.1.41` | `2026-03-28` | Automated patch release for Master Control Orchestration Server. |
+| `v0.1.40` | `2026-03-28` | Automated patch release for Master Control Orchestration Server. |
+| `v0.1.39` | `2026-03-28` | Automated patch release for Master Control Orchestration Server. |
+| `v0.1.38` | `2026-03-28` | Automated patch release for Master Control Orchestration Server. |
+| `v0.1.37` | `2026-03-27` | Automated patch release for Master Control Orchestration Server. |
+| `v0.1.36` | `2026-03-27` | Automated patch release for Master Control Orchestration Server. |
+| `v0.1.35` | `2026-03-27` | Automated patch release for Master Control Orchestration Server. |
 
 See also: [Automation](Automation) | [Operations](Operations)

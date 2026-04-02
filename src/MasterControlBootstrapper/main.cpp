@@ -1,4 +1,4 @@
-// Master Control Program
+// Master Control Orchestration Server
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 
@@ -27,14 +27,16 @@
 
 namespace {
 
+// Keep the legacy SCM and uninstall identities stable so upgrades from older installs continue to work.
+constexpr wchar_t kProductDisplayName[] = L"Master Control Orchestration Server";
 constexpr wchar_t kServiceName[] = L"MasterControlProgram";
 constexpr wchar_t kUninstallRegistryKey[] = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MasterControlProgram";
-constexpr wchar_t kProgramsFolderName[] = L"Master Control Program";
-constexpr wchar_t kShellShortcutName[] = L"Master Control Program.lnk";
-constexpr wchar_t kDashboardShortcutName[] = L"Master Control Dashboard.url";
+constexpr wchar_t kProgramsFolderName[] = L"Master Control Orchestration Server";
+constexpr wchar_t kShellShortcutName[] = L"Master Control Orchestration Server.lnk";
+constexpr wchar_t kDashboardShortcutName[] = L"Master Control Orchestration Server Dashboard.url";
 constexpr wchar_t kInstallStateFileName[] = L"installation-state.json";
-constexpr wchar_t kBrowserRuleName[] = L"Master Control Program - Browser Access";
-constexpr wchar_t kBeaconRuleName[] = L"Master Control Program - Beacon Discovery";
+constexpr wchar_t kBrowserRuleName[] = L"Master Control Orchestration Server - Browser Access";
+constexpr wchar_t kBeaconRuleName[] = L"Master Control Orchestration Server - Beacon Discovery";
 constexpr wchar_t kBootstrapperLogDirectoryEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_LOG_DIR";
 constexpr wchar_t kBootstrapperServiceNameEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_SERVICE_NAME";
 constexpr wchar_t kBootstrapperUninstallRegistryKeyEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_UNINSTALL_KEY";
@@ -147,6 +149,9 @@ struct PayloadLayout final {
     std::filesystem::path webDirectory;
 };
 
+constexpr wchar_t kCurrentShareLeaf[] = L"MasterControlOrchestrationServer";
+constexpr wchar_t kLegacyShareLeaf[] = L"MasterControlProgram";
+
 std::wstring wideFromUtf8(const std::string& input) {
     if (input.empty()) {
         return {};
@@ -230,25 +235,25 @@ std::optional<std::filesystem::path> tryKnownFolder(REFKNOWNFOLDERID folderId) {
 
 std::filesystem::path defaultInstallDirectory() {
     if (const auto programFilesPath = tryKnownFolder(FOLDERID_ProgramFiles); programFilesPath.has_value()) {
-        return *programFilesPath / "Master Control Program";
+        return *programFilesPath / "Master Control Orchestration Server";
     }
 
     if (const auto programFilesPath = readEnvironmentVariable(L"ProgramW6432"); programFilesPath.has_value() &&
                                                                               !programFilesPath->empty()) {
-        return std::filesystem::path(*programFilesPath) / "Master Control Program";
+        return std::filesystem::path(*programFilesPath) / "Master Control Orchestration Server";
     }
 
     if (const auto programFilesPath = readEnvironmentVariable(L"ProgramFiles"); programFilesPath.has_value() &&
                                                                              !programFilesPath->empty()) {
-        return std::filesystem::path(*programFilesPath) / "Master Control Program";
+        return std::filesystem::path(*programFilesPath) / "Master Control Orchestration Server";
     }
 
     if (const auto systemDrive = readEnvironmentVariable(L"SystemDrive"); systemDrive.has_value() &&
                                                                           !systemDrive->empty()) {
-        return std::filesystem::path(*systemDrive) / "Program Files" / "Master Control Program";
+        return std::filesystem::path(*systemDrive) / "Program Files" / "Master Control Orchestration Server";
     }
 
-    return executableDirectory() / "Master Control Program";
+    return executableDirectory() / "Master Control Orchestration Server";
 }
 
 std::filesystem::path knownFolder(REFKNOWNFOLDERID folderId) {
@@ -586,11 +591,11 @@ void writeBootstrapperActionLog(const std::wstring& mode,
 
         const auto logDirectory = bootstrapperLogDirectory();
         const auto logPath = logDirectory /
-            (L"MasterControlProgram-" + action + L"-" + wideFromUtf8(succeeded ? "succeeded" : "failed") +
+            (L"MasterControlOrchestrationServer-" + action + L"-" + wideFromUtf8(succeeded ? "succeeded" : "failed") +
              L"-" + wideFromUtf8(localTimestampForFileName()) + L".txt");
 
         std::ostringstream output;
-        output << "Master Control Program Bootstrapper Log\r\n\r\n";
+        output << "Master Control Orchestration Server Bootstrapper Log\r\n\r\n";
         output << "GeneratedAt: " << localTimestampForDisplay() << "\r\n";
         output << "Action: " << utf8FromWide(mode) << "\r\n";
         output << "Succeeded: " << (succeeded ? "true" : "false") << "\r\n";
@@ -653,11 +658,18 @@ std::optional<nlohmann::json> readJsonFile(const std::filesystem::path& filePath
 
 PayloadLayout resolvePayloadLayout() {
     const auto currentDirectory = executableDirectory();
-    const auto flatShare = currentDirectory / "share" / "MasterControlProgram";
+    std::filesystem::path flatShare;
+    for (const auto* shareLeaf : { kCurrentShareLeaf, kLegacyShareLeaf }) {
+        const auto candidate = currentDirectory / "share" / shareLeaf;
+        if (std::filesystem::exists(candidate / "ForsettiManifests") &&
+            std::filesystem::exists(candidate / "web")) {
+            flatShare = candidate;
+            break;
+        }
+    }
     if (std::filesystem::exists(currentDirectory / "MasterControlServiceHost.exe") &&
         std::filesystem::exists(currentDirectory / "MasterControlShell.exe") &&
-        std::filesystem::exists(flatShare / "ForsettiManifests") &&
-        std::filesystem::exists(flatShare / "web")) {
+        !flatShare.empty()) {
         return PayloadLayout{
             true,
             currentDirectory,
@@ -687,7 +699,7 @@ PayloadLayout resolvePayloadLayout() {
         };
     }
 
-    throw std::runtime_error("Unable to resolve an installable Master Control Program payload from the current bootstrapper location.");
+    throw std::runtime_error("Unable to resolve an installable Master Control Orchestration Server payload from the current bootstrapper location.");
 }
 
 void stagePayload(const PayloadLayout& layout, const std::filesystem::path& installDirectory) {
@@ -699,8 +711,8 @@ void stagePayload(const PayloadLayout& layout, const std::filesystem::path& inst
     copyRecursive(layout.bootstrapperDirectory, installDirectory);
     copyRecursive(layout.serviceDirectory, installDirectory);
     copyRecursive(layout.shellDirectory, installDirectory);
-    copyRecursive(layout.manifestsDirectory, installDirectory / "share" / "MasterControlProgram" / "ForsettiManifests");
-    copyRecursive(layout.webDirectory, installDirectory / "share" / "MasterControlProgram" / "web");
+    copyRecursive(layout.manifestsDirectory, installDirectory / "share" / kCurrentShareLeaf / "ForsettiManifests");
+    copyRecursive(layout.webDirectory, installDirectory / "share" / kCurrentShareLeaf / "web");
 }
 
 MasterControl::AppConfiguration ensureConfigurationPresent() {
@@ -899,7 +911,7 @@ bool registerUninstallEntry(const InstallationState& state) {
         L"\" uninstall \"" + std::filesystem::path(state.installDirectory).wstring() + L"\" --purge-install-dir";
 
     const bool success =
-        setRegistryStringValue(key, L"DisplayName", L"Master Control Program") &&
+        setRegistryStringValue(key, L"DisplayName", kProductDisplayName) &&
         setRegistryStringValue(key, L"Publisher", L"James Daley") &&
         setRegistryStringValue(key, L"DisplayVersion", wideFromUtf8(state.version)) &&
         setRegistryStringValue(key, L"InstallLocation", std::filesystem::path(state.installDirectory).wstring()) &&
@@ -927,7 +939,7 @@ bool createShellShortcut(const InstallationState& state) {
         L"$shortcut.TargetPath = '" + escapePowerShellLiteral(std::filesystem::path(state.shellBinary).wstring()) + L"'; " \
         L"$shortcut.WorkingDirectory = '" + escapePowerShellLiteral(std::filesystem::path(state.installDirectory).wstring()) + L"'; " \
         L"$shortcut.IconLocation = '" + escapePowerShellLiteral(std::filesystem::path(state.shellBinary).wstring()) + L",0'; " \
-        L"$shortcut.Description = 'Master Control Program administrative shell'; " \
+        L"$shortcut.Description = '" + std::wstring(kProductDisplayName) + L" administrative shell'; " \
         L"$shortcut.Save()";
 
     const auto command = L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"" + script + L"\"";
@@ -1288,7 +1300,7 @@ bool installOrUpdateService(const std::filesystem::path& serviceBinary) {
     SC_HANDLE service = CreateServiceW(
         scm,
         serviceName.c_str(),
-        serviceName.c_str(),
+        kProductDisplayName,
         SERVICE_ALL_ACCESS,
         SERVICE_WIN32_OWN_PROCESS,
         SERVICE_AUTO_START,
@@ -1386,7 +1398,7 @@ bool uninstallService() {
 }
 
 bool scheduleDeferredInstallRemoval(const std::filesystem::path& installDirectory) {
-    const auto scriptPath = std::filesystem::temp_directory_path() / "MasterControlProgram-uninstall.cmd";
+    const auto scriptPath = std::filesystem::temp_directory_path() / "MasterControlOrchestrationServer-uninstall.cmd";
     const std::string script =
         "@echo off\r\n"
         "ping 127.0.0.1 -n 4 > nul\r\n"
@@ -1460,10 +1472,23 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
     checkFile(installDirectory / "MasterControlServiceHost.exe", L"Service host");
     checkFile(installDirectory / "MasterControlShell.exe", L"Shell host");
     checkFile(installDirectory / "MasterControlBootstrapper.exe", L"Bootstrapper");
-    checkDirectory(installDirectory / "share" / "MasterControlProgram" / "ForsettiManifests", L"Forsetti manifest directory");
-    checkFile(installDirectory / "share" / "MasterControlProgram" / "ForsettiManifests" / "DashboardUIModule.json", L"Dashboard UI manifest");
-    checkDirectory(installDirectory / "share" / "MasterControlProgram" / "web", L"Web asset directory");
-    checkFile(installDirectory / "share" / "MasterControlProgram" / "web" / "index.html", L"Browser dashboard asset");
+    std::filesystem::path shareRoot;
+    for (const auto* shareLeaf : { kCurrentShareLeaf, kLegacyShareLeaf }) {
+        const auto candidate = installDirectory / "share" / shareLeaf;
+        if (std::filesystem::exists(candidate / "ForsettiManifests") ||
+            std::filesystem::exists(candidate / "web")) {
+            shareRoot = candidate;
+            break;
+        }
+    }
+    if (shareRoot.empty()) {
+        shareRoot = installDirectory / "share" / kCurrentShareLeaf;
+    }
+
+    checkDirectory(shareRoot / "ForsettiManifests", L"Forsetti manifest directory");
+    checkFile(shareRoot / "ForsettiManifests" / "DashboardUIModule.json", L"Dashboard UI manifest");
+    checkDirectory(shareRoot / "web", L"Web asset directory");
+    checkFile(shareRoot / "web" / "index.html", L"Browser dashboard asset");
 
     const auto serviceStatus = queryServiceInstallationStatus();
     const auto uninstallStatus = queryUninstallRegistrationStatus();
@@ -1620,7 +1645,7 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
     }
 
     if (!issues.empty()) {
-        std::wcerr << L"Master Control Program installation validation failed for "
+        std::wcerr << L"Master Control Orchestration Server installation validation failed for "
                    << installDirectory.c_str() << L":\n";
         for (const auto& issue : issues) {
             std::wcerr << L"  - " << issue << L'\n';
@@ -1628,7 +1653,7 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
         return false;
     }
 
-    std::wcout << L"Validated Master Control Program installation at "
+    std::wcout << L"Validated Master Control Orchestration Server installation at "
                << installDirectory.c_str() << L'\n';
     if (state.has_value()) {
         std::wcout << L"Browser URL: " << wideFromUtf8(state->browserUrl) << L'\n';
@@ -1657,7 +1682,7 @@ void showDetectedEnvironment(const bool jsonOutput) {
             { "dataDirectory", paths.dataDirectory.string() },
             { "defaultBrowserPort", configuration.browserPort },
             { "defaultBeaconPort", configuration.beaconPort },
-            { "seededBladeEndpoints", configuration.activeProfile.seededEndpoints.size() },
+            { "seededPlatformEndpoints", configuration.activeProfile.seededEndpoints.size() },
             { "serviceRegistered", serviceStatus.registered },
             { "serviceAutoStart", serviceStatus.autoStart },
             { "serviceDelayedAutoStart", serviceStatus.delayedAutoStart },
@@ -1690,7 +1715,7 @@ void showDetectedEnvironment(const bool jsonOutput) {
     std::cout << "Install data directory: " << paths.dataDirectory.string() << '\n';
     std::cout << "Default browser port: " << configuration.browserPort << '\n';
     std::cout << "Default beacon port: " << configuration.beaconPort << '\n';
-    std::cout << "Seeded BLADE endpoints: " << configuration.activeProfile.seededEndpoints.size() << '\n';
+    std::cout << "Seeded platform endpoints: " << configuration.activeProfile.seededEndpoints.size() << '\n';
 }
 
 bool isProcessElevated() {
@@ -1814,7 +1839,7 @@ bool runPreflight(const std::filesystem::path& installDirectory, const Integrati
     }
 
     if (!issues.empty()) {
-        std::wcerr << L"Master Control Program preflight failed for "
+        std::wcerr << L"Master Control Orchestration Server preflight failed for "
                    << installDirectory.c_str() << L":\n";
         for (const auto& issue : issues) {
             std::wcerr << L"  - " << issue << L'\n';
@@ -2073,7 +2098,7 @@ bool installLike(const std::wstring& mode,
         mode == L"upgrade" ? L"Upgraded" :
         L"Installed";
     std::wcout << action
-               << L" Master Control Program at " << installDirectory.c_str() << L'\n';
+               << L" Master Control Orchestration Server at " << installDirectory.c_str() << L'\n';
     std::wcout << L"Configuration path: " << wideFromUtf8(stagedState->configPath) << L'\n';
     std::wcout << L"Browser URL: " << wideFromUtf8(stagedState->browserUrl) << L'\n';
     return true;
@@ -2188,7 +2213,7 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
         return true;
     }
 
-    std::wcout << L"Uninstalled Master Control Program integrations.\n";
+    std::wcout << L"Uninstalled Master Control Orchestration Server integrations.\n";
     if (options.purgeInstallDirectory) {
         std::wcout << L"Install directory removal requested for " << installDirectory.c_str() << L'\n';
     }

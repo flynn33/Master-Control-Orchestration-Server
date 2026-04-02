@@ -1,4 +1,4 @@
-// Master Control Program
+// Master Control Orchestration Server
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 
@@ -35,7 +35,7 @@ struct AppPaths final {
 
 DiscoveredEnvironment detectLocalEnvironment();
 AppPaths resolveAppPaths();
-std::vector<RuntimeEndpoint> buildBladeCompatibilityEndpoints();
+std::vector<RuntimeEndpoint> buildDefaultSeededEndpoints();
 std::vector<ProviderConnection> buildDefaultProviders();
 AppConfiguration buildDefaultConfiguration();
 std::string executableDirectoryUtf8();

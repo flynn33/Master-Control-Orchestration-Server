@@ -1,4 +1,4 @@
-// Master Control Program
+// Master Control Orchestration Server
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 
@@ -61,7 +61,7 @@ private:
 
 std::filesystem::path makeTempRoot() {
     const auto root = std::filesystem::temp_directory_path() /
-        ("MasterControlProgramTests_" + std::to_string(GetCurrentProcessId()));
+        ("MasterControlOrchestrationServerTests_" + std::to_string(GetCurrentProcessId()));
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     return root;
@@ -1023,8 +1023,8 @@ int main() {
     success &= expect(!configuration.activeProfile.environmentName.empty(), "Default profile should describe the detected environment");
     success &= expect(configuration.providers.size() >= 3, "Default providers should include the supported named adapters");
 
-    const auto gatewayEndpoint = findEndpoint(configuration.activeProfile.seededEndpoints, "aggregator-gateway");
-    success &= expect(gatewayEndpoint.has_value(), "BLADE profile should include the aggregator gateway");
+    const auto gatewayEndpoint = findEndpoint(configuration.activeProfile.seededEndpoints, "platform-gateway");
+    success &= expect(gatewayEndpoint.has_value(), "Default profile should include the platform gateway");
     success &= expect(gatewayEndpoint.has_value() && gatewayEndpoint->host == configuration.activeProfile.preferredBindAddress, "Seeded endpoints should use the detected host");
 
     const nlohmann::json serialized = configuration;
@@ -1493,8 +1493,8 @@ int main() {
         writeTextFile(stagedPayloadRoot / "MasterControlServiceHost.exe", "");
         writeTextFile(stagedPayloadRoot / "MasterControlShell.exe", "");
         writeTextFile(stagedPayloadRoot / "MasterControlBootstrapper.exe", "");
-        writeTextFile(stagedPayloadRoot / "share" / "MasterControlProgram" / "web" / "index.html", "<html></html>");
-        writeTextFile(stagedPayloadRoot / "share" / "MasterControlProgram" / "ForsettiManifests" / "DashboardUIModule.json", "{}");
+        writeTextFile(stagedPayloadRoot / "share" / "MasterControlOrchestrationServer" / "web" / "index.html", "<html></html>");
+        writeTextFile(stagedPayloadRoot / "share" / "MasterControlOrchestrationServer" / "ForsettiManifests" / "DashboardUIModule.json", "{}");
 
         const auto packageExecution = application.executeGovernanceToolJson(nlohmann::json{
             { "platform", "windows" },
@@ -2939,7 +2939,7 @@ int main() {
         const auto failedBootstrapInstallDirectory = tempRoot / "bootstrapper-install-failed";
         const auto bootstrapDataDirectory = tempRoot / "bootstrapper-data";
         const auto bootstrapLogDirectory = tempRoot / "bootstrapper-desktop";
-        const auto bootstrapConfigurationFile = bootstrapDataDirectory / "config" / "master-control-program.json";
+    const auto bootstrapConfigurationFile = bootstrapDataDirectory / "config" / "master-control-orchestration-server.json";
         const auto bootstrapInstallStateFile = bootstrapInstallDirectory / "installation-state.json";
         const auto readJsonFile = [](const std::filesystem::path& path) -> std::optional<nlohmann::json> {
             std::ifstream input(path);
@@ -2961,7 +2961,7 @@ int main() {
                 return std::nullopt;
             }
 
-            const auto prefix = std::string("MasterControlProgram-") + action + "-" + outcome + "-";
+            const auto prefix = std::string("MasterControlOrchestrationServer-") + action + "-" + outcome + "-";
             for (const auto& entry : std::filesystem::directory_iterator(bootstrapLogDirectory, error)) {
                 if (error || !entry.is_regular_file()) {
                     continue;
@@ -2979,7 +2979,7 @@ int main() {
 
             return match;
         };
-        const auto bootstrapperServiceName = L"MasterControlProgramTests-" + std::to_wstring(GetCurrentProcessId());
+        const auto bootstrapperServiceName = L"MasterControlOrchestrationServerTests-" + std::to_wstring(GetCurrentProcessId());
         const auto bootstrapperUninstallKey =
             L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + bootstrapperServiceName;
 
@@ -3002,10 +3002,10 @@ int main() {
             std::filesystem::exists(bootstrapInstallDirectory / "MasterControlShell.exe"),
             "Bootstrapper install should stage the shell host");
         success &= expect(
-            std::filesystem::exists(bootstrapInstallDirectory / "share" / "MasterControlProgram" / "web" / "index.html"),
+            std::filesystem::exists(bootstrapInstallDirectory / "share" / "MasterControlOrchestrationServer" / "web" / "index.html"),
             "Bootstrapper install should stage browser resources");
         success &= expect(
-            std::filesystem::exists(bootstrapInstallDirectory / "share" / "MasterControlProgram" / "ForsettiManifests" / "DashboardUIModule.json"),
+            std::filesystem::exists(bootstrapInstallDirectory / "share" / "MasterControlOrchestrationServer" / "ForsettiManifests" / "DashboardUIModule.json"),
             "Bootstrapper install should stage Forsetti manifests");
         success &= expect(
             std::filesystem::exists(bootstrapInstallStateFile),

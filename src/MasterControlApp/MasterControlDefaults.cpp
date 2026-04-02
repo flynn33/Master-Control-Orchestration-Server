@@ -1,4 +1,4 @@
-// Master Control Program
+// Master Control Orchestration Server
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 
@@ -26,6 +26,11 @@ namespace {
 
 constexpr wchar_t kDataDirectoryOverrideVariable[] = L"MASTERCONTROL_DATA_DIR";
 constexpr wchar_t kResourceDirectoryOverrideVariable[] = L"MASTERCONTROL_RESOURCE_DIR";
+constexpr wchar_t kCurrentDataDirectoryLeaf[] = L"MasterControlOrchestrationServer";
+// Preserve legacy leaves so upgraded installs can still discover older data/share layouts.
+constexpr wchar_t kLegacyDataDirectoryLeaf[] = L"MasterControlProgram";
+constexpr wchar_t kCurrentShareLeaf[] = L"MasterControlOrchestrationServer";
+constexpr wchar_t kLegacyShareLeaf[] = L"MasterControlProgram";
 
 std::string utf8FromWide(const std::wstring& input) {
     if (input.empty()) {
@@ -218,19 +223,19 @@ NetworkIdentity detectPrimaryNetworkIdentity() {
     return {};
 }
 
-std::vector<RuntimeEndpoint> buildBladeCompatibilityEndpointsForHost(std::string host) {
+std::vector<RuntimeEndpoint> buildDefaultSeededEndpointsForHost(std::string host) {
     if (host.empty()) {
         host = "127.0.0.1";
     }
 
     std::vector<RuntimeEndpoint> endpoints;
 
-    endpoints.push_back(makeEndpoint("aggregator-gateway", "Aggregator Gateway", EndpointKind::Gateway, host, 7200, "/health", "Unified MCP tool gateway"));
+    endpoints.push_back(makeEndpoint("platform-gateway", "Platform Gateway", EndpointKind::Gateway, host, 7200, "/health", "Unified orchestration gateway"));
     endpoints.push_back(makeEndpoint("browser-gateway", "Browser Gateway", EndpointKind::BrowserGateway, host, 7300, "/", "Master Control Orchestration Server browser surface"));
     endpoints.push_back(makeEndpoint("client-tracker", "Client Tracker", EndpointKind::MCPServer, host, 7120, "/api/clients", "LAN client tracker"));
     endpoints.push_back(makeEndpoint("metrics", "Metrics", EndpointKind::MCPServer, host, 7121, "/api/metrics", "Host metrics feed"));
 
-    const std::array<std::pair<const char*, uint16_t>, 18> bladeServers = {{
+    const std::array<std::pair<const char*, uint16_t>, 18> orchestrationServers = {{
         { "repo-search", 7101 }, { "docs-search", 7102 }, { "fs-cache", 7103 }, { "build-cache", 7104 },
         { "symbol-index", 7105 }, { "session-context", 7106 }, { "response-cache", 7107 }, { "git-intel", 7108 },
         { "file-digest", 7109 }, { "vector-search", 7110 }, { "dep-graph", 7111 }, { "lint-cache", 7112 },
@@ -238,8 +243,8 @@ std::vector<RuntimeEndpoint> buildBladeCompatibilityEndpointsForHost(std::string
         { "coordination", 7117 }, { "event-bus", 7118 }
     }};
 
-    for (const auto& [name, port] : bladeServers) {
-        endpoints.push_back(makeEndpoint(name, name, EndpointKind::MCPServer, host, port, "/", "BLADE MCP server"));
+    for (const auto& [name, port] : orchestrationServers) {
+        endpoints.push_back(makeEndpoint(name, name, EndpointKind::MCPServer, host, port, "/", "Managed orchestration MCP server"));
     }
 
     const std::array<std::pair<const char*, uint16_t>, 7> agents = {{
@@ -248,7 +253,7 @@ std::vector<RuntimeEndpoint> buildBladeCompatibilityEndpointsForHost(std::string
     }};
 
     for (const auto& [name, port] : agents) {
-        endpoints.push_back(makeEndpoint(name, name, EndpointKind::SubAgent, host, port, "/", "BLADE sub-agent"));
+        endpoints.push_back(makeEndpoint(name, name, EndpointKind::SubAgent, host, port, "/", "Managed orchestration sub-agent"));
     }
 
     return endpoints;
@@ -296,14 +301,22 @@ DiscoveredEnvironment detectLocalEnvironment() {
 AppPaths resolveAppPaths() {
     const auto executableDirectory = currentExecutableDirectory();
     const auto dataDirectoryOverride = wideEnvironmentVariable(kDataDirectoryOverrideVariable);
+    const auto defaultDataDirectory = programDataDirectory() / kCurrentDataDirectoryLeaf;
+    const auto legacyDataDirectory = programDataDirectory() / kLegacyDataDirectoryLeaf;
     const auto dataDirectory = dataDirectoryOverride.has_value()
         ? std::filesystem::path(*dataDirectoryOverride)
-        : programDataDirectory() / "MasterControlProgram";
+        : (!std::filesystem::exists(defaultDataDirectory) && std::filesystem::exists(legacyDataDirectory)
+            ? legacyDataDirectory
+            : defaultDataDirectory);
     const auto installHistoryFile = dataDirectory / "state" / "install-history.json";
     const auto appleOperationHistoryFile = dataDirectory / "state" / "apple-operations.json";
     const auto entitlementsFile = dataDirectory / "state" / "entitlements.json";
     const auto providerCredentialsFile = dataDirectory / "state" / "provider-credentials.json";
-    const auto configurationFile = dataDirectory / "config" / "master-control-program.json";
+    const auto currentConfigurationFile = dataDirectory / "config" / "master-control-orchestration-server.json";
+    const auto legacyConfigurationFile = dataDirectory / "config" / "master-control-program.json";
+    const auto configurationFile = !std::filesystem::exists(currentConfigurationFile) && std::filesystem::exists(legacyConfigurationFile)
+        ? legacyConfigurationFile
+        : currentConfigurationFile;
     const auto workDirectory = dataDirectory / "work";
 
 std::filesystem::path manifestsDirectory;
@@ -315,9 +328,15 @@ std::filesystem::path cluProfileFile;
         webRootDirectory = std::filesystem::path(*resourceDirectory) / "web";
         cluProfileFile = std::filesystem::path(*resourceDirectory) / "clu" / "governance-profile.json";
     } else {
-        manifestsDirectory = executableDirectory / "share" / "MasterControlProgram" / "ForsettiManifests";
-        webRootDirectory = executableDirectory / "share" / "MasterControlProgram" / "web";
-        cluProfileFile = executableDirectory / "share" / "MasterControlProgram" / "clu" / "governance-profile.json";
+        const auto currentShareRoot = executableDirectory / "share" / kCurrentShareLeaf;
+        const auto legacyShareRoot = executableDirectory / "share" / kLegacyShareLeaf;
+        const auto shareRoot =
+            (std::filesystem::exists(currentShareRoot / "ForsettiManifests") || std::filesystem::exists(currentShareRoot / "web"))
+                ? currentShareRoot
+                : legacyShareRoot;
+        manifestsDirectory = shareRoot / "ForsettiManifests";
+        webRootDirectory = shareRoot / "web";
+        cluProfileFile = shareRoot / "clu" / "governance-profile.json";
     }
 
     if (!std::filesystem::exists(manifestsDirectory)) {
@@ -349,8 +368,8 @@ std::filesystem::path cluProfileFile;
     };
 }
 
-std::vector<RuntimeEndpoint> buildBladeCompatibilityEndpoints() {
-    return buildBladeCompatibilityEndpointsForHost(detectLocalEnvironment().preferredBindAddress);
+std::vector<RuntimeEndpoint> buildDefaultSeededEndpoints() {
+    return buildDefaultSeededEndpointsForHost(detectLocalEnvironment().preferredBindAddress);
 }
 
 std::vector<ProviderConnection> buildDefaultProviders() {
@@ -381,7 +400,7 @@ AppConfiguration buildDefaultConfiguration() {
     configuration.activeProfile.environmentName = environment.hostName + " - " + environment.operatingSystem;
     configuration.activeProfile.preferredBindAddress = environment.preferredBindAddress;
     configuration.activeProfile.macAddress = environment.macAddress;
-    configuration.activeProfile.seededEndpoints = buildBladeCompatibilityEndpointsForHost(environment.preferredBindAddress);
+    configuration.activeProfile.seededEndpoints = buildDefaultSeededEndpointsForHost(environment.preferredBindAddress);
     return configuration;
 }
 

@@ -1,4 +1,4 @@
-// Master Control Program
+// Master Control Orchestration Server
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 
@@ -146,7 +146,7 @@ winrt::Windows::Foundation::IAsyncAction SecuritySectionControl::SaveSecurityAsy
 winrt::Windows::Foundation::IAsyncAction SecuritySectionControl::ShowUnsafeConfirmationAsync() {
     ContentDialog dialog;
     dialog.Title(winrt::box_value(L"Disable Security Protocols?"));
-    dialog.Content(winrt::box_value(L"Disabling security protocols weakens the protection envelope for the Master Control Program. Continue only for controlled troubleshooting."));
+    dialog.Content(winrt::box_value(L"Disabling security protocols weakens the protection envelope for the Master Control Orchestration Server. Continue only for controlled troubleshooting."));
     dialog.PrimaryButtonText(L"Disable");
     dialog.CloseButtonText(L"Cancel");
     dialog.DefaultButton(ContentDialogButton::Close);

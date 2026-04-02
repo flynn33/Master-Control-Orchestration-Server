@@ -1,10 +1,6 @@
-# Master Control Program Wiki
+# Master Control Orchestration Server Wiki
 
-Master Control Program is a Forsetti-compliant Windows control plane that manages MCP servers,
-AI sub-agents, host telemetry, and browser-based operations from a single platform.
-The system runs on the MASTER-CONTROL server (`192.168.1.3`) and exposes 96+ tools
-through an aggregator gateway that any Claude Code instance on the LAN can reach with
-one connection.
+Master Control Orchestration Server is a Forsetti-compliant Windows orchestration server for guided setup, provider routing, CLU governance, platform gateways, platform governance lanes, telemetry, imports, exports, and browser-based operations.
 
 ## Current Release
 
@@ -12,34 +8,35 @@ one connection.
 | --- | --- |
 | Version | `v0.1.49` |
 | Released | `2026-03-29` |
-| Summary | Automated patch release for Master Control Program. |
+| Summary | Automated patch release for Master Control Orchestration Server. |
 
 ## Platform at a Glance
 
 | Component | Count | Details |
 | --- | --- | --- |
-| Blade tool servers | 18 | Ports 7101-7118, specialized MCP tool providers |
-| AI sub-agents | 7 | Ports 7201-7207, autonomous AI workers |
-| Aggregator gateway | 1 | Port 7200, single-endpoint proxy for all tools |
-| Exposed tools | 96+ | Accessible via HTTPS at `192.168.1.3:8443` |
-| Dashboard sections | 7 | Real-time metrics, server grid, agent grid, comms, coordination, events, beacon |
+| Operator surfaces | 2 | WinUI 3 desktop shell and browser admin UI backed by the same runtime |
+| Platform lanes | 6 | Windows, macOS, and iOS gateway plus governance lanes |
+| AI providers | 3 | Codex, Claude Code, and xAI routing in the current build |
+| Install flow | 2 | Native setup launcher plus diagnostic PowerShell fallback |
+| Governance | 1 core lane | CLU plus platform governance execution and resource enforcement |
 
 ## Wiki Pages
 
 | Page | Description |
 | --- | --- |
-| [Architecture](Architecture) | System design, dashboard layout, aggregator gateway, and repository module map |
-| [Infrastructure](Infrastructure) | Server hardware, port allocation, Caddy proxy, network topology, and storage layout |
-| [Sub-Agents](Sub-Agents) | The 7 AI sub-agents, their roles, ports, capabilities, and implementation details |
-| [API Reference](API-Reference) | All 25 backend services, API endpoints, metrics system, and health checks |
-| [Operations](Operations) | Build, test, install commands, service management, dashboard access, and push guard |
-| [Remote Client](Remote-Client) | How to connect a remote Claude Code instance to the BLADE gateway |
+| [Architecture](Architecture) | Product composition, runtime structure, and platform governance model |
+| [Infrastructure](Infrastructure) | Deployment shape, packaging model, and target-host validation focus |
+| [Sub-Agents](Sub-Agents) | Current seven-agent roster, responsibilities, and shared client details |
+| [API Reference](API-Reference) | Current browser, CLU, platform-service, and governance routes from the runtime |
+| [Operations](Operations) | Build, validate, package, install, and deployment-acceptance workflows |
+| [Remote Client](Remote-Client) | Current onboarding direction for Codex, Claude Code, and platform gateway discovery |
 | [Automation](Automation) | GitHub agents, CI/CD pipeline, commit conventions, and workflow triggers |
 | [Versions](Versions) | Release history, versioning scheme, and release documents |
 
 ## Quick Links
 
-- Dashboard: `http://192.168.1.3:8080/dashboard/`
-- Gateway health: `http://192.168.1.3:7200/health`
-- HTTPS gateway: `https://192.168.1.3:8443/mcp/gateway`
+- [README](../README.md)
+- [Project Overview](../plans/dashboard/project-overview.md)
+- [Technical Details](../plans/dashboard/technical-details.md)
+- [Version Index](../docs/versions/index.md)
 - Repository: https://github.com/flynn33/master-control-dashboard

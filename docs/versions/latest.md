@@ -5,7 +5,7 @@
 - Commit: `4d69fe95b55864dbacb800587c6aa3cb75e24cc8`
 
 ## Summary
-Automated patch release for Master Control Program.
+Automated patch release for Master Control Orchestration Server.
 
 ## Included Changes
 - feat(wiki): overhaul wiki generation with comprehensive pages (flynn33)

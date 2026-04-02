@@ -1,4 +1,4 @@
-# Master Control Program
+# Master Control Orchestration Server
 # Copyright (c) 2026 James Daley. All Rights Reserved.
 # Proprietary and Confidential.
 
@@ -240,7 +240,7 @@ $releaseStatus = if (($checks | Where-Object { -not $_.passed }).Count -eq 0 -an
 }
 
 $bootstrapperPath = (Resolve-Path $packageMetadata.bootstrapperPath).Path
-$testScriptPath = (Resolve-Path (Join-Path $PSScriptRoot "Test-MasterControlDeployment.ps1")).Path
+$testScriptPath = (Resolve-Path (Join-Path $PSScriptRoot "Test-MasterControlOrchestrationServerDeployment.ps1")).Path
 $versionTag = [string]$packageMetadata.versionTag
 $recommendedCommands = @(
     [pscustomobject][ordered]@{

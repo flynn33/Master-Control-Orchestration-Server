@@ -1,4 +1,4 @@
-# Master Control Program
+# Master Control Orchestration Server
 # Copyright (c) 2026 James Daley. All Rights Reserved.
 # Proprietary and Confidential.
 
@@ -33,8 +33,8 @@ New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 
 $localReportPath = Join-Path $OutputDirectory ($BaseName + "-local.json")
 $comparisonReportPath = Join-Path $OutputDirectory ($BaseName + "-comparison.json")
-$testScriptPath = Join-Path $PSScriptRoot "Test-MasterControlDeployment.ps1"
-$compareScriptPath = Join-Path $PSScriptRoot "Compare-MasterControlDeploymentReports.ps1"
+$testScriptPath = Join-Path $PSScriptRoot "Test-MasterControlOrchestrationServerDeployment.ps1"
+$compareScriptPath = Join-Path $PSScriptRoot "Compare-MasterControlOrchestrationServerDeploymentReports.ps1"
 
 $testArguments = @(
     "-NoProfile",

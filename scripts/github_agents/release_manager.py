@@ -102,9 +102,9 @@ def initial_release_record() -> dict:
         "tag": f"v{DEFAULT_VERSION}",
         "released_at": utc_date(),
         "commit": current_head(),
-        "summary": "Initial tracked baseline for the Forsetti-based Master Control Program workspace.",
+        "summary": "Initial tracked baseline for the Forsetti-based Master Control Orchestration Server workspace.",
         "entries": [
-            "Imported the current Forsetti-compliant Master Control Program source tree.",
+            "Imported the current Forsetti-compliant Master Control Orchestration Server source tree.",
             "Established WinUI 3 shell, service host, browser dashboard, and bootstrapper scaffolding.",
             "Seeded repository-owned version, changelog, wiki, and README automation files.",
         ],

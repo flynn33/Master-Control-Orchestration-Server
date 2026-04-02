@@ -1,4 +1,4 @@
-// Master Control Program
+// Master Control Orchestration Server
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 
@@ -15,8 +15,11 @@ namespace {
 using namespace winrt;
 using namespace Windows::Data::Json;
 
+// Keep the legacy service identity stable so the shell can attach to upgraded installs.
 constexpr wchar_t kServiceName[] = L"MasterControlProgram";
 constexpr wchar_t kDataDirectoryOverrideVariable[] = L"MASTERCONTROL_DATA_DIR";
+constexpr wchar_t kCurrentDataDirectoryLeaf[] = L"MasterControlOrchestrationServer";
+constexpr wchar_t kLegacyDataDirectoryLeaf[] = L"MasterControlProgram";
 
 struct ServiceSnapshot final {
     ServiceState state = ServiceState::Missing;
@@ -2055,7 +2058,7 @@ bool ShellRuntime::StartService(std::wstring& message) const {
     SC_HANDLE service = OpenServiceW(scm, kServiceName, SERVICE_START | SERVICE_QUERY_STATUS);
     if (service == nullptr) {
         CloseServiceHandle(scm);
-        message = L"Master Control Program service is not installed.";
+        message = L"Master Control Orchestration Server service is not installed.";
         return false;
     }
 
@@ -2075,7 +2078,7 @@ bool ShellRuntime::StartService(std::wstring& message) const {
         message = L"Service start requested.";
         started = true;
     } else {
-        message = L"Unable to start the Master Control Program service.";
+        message = L"Unable to start the Master Control Orchestration Server service.";
     }
 
     CloseServiceHandle(service);
@@ -2093,13 +2096,13 @@ bool ShellRuntime::StopService(std::wstring& message) const {
     SC_HANDLE service = OpenServiceW(scm, kServiceName, SERVICE_STOP | SERVICE_QUERY_STATUS);
     if (service == nullptr) {
         CloseServiceHandle(scm);
-        message = L"Master Control Program service is not installed.";
+        message = L"Master Control Orchestration Server service is not installed.";
         return false;
     }
 
     SERVICE_STATUS status{};
     const bool stopped = ControlService(service, SERVICE_CONTROL_STOP, &status) != 0 || GetLastError() == ERROR_SERVICE_NOT_ACTIVE;
-    message = stopped ? L"Service stop requested." : L"Unable to stop the Master Control Program service.";
+    message = stopped ? L"Service stop requested." : L"Unable to stop the Master Control Orchestration Server service.";
 
     CloseServiceHandle(service);
     CloseServiceHandle(scm);
@@ -2445,11 +2448,23 @@ std::filesystem::path ShellRuntime::ResolveDataDirectory() const {
         return std::filesystem::path(*overrideValue);
     }
 
-    return programDataDirectory() / "MasterControlProgram";
+    const auto currentDirectory = programDataDirectory() / kCurrentDataDirectoryLeaf;
+    const auto legacyDirectory = programDataDirectory() / kLegacyDataDirectoryLeaf;
+    if (!std::filesystem::exists(currentDirectory) && std::filesystem::exists(legacyDirectory)) {
+        return legacyDirectory;
+    }
+
+    return currentDirectory;
 }
 
 std::filesystem::path ShellRuntime::ResolveConfigurationFile() const {
-    return ResolveDataDirectory() / "config" / "master-control-program.json";
+    const auto currentFile = ResolveDataDirectory() / "config" / "master-control-orchestration-server.json";
+    const auto legacyFile = ResolveDataDirectory() / "config" / "master-control-program.json";
+    if (!std::filesystem::exists(currentFile) && std::filesystem::exists(legacyFile)) {
+        return legacyFile;
+    }
+
+    return currentFile;
 }
 
 std::filesystem::path ShellRuntime::ResolveExportsDirectory() const {

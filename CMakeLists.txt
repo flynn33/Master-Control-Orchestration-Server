@@ -1,12 +1,12 @@
-# Master Control Program
+# Master Control Orchestration Server
 # Copyright (c) 2026 James Daley. All Rights Reserved.
 # Proprietary and Confidential.
 
 cmake_minimum_required(VERSION 3.28)
 
-project(MasterControlProgram
+project(MasterControlOrchestrationServer
     VERSION 0.1.0
-    DESCRIPTION "Master Control Program - Forsetti-compliant Windows control plane"
+    DESCRIPTION "Master Control Orchestration Server - Forsetti-compliant Windows control plane"
     LANGUAGES CXX
 )
 
@@ -55,15 +55,15 @@ endif()
 
 install(
     DIRECTORY "${CMAKE_SOURCE_DIR}/src/MasterControlModules/Resources/ForsettiManifests"
-    DESTINATION "share/MasterControlProgram"
+    DESTINATION "share/MasterControlOrchestrationServer"
 )
 
 install(
     DIRECTORY "${CMAKE_SOURCE_DIR}/resources/web"
-    DESTINATION "share/MasterControlProgram"
+    DESTINATION "share/MasterControlOrchestrationServer"
 )
 
 install(
     DIRECTORY "${CMAKE_SOURCE_DIR}/resources/clu"
-    DESTINATION "share/MasterControlProgram"
+    DESTINATION "share/MasterControlOrchestrationServer"
 )

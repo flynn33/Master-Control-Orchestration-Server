@@ -1,4 +1,4 @@
-// Master Control Program
+// Master Control Orchestration Server
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 
@@ -1011,7 +1011,7 @@ GovernanceProfile buildFallbackGovernanceProfile() {
                 "clu-constitution",
                 "CLU Constitution",
                 "constitution",
-                "Defines the baseline rules for agentic operation inside Master Control Program.",
+                "Defines the baseline rules for agentic operation inside Master Control Orchestration Server.",
                 "Contract before action. Scope is binding. Truthfulness is mandatory. Governance overrides convenience."
             }
         },
@@ -2729,7 +2729,7 @@ private:
                                            const std::vector<RuntimeEndpoint>& endpoints,
                                            const bool useJsonRpcTools) const {
         std::ostringstream prompt;
-        prompt << "You are operating inside Master Control Program as the provider assigned to target '" << request.targetId << "'.\n"
+        prompt << "You are operating inside Master Control Orchestration Server as the provider assigned to target '" << request.targetId << "'.\n"
                << "Stay within the requested orchestration lane and do not assume ownership of other roles or sub-agents.\n"
                << "Assigned provider route: " << provider.displayName << " (" << provider.id << ").\n";
         if (!request.workingDirectory.empty()) {
@@ -2791,7 +2791,7 @@ private:
                 { "type", "function" },
                 { "function", {
                     { "name", "master_control_list_mcp_servers" },
-                    { "description", "List the MCP server endpoints currently shared through Master Control Program for this execution." },
+                    { "description", "List the MCP server endpoints currently shared through Master Control Orchestration Server for this execution." },
                     { "parameters", {
                         { "type", "object" },
                         { "properties", nlohmann::json::object() },
@@ -2803,7 +2803,7 @@ private:
                 { "type", "function" },
                 { "function", {
                     { "name", "master_control_invoke_mcp_jsonrpc" },
-                    { "description", "Invoke a JSON-RPC request against a shared MCP server endpoint exposed by Master Control Program." },
+                    { "description", "Invoke a JSON-RPC request against a shared MCP server endpoint exposed by Master Control Orchestration Server." },
                     { "parameters", {
                         { "type", "object" },
                         { "properties", {
@@ -2973,7 +2973,7 @@ private:
             return record;
         }
 
-        const auto executionDirectory = std::filesystem::temp_directory_path() / "MasterControlProgram" / "provider-executions" / sanitizePathComponent(record.executionId);
+        const auto executionDirectory = std::filesystem::temp_directory_path() / "MasterControlOrchestrationServer" / "provider-executions" / sanitizePathComponent(record.executionId);
         std::filesystem::create_directories(executionDirectory);
         const auto systemPromptFile = executionDirectory / "system-prompt.txt";
         {
@@ -3513,7 +3513,8 @@ public:
             endpoints.begin(),
             endpoints.end(),
             [](const RuntimeEndpoint& endpoint) {
-                return endpoint.id == "aggregator-gateway" || endpoint.kind == EndpointKind::Gateway;
+                // Accept the retired aggregator-gateway id so older exported profiles still resolve.
+                return endpoint.id == "platform-gateway" || endpoint.id == "aggregator-gateway" || endpoint.kind == EndpointKind::Gateway;
             });
         const auto browserIterator = std::find_if(
             endpoints.begin(),
@@ -6188,12 +6189,22 @@ private:
         return candidates;
     }
 
+    static std::optional<std::filesystem::path> findSharePayloadRoot(const std::filesystem::path& root) {
+        for (const auto* shareLeaf : { "MasterControlOrchestrationServer", "MasterControlProgram" }) {
+            const auto candidate = root / "share" / shareLeaf;
+            if (std::filesystem::exists(candidate / "web" / "index.html") &&
+                std::filesystem::exists(candidate / "ForsettiManifests" / "DashboardUIModule.json")) {
+                return candidate;
+            }
+        }
+        return std::nullopt;
+    }
+
     static bool hasPayloadLayout(const std::filesystem::path& root) {
         return std::filesystem::exists(root / "MasterControlServiceHost.exe") &&
             std::filesystem::exists(root / "MasterControlShell.exe") &&
             std::filesystem::exists(root / "MasterControlBootstrapper.exe") &&
-            std::filesystem::exists(root / "share" / "MasterControlProgram" / "web" / "index.html") &&
-            std::filesystem::exists(root / "share" / "MasterControlProgram" / "ForsettiManifests" / "DashboardUIModule.json");
+            findSharePayloadRoot(root).has_value();
     }
 
     ProcessCaptureResult runPowerShellScript(const std::filesystem::path& scriptPath,
@@ -6798,12 +6809,14 @@ private:
             }
 
             const auto& payloadRoot = *payloadIterator;
+            const auto shareRoot = findSharePayloadRoot(payloadRoot).value_or(
+                payloadRoot / "share" / "MasterControlOrchestrationServer");
             const std::array<std::pair<std::filesystem::path, std::string>, 5> requiredArtifacts = {{
                 { payloadRoot / "MasterControlServiceHost.exe", "Service host executable is staged." },
                 { payloadRoot / "MasterControlShell.exe", "Shell executable is staged." },
                 { payloadRoot / "MasterControlBootstrapper.exe", "Bootstrapper executable is staged." },
-                { payloadRoot / "share" / "MasterControlProgram" / "web" / "index.html", "Browser payload is staged." },
-                { payloadRoot / "share" / "MasterControlProgram" / "ForsettiManifests" / "DashboardUIModule.json", "Forsetti UI manifest is staged." }
+                { shareRoot / "web" / "index.html", "Browser payload is staged." },
+                { shareRoot / "ForsettiManifests" / "DashboardUIModule.json", "Forsetti UI manifest is staged." }
             }};
 
             for (const auto& [artifactPath, message] : requiredArtifacts) {

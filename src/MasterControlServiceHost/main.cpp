@@ -1,4 +1,4 @@
-// Master Control Program
+// Master Control Orchestration Server
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 
@@ -12,10 +12,12 @@
 
 namespace {
 
-constexpr wchar_t kServiceName[] = L"MasterControlProgram";
+constexpr wchar_t kCurrentServiceName[] = L"MasterControlProgram";
+constexpr wchar_t kAlternateServiceName[] = L"MasterControlOrchestrationServer";
 std::unique_ptr<MasterControl::MasterControlApplication> g_application;
 SERVICE_STATUS g_serviceStatus{};
 SERVICE_STATUS_HANDLE g_statusHandle = nullptr;
+const wchar_t* g_registeredServiceName = kCurrentServiceName;
 
 void updateServiceStatus(const DWORD currentState, const DWORD win32ExitCode = NO_ERROR) {
     g_serviceStatus.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
@@ -47,17 +49,17 @@ int runConsoleMode() {
 
     g_application = std::make_unique<MasterControl::MasterControlApplication>();
     if (!g_application->initialize()) {
-        throw std::runtime_error("Failed to initialize Master Control Program.");
+        throw std::runtime_error("Failed to initialize Master Control Orchestration Server.");
     }
 
-    std::cout << "Master Control Program listening at " << g_application->browserUrl() << '\n';
+    std::cout << "Master Control Orchestration Server listening at " << g_application->browserUrl() << '\n';
     const int exitCode = g_application->runInteractive();
     g_application->shutdown();
     return exitCode;
 }
 
-void WINAPI serviceMain(DWORD, LPWSTR*) {
-    g_statusHandle = RegisterServiceCtrlHandlerExW(kServiceName, serviceControlHandler, nullptr);
+void runServiceMain() {
+    g_statusHandle = RegisterServiceCtrlHandlerExW(g_registeredServiceName, serviceControlHandler, nullptr);
     if (g_statusHandle == nullptr) {
         return;
     }
@@ -76,6 +78,16 @@ void WINAPI serviceMain(DWORD, LPWSTR*) {
     updateServiceStatus(SERVICE_STOPPED);
 }
 
+void WINAPI serviceMainCurrent(DWORD, LPWSTR*) {
+    g_registeredServiceName = kCurrentServiceName;
+    runServiceMain();
+}
+
+void WINAPI serviceMainAlternate(DWORD, LPWSTR*) {
+    g_registeredServiceName = kAlternateServiceName;
+    runServiceMain();
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t* argv[]) {
@@ -85,7 +97,8 @@ int wmain(int argc, wchar_t* argv[]) {
         }
 
         SERVICE_TABLE_ENTRYW dispatchTable[] = {
-            { const_cast<LPWSTR>(kServiceName), serviceMain },
+            { const_cast<LPWSTR>(kCurrentServiceName), serviceMainCurrent },
+            { const_cast<LPWSTR>(kAlternateServiceName), serviceMainAlternate },
             { nullptr, nullptr }
         };
 

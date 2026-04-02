@@ -11,7 +11,7 @@
       "tag": "v0.1.49",
       "released_at": "2026-03-29",
       "commit": "4d69fe95b55864dbacb800587c6aa3cb75e24cc8",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "feat(wiki): overhaul wiki generation with comprehensive pages (flynn33)"
       ]
@@ -21,7 +21,7 @@
       "tag": "v0.1.48",
       "released_at": "2026-03-29",
       "commit": "0d78829c22bed9d3f66d44fc534925c1c6059972",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Delete .claude directory (Jim Daley)"
       ]
@@ -31,7 +31,7 @@
       "tag": "v0.1.47",
       "released_at": "2026-03-29",
       "commit": "a27e7b3e03f0338c01cb94d30046af5f231ecaac",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add guided setup wizards and shell fixes (flynn33)"
       ]
@@ -41,7 +41,7 @@
       "tag": "v0.1.46",
       "released_at": "2026-03-29",
       "commit": "fe1eb1b8768153f5918b980a5b5de4acc86ced7e",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add native setup launcher for release packages (flynn33)"
       ]
@@ -51,7 +51,7 @@
       "tag": "v0.1.45",
       "released_at": "2026-03-29",
       "commit": "ff069568f280d35bae0dbd555c0677d7bb23a3f0",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Fix installer elevation path handling (flynn33)"
       ]
@@ -61,7 +61,7 @@
       "tag": "v0.1.44",
       "released_at": "2026-03-29",
       "commit": "24c03ca696fb0ef13004151ddd4ac229c3be1a52",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Fix managed installer lifecycle and elevation flow (flynn33)"
       ]
@@ -71,7 +71,7 @@
       "tag": "v0.1.43",
       "released_at": "2026-03-28",
       "commit": "8aaae5cf6beba5d1f7aa3c3c5cce3284c4025486",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add installer desktop logging and launch diagnostics (flynn33)"
       ]
@@ -81,7 +81,7 @@
       "tag": "v0.1.42",
       "released_at": "2026-03-28",
       "commit": "e40c5b0f24b3de2e8ff170746c275a13bdf93044",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Bundle release readiness into packages (flynn33)"
       ]
@@ -91,7 +91,7 @@
       "tag": "v0.1.41",
       "released_at": "2026-03-28",
       "commit": "437158c4044216b729b4c3681736f88e74e9e098",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add release readiness reporting script (flynn33)"
       ]
@@ -101,7 +101,7 @@
       "tag": "v0.1.40",
       "released_at": "2026-03-28",
       "commit": "50377748597e38210966d954fe0ca18f4a67fd2c",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Enforce bandwidth and storage resource gates (flynn33)"
       ]
@@ -111,7 +111,7 @@
       "tag": "v0.1.39",
       "released_at": "2026-03-28",
       "commit": "ac462f885e54e3be95de7118f8ed4080ee283e3d",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Package release installer bundle (flynn33)"
       ]
@@ -121,7 +121,7 @@
       "tag": "v0.1.38",
       "released_at": "2026-03-28",
       "commit": "50f35f48597840bfdb78e54d1be82141deddbae8",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add deployment report comparison tooling (flynn33)"
       ]
@@ -131,7 +131,7 @@
       "tag": "v0.1.37",
       "released_at": "2026-03-27",
       "commit": "117023f3e430ba17cd60d47402d5a9ee867a85c0",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Package deployment acceptance bundles (flynn33)"
       ]
@@ -141,7 +141,7 @@
       "tag": "v0.1.36",
       "released_at": "2026-03-27",
       "commit": "eb06d5c82798e0b71faf4b0ffa9f9563f6f123bb",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Expand deployment acceptance diagnostics (flynn33)"
       ]
@@ -151,7 +151,7 @@
       "tag": "v0.1.35",
       "released_at": "2026-03-27",
       "commit": "9e168802c9e5acf4a059f1281cb419cda5be2a91",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Harden deployment acceptance reporting (flynn33)"
       ]
@@ -161,7 +161,7 @@
       "tag": "v0.1.34",
       "released_at": "2026-03-27",
       "commit": "4e0052fc8cc643539d8364892a3f8a23e00d4944",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add deployment acceptance harness (flynn33)"
       ]
@@ -171,7 +171,7 @@
       "tag": "v0.1.33",
       "released_at": "2026-03-27",
       "commit": "136159e67a559bb1b87478fd2c2c9e9711c829e5",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Fix non-admin shortcut deployment path (flynn33)"
       ]
@@ -181,7 +181,7 @@
       "tag": "v0.1.32",
       "released_at": "2026-03-27",
       "commit": "e4ed023f191a0026dff029f186063a939f3c37a9",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Harden bootstrapper rollback and deployment contracts (flynn33)"
       ]
@@ -191,7 +191,7 @@
       "tag": "v0.1.31",
       "released_at": "2026-03-27",
       "commit": "55a085c3a1f721d6cdda9b7d74e2d98f2fe7c2ff",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add bootstrapper preflight readiness checks (flynn33)"
       ]
@@ -201,7 +201,7 @@
       "tag": "v0.1.30",
       "released_at": "2026-03-27",
       "commit": "badd7fdbe3cefc0a584388a425db5dd521aeb5aa",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Expand bootstrapper integration validation (flynn33)"
       ]
@@ -211,7 +211,7 @@
       "tag": "v0.1.29",
       "released_at": "2026-03-27",
       "commit": "08abcc4c08726ba1507d25e8fd5cbe22ea7f4f81",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Harden deployment workflow and remove gateway assumptions (flynn33)",
         "Harden bootstrapper deployment validation (flynn33)"
@@ -222,7 +222,7 @@
       "tag": "v0.1.28",
       "released_at": "2026-03-27",
       "commit": "a386cb4161e16cfc2dfeb6437f3e55004447883c",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add CLU enforcement and local resource controls (flynn33)"
       ]
@@ -232,7 +232,7 @@
       "tag": "v0.1.27",
       "released_at": "2026-03-27",
       "commit": "ed3445c8553856ce8a80ec83465677d068646642",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add Apple readiness drill-down surfaces (flynn33)"
       ]
@@ -242,7 +242,7 @@
       "tag": "v0.1.26",
       "released_at": "2026-03-27",
       "commit": "811f3331d841c02842052e466db5af405cd2c4d3",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add Apple queue execution and cancellation (flynn33)"
       ]
@@ -252,7 +252,7 @@
       "tag": "v0.1.25",
       "released_at": "2026-03-22",
       "commit": "342c1e3176db7526792e975888127897be4faba0",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add proprietary software license (Jim Daley)"
       ]
@@ -262,7 +262,7 @@
       "tag": "v0.1.24",
       "released_at": "2026-03-22",
       "commit": "94f042f039f91b9c9c4a5d48254e5685c5152abb",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add Apple job-control triage surfaces (flynn33)"
       ]
@@ -272,7 +272,7 @@
       "tag": "v0.1.23",
       "released_at": "2026-03-22",
       "commit": "d998c19c69ff5f61ce98c497d082dca5ad418c22",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add Apple replay readiness safeguards (flynn33)"
       ]
@@ -282,7 +282,7 @@
       "tag": "v0.1.22",
       "released_at": "2026-03-22",
       "commit": "172993192bc1381ae5f6f5dbffc6f0fa6e638d8c",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Harden Apple operation diagnostics and credential redaction (flynn33)"
       ]
@@ -292,7 +292,7 @@
       "tag": "v0.1.21",
       "released_at": "2026-03-22",
       "commit": "117e881830738479c4a8e1a1f861869da6b46c2d",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Persist Apple governance operation history (flynn33)"
       ]
@@ -302,7 +302,7 @@
       "tag": "v0.1.20",
       "released_at": "2026-03-22",
       "commit": "c12105c1cacc0107d6403b2a4ded94fa71a21402",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add Apple host management and replay controls (flynn33)"
       ]
@@ -312,7 +312,7 @@
       "tag": "v0.1.19",
       "released_at": "2026-03-22",
       "commit": "0b062e6b5d75a484bfcf79078bddecec7a6cd3ea",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Expose Apple operations in shell and browser (flynn33)"
       ]
@@ -322,7 +322,7 @@
       "tag": "v0.1.18",
       "released_at": "2026-03-21",
       "commit": "8d3fc75998d175a4b0048a02d660e10ac7c4dfe0",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Track Apple governance operation history (flynn33)"
       ]
@@ -332,7 +332,7 @@
       "tag": "v0.1.17",
       "released_at": "2026-03-21",
       "commit": "e595bfd5d5a6f9c32182865994da461d7998cca5",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add macOS stapling and Apple host defaults (flynn33)"
       ]
@@ -342,7 +342,7 @@
       "tag": "v0.1.16",
       "released_at": "2026-03-21",
       "commit": "49615b335c337353e96ca1a575b730bd13cf556c",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add macOS signing and notarization tooling (flynn33)"
       ]
@@ -352,7 +352,7 @@
       "tag": "v0.1.15",
       "released_at": "2026-03-21",
       "commit": "59fdc7ea846d5516c3cf233ab77f6dc515aa529c",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add iOS archive export and device install tooling (flynn33)"
       ]
@@ -362,7 +362,7 @@
       "tag": "v0.1.14",
       "released_at": "2026-03-21",
       "commit": "53420a76bcc14c123896ff1c93f9c412fddc5ca6",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add Apple remote execution tooling (flynn33)"
       ]
@@ -372,7 +372,7 @@
       "tag": "v0.1.13",
       "released_at": "2026-03-21",
       "commit": "b64842a2c5415eb01b5f62916ee87851411a4747",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add Apple host registry and readiness routing (flynn33)"
       ]
@@ -382,7 +382,7 @@
       "tag": "v0.1.12",
       "released_at": "2026-03-21",
       "commit": "d7d29809b2a4d11274a7d8b023fd0063189e481e",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Implement governance tool execution layer (flynn33)"
       ]
@@ -392,7 +392,7 @@
       "tag": "v0.1.11",
       "released_at": "2026-03-20",
       "commit": "f6fdb991b06f8bdaa621db5572f17736526cfc9c",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add platform gateway and governance service lanes (flynn33)"
       ]
@@ -402,7 +402,7 @@
       "tag": "v0.1.10",
       "released_at": "2026-03-20",
       "commit": "a15cf77da38a268075bed9b53495f67b89c08f49",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add custom MCP server authoring workflows (flynn33)"
       ]
@@ -412,7 +412,7 @@
       "tag": "v0.1.9",
       "released_at": "2026-03-20",
       "commit": "3f37114808f9055f479d868cc176c6a3e6eaf1c5",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add custom sub-agent authoring workflows (flynn33)"
       ]
@@ -422,7 +422,7 @@
       "tag": "v0.1.8",
       "released_at": "2026-03-20",
       "commit": "57db0cb27708ba767f57191a6739c974c15eb8a6",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Add group-based provider routing for sub-agents (flynn33)"
       ]
@@ -432,7 +432,7 @@
       "tag": "v0.1.7",
       "released_at": "2026-03-20",
       "commit": "d56c4c855a4ecaefef301ada52bd7d5c0a94f3aa",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Implement provider execution adapters and consoles (flynn33)"
       ]
@@ -442,7 +442,7 @@
       "tag": "v0.1.6",
       "released_at": "2026-03-20",
       "commit": "fb11fc97a007c2d672596cebb24a7a540539d112",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Split AI integration into provider modules (flynn33)"
       ]
@@ -452,7 +452,7 @@
       "tag": "v0.1.5",
       "released_at": "2026-03-20",
       "commit": "6d6412b0c11512ec2f053f1f5e18e52735ae2d4d",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Implement CLU governance and Forsetti runtime hardening (flynn33)"
       ]
@@ -462,7 +462,7 @@
       "tag": "v0.1.4",
       "released_at": "2026-03-16",
       "commit": "dc666499645e68581d2483f0bd0bf149b4faf5b3",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Make browser surface Forsetti-native (flynn33)"
       ]
@@ -472,7 +472,7 @@
       "tag": "v0.1.3",
       "released_at": "2026-03-16",
       "commit": "f345c888b47551c43157c57eada900a824dfa40f",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Make shell Forsetti-native for certification (flynn33)"
       ]
@@ -482,7 +482,7 @@
       "tag": "v0.1.2",
       "released_at": "2026-03-16",
       "commit": "006b7394c98229a0fe31a7752b876dd52636d2e7",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "Implement Forsetti compliance and shell surfaces (flynn33)"
       ]
@@ -492,7 +492,7 @@
       "tag": "v0.1.1",
       "released_at": "2026-03-16",
       "commit": "5d62fe6dc2dbdf25aa7596084419af666e677757",
-      "summary": "Automated patch release for Master Control Program.",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
       "entries": [
         "chore(repo): add GitHub repository agents (flynn33)",
         "fix(hooks): allow pre-push stdin on Windows (flynn33)",
@@ -505,9 +505,9 @@
       "tag": "v0.1.0",
       "released_at": "2026-03-16",
       "commit": "e594af5a03b7d2fa7483a28d129d97962faea516",
-      "summary": "Initial tracked baseline for the Forsetti-based Master Control Program workspace.",
+      "summary": "Initial tracked baseline for the Forsetti-based Master Control Orchestration Server workspace.",
       "entries": [
-        "Imported the current Forsetti-compliant Master Control Program source tree.",
+        "Imported the current Forsetti-compliant Master Control Orchestration Server source tree.",
         "Established WinUI 3 shell, service host, browser dashboard, and bootstrapper scaffolding.",
         "Seeded repository-owned version, changelog, wiki, and README automation files."
       ]

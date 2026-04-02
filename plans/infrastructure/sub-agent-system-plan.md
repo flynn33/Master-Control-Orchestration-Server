@@ -14,15 +14,15 @@
 - SSE Response Parsing required: MCP SDK returns text/event-stream, not JSON
 - Must send notifications/initialized after MCP init handshake
 - Accept header must include both application/json and text/event-stream
-- All agents share blade-client.js for MCP communication
+- All agents share the platform gateway client for MCP communication
 
 ### Key Files
-- D:\Sub-Agents\lib\blade-client.js - SSE-aware MCP client
+- D:\Sub-Agents\lib\platform-gateway-client.js - SSE-aware MCP client
 - D:\Sub-Agents\lib\agent-base.js - Shared server factory
 - D:\Sub-Agents\agents\{name}\index.js - Individual agent implementations
 - D:\Sub-Agents\Start-SubAgents.ps1 / Stop-SubAgents.ps1 - Lifecycle management
 
 ### Resource Usage
 - ~540MB total RAM for all 7 agents (~77MB each)
-- All registered with blade agent-comm server
+- All registered with the orchestration agent-communication server
 - WATCHTOWER aggregates all agent data via /api/sub-agents endpoint

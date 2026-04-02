@@ -1,40 +1,38 @@
-## master-control-dashboard - Project Overview
+## Master Control Orchestration Server - Project Overview
 
 ### What It Is
-Real-time monitoring dashboard for the entire BLADE MCP infrastructure.
-Single HTML page served by a Node.js static server via Caddy reverse proxy.
+Forsetti-compliant Windows orchestration server for MCP services, AI coding agents, provider routing, CLU governance, imports, exports, and operator control.
+The product ships as a Windows service, a WinUI 3 desktop shell, and a browser-based admin surface backed by the same local runtime.
 
-### Location
-- Source: D:\mcp\dashboard\index.html (81KB, single-file SPA)
-- Config: D:\mcp\dashboard\config.json (25 backend endpoints)
-- Server: D:\mcp\dashboard\serve.ps1 (Node.js static server on port 18000)
-- URL: http://192.168.1.3:8080/dashboard/
+### Core Objective
+- make setup fast through guided workflows instead of low-level manual editing
+- host and govern MCP servers, providers, sub-agents, and platform governance lanes from one control plane
+- provide a desktop-first and browser-accessible operations surface for telemetry, runtime control, and deployment visibility
+- package the product so it can be installed, validated, upgraded, repaired, and uninstalled with repo-owned tooling
 
-### Dashboard Sections
-1. System Metrics - CPU, RAM, Network (real-time charts via /api/metrics/stream SSE)
-2. MCP Server Grid - 18 blade servers with status indicators (green/red/yellow)
-3. Sub-Agent Grid - 7 AI agents with status, uptime, tool counts
-4. Agent Communication - Message flow between agents via agent-comm server
-5. Coordination - Task coordination status
-6. Event Bus - Event stream monitoring
-7. Memory Beacon - Memory server status and beacon health
+### Major Product Surfaces
+1. Windows service host for orchestration, telemetry, configuration, imports, governance, and browser APIs
+2. WinUI 3 shell for guided setup, CLU control, runtime operations, provider configuration, and security posture
+3. Browser admin UI backed by the same service APIs and Forsetti surface model
+4. Bootstrapper and setup launcher for install, validate, repair, upgrade, and uninstall flows
 
-### API Endpoints Consumed
-- /api/metrics + /api/metrics/history + /api/metrics/stream (SSE)
-- /api/clients (client tracker)
-- /api/sub-agents (WATCHTOWER aggregated data)
-- /api/agent-comm (agent communication dashboard)
-- /api/coordination (task coordination)
-- /api/event-bus (event stream)
-- /api/memory-beacon (memory beacon status)
+### Major Functional Areas
+- Forsetti module architecture with manifest-driven composition
+- CLU governance and policy enforcement
+- provider routing for Codex, Claude Code, and xAI
+- custom MCP server authoring and custom sub-agent authoring
+- Windows, macOS, and iOS gateway/governance lanes
+- Apple remote-host readiness, execution, signing, notarization, export, install, and history flows
+- resource governance and controlled local process execution
+- deployment acceptance, release packaging, and readiness reporting
 
-### Architecture
-- Pure HTML/CSS/JS, no build step, no dependencies
-- Uses CSS Grid for responsive layout
-- EventSource for real-time SSE streaming
-- 5-second polling interval for non-SSE data
-- Custom canvas charts (60-point rolling window)
+### Current Build State
+- feature-complete for the current build
+- locally validated for Forsetti compliance, build health, and repo-native tests
+- installer and setup flows validated on Windows 11
+- Windows Server 2022 acceptance remains the main external validation gap
 
-### Recent Changes
-- Fixed sub-agent grid media query: changed @media (max-width: 1400px) from repeat(auto-fit, minmax(180px, 1fr)) to repeat(7, 1fr) so all 7 agents show in one row on 1080p
-- Dashboard height reduced from 958px to 847px after fix
+### Current Focus
+- remove naming and packaging drift so product identity, docs, and release artifacts align
+- keep guided setup as the primary operator path
+- preserve deployment stability while polishing the end-user install and operations experience

@@ -1,4 +1,4 @@
-# Master Control Program
+# Master Control Orchestration Server
 # Copyright (c) 2026 James Daley. All Rights Reserved.
 # Proprietary and Confidential.
 
@@ -26,7 +26,7 @@ if ([string]::IsNullOrWhiteSpace($BootstrapperPath)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($SetupPath)) {
-    $candidateSetupPath = Join-Path (Split-Path -Parent $BootstrapperPath) "MasterControlSetup.exe"
+    $candidateSetupPath = Join-Path (Split-Path -Parent $BootstrapperPath) "MasterControlOrchestrationServerSetup.exe"
     if (Test-Path $candidateSetupPath) {
         $SetupPath = $candidateSetupPath
     }
@@ -411,8 +411,8 @@ function Capture-HostDiagnostics {
 
     $userProgramsRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
     $commonProgramsRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonPrograms)
-    $userShortcutDirectory = Join-Path $userProgramsRoot "Master Control Program"
-    $commonShortcutDirectory = Join-Path $commonProgramsRoot "Master Control Program"
+    $userShortcutDirectory = Join-Path $userProgramsRoot "Master Control Orchestration Server"
+    $commonShortcutDirectory = Join-Path $commonProgramsRoot "Master Control Orchestration Server"
     $shortcutStatus = [pscustomobject][ordered]@{
         userProgramsRoot = $userProgramsRoot
         commonProgramsRoot = $commonProgramsRoot
@@ -450,7 +450,7 @@ function Capture-HostDiagnostics {
             } -ErrorAction Stop |
             Where-Object {
                 $_.ProviderName -eq "Service Control Manager" -and
-                $_.Message -match "Master Control Program|MasterControlProgram"
+                $_.Message -match "Master Control Orchestration Server|MasterControlOrchestrationServer|MasterControlProgram"
             } |
             Select-Object TimeCreated, Id, LevelDisplayName, ProviderName, Message)
     } catch {
@@ -467,8 +467,8 @@ function Capture-HostDiagnostics {
     [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "sc.exe" -Arguments @("qsidtype", "MasterControlProgram") -ArtifactDirectory $diagnosticsDirectory -Name "sc-qsidtype"))
     [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "reg.exe" -Arguments @("query", "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MasterControlProgram", "/s") -ArtifactDirectory $diagnosticsDirectory -Name "reg-uninstall-hklm"))
     [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "reg.exe" -Arguments @("query", "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MasterControlProgram", "/s") -ArtifactDirectory $diagnosticsDirectory -Name "reg-uninstall-hkcu"))
-    [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "netsh.exe" -Arguments @("advfirewall", "firewall", "show", "rule", "name=Master Control Program - Browser Access") -ArtifactDirectory $diagnosticsDirectory -Name "netsh-browser-rule"))
-    [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "netsh.exe" -Arguments @("advfirewall", "firewall", "show", "rule", "name=Master Control Program - Beacon Discovery") -ArtifactDirectory $diagnosticsDirectory -Name "netsh-beacon-rule"))
+    [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "netsh.exe" -Arguments @("advfirewall", "firewall", "show", "rule", "name=Master Control Orchestration Server - Browser Access") -ArtifactDirectory $diagnosticsDirectory -Name "netsh-browser-rule"))
+    [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "netsh.exe" -Arguments @("advfirewall", "firewall", "show", "rule", "name=Master Control Orchestration Server - Beacon Discovery") -ArtifactDirectory $diagnosticsDirectory -Name "netsh-beacon-rule"))
 
     return [pscustomobject][ordered]@{
         directory = $diagnosticsDirectory
