@@ -5,6 +5,13 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.1.50] - 2026-04-02
+### Summary
+Automated patch release for Master Control Orchestration Server.
+
+### Included Changes
+- Align repo naming with orchestration server (flynn33)
+
 ## [0.1.49] - 2026-03-29
 ### Summary
 Automated patch release for Master Control Orchestration Server.
