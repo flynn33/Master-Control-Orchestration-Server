@@ -18,56 +18,14 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $configuration = if ($Preset -eq "debug") { "Debug" } else { "Release" }
 $binaryDir = Join-Path $repoRoot ("build\" + $Preset)
-
-function Resolve-FirstPath {
-    param(
-        [string[]]$Candidates,
-        [string]$Label
-    )
-
-    foreach ($candidate in $Candidates) {
-        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate)) {
-            return $candidate
-        }
-    }
-
-    $command = Get-Command $Label -ErrorAction SilentlyContinue
-    if ($null -ne $command) {
-        return $command.Source
-    }
-
-    throw "$Label was not found."
-}
-
-function Resolve-VcRuntimeDirectory {
-    $redistRoots = @(
-        "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Redist\MSVC",
-        "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Redist\MSVC"
-    )
-
-    foreach ($root in $redistRoots) {
-        if (-not (Test-Path $root)) {
-            continue
-        }
-
-        $candidates = @(Get-ChildItem -Path $root -Directory | Sort-Object Name -Descending)
-        foreach ($candidate in $candidates) {
-            $crtDirectory = Join-Path $candidate.FullName "x64\Microsoft.VC143.CRT"
-            if (Test-Path $crtDirectory) {
-                return $crtDirectory
-            }
-        }
-    }
-
-    throw "Microsoft VC++ x64 runtime directory was not found."
-}
+. (Join-Path $PSScriptRoot "Resolve-MasterControlToolchain.ps1")
 
 function Invoke-DevShell {
     param([string[]]$Commands)
 
     $chain = @(
         "call `"$script:vsDevCmd`" -host_arch=x64 -arch=x64",
-        "set VCPKG_ROOT=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\vcpkg",
+        "set `"VCPKG_ROOT=$script:vcpkgRoot`"",
         "cd /d `"$script:repoRoot`""
     ) + $Commands
 
@@ -107,21 +65,12 @@ function Invoke-CapturedProcess {
     }
 }
 
-$vsDevCmd = Resolve-FirstPath -Candidates @(
-    "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat",
-    "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat"
-) -Label "VsDevCmd.bat"
-
-$cmake = Resolve-FirstPath -Candidates @(
-    "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
-    "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-) -Label "cmake.exe"
-
-$ctest = Resolve-FirstPath -Candidates @(
-    "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe",
-    "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe"
-) -Label "ctest.exe"
-$vcRuntimeDirectory = Resolve-VcRuntimeDirectory
+$toolchain = Resolve-MasterControlToolchain
+$vsDevCmd = $toolchain.VsDevCmd
+$cmake = $toolchain.CMake
+$ctest = $toolchain.CTest
+$vcpkgRoot = $toolchain.VcpkgRoot
+$vcRuntimeDirectory = $toolchain.VcRuntimeDirectory
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $versionDocument = Get-Content (Join-Path $repoRoot "VERSION.json") -Raw | ConvertFrom-Json

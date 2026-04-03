@@ -5,12 +5,12 @@
       "name": "debug",
       "displayName": "Debug",
       "description": "Debug build for Master Control Orchestration Server",
-      "generator": "Visual Studio 17 2022",
       "binaryDir": "${sourceDir}/build/debug",
+      "architecture": "x64",
       "cacheVariables": {
         "BUILD_TESTING": "ON",
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_TOOLCHAIN_FILE": "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
         "VCPKG_TARGET_TRIPLET": "x64-windows"
       }
     },
@@ -18,12 +18,12 @@
       "name": "release",
       "displayName": "Release",
       "description": "Release build for Master Control Orchestration Server",
-      "generator": "Visual Studio 17 2022",
       "binaryDir": "${sourceDir}/build/release",
+      "architecture": "x64",
       "cacheVariables": {
         "BUILD_TESTING": "ON",
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_TOOLCHAIN_FILE": "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
         "VCPKG_TARGET_TRIPLET": "x64-windows"
       }
     }
@@ -45,6 +45,14 @@
       "name": "debug",
       "configurePreset": "debug",
       "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configuration": "Release",
       "output": {
         "outputOnFailure": true
       }

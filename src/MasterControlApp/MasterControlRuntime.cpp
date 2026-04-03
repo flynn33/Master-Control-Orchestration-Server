@@ -223,6 +223,21 @@ std::string quotePosixShellArgument(const std::string& argument) {
     return quoted;
 }
 
+std::wstring quotePowerShellLiteral(const std::wstring& argument) {
+    std::wstring quoted;
+    quoted.reserve(argument.size() + 2);
+    quoted.push_back(L'\'');
+    for (const wchar_t character : argument) {
+        if (character == L'\'') {
+            quoted += L"''";
+        } else {
+            quoted.push_back(character);
+        }
+    }
+    quoted.push_back(L'\'');
+    return quoted;
+}
+
 std::wstring joinCommandArguments(const std::vector<std::wstring>& arguments) {
     std::wstring commandLine;
     for (size_t index = 0; index < arguments.size(); ++index) {
@@ -3305,9 +3320,20 @@ OperationResult InstallerOrchestrator::installFromZipBundle(const ZipBundleSpec&
     const auto extractDirectory = paths_.workDirectory / ("zip_" + sanitizePathComponent(timestampNowUtc()));
     std::filesystem::create_directories(extractDirectory);
 
-    const std::wstring extractCommand =
-        L"pwsh -NoProfile -ExecutionPolicy Bypass -Command \"Expand-Archive -Path '" +
-        zipPath.wstring() + L"' -DestinationPath '" + extractDirectory.wstring() + L"' -Force\"";
+    const auto powershell = findCommandOnPath({ L"pwsh.exe", L"powershell.exe" });
+    if (!powershell.has_value()) {
+        return OperationResult{ false, false, "A PowerShell executable could not be located." };
+    }
+
+    const auto extractCommand = joinCommandArguments({
+        powershell->wstring(),
+        L"-NoProfile",
+        L"-ExecutionPolicy",
+        L"Bypass",
+        L"-Command",
+        L"Expand-Archive -Path " + quotePowerShellLiteral(zipPath.wstring()) +
+            L" -DestinationPath " + quotePowerShellLiteral(extractDirectory.wstring()) + L" -Force"
+    });
 
     const int extractExitCode = executeCommand(extractCommand, paths_.workDirectory);
     if (extractExitCode != 0) {
@@ -3496,9 +3522,15 @@ int InstallerOrchestrator::executePackage(const std::filesystem::path& payloadPa
         case InstallerKind::Exe:
             command = L"\"" + payloadPath.wstring() + L"\" " + wideFromUtf8(arguments);
             break;
-        case InstallerKind::PowerShell:
-            command = L"pwsh -NoProfile -ExecutionPolicy Bypass -File \"" + payloadPath.wstring() + L"\" " + wideFromUtf8(arguments);
+        case InstallerKind::PowerShell: {
+            const auto powershell = findCommandOnPath({ L"pwsh.exe", L"powershell.exe" });
+            if (!powershell.has_value()) {
+                return 1;
+            }
+            command = L"\"" + powershell->wstring() + L"\" -NoProfile -ExecutionPolicy Bypass -File \"" +
+                payloadPath.wstring() + L"\" " + wideFromUtf8(arguments);
             break;
+        }
         default:
             return 1;
     }
@@ -3515,7 +3547,12 @@ int InstallerOrchestrator::executeBootstrap(const std::filesystem::path& bootstr
 
     std::wstring command;
     if (bootstrapPath.extension() == ".ps1") {
-        command = L"pwsh -NoProfile -ExecutionPolicy Bypass -File \"" + bootstrapPath.wstring() + L"\" " + wideFromUtf8(arguments);
+        const auto powershell = findCommandOnPath({ L"pwsh.exe", L"powershell.exe" });
+        if (!powershell.has_value()) {
+            return 1;
+        }
+        command = L"\"" + powershell->wstring() + L"\" -NoProfile -ExecutionPolicy Bypass -File \"" +
+            bootstrapPath.wstring() + L"\" " + wideFromUtf8(arguments);
     } else {
         command = L"\"" + bootstrapPath.wstring() + L"\" " + wideFromUtf8(arguments);
     }

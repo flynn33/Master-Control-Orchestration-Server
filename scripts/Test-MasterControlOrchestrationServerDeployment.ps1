@@ -511,15 +511,23 @@ function Capture-HostDiagnostics {
 
     $userProgramsRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
     $commonProgramsRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonPrograms)
-    $userShortcutDirectory = Join-Path $userProgramsRoot "Master Control Orchestration Server"
-    $commonShortcutDirectory = Join-Path $commonProgramsRoot "Master Control Orchestration Server"
+    $userShortcutDirectory = if ([string]::IsNullOrWhiteSpace($userProgramsRoot)) {
+        ""
+    } else {
+        Join-Path $userProgramsRoot "Master Control Orchestration Server"
+    }
+    $commonShortcutDirectory = if ([string]::IsNullOrWhiteSpace($commonProgramsRoot)) {
+        ""
+    } else {
+        Join-Path $commonProgramsRoot "Master Control Orchestration Server"
+    }
     $shortcutStatus = [pscustomobject][ordered]@{
         userProgramsRoot = $userProgramsRoot
         commonProgramsRoot = $commonProgramsRoot
         userShortcutDirectory = $userShortcutDirectory
         commonShortcutDirectory = $commonShortcutDirectory
-        userShortcutDirectoryExists = Test-Path $userShortcutDirectory
-        commonShortcutDirectoryExists = Test-Path $commonShortcutDirectory
+        userShortcutDirectoryExists = (-not [string]::IsNullOrWhiteSpace($userShortcutDirectory)) -and (Test-Path $userShortcutDirectory)
+        commonShortcutDirectoryExists = (-not [string]::IsNullOrWhiteSpace($commonShortcutDirectory)) -and (Test-Path $commonShortcutDirectory)
         userEntries = @()
         commonEntries = @()
     }

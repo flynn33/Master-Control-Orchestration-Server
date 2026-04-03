@@ -8,33 +8,32 @@ param(
     [string]$Preset = "debug"
 )
 
-$vsDevCmd = "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat"
-$cmake = "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-$ctest = "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "Resolve-MasterControlToolchain.ps1")
 
-if (-not (Test-Path $vsDevCmd)) {
-    throw "VsDevCmd.bat not found at $vsDevCmd"
+$toolchain = Resolve-MasterControlToolchain
+$vsDevCmd = $toolchain.VsDevCmd
+$cmake = $toolchain.CMake
+$ctest = $toolchain.CTest
+$vcpkgRoot = $toolchain.VcpkgRoot
+
+function Invoke-DevShell {
+    param([string[]]$Commands)
+
+    $chain = @(
+        "call `"$vsDevCmd`" -host_arch=x64 -arch=x64",
+        "set `"VCPKG_ROOT=$vcpkgRoot`"",
+        "cd /d `"$repoRoot`""
+    ) + $Commands
+
+    cmd /c ($chain -join " && ")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Build pipeline failed with exit code $LASTEXITCODE"
+    }
 }
 
-if (-not (Test-Path $cmake)) {
-    throw "cmake.exe not found at $cmake"
-}
-
-if (-not (Test-Path $ctest)) {
-    throw "ctest.exe not found at $ctest"
-}
-
-$command = @(
-    "call `"$vsDevCmd`" -host_arch=x64 -arch=x64",
-    "set VCPKG_ROOT=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\vcpkg",
-    "cd /d `"$repoRoot`"",
+Invoke-DevShell -Commands @(
     "`"$cmake`" --preset $Preset",
     "`"$cmake`" --build --preset $Preset",
-    "`"$ctest`" --test-dir `"$repoRoot\\build\\debug`" -C Debug --output-on-failure"
-) -join " && "
-
-cmd /c $command
-if ($LASTEXITCODE -ne 0) {
-    throw "Build pipeline failed with exit code $LASTEXITCODE"
-}
+    "`"$ctest`" --preset $Preset"
+)

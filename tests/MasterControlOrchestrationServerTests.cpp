@@ -636,6 +636,20 @@ bool toolExists(const wchar_t* executableName) {
     return SearchPathW(nullptr, executableName, nullptr, MAX_PATH, pathBuffer, nullptr) > 0;
 }
 
+std::optional<std::wstring> findToolOnPath(std::initializer_list<const wchar_t*> executableNames) {
+    wchar_t pathBuffer[MAX_PATH]{};
+    for (const auto* executableName : executableNames) {
+        if (SearchPathW(nullptr, executableName, nullptr, MAX_PATH, pathBuffer, nullptr) > 0) {
+            return std::wstring(pathBuffer);
+        }
+    }
+    return std::nullopt;
+}
+
+bool powerShellExists() {
+    return findToolOnPath({ L"pwsh.exe", L"powershell.exe" }).has_value();
+}
+
 std::optional<MasterControl::RuntimeEndpoint> findEndpoint(const std::vector<MasterControl::RuntimeEndpoint>& endpoints,
                                                            const std::string& id) {
     const auto iterator = std::find_if(
@@ -1015,6 +1029,11 @@ bool createGitImportFixture(const std::filesystem::path& repoRoot) {
 bool createZipImportFixture(const std::filesystem::path& sourceRoot, const std::filesystem::path& zipPath) {
     writeTextFile(sourceRoot / "bootstrap.ps1", "New-Item -Path (Join-Path $PSScriptRoot 'zip-bootstrap.ok') -ItemType File -Force | Out-Null\nexit 0\n");
 
+    const auto powershell = findToolOnPath({ L"pwsh.exe", L"powershell.exe" });
+    if (!powershell.has_value()) {
+        return false;
+    }
+
     const nlohmann::json manifest = {
         { "version", "3.1.0" },
         { "bootstrapScript", "bootstrap.ps1" },
@@ -1044,7 +1063,7 @@ bool createZipImportFixture(const std::filesystem::path& sourceRoot, const std::
 
     writeTextFile(sourceRoot / "mcp-bootstrap.json", manifest.dump(2));
 
-    const auto command = L"pwsh -NoProfile -ExecutionPolicy Bypass -Command \"Compress-Archive -Path '" +
+    const auto command = L"\"" + *powershell + L"\" -NoProfile -ExecutionPolicy Bypass -Command \"Compress-Archive -Path '" +
         escapePowerShellLiteral((sourceRoot / L"*").wstring()) +
         L"' -DestinationPath '" + escapePowerShellLiteral(zipPath.wstring()) + L"' -Force\"";
 
@@ -2693,7 +2712,7 @@ int main() {
                 "Claude execution should be persisted to runtime history.");
         }
 
-        if (toolExists(L"pwsh.exe")) {
+        if (powerShellExists()) {
             const auto packageScript = tempRoot / "package-install.ps1";
             const auto markerFile = tempRoot / "package-install.ok";
             writeTextFile(
@@ -2880,7 +2899,7 @@ int main() {
                 finalRestoreResourceResult.succeeded,
                 "Managed resource allocation should be restorable after storage enforcement testing.");
         } else {
-            std::cout << "Skipping package import test because pwsh.exe was not found.\n";
+            std::cout << "Skipping package import test because no PowerShell executable was found.\n";
         }
 
         if (toolExists(L"git.exe")) {
@@ -2906,7 +2925,7 @@ int main() {
             std::cout << "Skipping repository import test because git.exe was not found.\n";
         }
 
-        if (toolExists(L"pwsh.exe")) {
+        if (powerShellExists()) {
             const auto zipRoot = tempRoot / "zip-fixture";
             const auto zipPath = tempRoot / "zip-fixture.zip";
             success &= expect(createZipImportFixture(zipRoot, zipPath), "Zip fixture should be created successfully");
@@ -2926,7 +2945,7 @@ int main() {
                 success &= expect(hasHistoryEntry(snapshot.installHistory, MasterControl::InstallerKind::ZipBundle, zipSource), "Zip import should be recorded in history");
             }
         } else {
-            std::cout << "Skipping zip import test because pwsh.exe was not found.\n";
+            std::cout << "Skipping zip import test because no PowerShell executable was found.\n";
         }
 
         application.shutdown();
