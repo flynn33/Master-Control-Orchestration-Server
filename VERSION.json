@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.53",
-  "current_tag": "v0.1.53",
-  "released_at": "2026-04-02",
-  "last_release_commit": "ae8f9e1c693ccf3ed8bee6536368ef91ce1a9ee1",
+  "current_version": "0.1.54",
+  "current_tag": "v0.1.54",
+  "released_at": "2026-04-03",
+  "last_release_commit": "4c70f2a3410fcdd68f5465f6e2e508f624195b17",
   "history": [
+    {
+      "version": "0.1.54",
+      "tag": "v0.1.54",
+      "released_at": "2026-04-03",
+      "commit": "4c70f2a3410fcdd68f5465f6e2e508f624195b17",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Add browser guided setup workflows (flynn33)"
+      ]
+    },
     {
       "version": "0.1.53",
       "tag": "v0.1.53",
