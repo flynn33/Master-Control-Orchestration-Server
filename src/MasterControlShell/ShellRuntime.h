@@ -150,6 +150,18 @@ struct ShellSecuritySettings final {
     std::vector<std::wstring> trustedRemoteHosts;
 };
 
+struct ShellHostSettings final {
+    std::wstring instanceName;
+    std::wstring bindAddress;
+    uint16_t browserPort = 7300;
+    uint16_t beaconPort = 7301;
+    bool beaconEnabled = true;
+    int cpuAllocationPercent = 50;
+    int memoryAllocationPercent = 50;
+    int bandwidthAllocationPercent = 50;
+    int storageAllocationPercent = 50;
+};
+
 struct ShellAppleRemoteHost final {
     std::wstring hostId;
     std::wstring displayName;
@@ -334,6 +346,7 @@ struct ShellSnapshot final {
     uint64_t bytesSentPerSecond = 0;
     uint64_t bytesReceivedPerSecond = 0;
     uint16_t browserPort = 7300;
+    uint16_t beaconPort = 7301;
     bool beaconEnabled = true;
     bool aiAutonomyEnabled = false;
     bool securityProtocolsEnabled = true;
@@ -364,6 +377,7 @@ struct ShellSnapshot final {
     std::wstring primaryIpAddress;
     std::wstring primaryMacAddress;
     std::wstring telemetryCapturedAtUtc;
+    std::wstring instanceName;
     std::wstring bindAddress;
     std::wstring overviewText;
     std::wstring telemetryText;
@@ -439,6 +453,7 @@ public:
     [[nodiscard]] ShellOperationResult UpdateAiAutonomyEnabled(bool enabled) const;
     [[nodiscard]] ShellOperationResult UpdateSecuritySettings(const ShellSecuritySettings& settings,
                                                              bool confirmUnsafeChanges) const;
+    [[nodiscard]] ShellOperationResult UpdateHostSettings(const ShellHostSettings& settings) const;
     [[nodiscard]] ShellOperationResult InstallPackage(const ShellInstallerPackageSpec& spec) const;
     [[nodiscard]] ShellOperationResult InstallRepository(const ShellBootstrapRepoSpec& spec) const;
     [[nodiscard]] ShellOperationResult InstallZipBundle(const ShellZipBundleSpec& spec) const;

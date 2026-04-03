@@ -113,6 +113,23 @@ std::wstring trimCopy(const std::wstring& value) {
     return std::wstring(begin, end);
 }
 
+std::optional<int> parseInteger(const std::wstring& value, const int minimum, const int maximum) {
+    const auto trimmed = trimCopy(value);
+    if (trimmed.empty()) {
+        return std::nullopt;
+    }
+
+    try {
+        const auto parsed = std::stoi(trimmed);
+        if (parsed < minimum || parsed > maximum) {
+            return std::nullopt;
+        }
+        return parsed;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
 std::wstring joinValues(const std::vector<std::wstring>& values, const wchar_t* separator = L", ") {
     std::wstring result;
     for (size_t index = 0; index < values.size(); ++index) {
@@ -216,6 +233,28 @@ SectionMetadata metadataForDestination(const std::wstring& destinationId, const 
         return { L"SETTINGS", title, L"Trace configuration files, data paths, and the current resource envelope that shapes the host runtime." };
     }
     return { L"OVERVIEW", title, L"Forsetti surface navigation is hosting the current command deck instead of a hardcoded shell page map." };
+}
+
+std::wstring guidedFollowThroughForDestination(const std::wstring& destinationId) {
+    if (destinationId == kRuntimeDestination) {
+        return L"Next:\n- Review the Runtime surface to confirm the lane or host details.\n- If this lane should own orchestration work, use Assign Responsibility next.";
+    }
+    if (destinationId == kProvidersDestination) {
+        return L"Next:\n- Review the Providers surface to confirm routing or ownership.\n- Run Validate Provider Routing next if you want an operator-safe execution check.";
+    }
+    if (destinationId == kCluDestination) {
+        return L"Next:\n- Review CLU posture and module state.\n- Confirm the module action matches the current governance plan.";
+    }
+    if (destinationId == kImportsDestination) {
+        return L"Next:\n- Review the Imports surface for staging status and provenance.\n- Continue with deployment or validation once the intake is confirmed.";
+    }
+    if (destinationId == kSecurityDestination) {
+        return L"Next:\n- Review the Security surface to confirm the protection envelope.\n- Verify trusted hosts and authentication posture before broad operator use.";
+    }
+    if (destinationId == kSettingsDestination) {
+        return L"Next:\n- Review Settings to confirm ports, beacon behavior, and resource budgets.\n- Refresh the shell if operators are already connected to the host.";
+    }
+    return L"Next:\n- Review the updated section to confirm the guided change landed as expected.";
 }
 
 std::vector<::MasterControlShell::ShellNavigationPointer> bootstrapNavigationPointers() {
@@ -340,7 +379,10 @@ void attachInteractiveRuntime(const FrameworkElement& view,
                               std::function<void(const std::wstring&)> actionRequested) {
     if (viewId == kRuntimeView) {
         const auto typed = view.as<winrt::MasterControlShell::RuntimeSectionControl>();
-        winrt::get_self<winrt::MasterControlShell::implementation::RuntimeSectionControl>(typed)->AttachRuntime(&runtime, std::move(refreshRequested));
+        winrt::get_self<winrt::MasterControlShell::implementation::RuntimeSectionControl>(typed)->AttachRuntime(
+            &runtime,
+            std::move(refreshRequested),
+            std::move(actionRequested));
         return;
     }
     if (viewId == kCluView) {
@@ -353,7 +395,10 @@ void attachInteractiveRuntime(const FrameworkElement& view,
     }
     if (viewId == kProvidersView) {
         const auto typed = view.as<winrt::MasterControlShell::ProvidersSectionControl>();
-        winrt::get_self<winrt::MasterControlShell::implementation::ProvidersSectionControl>(typed)->AttachRuntime(&runtime, std::move(refreshRequested));
+        winrt::get_self<winrt::MasterControlShell::implementation::ProvidersSectionControl>(typed)->AttachRuntime(
+            &runtime,
+            std::move(refreshRequested),
+            std::move(actionRequested));
         return;
     }
     if (viewId == kImportsView) {
@@ -368,7 +413,15 @@ void attachInteractiveRuntime(const FrameworkElement& view,
     }
     if (viewId == kSecurityView) {
         const auto typed = view.as<winrt::MasterControlShell::SecuritySectionControl>();
-        winrt::get_self<winrt::MasterControlShell::implementation::SecuritySectionControl>(typed)->AttachRuntime(&runtime, std::move(refreshRequested));
+        winrt::get_self<winrt::MasterControlShell::implementation::SecuritySectionControl>(typed)->AttachRuntime(
+            &runtime,
+            std::move(refreshRequested),
+            std::move(actionRequested));
+        return;
+    }
+    if (viewId == kSettingsView) {
+        const auto typed = view.as<winrt::MasterControlShell::SettingsSectionControl>();
+        winrt::get_self<winrt::MasterControlShell::implementation::SettingsSectionControl>(typed)->AttachActions(std::move(actionRequested));
     }
 }
 
@@ -524,6 +577,22 @@ void MainWindow::GuidedImportWizardButton_Click(IInspectable const&, RoutedEvent
     StartGuidedWorkflow(L"guided-import");
 }
 
+void MainWindow::GuidedSecurityWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
+    StartGuidedWorkflow(L"guided-security");
+}
+
+void MainWindow::GuidedSettingsWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
+    StartGuidedWorkflow(L"guided-settings");
+}
+
+void MainWindow::GuidedProviderExecutionWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
+    StartGuidedWorkflow(L"guided-provider-execution");
+}
+
+void MainWindow::GuidedRuntimeMaintenanceWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
+    StartGuidedWorkflow(L"guided-runtime-maintenance");
+}
+
 void MainWindow::StartGuidedWorkflow(std::wstring const& workflowId) {
     IAsyncAction action{ nullptr };
     if (workflowId == L"connect-model") {
@@ -542,6 +611,14 @@ void MainWindow::StartGuidedWorkflow(std::wstring const& workflowId) {
         action = ShowForsettiModuleWizardAsync();
     } else if (workflowId == L"guided-import") {
         action = ShowImportWizardAsync();
+    } else if (workflowId == L"guided-security") {
+        action = ShowSecurityWizardAsync();
+    } else if (workflowId == L"guided-settings") {
+        action = ShowSettingsWizardAsync();
+    } else if (workflowId == L"guided-provider-execution") {
+        action = ShowProviderExecutionWizardAsync();
+    } else if (workflowId == L"guided-runtime-maintenance") {
+        action = ShowRuntimeMaintenanceWizardAsync();
     } else {
         UpdateStatusBar(winrt::hstring(std::wstring(L"Unknown guided workflow request: ") + workflowId), InfoBarSeverity::Warning);
         return;
@@ -1204,10 +1281,9 @@ IAsyncAction MainWindow::ShowSubAgentWizardAsync() {
             }
 
             GuidedWorkflowStatusText().Text(winrt::hstring(L"Created sub-agent lane '" + displayName + L"'."));
-            SetCurrentDestination(kRuntimeDestination);
-            auto refreshIgnored = RefreshAsync();
-            (void)refreshIgnored;
+            const auto completionMessage = GuidedWorkflowStatusText().Text();
             dialog.Hide();
+            co_await CompleteGuidedWorkflowAsync(completionMessage, kRuntimeDestination);
         }();
         (void)ignored;
     });
@@ -1367,10 +1443,9 @@ IAsyncAction MainWindow::ShowSubAgentGroupWizardAsync() {
             }
 
             GuidedWorkflowStatusText().Text(winrt::hstring(L"Created sub-agent group '" + displayName + L"' for CLU routing and model responsibility mapping."));
-            SetCurrentDestination(kProvidersDestination);
-            auto refreshIgnored = RefreshAsync();
-            (void)refreshIgnored;
+            const auto completionMessage = GuidedWorkflowStatusText().Text();
             dialog.Hide();
+            co_await CompleteGuidedWorkflowAsync(completionMessage, kProvidersDestination);
         }();
         (void)ignored;
     });
@@ -1555,10 +1630,9 @@ IAsyncAction MainWindow::ShowMcpServerWizardAsync() {
             }
 
             GuidedWorkflowStatusText().Text(winrt::hstring(L"Published MCP server lane '" + displayName + L"'."));
-            SetCurrentDestination(kRuntimeDestination);
-            auto refreshIgnored = RefreshAsync();
-            (void)refreshIgnored;
+            const auto completionMessage = GuidedWorkflowStatusText().Text();
             dialog.Hide();
+            co_await CompleteGuidedWorkflowAsync(completionMessage, kRuntimeDestination);
         }();
         (void)ignored;
     });
@@ -1864,10 +1938,9 @@ IAsyncAction MainWindow::ShowProviderWizardAsync() {
             co_await uiThread;
 
             GuidedWorkflowStatusText().Text(winrt::hstring(L"Connected AI model route '" + displayName + L"'."));
-            SetCurrentDestination(kProvidersDestination);
-            auto refreshIgnored = RefreshAsync();
-            (void)refreshIgnored;
+            const auto completionMessage = GuidedWorkflowStatusText().Text();
             dialog.Hide();
+            co_await CompleteGuidedWorkflowAsync(completionMessage, kProvidersDestination);
         }();
         (void)ignored;
     });
@@ -2203,10 +2276,9 @@ IAsyncAction MainWindow::ShowAppleHostWizardAsync() {
             }
 
             GuidedWorkflowStatusText().Text(winrt::hstring(L"Registered Apple host '" + displayName + L"' for CLU and platform governance."));
-            SetCurrentDestination(kRuntimeDestination);
-            auto refreshIgnored = RefreshAsync();
-            (void)refreshIgnored;
+            const auto completionMessage = GuidedWorkflowStatusText().Text();
             dialog.Hide();
+            co_await CompleteGuidedWorkflowAsync(completionMessage, kRuntimeDestination);
         }();
         (void)ignored;
     });
@@ -2360,10 +2432,9 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
                 (provider.displayName.empty() ? provider.id : provider.displayName) +
                 L"' to " +
                 (target.displayName.empty() ? target.targetId : target.displayName) + L"."));
-            SetCurrentDestination(kProvidersDestination);
-            auto refreshIgnored = RefreshAsync();
-            (void)refreshIgnored;
+            const auto completionMessage = GuidedWorkflowStatusText().Text();
             dialog.Hide();
+            co_await CompleteGuidedWorkflowAsync(completionMessage, kProvidersDestination);
         }();
         (void)ignored;
     });
@@ -2573,9 +2644,9 @@ IAsyncAction MainWindow::ShowForsettiModuleWizardAsync() {
 
             GuidedWorkflowStatusText().Text(winrt::hstring(L"Applied '" + action + L"' to Forsetti module '" +
                 (module.displayName.empty() ? module.moduleId : module.displayName) + L"'."));
-            auto refreshIgnored = RefreshAsync();
-            (void)refreshIgnored;
+            const auto completionMessage = GuidedWorkflowStatusText().Text();
             dialog.Hide();
+            co_await CompleteGuidedWorkflowAsync(completionMessage, kCluDestination);
         }();
         (void)ignored;
     });
@@ -2805,13 +2876,1730 @@ IAsyncAction MainWindow::ShowImportWizardAsync() {
             }
 
             GuidedWorkflowStatusText().Text(L"Guided import dispatched successfully.");
-            SetCurrentDestination(kImportsDestination);
-            auto refreshIgnored = RefreshAsync();
-            (void)refreshIgnored;
+            const auto completionMessage = GuidedWorkflowStatusText().Text();
             dialog.Hide();
+            co_await CompleteGuidedWorkflowAsync(completionMessage, kImportsDestination);
         }();
         (void)ignored;
     });
+
+    co_await dialog.ShowAsync();
+}
+
+IAsyncAction MainWindow::ShowSecurityWizardAsync() {
+    ContentDialog dialog;
+    dialog.Title(box_value(L"Guided Security Hardening"));
+    dialog.CloseButtonText(L"Close");
+    dialog.XamlRoot(RootGrid().XamlRoot());
+
+    ScrollViewer scrollViewer;
+    scrollViewer.HorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
+    scrollViewer.VerticalScrollBarVisibility(ScrollBarVisibility::Auto);
+    scrollViewer.MaxHeight(680);
+
+    StackPanel root;
+    root.Spacing(14);
+    root.Width(580);
+
+    TextBlock intro;
+    intro.Style(Application::Current().Resources().Lookup(box_value(L"ShellBodyTextStyle")).try_as<Style>());
+    intro.Text(L"Step 1: choose the security posture that best matches this host. Step 2: review access, authentication, and troubleshooting switches. Step 3: publish the protection envelope through the local admin API.");
+    intro.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(intro);
+
+    const auto addLabel = [&root](std::wstring const& text) {
+        TextBlock label;
+        label.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+        label.Text(winrt::hstring(text));
+        root.Children().Append(label);
+    };
+
+    ComboBox postureSelector;
+    const auto appendPosture = [&postureSelector](const wchar_t* label, const wchar_t* tag) {
+        ComboBoxItem item;
+        item.Content(box_value(label));
+        item.Tag(box_value(tag));
+        postureSelector.Items().Append(item);
+    };
+    appendPosture(L"Balanced Default", L"balanced");
+    appendPosture(L"Restricted Operations", L"restricted");
+    appendPosture(L"Controlled Troubleshooting", L"troubleshooting");
+    postureSelector.SelectedIndex(0);
+    root.Children().Append([&]() {
+        addLabel(L"Step 1. Security Posture");
+        return postureSelector;
+    }());
+
+    ToggleSwitch securityProtocolsToggle;
+    securityProtocolsToggle.Header(box_value(L"Security protocols enabled"));
+    securityProtocolsToggle.IsOn(currentSnapshot_.securitySettings.securityProtocolsEnabled);
+    ToggleSwitch tlsToggle;
+    tlsToggle.Header(box_value(L"Enable TLS"));
+    tlsToggle.IsOn(currentSnapshot_.securitySettings.enableTls);
+    ToggleSwitch authToggle;
+    authToggle.Header(box_value(L"Require authentication"));
+    authToggle.IsOn(currentSnapshot_.securitySettings.enableAuthentication);
+    ToggleSwitch bypassToggle;
+    bypassToggle.Header(box_value(L"Allow troubleshooting bypass"));
+    bypassToggle.IsOn(currentSnapshot_.securitySettings.allowTroubleshootingBypass);
+    ToggleSwitch openLanToggle;
+    openLanToggle.Header(box_value(L"Allow open LAN access"));
+    openLanToggle.IsOn(currentSnapshot_.securitySettings.allowOpenLanAccess);
+
+    TextBox trustedHostsBox;
+    trustedHostsBox.AcceptsReturn(true);
+    trustedHostsBox.Height(120);
+    trustedHostsBox.PlaceholderText(L"one host per line");
+    trustedHostsBox.Text(winrt::hstring(joinValues(currentSnapshot_.securitySettings.trustedRemoteHosts, L"\r\n")));
+
+    root.Children().Append([&]() {
+        addLabel(L"Step 2. Protection Controls");
+        StackPanel panel;
+        panel.Spacing(10);
+        panel.Children().Append(securityProtocolsToggle);
+        panel.Children().Append(tlsToggle);
+        panel.Children().Append(authToggle);
+        panel.Children().Append(bypassToggle);
+        panel.Children().Append(openLanToggle);
+        return panel;
+    }());
+
+    root.Children().Append([&]() {
+        addLabel(L"Trusted Remote Hosts");
+        return trustedHostsBox;
+    }());
+
+    TextBlock summaryText;
+    summaryText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
+    summaryText.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(summaryText);
+
+    TextBlock statusText;
+    statusText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
+    statusText.Text(L"Choose the posture that matches normal operations, then override only the switches you explicitly need.");
+    statusText.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(statusText);
+
+    Button applyButton;
+    applyButton.Content(box_value(L"Apply Security Hardening"));
+    applyButton.Style(Application::Current().Resources().Lookup(box_value(L"ShellCommandButtonStyle")).try_as<Style>());
+    root.Children().Append(applyButton);
+
+    const auto applyProfile = [&, this](std::wstring const& profileId) {
+        if (profileId == L"restricted") {
+            securityProtocolsToggle.IsOn(true);
+            tlsToggle.IsOn(true);
+            authToggle.IsOn(true);
+            bypassToggle.IsOn(false);
+            openLanToggle.IsOn(false);
+        } else if (profileId == L"troubleshooting") {
+            securityProtocolsToggle.IsOn(true);
+            tlsToggle.IsOn(false);
+            authToggle.IsOn(false);
+            bypassToggle.IsOn(true);
+            openLanToggle.IsOn(false);
+        } else {
+            securityProtocolsToggle.IsOn(true);
+            tlsToggle.IsOn(currentSnapshot_.securitySettings.enableTls);
+            authToggle.IsOn(currentSnapshot_.securitySettings.enableAuthentication);
+            bypassToggle.IsOn(currentSnapshot_.securitySettings.allowTroubleshootingBypass);
+            openLanToggle.IsOn(currentSnapshot_.securitySettings.allowOpenLanAccess);
+        }
+    };
+
+    const auto updateSummary = [&, this]() {
+        const auto selectedItem = postureSelector.SelectedItem().try_as<ComboBoxItem>();
+        const auto postureValue = selectedItem == nullptr
+            ? hstring(L"balanced")
+            : unbox_value_or<hstring>(selectedItem.Tag(), hstring(L"balanced"));
+        const auto posture = std::wstring(postureValue.c_str());
+        std::vector<std::wstring> summaryParts;
+        summaryParts.push_back(L"Posture: " + posture);
+        summaryParts.push_back(std::wstring(L"Protocols ") + (securityProtocolsToggle.IsOn() ? L"enabled" : L"disabled"));
+        summaryParts.push_back(std::wstring(L"TLS ") + (tlsToggle.IsOn() ? L"on" : L"off"));
+        summaryParts.push_back(std::wstring(L"Authentication ") + (authToggle.IsOn() ? L"required" : L"optional"));
+        summaryParts.push_back(std::wstring(L"Open LAN ") + (openLanToggle.IsOn() ? L"allowed" : L"restricted"));
+        if (bypassToggle.IsOn()) {
+            summaryParts.push_back(L"Troubleshooting bypass available");
+        }
+        const auto trustedHosts = trimCopy(std::wstring(trustedHostsBox.Text().c_str()));
+        if (!trustedHosts.empty()) {
+            summaryParts.push_back(L"Trusted hosts curated");
+        }
+        summaryText.Text(winrt::hstring(joinValues(summaryParts, L"  |  ")));
+    };
+
+    postureSelector.SelectionChanged([&](IInspectable const&, Controls::SelectionChangedEventArgs const&) {
+        const auto selectedItem = postureSelector.SelectedItem().try_as<ComboBoxItem>();
+        const auto postureValue = selectedItem == nullptr
+            ? hstring(L"balanced")
+            : unbox_value_or<hstring>(selectedItem.Tag(), hstring(L"balanced"));
+        const auto posture = std::wstring(postureValue.c_str());
+        applyProfile(posture);
+        updateSummary();
+    });
+    auto trackedToggle = [&](ToggleSwitch const& toggle) {
+        toggle.Toggled([&](IInspectable const&, RoutedEventArgs const&) {
+            updateSummary();
+        });
+    };
+    trackedToggle(securityProtocolsToggle);
+    trackedToggle(tlsToggle);
+    trackedToggle(authToggle);
+    trackedToggle(bypassToggle);
+    trackedToggle(openLanToggle);
+    trustedHostsBox.TextChanged([&](IInspectable const&, Controls::TextChangedEventArgs const&) {
+        updateSummary();
+    });
+    updateSummary();
+
+    scrollViewer.Content(root);
+    dialog.Content(scrollViewer);
+
+    applyButton.Click([this, dialog, applyButton, statusText, securityProtocolsToggle, tlsToggle, authToggle, bypassToggle, openLanToggle, trustedHostsBox](IInspectable const&, RoutedEventArgs const&) {
+        auto ignored = [this, dialog, applyButton, statusText, securityProtocolsToggle, tlsToggle, authToggle, bypassToggle, openLanToggle, trustedHostsBox]() -> IAsyncAction {
+            ::MasterControlShell::ShellSecuritySettings settings;
+            settings.securityProtocolsEnabled = securityProtocolsToggle.IsOn();
+            settings.enableTls = tlsToggle.IsOn();
+            settings.enableAuthentication = authToggle.IsOn();
+            settings.allowTroubleshootingBypass = bypassToggle.IsOn();
+            settings.allowOpenLanAccess = openLanToggle.IsOn();
+
+            std::wstringstream trustedHostsStream(std::wstring(trustedHostsBox.Text().c_str()));
+            std::wstring line;
+            while (std::getline(trustedHostsStream, line)) {
+                std::wstringstream commaStream(line);
+                std::wstring host;
+                while (std::getline(commaStream, host, L',')) {
+                    const auto trimmed = trimCopy(host);
+                    if (!trimmed.empty()) {
+                        settings.trustedRemoteHosts.push_back(trimmed);
+                    }
+                }
+            }
+
+            applyButton.IsEnabled(false);
+            statusText.Text(L"Applying the guided security posture through the local admin API.");
+
+            winrt::apartment_context uiThread;
+            co_await winrt::resume_background();
+            auto result = runtime_.UpdateSecuritySettings(settings, false);
+            co_await uiThread;
+
+            if (result.requiresConfirmation && !result.succeeded) {
+                ContentDialog confirmation;
+                confirmation.Title(box_value(L"Disable Security Protocols?"));
+                confirmation.Content(box_value(L"Disabling security protocols weakens the protection envelope for the Master Control Orchestration Server. Continue only for a controlled troubleshooting window."));
+                confirmation.PrimaryButtonText(L"Disable");
+                confirmation.CloseButtonText(L"Cancel");
+                confirmation.DefaultButton(ContentDialogButton::Close);
+                confirmation.XamlRoot(RootGrid().XamlRoot());
+
+                if (co_await confirmation.ShowAsync() == ContentDialogResult::Primary) {
+                    statusText.Text(L"Applying the confirmed security exception.");
+                    co_await winrt::resume_background();
+                    result = runtime_.UpdateSecuritySettings(settings, true);
+                    co_await uiThread;
+                } else {
+                    statusText.Text(L"Guided security hardening was cancelled before unsafe changes were applied.");
+                    applyButton.IsEnabled(true);
+                    GuidedWorkflowStatusText().Text(L"Security hardening wizard cancelled the unsafe change request.");
+                    co_return;
+                }
+            }
+
+            statusText.Text(winrt::hstring(result.message));
+            if (!result.succeeded) {
+                applyButton.IsEnabled(true);
+                GuidedWorkflowStatusText().Text(L"Security hardening wizard needs attention. Review the wizard message and try again.");
+                co_return;
+            }
+
+            GuidedWorkflowStatusText().Text(L"Applied guided security hardening to the orchestration server.");
+            const auto completionMessage = GuidedWorkflowStatusText().Text();
+            dialog.Hide();
+            co_await CompleteGuidedWorkflowAsync(completionMessage, kSecurityDestination);
+        }();
+        (void)ignored;
+    });
+
+    co_await dialog.ShowAsync();
+}
+
+IAsyncAction MainWindow::ShowSettingsWizardAsync() {
+    ContentDialog dialog;
+    dialog.Title(box_value(L"Guided Host Settings"));
+    dialog.CloseButtonText(L"Close");
+    dialog.XamlRoot(RootGrid().XamlRoot());
+
+    ScrollViewer scrollViewer;
+    scrollViewer.HorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
+    scrollViewer.VerticalScrollBarVisibility(ScrollBarVisibility::Auto);
+    scrollViewer.MaxHeight(700);
+
+    StackPanel root;
+    root.Spacing(14);
+    root.Width(580);
+
+    TextBlock intro;
+    intro.Style(Application::Current().Resources().Lookup(box_value(L"ShellBodyTextStyle")).try_as<Style>());
+    intro.Text(L"Step 1: confirm the host identity and bind endpoints. Step 2: decide whether the LAN beacon should stay active. Step 3: shape the governed CPU, memory, bandwidth, and storage envelope for managed launches.");
+    intro.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(intro);
+
+    const auto addLabel = [&root](std::wstring const& text) {
+        TextBlock label;
+        label.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+        label.Text(winrt::hstring(text));
+        root.Children().Append(label);
+    };
+
+    TextBox instanceNameBox;
+    instanceNameBox.PlaceholderText(L"Master Control Orchestration Server");
+    instanceNameBox.Text(winrt::hstring(currentSnapshot_.instanceName.empty() ? std::wstring(kProductDisplayName) : currentSnapshot_.instanceName));
+    root.Children().Append([&]() {
+        addLabel(L"Step 1. Instance Name");
+        return instanceNameBox;
+    }());
+
+    TextBox bindAddressBox;
+    bindAddressBox.PlaceholderText(L"0.0.0.0");
+    bindAddressBox.Text(winrt::hstring(currentSnapshot_.bindAddress.empty() ? L"0.0.0.0" : currentSnapshot_.bindAddress));
+    root.Children().Append([&]() {
+        addLabel(L"Bind Address");
+        return bindAddressBox;
+    }());
+
+    Grid portGrid;
+    portGrid.ColumnSpacing(12);
+    portGrid.ColumnDefinitions().Append(ColumnDefinition());
+    portGrid.ColumnDefinitions().Append(ColumnDefinition());
+
+    StackPanel browserPortPanel;
+    browserPortPanel.Spacing(6);
+    TextBlock browserPortLabel;
+    browserPortLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    browserPortLabel.Text(L"Browser Port");
+    TextBox browserPortBox;
+    browserPortBox.Text(winrt::hstring(std::to_wstring(currentSnapshot_.browserPort)));
+    browserPortPanel.Children().Append(browserPortLabel);
+    browserPortPanel.Children().Append(browserPortBox);
+
+    StackPanel beaconPortPanel;
+    beaconPortPanel.Spacing(6);
+    TextBlock beaconPortLabel;
+    beaconPortLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    beaconPortLabel.Text(L"Beacon Port");
+    TextBox beaconPortBox;
+    beaconPortBox.Text(winrt::hstring(std::to_wstring(currentSnapshot_.beaconPort)));
+    beaconPortPanel.Children().Append(beaconPortLabel);
+    beaconPortPanel.Children().Append(beaconPortBox);
+
+    Grid::SetColumn(browserPortPanel, 0);
+    Grid::SetColumn(beaconPortPanel, 1);
+    portGrid.Children().Append(browserPortPanel);
+    portGrid.Children().Append(beaconPortPanel);
+    root.Children().Append(portGrid);
+
+    ToggleSwitch beaconEnabledToggle;
+    beaconEnabledToggle.Header(box_value(L"Broadcast LAN beacon and gateway metadata"));
+    beaconEnabledToggle.IsOn(currentSnapshot_.beaconEnabled);
+    root.Children().Append(beaconEnabledToggle);
+
+    Grid resourceGrid;
+    resourceGrid.ColumnSpacing(12);
+    resourceGrid.RowSpacing(12);
+    resourceGrid.ColumnDefinitions().Append(ColumnDefinition());
+    resourceGrid.ColumnDefinitions().Append(ColumnDefinition());
+    resourceGrid.RowDefinitions().Append(RowDefinition());
+    resourceGrid.RowDefinitions().Append(RowDefinition());
+
+    const auto addResourceEditor = [&resourceGrid, this](const int row,
+                                                         const int column,
+                                                         std::wstring const& labelText,
+                                                         std::wstring const& valueText) {
+        StackPanel panel;
+        panel.Spacing(6);
+        TextBlock label;
+        label.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+        label.Text(winrt::hstring(labelText));
+        TextBox valueBox;
+        valueBox.Text(winrt::hstring(valueText));
+        panel.Children().Append(label);
+        panel.Children().Append(valueBox);
+        Grid::SetRow(panel, row);
+        Grid::SetColumn(panel, column);
+        resourceGrid.Children().Append(panel);
+        return valueBox;
+    };
+
+    addLabel(L"Step 3. Governed Resource Envelope");
+    TextBox cpuPercentBox = addResourceEditor(0, 0, L"CPU Allocation %", std::to_wstring(currentSnapshot_.cpuAllocationPercent));
+    TextBox memoryPercentBox = addResourceEditor(0, 1, L"Memory Allocation %", std::to_wstring(currentSnapshot_.memoryAllocationPercent));
+    TextBox bandwidthPercentBox = addResourceEditor(1, 0, L"Bandwidth Allocation %", std::to_wstring(currentSnapshot_.bandwidthAllocationPercent));
+    TextBox storagePercentBox = addResourceEditor(1, 1, L"Storage Allocation %", std::to_wstring(currentSnapshot_.storageAllocationPercent));
+    root.Children().Append(resourceGrid);
+
+    TextBlock summaryText;
+    summaryText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
+    summaryText.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(summaryText);
+
+    TextBlock statusText;
+    statusText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
+    statusText.Text(L"Use this wizard when you want to adjust bind ports, beacon behavior, or the governed resource budget without hand-editing configuration.");
+    statusText.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(statusText);
+
+    Button applyButton;
+    applyButton.Content(box_value(L"Apply Host Settings"));
+    applyButton.Style(Application::Current().Resources().Lookup(box_value(L"ShellCommandButtonStyle")).try_as<Style>());
+    root.Children().Append(applyButton);
+
+    const auto updateSummary = [&, this]() {
+        std::wstring summary = L"Host '";
+        summary += trimCopy(std::wstring(instanceNameBox.Text().c_str())).empty()
+            ? std::wstring(kProductDisplayName)
+            : trimCopy(std::wstring(instanceNameBox.Text().c_str()));
+        summary += L"' on ";
+        summary += trimCopy(std::wstring(bindAddressBox.Text().c_str())).empty()
+            ? L"0.0.0.0"
+            : trimCopy(std::wstring(bindAddressBox.Text().c_str()));
+        summary += L" | Browser ";
+        summary += trimCopy(std::wstring(browserPortBox.Text().c_str())).empty()
+            ? std::to_wstring(currentSnapshot_.browserPort)
+            : trimCopy(std::wstring(browserPortBox.Text().c_str()));
+        summary += L" | Beacon ";
+        summary += beaconEnabledToggle.IsOn() ? L"enabled" : L"disabled";
+        summary += L" | CPU ";
+        summary += trimCopy(std::wstring(cpuPercentBox.Text().c_str()));
+        summary += L"% | RAM ";
+        summary += trimCopy(std::wstring(memoryPercentBox.Text().c_str()));
+        summary += L"% | Bandwidth ";
+        summary += trimCopy(std::wstring(bandwidthPercentBox.Text().c_str()));
+        summary += L"% | Storage ";
+        summary += trimCopy(std::wstring(storagePercentBox.Text().c_str()));
+        summary += L"%";
+        summaryText.Text(winrt::hstring(summary));
+    };
+
+    instanceNameBox.TextChanged([&](IInspectable const&, Controls::TextChangedEventArgs const&) { updateSummary(); });
+    bindAddressBox.TextChanged([&](IInspectable const&, Controls::TextChangedEventArgs const&) { updateSummary(); });
+    browserPortBox.TextChanged([&](IInspectable const&, Controls::TextChangedEventArgs const&) { updateSummary(); });
+    beaconPortBox.TextChanged([&](IInspectable const&, Controls::TextChangedEventArgs const&) { updateSummary(); });
+    cpuPercentBox.TextChanged([&](IInspectable const&, Controls::TextChangedEventArgs const&) { updateSummary(); });
+    memoryPercentBox.TextChanged([&](IInspectable const&, Controls::TextChangedEventArgs const&) { updateSummary(); });
+    bandwidthPercentBox.TextChanged([&](IInspectable const&, Controls::TextChangedEventArgs const&) { updateSummary(); });
+    storagePercentBox.TextChanged([&](IInspectable const&, Controls::TextChangedEventArgs const&) { updateSummary(); });
+    beaconEnabledToggle.Toggled([&](IInspectable const&, RoutedEventArgs const&) { updateSummary(); });
+    updateSummary();
+
+    scrollViewer.Content(root);
+    dialog.Content(scrollViewer);
+
+    applyButton.Click([this, dialog, applyButton, statusText, instanceNameBox, bindAddressBox, browserPortBox, beaconPortBox, beaconEnabledToggle, cpuPercentBox, memoryPercentBox, bandwidthPercentBox, storagePercentBox](IInspectable const&, RoutedEventArgs const&) {
+        auto ignored = [this, dialog, applyButton, statusText, instanceNameBox, bindAddressBox, browserPortBox, beaconPortBox, beaconEnabledToggle, cpuPercentBox, memoryPercentBox, bandwidthPercentBox, storagePercentBox]() -> IAsyncAction {
+            const auto browserPort = parseInteger(std::wstring(browserPortBox.Text().c_str()), 1, 65535);
+            const auto beaconPort = parseInteger(std::wstring(beaconPortBox.Text().c_str()), 1, 65535);
+            const auto cpuPercent = parseInteger(std::wstring(cpuPercentBox.Text().c_str()), 0, 100);
+            const auto memoryPercent = parseInteger(std::wstring(memoryPercentBox.Text().c_str()), 0, 100);
+            const auto bandwidthPercent = parseInteger(std::wstring(bandwidthPercentBox.Text().c_str()), 0, 100);
+            const auto storagePercent = parseInteger(std::wstring(storagePercentBox.Text().c_str()), 0, 100);
+
+            if (trimCopy(std::wstring(instanceNameBox.Text().c_str())).empty()) {
+                statusText.Text(L"Instance name is required.");
+                co_return;
+            }
+            if (trimCopy(std::wstring(bindAddressBox.Text().c_str())).empty()) {
+                statusText.Text(L"Bind address is required.");
+                co_return;
+            }
+            if (!browserPort.has_value() || !beaconPort.has_value()) {
+                statusText.Text(L"Browser and beacon ports must be between 1 and 65535.");
+                co_return;
+            }
+            if (!cpuPercent.has_value() || !memoryPercent.has_value() || !bandwidthPercent.has_value() || !storagePercent.has_value()) {
+                statusText.Text(L"Resource allocation values must stay between 0 and 100.");
+                co_return;
+            }
+
+            applyButton.IsEnabled(false);
+            statusText.Text(L"Applying the guided host settings through the local admin API.");
+
+            winrt::apartment_context uiThread;
+            co_await winrt::resume_background();
+            const auto result = runtime_.UpdateHostSettings(::MasterControlShell::ShellHostSettings{
+                trimCopy(std::wstring(instanceNameBox.Text().c_str())),
+                trimCopy(std::wstring(bindAddressBox.Text().c_str())),
+                static_cast<uint16_t>(*browserPort),
+                static_cast<uint16_t>(*beaconPort),
+                beaconEnabledToggle.IsOn(),
+                *cpuPercent,
+                *memoryPercent,
+                *bandwidthPercent,
+                *storagePercent
+            });
+            co_await uiThread;
+
+            statusText.Text(winrt::hstring(result.message));
+            if (!result.succeeded) {
+                applyButton.IsEnabled(true);
+                GuidedWorkflowStatusText().Text(L"Host settings wizard needs attention. Review the wizard message and try again.");
+                co_return;
+            }
+
+            GuidedWorkflowStatusText().Text(L"Applied guided host settings and resource envelope updates.");
+            const auto completionMessage = GuidedWorkflowStatusText().Text();
+            dialog.Hide();
+            co_await CompleteGuidedWorkflowAsync(completionMessage, kSettingsDestination);
+        }();
+        (void)ignored;
+    });
+
+    co_await dialog.ShowAsync();
+}
+
+IAsyncAction MainWindow::ShowProviderExecutionWizardAsync() {
+    ContentDialog dialog;
+    dialog.Title(box_value(L"Guided Provider Routing Validation"));
+    dialog.CloseButtonText(L"Close");
+    dialog.XamlRoot(RootGrid().XamlRoot());
+
+    ScrollViewer scrollViewer;
+    scrollViewer.HorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
+    scrollViewer.VerticalScrollBarVisibility(ScrollBarVisibility::Auto);
+    scrollViewer.MaxHeight(700);
+
+    StackPanel root;
+    root.Spacing(14);
+    root.Width(580);
+
+    TextBlock intro;
+    intro.Style(Application::Current().Resources().Lookup(box_value(L"ShellBodyTextStyle")).try_as<Style>());
+    intro.Text(L"Step 1: choose the orchestration lane you want to validate. Step 2: choose the kind of routing check you want the assigned provider to perform. Step 3: dispatch the guided validation through the local admin API and review the result in provider execution history.");
+    intro.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(intro);
+
+    const auto addLabel = [&root](std::wstring const& text) {
+        TextBlock label;
+        label.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+        label.Text(winrt::hstring(text));
+        root.Children().Append(label);
+    };
+
+    ComboBox targetSelector;
+    targetSelector.PlaceholderText(L"Choose a role or sub-agent lane");
+    for (const auto& target : currentSnapshot_.providerAssignmentTargets) {
+        ComboBoxItem item;
+        std::wstring label = target.displayName.empty() ? target.targetId : target.displayName;
+        if (!target.kind.empty()) {
+            label += L"  |  ";
+            label += target.kind;
+        }
+        item.Content(box_value(winrt::hstring(label)));
+        targetSelector.Items().Append(item);
+    }
+    if (targetSelector.Items().Size() > 0) {
+        targetSelector.SelectedIndex(0);
+    }
+    root.Children().Append([&]() {
+        addLabel(L"Step 1. Validation Target");
+        return targetSelector;
+    }());
+
+    const std::vector<std::pair<std::wstring, std::wstring>> promptTemplates{
+        {L"Planning Check", L"Create a concise plan for this orchestration lane and explain the first action you would take."},
+        {L"Coding Check", L"Describe how you would implement the next coding task for this lane and note any MCP tools you would need."},
+        {L"Review Check", L"Review the current state of this lane, identify the highest-risk issue, and recommend the next operator action."},
+        {L"Specialist Coordination", L"Summarize how this lane would coordinate with related specialists and what inputs it needs before execution."},
+        {L"Custom Prompt", L""}
+    };
+
+    ComboBox templateSelector;
+    templateSelector.PlaceholderText(L"Choose a validation pattern");
+    for (const auto& templateEntry : promptTemplates) {
+        ComboBoxItem item;
+        item.Content(box_value(winrt::hstring(templateEntry.first)));
+        templateSelector.Items().Append(item);
+    }
+    if (templateSelector.Items().Size() > 0) {
+        templateSelector.SelectedIndex(0);
+    }
+    root.Children().Append([&]() {
+        addLabel(L"Step 2. Validation Pattern");
+        return templateSelector;
+    }());
+
+    Grid optionGrid;
+    optionGrid.ColumnSpacing(12);
+    optionGrid.ColumnDefinitions().Append(ColumnDefinition());
+    optionGrid.ColumnDefinitions().Append(ColumnDefinition());
+
+    ToggleSwitch toolAccessToggle;
+    toolAccessToggle.Header(box_value(L"Allow shared MCP access"));
+    toolAccessToggle.IsOn(true);
+
+    StackPanel maxTurnsPanel;
+    maxTurnsPanel.Spacing(6);
+    TextBlock maxTurnsLabel;
+    maxTurnsLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    maxTurnsLabel.Text(L"Max Turns");
+    TextBox maxTurnsBox;
+    maxTurnsBox.Text(L"4");
+    maxTurnsPanel.Children().Append(maxTurnsLabel);
+    maxTurnsPanel.Children().Append(maxTurnsBox);
+
+    Grid::SetColumn(toolAccessToggle, 0);
+    Grid::SetColumn(maxTurnsPanel, 1);
+    optionGrid.Children().Append(toolAccessToggle);
+    optionGrid.Children().Append(maxTurnsPanel);
+    root.Children().Append(optionGrid);
+
+    TextBox promptBox;
+    promptBox.AcceptsReturn(true);
+    promptBox.Height(140);
+    promptBox.TextWrapping(TextWrapping::WrapWholeWords);
+    promptBox.PlaceholderText(L"Ask the assigned provider to work within its orchestration lane.");
+    promptBox.Text(winrt::hstring(promptTemplates.front().second));
+    root.Children().Append([&]() {
+        addLabel(L"Step 3. Prompt");
+        return promptBox;
+    }());
+
+    TextBlock summaryText;
+    summaryText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
+    summaryText.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(summaryText);
+
+    TextBlock statusText;
+    statusText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
+    statusText.TextWrapping(TextWrapping::WrapWholeWords);
+    statusText.Text(currentSnapshot_.providerAssignmentTargets.empty()
+        ? L"No provider ownership lanes are published yet. Connect a model and assign responsibility before using this wizard."
+        : L"Use this wizard when you want to validate routing, ownership, credentials, and MCP access without manually filling the provider execution console.");
+    root.Children().Append(statusText);
+
+    Button runButton;
+    runButton.Content(box_value(L"Run Guided Validation"));
+    runButton.Style(Application::Current().Resources().Lookup(box_value(L"ShellCommandButtonStyle")).try_as<Style>());
+    runButton.IsEnabled(!currentSnapshot_.providerAssignmentTargets.empty());
+    root.Children().Append(runButton);
+
+    const auto updatePromptFromTemplate = [templateSelector, promptBox, promptTemplates]() {
+        const auto index = templateSelector.SelectedIndex();
+        if (index < 0 || index >= static_cast<int>(promptTemplates.size())) {
+            return;
+        }
+        const auto& templatePrompt = promptTemplates[static_cast<size_t>(index)].second;
+        if (!templatePrompt.empty()) {
+            promptBox.Text(winrt::hstring(templatePrompt));
+        }
+    };
+
+    const auto updateSummary = [&, this]() {
+        std::wstring targetLabel = L"No target selected";
+        if (const auto index = targetSelector.SelectedIndex();
+            index >= 0 && index < static_cast<int>(currentSnapshot_.providerAssignmentTargets.size())) {
+            const auto& target = currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(index)];
+            targetLabel = target.displayName.empty() ? target.targetId : target.displayName;
+            if (!target.kind.empty()) {
+                targetLabel += L"  |  ";
+                targetLabel += target.kind;
+            }
+        }
+
+        std::wstring templateLabel = L"Custom Prompt";
+        if (const auto index = templateSelector.SelectedIndex();
+            index >= 0 && index < static_cast<int>(promptTemplates.size())) {
+            templateLabel = promptTemplates[static_cast<size_t>(index)].first;
+        }
+
+        std::wstring summary = L"Validate ";
+        summary += targetLabel;
+        summary += L" using ";
+        summary += templateLabel;
+        summary += L" | Shared MCP ";
+        summary += toolAccessToggle.IsOn() ? L"enabled" : L"disabled";
+        summary += L" | Max turns ";
+        summary += trimCopy(std::wstring(maxTurnsBox.Text().c_str())).empty()
+            ? L"4"
+            : trimCopy(std::wstring(maxTurnsBox.Text().c_str()));
+        summaryText.Text(winrt::hstring(summary));
+    };
+
+    templateSelector.SelectionChanged([&](IInspectable const&, Controls::SelectionChangedEventArgs const&) {
+        updatePromptFromTemplate();
+        updateSummary();
+    });
+    targetSelector.SelectionChanged([&](IInspectable const&, Controls::SelectionChangedEventArgs const&) { updateSummary(); });
+    toolAccessToggle.Toggled([&](IInspectable const&, RoutedEventArgs const&) { updateSummary(); });
+    maxTurnsBox.TextChanged([&](IInspectable const&, Controls::TextChangedEventArgs const&) { updateSummary(); });
+    promptBox.TextChanged([&](IInspectable const&, Controls::TextChangedEventArgs const&) { updateSummary(); });
+    updateSummary();
+
+    scrollViewer.Content(root);
+    dialog.Content(scrollViewer);
+
+    runButton.Click([this, dialog, runButton, statusText, targetSelector, toolAccessToggle, maxTurnsBox, promptBox](IInspectable const&, RoutedEventArgs const&) {
+        auto ignored = [this, dialog, runButton, statusText, targetSelector, toolAccessToggle, maxTurnsBox, promptBox]() -> IAsyncAction {
+            if (targetSelector.SelectedIndex() < 0 ||
+                targetSelector.SelectedIndex() >= static_cast<int>(currentSnapshot_.providerAssignmentTargets.size())) {
+                statusText.Text(L"Choose a role or sub-agent lane before running guided validation.");
+                co_return;
+            }
+
+            const auto maxTurns = parseInteger(std::wstring(maxTurnsBox.Text().c_str()), 1, 12);
+            if (!maxTurns.has_value()) {
+                statusText.Text(L"Max turns must be between 1 and 12.");
+                co_return;
+            }
+
+            const auto prompt = trimCopy(std::wstring(promptBox.Text().c_str()));
+            if (prompt.empty()) {
+                statusText.Text(L"Enter a prompt before running guided validation.");
+                co_return;
+            }
+
+            const auto& target = currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(targetSelector.SelectedIndex())];
+            runButton.IsEnabled(false);
+            statusText.Text(L"Dispatching guided provider validation through the local admin API.");
+
+            winrt::apartment_context uiThread;
+            co_await winrt::resume_background();
+            const auto record = runtime_.ExecuteProviderTask(::MasterControlShell::ShellProviderExecutionRequest{
+                target.targetId,
+                prompt,
+                toolAccessToggle.IsOn(),
+                *maxTurns
+            });
+            co_await uiThread;
+
+            const auto output = !record.outputText.empty() ? record.outputText : record.rawResponse;
+            if (!record.errorMessage.empty() || record.status == L"failed") {
+                statusText.Text(winrt::hstring(
+                    record.errorMessage.empty() ? L"Provider validation failed. Review execution history for details." : record.errorMessage));
+                runButton.IsEnabled(true);
+                GuidedWorkflowStatusText().Text(L"Provider routing validation needs attention. Review the wizard message and try again.");
+                co_return;
+            }
+
+            statusText.Text(winrt::hstring(output.empty() ? L"Provider routing validation completed." : output));
+            GuidedWorkflowStatusText().Text(L"Completed guided provider routing validation and refreshed provider history.");
+            const auto completionMessage = GuidedWorkflowStatusText().Text();
+            dialog.Hide();
+            co_await CompleteGuidedWorkflowAsync(completionMessage, kProvidersDestination);
+        }();
+        (void)ignored;
+    });
+
+    co_await dialog.ShowAsync();
+}
+
+IAsyncAction MainWindow::ShowRuntimeMaintenanceWizardAsync() {
+    ContentDialog dialog;
+    dialog.Title(box_value(L"Manage Runtime Lanes"));
+    dialog.CloseButtonText(L"Close");
+    dialog.XamlRoot(RootGrid().XamlRoot());
+
+    std::vector<::MasterControlShell::ShellRuntimeEndpoint> customMcpServers;
+    std::vector<::MasterControlShell::ShellRuntimeEndpoint> customSubAgents;
+    customMcpServers.reserve(currentSnapshot_.endpoints.size());
+    customSubAgents.reserve(currentSnapshot_.endpoints.size());
+    for (const auto& endpoint : currentSnapshot_.endpoints) {
+        if (!endpoint.userDefined) {
+            continue;
+        }
+
+        if (endpoint.kind == L"mcp_server") {
+            customMcpServers.push_back(endpoint);
+        } else if (endpoint.kind == L"sub_agent") {
+            customSubAgents.push_back(endpoint);
+        }
+    }
+    const auto appleHosts = currentSnapshot_.appleRemoteHosts;
+
+    ScrollViewer scrollViewer;
+    scrollViewer.HorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
+    scrollViewer.VerticalScrollBarVisibility(ScrollBarVisibility::Auto);
+    scrollViewer.MaxHeight(720);
+
+    StackPanel root;
+    root.Spacing(14);
+    root.Width(600);
+
+    TextBlock intro;
+    intro.Style(Application::Current().Resources().Lookup(box_value(L"ShellBodyTextStyle")).try_as<Style>());
+    intro.Text(L"Step 1: choose the runtime lane type you need to maintain. Step 2: load a published lane. Step 3: update or remove it without dropping into the raw runtime editors.");
+    intro.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(intro);
+
+    const auto addLabel = [&root](std::wstring const& text) {
+        TextBlock label;
+        label.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+        label.Text(winrt::hstring(text));
+        root.Children().Append(label);
+    };
+
+    ComboBox kindSelector;
+    kindSelector.PlaceholderText(L"Choose a runtime lane type");
+    {
+        ComboBoxItem mcpItem;
+        mcpItem.Content(box_value(L"Shared MCP Server"));
+        mcpItem.Tag(box_value(L"mcp"));
+        kindSelector.Items().Append(mcpItem);
+
+        ComboBoxItem subAgentItem;
+        subAgentItem.Content(box_value(L"Custom Sub-Agent"));
+        subAgentItem.Tag(box_value(L"subagent"));
+        kindSelector.Items().Append(subAgentItem);
+
+        ComboBoxItem appleItem;
+        appleItem.Content(box_value(L"Apple Remote Host"));
+        appleItem.Tag(box_value(L"apple"));
+        kindSelector.Items().Append(appleItem);
+    }
+    kindSelector.SelectedIndex(0);
+    root.Children().Append([&]() {
+        addLabel(L"Step 1. Runtime Lane Type");
+        return kindSelector;
+    }());
+
+    ComboBox recordSelector;
+    recordSelector.PlaceholderText(L"Choose a published lane");
+    root.Children().Append([&]() {
+        addLabel(L"Step 2. Published Lane");
+        return recordSelector;
+    }());
+
+    StackPanel mcpPanel;
+    mcpPanel.Spacing(10);
+
+    TextBox mcpIdBox;
+    mcpIdBox.PlaceholderText(L"swift-tools-mcp");
+    TextBox mcpDisplayNameBox;
+    mcpDisplayNameBox.PlaceholderText(L"Swift Tools MCP");
+    TextBox mcpHostBox;
+    mcpHostBox.PlaceholderText(L"127.0.0.1");
+    TextBox mcpPortBox;
+    mcpPortBox.PlaceholderText(L"7302");
+    TextBox mcpProtocolBox;
+    mcpProtocolBox.PlaceholderText(L"http");
+    TextBox mcpRoutePathBox;
+    mcpRoutePathBox.PlaceholderText(L"/mcp");
+    TextBox mcpDescriptionBox;
+    mcpDescriptionBox.AcceptsReturn(true);
+    mcpDescriptionBox.Height(88);
+    mcpDescriptionBox.TextWrapping(TextWrapping::Wrap);
+    mcpDescriptionBox.PlaceholderText(L"What tools or capabilities does this MCP lane expose?");
+
+    TextBlock mcpIdLabel;
+    mcpIdLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    mcpIdLabel.Text(L"MCP Server ID");
+    mcpPanel.Children().Append(mcpIdLabel);
+    mcpPanel.Children().Append(mcpIdBox);
+
+    TextBlock mcpDisplayLabel;
+    mcpDisplayLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    mcpDisplayLabel.Text(L"Display Name");
+    mcpPanel.Children().Append(mcpDisplayLabel);
+    mcpPanel.Children().Append(mcpDisplayNameBox);
+
+    Grid mcpHostGrid;
+    mcpHostGrid.ColumnSpacing(12);
+    mcpHostGrid.ColumnDefinitions().Append(ColumnDefinition());
+    mcpHostGrid.ColumnDefinitions().Append(ColumnDefinition());
+    mcpHostGrid.ColumnDefinitions().Append(ColumnDefinition());
+
+    StackPanel mcpHostPanel;
+    mcpHostPanel.Spacing(6);
+    TextBlock mcpHostLabel;
+    mcpHostLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    mcpHostLabel.Text(L"Host");
+    mcpHostPanel.Children().Append(mcpHostLabel);
+    mcpHostPanel.Children().Append(mcpHostBox);
+
+    StackPanel mcpPortPanel;
+    mcpPortPanel.Spacing(6);
+    TextBlock mcpPortLabel;
+    mcpPortLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    mcpPortLabel.Text(L"Port");
+    mcpPortPanel.Children().Append(mcpPortLabel);
+    mcpPortPanel.Children().Append(mcpPortBox);
+    Grid::SetColumn(mcpPortPanel, 1);
+
+    StackPanel mcpProtocolPanel;
+    mcpProtocolPanel.Spacing(6);
+    TextBlock mcpProtocolLabel;
+    mcpProtocolLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    mcpProtocolLabel.Text(L"Protocol");
+    mcpProtocolPanel.Children().Append(mcpProtocolLabel);
+    mcpProtocolPanel.Children().Append(mcpProtocolBox);
+    Grid::SetColumn(mcpProtocolPanel, 2);
+
+    mcpHostGrid.Children().Append(mcpHostPanel);
+    mcpHostGrid.Children().Append(mcpPortPanel);
+    mcpHostGrid.Children().Append(mcpProtocolPanel);
+    mcpPanel.Children().Append(mcpHostGrid);
+
+    TextBlock mcpRouteLabel;
+    mcpRouteLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    mcpRouteLabel.Text(L"Shared Route Path");
+    mcpPanel.Children().Append(mcpRouteLabel);
+    mcpPanel.Children().Append(mcpRoutePathBox);
+
+    TextBlock mcpDescriptionLabel;
+    mcpDescriptionLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    mcpDescriptionLabel.Text(L"Notes");
+    mcpPanel.Children().Append(mcpDescriptionLabel);
+    mcpPanel.Children().Append(mcpDescriptionBox);
+
+    StackPanel subAgentPanel;
+    subAgentPanel.Spacing(10);
+
+    TextBox subAgentIdBox;
+    subAgentIdBox.PlaceholderText(L"swift-specialist");
+    TextBox subAgentDisplayNameBox;
+    subAgentDisplayNameBox.PlaceholderText(L"Swift Specialist");
+    TextBox subAgentSpecializationBox;
+    subAgentSpecializationBox.PlaceholderText(L"Swift, C++, documentation, test automation...");
+    TextBox subAgentHostBox;
+    subAgentHostBox.PlaceholderText(L"Optional host");
+    TextBox subAgentPortBox;
+    subAgentPortBox.PlaceholderText(L"0");
+    TextBox subAgentProtocolBox;
+    subAgentProtocolBox.PlaceholderText(L"virtual");
+    TextBox subAgentRoutePathBox;
+    subAgentRoutePathBox.PlaceholderText(L"/status");
+    TextBox subAgentDescriptionBox;
+    subAgentDescriptionBox.AcceptsReturn(true);
+    subAgentDescriptionBox.Height(88);
+    subAgentDescriptionBox.TextWrapping(TextWrapping::Wrap);
+    subAgentDescriptionBox.PlaceholderText(L"Optional notes about this specialist lane.");
+
+    TextBlock subAgentIdLabel;
+    subAgentIdLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    subAgentIdLabel.Text(L"Sub-Agent ID");
+    subAgentPanel.Children().Append(subAgentIdLabel);
+    subAgentPanel.Children().Append(subAgentIdBox);
+
+    TextBlock subAgentDisplayLabel;
+    subAgentDisplayLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    subAgentDisplayLabel.Text(L"Display Name");
+    subAgentPanel.Children().Append(subAgentDisplayLabel);
+    subAgentPanel.Children().Append(subAgentDisplayNameBox);
+
+    TextBlock subAgentSpecializationLabel;
+    subAgentSpecializationLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    subAgentSpecializationLabel.Text(L"Specialization");
+    subAgentPanel.Children().Append(subAgentSpecializationLabel);
+    subAgentPanel.Children().Append(subAgentSpecializationBox);
+
+    Grid subAgentHostGrid;
+    subAgentHostGrid.ColumnSpacing(12);
+    subAgentHostGrid.ColumnDefinitions().Append(ColumnDefinition());
+    subAgentHostGrid.ColumnDefinitions().Append(ColumnDefinition());
+    subAgentHostGrid.ColumnDefinitions().Append(ColumnDefinition());
+
+    StackPanel subAgentHostPanel;
+    subAgentHostPanel.Spacing(6);
+    TextBlock subAgentHostLabel;
+    subAgentHostLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    subAgentHostLabel.Text(L"Host");
+    subAgentHostPanel.Children().Append(subAgentHostLabel);
+    subAgentHostPanel.Children().Append(subAgentHostBox);
+
+    StackPanel subAgentPortPanel;
+    subAgentPortPanel.Spacing(6);
+    TextBlock subAgentPortLabel;
+    subAgentPortLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    subAgentPortLabel.Text(L"Port");
+    subAgentPortPanel.Children().Append(subAgentPortLabel);
+    subAgentPortPanel.Children().Append(subAgentPortBox);
+    Grid::SetColumn(subAgentPortPanel, 1);
+
+    StackPanel subAgentProtocolPanel;
+    subAgentProtocolPanel.Spacing(6);
+    TextBlock subAgentProtocolLabel;
+    subAgentProtocolLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    subAgentProtocolLabel.Text(L"Protocol");
+    subAgentProtocolPanel.Children().Append(subAgentProtocolLabel);
+    subAgentProtocolPanel.Children().Append(subAgentProtocolBox);
+    Grid::SetColumn(subAgentProtocolPanel, 2);
+
+    subAgentHostGrid.Children().Append(subAgentHostPanel);
+    subAgentHostGrid.Children().Append(subAgentPortPanel);
+    subAgentHostGrid.Children().Append(subAgentProtocolPanel);
+    subAgentPanel.Children().Append(subAgentHostGrid);
+
+    TextBlock subAgentRouteLabel;
+    subAgentRouteLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    subAgentRouteLabel.Text(L"Route Path");
+    subAgentPanel.Children().Append(subAgentRouteLabel);
+    subAgentPanel.Children().Append(subAgentRoutePathBox);
+
+    TextBlock subAgentDescriptionLabel;
+    subAgentDescriptionLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    subAgentDescriptionLabel.Text(L"Notes");
+    subAgentPanel.Children().Append(subAgentDescriptionLabel);
+    subAgentPanel.Children().Append(subAgentDescriptionBox);
+
+    StackPanel applePanel;
+    applePanel.Spacing(10);
+
+    TextBox appleHostIdBox;
+    appleHostIdBox.PlaceholderText(L"apple-host-01");
+    TextBox appleDisplayNameBox;
+    appleDisplayNameBox.PlaceholderText(L"Primary Apple Build Host");
+    TextBox appleAddressBox;
+    appleAddressBox.PlaceholderText(L"mac-builder.local");
+    TextBox applePortBox;
+    applePortBox.PlaceholderText(L"8081");
+    TextBox appleUsernameBox;
+    appleUsernameBox.PlaceholderText(L"builder");
+    TextBox appleServiceBaseUrlBox;
+    appleServiceBaseUrlBox.PlaceholderText(L"http://mac-builder.local:8081");
+    TextBox appleHealthPathBox;
+    appleHealthPathBox.PlaceholderText(L"/healthz");
+    TextBox appleExecutePathBox;
+    appleExecutePathBox.PlaceholderText(L"/execute");
+    TextBox appleDeveloperDirectoryBox;
+    appleDeveloperDirectoryBox.PlaceholderText(L"/Applications/Xcode.app/Contents/Developer");
+    TextBox appleSigningIdentityBox;
+    appleSigningIdentityBox.PlaceholderText(L"Developer ID Application: Example Corp");
+    TextBox appleNotaryProfileBox;
+    appleNotaryProfileBox.PlaceholderText(L"mastercontrol-notary");
+    TextBox appleTeamIdBox;
+    appleTeamIdBox.PlaceholderText(L"ABCDE12345");
+
+    TextBlock appleIdLabel;
+    appleIdLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    appleIdLabel.Text(L"Apple Host ID");
+    applePanel.Children().Append(appleIdLabel);
+    applePanel.Children().Append(appleHostIdBox);
+
+    TextBlock appleDisplayLabel;
+    appleDisplayLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    appleDisplayLabel.Text(L"Display Name");
+    applePanel.Children().Append(appleDisplayLabel);
+    applePanel.Children().Append(appleDisplayNameBox);
+
+    ComboBox appleTransportSelector;
+    ComboBoxItem appleCompanionItem;
+    appleCompanionItem.Content(box_value(L"Companion Service"));
+    appleCompanionItem.Tag(box_value(L"companion_service"));
+    appleTransportSelector.Items().Append(appleCompanionItem);
+    ComboBoxItem appleSshItem;
+    appleSshItem.Content(box_value(L"SSH"));
+    appleSshItem.Tag(box_value(L"ssh"));
+    appleTransportSelector.Items().Append(appleSshItem);
+    appleTransportSelector.SelectedIndex(0);
+    TextBlock appleTransportLabel;
+    appleTransportLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    appleTransportLabel.Text(L"Transport");
+    applePanel.Children().Append(appleTransportLabel);
+    applePanel.Children().Append(appleTransportSelector);
+
+    Grid appleEndpointGrid;
+    appleEndpointGrid.ColumnSpacing(12);
+    appleEndpointGrid.ColumnDefinitions().Append(ColumnDefinition());
+    appleEndpointGrid.ColumnDefinitions().Append(ColumnDefinition());
+    appleEndpointGrid.ColumnDefinitions().Append(ColumnDefinition());
+
+    StackPanel appleAddressPanel;
+    appleAddressPanel.Spacing(6);
+    TextBlock appleAddressLabel;
+    appleAddressLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    appleAddressLabel.Text(L"Address or Hostname");
+    appleAddressPanel.Children().Append(appleAddressLabel);
+    appleAddressPanel.Children().Append(appleAddressBox);
+
+    StackPanel applePortPanel;
+    applePortPanel.Spacing(6);
+    TextBlock applePortLabel;
+    applePortLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    applePortLabel.Text(L"Port");
+    applePortPanel.Children().Append(applePortLabel);
+    applePortPanel.Children().Append(applePortBox);
+    Grid::SetColumn(applePortPanel, 1);
+
+    StackPanel appleUsernamePanel;
+    appleUsernamePanel.Spacing(6);
+    TextBlock appleUsernameLabel;
+    appleUsernameLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    appleUsernameLabel.Text(L"SSH Username");
+    appleUsernamePanel.Children().Append(appleUsernameLabel);
+    appleUsernamePanel.Children().Append(appleUsernameBox);
+    Grid::SetColumn(appleUsernamePanel, 2);
+
+    appleEndpointGrid.Children().Append(appleAddressPanel);
+    appleEndpointGrid.Children().Append(applePortPanel);
+    appleEndpointGrid.Children().Append(appleUsernamePanel);
+    applePanel.Children().Append(appleEndpointGrid);
+
+    StackPanel appleServiceBaseUrlPanel;
+    appleServiceBaseUrlPanel.Spacing(6);
+    TextBlock appleServiceBaseUrlLabel;
+    appleServiceBaseUrlLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    appleServiceBaseUrlLabel.Text(L"Companion Base URL");
+    appleServiceBaseUrlPanel.Children().Append(appleServiceBaseUrlLabel);
+    appleServiceBaseUrlPanel.Children().Append(appleServiceBaseUrlBox);
+    applePanel.Children().Append(appleServiceBaseUrlPanel);
+
+    Grid appleCompanionGrid;
+    appleCompanionGrid.ColumnSpacing(12);
+    appleCompanionGrid.ColumnDefinitions().Append(ColumnDefinition());
+    appleCompanionGrid.ColumnDefinitions().Append(ColumnDefinition());
+
+    StackPanel appleHealthPanel;
+    appleHealthPanel.Spacing(6);
+    TextBlock appleHealthLabel;
+    appleHealthLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    appleHealthLabel.Text(L"Companion Health Path");
+    appleHealthPanel.Children().Append(appleHealthLabel);
+    appleHealthPanel.Children().Append(appleHealthPathBox);
+
+    StackPanel appleExecutePanel;
+    appleExecutePanel.Spacing(6);
+    TextBlock appleExecuteLabel;
+    appleExecuteLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    appleExecuteLabel.Text(L"Companion Execute Path");
+    appleExecutePanel.Children().Append(appleExecuteLabel);
+    appleExecutePanel.Children().Append(appleExecutePathBox);
+    Grid::SetColumn(appleExecutePanel, 1);
+
+    appleCompanionGrid.Children().Append(appleHealthPanel);
+    appleCompanionGrid.Children().Append(appleExecutePanel);
+    applePanel.Children().Append(appleCompanionGrid);
+
+    TextBlock appleDeveloperLabel;
+    appleDeveloperLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    appleDeveloperLabel.Text(L"Preferred Developer Directory");
+    applePanel.Children().Append(appleDeveloperLabel);
+    applePanel.Children().Append(appleDeveloperDirectoryBox);
+
+    Grid appleDefaultsGrid;
+    appleDefaultsGrid.ColumnSpacing(12);
+    appleDefaultsGrid.ColumnDefinitions().Append(ColumnDefinition());
+    appleDefaultsGrid.ColumnDefinitions().Append(ColumnDefinition());
+
+    StackPanel appleSigningPanel;
+    appleSigningPanel.Spacing(6);
+    TextBlock appleSigningLabel;
+    appleSigningLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    appleSigningLabel.Text(L"Default Signing Identity");
+    appleSigningPanel.Children().Append(appleSigningLabel);
+    appleSigningPanel.Children().Append(appleSigningIdentityBox);
+
+    StackPanel appleNotaryProfilePanel;
+    appleNotaryProfilePanel.Spacing(6);
+    TextBlock appleNotaryProfileLabel;
+    appleNotaryProfileLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    appleNotaryProfileLabel.Text(L"Default Notary Profile");
+    appleNotaryProfilePanel.Children().Append(appleNotaryProfileLabel);
+    appleNotaryProfilePanel.Children().Append(appleNotaryProfileBox);
+    Grid::SetColumn(appleNotaryProfilePanel, 1);
+
+    appleDefaultsGrid.Children().Append(appleSigningPanel);
+    appleDefaultsGrid.Children().Append(appleNotaryProfilePanel);
+    applePanel.Children().Append(appleDefaultsGrid);
+
+    TextBlock appleTeamIdLabel;
+    appleTeamIdLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
+    appleTeamIdLabel.Text(L"Default Notary Team ID");
+    applePanel.Children().Append(appleTeamIdLabel);
+    applePanel.Children().Append(appleTeamIdBox);
+
+    StackPanel applePlatformPanel;
+    applePlatformPanel.Orientation(Orientation::Horizontal);
+    applePlatformPanel.Spacing(18);
+    CheckBox appleMacPlatformCheckBox;
+    appleMacPlatformCheckBox.Content(box_value(L"macOS"));
+    CheckBox appleIosPlatformCheckBox;
+    appleIosPlatformCheckBox.Content(box_value(L"iOS"));
+    CheckBox appleEnabledCheckBox;
+    appleEnabledCheckBox.Content(box_value(L"Enabled"));
+    applePlatformPanel.Children().Append(appleMacPlatformCheckBox);
+    applePlatformPanel.Children().Append(appleIosPlatformCheckBox);
+    applePlatformPanel.Children().Append(appleEnabledCheckBox);
+    applePanel.Children().Append(applePlatformPanel);
+
+    root.Children().Append(mcpPanel);
+    root.Children().Append(subAgentPanel);
+    root.Children().Append(applePanel);
+
+    TextBlock summaryText;
+    summaryText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
+    summaryText.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(summaryText);
+
+    TextBlock statusText;
+    statusText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
+    statusText.TextWrapping(TextWrapping::WrapWholeWords);
+    root.Children().Append(statusText);
+
+    StackPanel buttonRow;
+    buttonRow.Orientation(Orientation::Horizontal);
+    buttonRow.Spacing(12);
+
+    Button saveButton;
+    saveButton.Content(box_value(L"Save Runtime Lane"));
+    saveButton.Style(Application::Current().Resources().Lookup(box_value(L"ShellCommandButtonStyle")).try_as<Style>());
+    saveButton.IsEnabled(false);
+
+    Button removeButton;
+    removeButton.Content(box_value(L"Remove Runtime Lane"));
+    removeButton.Style(Application::Current().Resources().Lookup(box_value(L"ShellCommandButtonStyle")).try_as<Style>());
+    removeButton.IsEnabled(false);
+
+    buttonRow.Children().Append(saveButton);
+    buttonRow.Children().Append(removeButton);
+    root.Children().Append(buttonRow);
+
+    scrollViewer.Content(root);
+    dialog.Content(scrollViewer);
+
+    const auto currentKind = [kindSelector]() -> std::wstring {
+        const auto item = kindSelector.SelectedItem().try_as<ComboBoxItem>();
+        return item == nullptr
+            ? std::wstring(L"mcp")
+            : std::wstring(unbox_value_or<hstring>(item.Tag(), hstring(L"mcp")).c_str());
+    };
+
+    const auto updateAppleTransportForm = [&, this]() {
+        const auto selectedItem = appleTransportSelector.SelectedItem().try_as<ComboBoxItem>();
+        const auto transport = selectedItem == nullptr
+            ? std::wstring(L"companion_service")
+            : std::wstring(unbox_value_or<hstring>(selectedItem.Tag(), hstring(L"companion_service")).c_str());
+        const bool companionSelected = transport == L"companion_service";
+        setElementVisibility(appleServiceBaseUrlPanel, companionSelected);
+        setElementVisibility(appleCompanionGrid, companionSelected);
+        setElementVisibility(appleUsernamePanel, !companionSelected);
+    };
+
+    const auto clearMcpFields = [&]() {
+        mcpIdBox.Text(L"");
+        mcpDisplayNameBox.Text(L"");
+        mcpHostBox.Text(L"");
+        mcpPortBox.Text(L"");
+        mcpProtocolBox.Text(L"http");
+        mcpRoutePathBox.Text(L"/mcp");
+        mcpDescriptionBox.Text(L"");
+    };
+
+    const auto clearSubAgentFields = [&]() {
+        subAgentIdBox.Text(L"");
+        subAgentDisplayNameBox.Text(L"");
+        subAgentSpecializationBox.Text(L"");
+        subAgentHostBox.Text(L"");
+        subAgentPortBox.Text(L"");
+        subAgentProtocolBox.Text(L"virtual");
+        subAgentRoutePathBox.Text(L"");
+        subAgentDescriptionBox.Text(L"");
+    };
+
+    const auto clearAppleFields = [&]() {
+        appleHostIdBox.Text(L"");
+        appleDisplayNameBox.Text(L"");
+        appleTransportSelector.SelectedIndex(0);
+        appleAddressBox.Text(L"");
+        applePortBox.Text(L"8081");
+        appleUsernameBox.Text(L"");
+        appleServiceBaseUrlBox.Text(L"");
+        appleHealthPathBox.Text(L"/healthz");
+        appleExecutePathBox.Text(L"/execute");
+        appleDeveloperDirectoryBox.Text(L"");
+        appleSigningIdentityBox.Text(L"");
+        appleNotaryProfileBox.Text(L"");
+        appleTeamIdBox.Text(L"");
+        appleMacPlatformCheckBox.IsChecked(true);
+        appleIosPlatformCheckBox.IsChecked(true);
+        appleEnabledCheckBox.IsChecked(true);
+    };
+
+    const auto refreshRecordSelector = [&]() {
+        recordSelector.Items().Clear();
+        const auto kind = currentKind();
+        if (kind == L"mcp") {
+            for (const auto& endpoint : customMcpServers) {
+                ComboBoxItem item;
+                const auto label = endpoint.routePath.empty()
+                    ? endpoint.displayName
+                    : (endpoint.displayName + L"  |  " + endpoint.routePath);
+                item.Content(box_value(winrt::hstring(label)));
+                item.Tag(box_value(winrt::hstring(endpoint.id)));
+                recordSelector.Items().Append(item);
+            }
+        } else if (kind == L"subagent") {
+            for (const auto& endpoint : customSubAgents) {
+                ComboBoxItem item;
+                const auto label = endpoint.specialization.empty()
+                    ? endpoint.displayName
+                    : (endpoint.displayName + L"  |  " + endpoint.specialization);
+                item.Content(box_value(winrt::hstring(label)));
+                item.Tag(box_value(winrt::hstring(endpoint.id)));
+                recordSelector.Items().Append(item);
+            }
+        } else {
+            for (const auto& host : appleHosts) {
+                ComboBoxItem item;
+                const auto label = host.transport.empty()
+                    ? host.displayName
+                    : (host.displayName + L"  |  " + host.transport);
+                item.Content(box_value(winrt::hstring(label)));
+                item.Tag(box_value(winrt::hstring(host.hostId)));
+                recordSelector.Items().Append(item);
+            }
+        }
+
+        const bool hasItems = recordSelector.Items().Size() > 0;
+        recordSelector.IsEnabled(hasItems);
+        recordSelector.SelectedIndex(hasItems ? 0 : -1);
+    };
+
+    const auto updateSummary = [&, this]() {
+        const auto kind = currentKind();
+        std::wstring summary;
+        if (kind == L"mcp") {
+            summary = L"Shared MCP | ";
+            summary += trimCopy(std::wstring(mcpDisplayNameBox.Text().c_str())).empty()
+                ? L"no lane selected"
+                : trimCopy(std::wstring(mcpDisplayNameBox.Text().c_str()));
+            summary += L" | ";
+            summary += trimCopy(std::wstring(mcpHostBox.Text().c_str())).empty()
+                ? L"host pending"
+                : trimCopy(std::wstring(mcpHostBox.Text().c_str()));
+            summary += L":";
+            summary += trimCopy(std::wstring(mcpPortBox.Text().c_str())).empty()
+                ? L"port pending"
+                : trimCopy(std::wstring(mcpPortBox.Text().c_str()));
+            if (!trimCopy(std::wstring(mcpRoutePathBox.Text().c_str())).empty()) {
+                summary += L" | ";
+                summary += trimCopy(std::wstring(mcpRoutePathBox.Text().c_str()));
+            }
+        } else if (kind == L"subagent") {
+            summary = L"Sub-Agent | ";
+            summary += trimCopy(std::wstring(subAgentDisplayNameBox.Text().c_str())).empty()
+                ? L"no lane selected"
+                : trimCopy(std::wstring(subAgentDisplayNameBox.Text().c_str()));
+            if (!trimCopy(std::wstring(subAgentSpecializationBox.Text().c_str())).empty()) {
+                summary += L" | ";
+                summary += trimCopy(std::wstring(subAgentSpecializationBox.Text().c_str()));
+            }
+            if (!trimCopy(std::wstring(subAgentProtocolBox.Text().c_str())).empty()) {
+                summary += L" | ";
+                summary += trimCopy(std::wstring(subAgentProtocolBox.Text().c_str()));
+            }
+        } else {
+            summary = L"Apple Host | ";
+            summary += trimCopy(std::wstring(appleDisplayNameBox.Text().c_str())).empty()
+                ? L"no host selected"
+                : trimCopy(std::wstring(appleDisplayNameBox.Text().c_str()));
+            summary += L" | ";
+            summary += trimCopy(std::wstring(appleAddressBox.Text().c_str())).empty()
+                ? L"address pending"
+                : trimCopy(std::wstring(appleAddressBox.Text().c_str()));
+            const auto selectedItem = appleTransportSelector.SelectedItem().try_as<ComboBoxItem>();
+            const auto transport = selectedItem == nullptr
+                ? std::wstring(L"companion_service")
+                : std::wstring(unbox_value_or<hstring>(selectedItem.Tag(), hstring(L"companion_service")).c_str());
+            summary += L" | ";
+            summary += transport == L"ssh" ? L"SSH" : L"Companion Service";
+            summary += L" | platforms ";
+            std::vector<std::wstring> platforms;
+            const auto macChecked = appleMacPlatformCheckBox.IsChecked();
+            if (macChecked && macChecked.Value()) {
+                platforms.push_back(L"macOS");
+            }
+            const auto iosChecked = appleIosPlatformCheckBox.IsChecked();
+            if (iosChecked && iosChecked.Value()) {
+                platforms.push_back(L"iOS");
+            }
+            summary += platforms.empty() ? L"none" : joinValues(platforms, L", ");
+        }
+        summaryText.Text(winrt::hstring(summary));
+    };
+
+    const auto populateCurrentSelection = [&]() {
+        clearMcpFields();
+        clearSubAgentFields();
+        clearAppleFields();
+
+        const auto kind = currentKind();
+        const auto index = recordSelector.SelectedIndex();
+        const bool hasSelection = index >= 0;
+
+        if (kind == L"mcp" && hasSelection && index < static_cast<int>(customMcpServers.size())) {
+            const auto& endpoint = customMcpServers[static_cast<size_t>(index)];
+            mcpIdBox.Text(winrt::hstring(endpoint.id));
+            mcpDisplayNameBox.Text(winrt::hstring(endpoint.displayName));
+            mcpHostBox.Text(winrt::hstring(endpoint.host));
+            mcpPortBox.Text(winrt::hstring(endpoint.port == 0 ? std::wstring{} : std::to_wstring(endpoint.port)));
+            mcpProtocolBox.Text(winrt::hstring(endpoint.protocol.empty() ? L"http" : endpoint.protocol));
+            mcpRoutePathBox.Text(winrt::hstring(endpoint.routePath.empty() ? L"/mcp" : endpoint.routePath));
+            mcpDescriptionBox.Text(winrt::hstring(endpoint.description));
+            statusText.Text(L"Loaded the selected shared MCP lane. Update the published details here or remove it cleanly.");
+        } else if (kind == L"subagent" && hasSelection && index < static_cast<int>(customSubAgents.size())) {
+            const auto& endpoint = customSubAgents[static_cast<size_t>(index)];
+            subAgentIdBox.Text(winrt::hstring(endpoint.id));
+            subAgentDisplayNameBox.Text(winrt::hstring(endpoint.displayName));
+            subAgentSpecializationBox.Text(winrt::hstring(endpoint.specialization));
+            subAgentHostBox.Text(winrt::hstring(endpoint.host));
+            subAgentPortBox.Text(winrt::hstring(endpoint.port == 0 ? std::wstring{} : std::to_wstring(endpoint.port)));
+            subAgentProtocolBox.Text(winrt::hstring(endpoint.protocol.empty() ? L"virtual" : endpoint.protocol));
+            subAgentRoutePathBox.Text(winrt::hstring(endpoint.routePath));
+            subAgentDescriptionBox.Text(winrt::hstring(endpoint.description));
+            statusText.Text(L"Loaded the selected custom sub-agent. Update its specialist details here or remove it cleanly.");
+        } else if (kind == L"apple" && hasSelection && index < static_cast<int>(appleHosts.size())) {
+            const auto& host = appleHosts[static_cast<size_t>(index)];
+            appleHostIdBox.Text(winrt::hstring(host.hostId));
+            appleDisplayNameBox.Text(winrt::hstring(host.displayName));
+            appleTransportSelector.SelectedIndex(host.transport == L"ssh" ? 1 : 0);
+            appleAddressBox.Text(winrt::hstring(host.address));
+            applePortBox.Text(winrt::hstring(host.port == 0 ? std::wstring{} : std::to_wstring(host.port)));
+            appleUsernameBox.Text(winrt::hstring(host.username));
+            appleServiceBaseUrlBox.Text(winrt::hstring(host.serviceBaseUrl));
+            appleHealthPathBox.Text(winrt::hstring(host.companionHealthPath.empty() ? L"/healthz" : host.companionHealthPath));
+            appleExecutePathBox.Text(winrt::hstring(host.companionExecutePath.empty() ? L"/execute" : host.companionExecutePath));
+            appleDeveloperDirectoryBox.Text(winrt::hstring(host.preferredDeveloperDirectory));
+            appleSigningIdentityBox.Text(winrt::hstring(host.defaultSigningIdentity));
+            appleNotaryProfileBox.Text(winrt::hstring(host.defaultNotaryKeychainProfile));
+            appleTeamIdBox.Text(winrt::hstring(host.defaultNotaryTeamId));
+            appleMacPlatformCheckBox.IsChecked(std::find(host.platforms.begin(), host.platforms.end(), L"macos") != host.platforms.end());
+            appleIosPlatformCheckBox.IsChecked(std::find(host.platforms.begin(), host.platforms.end(), L"ios") != host.platforms.end());
+            appleEnabledCheckBox.IsChecked(host.enabled);
+            statusText.Text(L"Loaded the selected Apple host. Update transport, defaults, or platform coverage here or remove it cleanly.");
+        } else if (kind == L"mcp") {
+            statusText.Text(L"No custom MCP server lanes are published yet. Use the New MCP Server wizard first.");
+        } else if (kind == L"subagent") {
+            statusText.Text(L"No custom sub-agent lanes are published yet. Use the New Sub-Agent wizard first.");
+        } else {
+            statusText.Text(L"No Apple remote hosts are registered yet. Use the New Apple Host wizard first.");
+        }
+
+        setElementVisibility(mcpPanel, kind == L"mcp");
+        setElementVisibility(subAgentPanel, kind == L"subagent");
+        setElementVisibility(applePanel, kind == L"apple");
+        updateAppleTransportForm();
+        saveButton.IsEnabled(hasSelection);
+        removeButton.IsEnabled(hasSelection);
+        updateSummary();
+    };
+
+    kindSelector.SelectionChanged([&](IInspectable const&, Controls::SelectionChangedEventArgs const&) {
+        refreshRecordSelector();
+        populateCurrentSelection();
+    });
+    recordSelector.SelectionChanged([&](IInspectable const&, Controls::SelectionChangedEventArgs const&) { populateCurrentSelection(); });
+    appleTransportSelector.SelectionChanged([&](IInspectable const&, Controls::SelectionChangedEventArgs const&) {
+        updateAppleTransportForm();
+        updateSummary();
+    });
+
+    const auto attachSummaryTextChanged = [&updateSummary](TextBox const& textBox) {
+        textBox.TextChanged([&](IInspectable const&, Controls::TextChangedEventArgs const&) { updateSummary(); });
+    };
+    attachSummaryTextChanged(mcpIdBox);
+    attachSummaryTextChanged(mcpDisplayNameBox);
+    attachSummaryTextChanged(mcpHostBox);
+    attachSummaryTextChanged(mcpPortBox);
+    attachSummaryTextChanged(mcpProtocolBox);
+    attachSummaryTextChanged(mcpRoutePathBox);
+    attachSummaryTextChanged(mcpDescriptionBox);
+    attachSummaryTextChanged(subAgentIdBox);
+    attachSummaryTextChanged(subAgentDisplayNameBox);
+    attachSummaryTextChanged(subAgentSpecializationBox);
+    attachSummaryTextChanged(subAgentHostBox);
+    attachSummaryTextChanged(subAgentPortBox);
+    attachSummaryTextChanged(subAgentProtocolBox);
+    attachSummaryTextChanged(subAgentRoutePathBox);
+    attachSummaryTextChanged(subAgentDescriptionBox);
+    attachSummaryTextChanged(appleHostIdBox);
+    attachSummaryTextChanged(appleDisplayNameBox);
+    attachSummaryTextChanged(appleAddressBox);
+    attachSummaryTextChanged(applePortBox);
+    attachSummaryTextChanged(appleUsernameBox);
+    attachSummaryTextChanged(appleServiceBaseUrlBox);
+    attachSummaryTextChanged(appleHealthPathBox);
+    attachSummaryTextChanged(appleExecutePathBox);
+    attachSummaryTextChanged(appleDeveloperDirectoryBox);
+    attachSummaryTextChanged(appleSigningIdentityBox);
+    attachSummaryTextChanged(appleNotaryProfileBox);
+    attachSummaryTextChanged(appleTeamIdBox);
+
+    appleMacPlatformCheckBox.Click([&](IInspectable const&, RoutedEventArgs const&) { updateSummary(); });
+    appleIosPlatformCheckBox.Click([&](IInspectable const&, RoutedEventArgs const&) { updateSummary(); });
+    appleEnabledCheckBox.Click([&](IInspectable const&, RoutedEventArgs const&) { updateSummary(); });
+
+    saveButton.Click([this, dialog, saveButton, statusText, kindSelector, recordSelector, mcpIdBox, mcpDisplayNameBox, mcpHostBox, mcpPortBox, mcpProtocolBox, mcpRoutePathBox, mcpDescriptionBox, subAgentIdBox, subAgentDisplayNameBox, subAgentSpecializationBox, subAgentHostBox, subAgentPortBox, subAgentProtocolBox, subAgentRoutePathBox, subAgentDescriptionBox, appleHostIdBox, appleDisplayNameBox, appleTransportSelector, appleAddressBox, applePortBox, appleUsernameBox, appleServiceBaseUrlBox, appleHealthPathBox, appleExecutePathBox, appleDeveloperDirectoryBox, appleSigningIdentityBox, appleNotaryProfileBox, appleTeamIdBox, appleMacPlatformCheckBox, appleIosPlatformCheckBox, appleEnabledCheckBox](IInspectable const&, RoutedEventArgs const&) {
+        auto ignored = [this, dialog, saveButton, statusText, kindSelector, recordSelector, mcpIdBox, mcpDisplayNameBox, mcpHostBox, mcpPortBox, mcpProtocolBox, mcpRoutePathBox, mcpDescriptionBox, subAgentIdBox, subAgentDisplayNameBox, subAgentSpecializationBox, subAgentHostBox, subAgentPortBox, subAgentProtocolBox, subAgentRoutePathBox, subAgentDescriptionBox, appleHostIdBox, appleDisplayNameBox, appleTransportSelector, appleAddressBox, applePortBox, appleUsernameBox, appleServiceBaseUrlBox, appleHealthPathBox, appleExecutePathBox, appleDeveloperDirectoryBox, appleSigningIdentityBox, appleNotaryProfileBox, appleTeamIdBox, appleMacPlatformCheckBox, appleIosPlatformCheckBox, appleEnabledCheckBox]() -> IAsyncAction {
+            if (recordSelector.SelectedIndex() < 0) {
+                statusText.Text(L"Choose a published runtime lane before saving changes.");
+                co_return;
+            }
+
+            const auto selectedKindItem = kindSelector.SelectedItem().try_as<ComboBoxItem>();
+            const auto kind = selectedKindItem == nullptr
+                ? std::wstring(L"mcp")
+                : std::wstring(unbox_value_or<hstring>(selectedKindItem.Tag(), hstring(L"mcp")).c_str());
+
+            winrt::apartment_context uiThread;
+            saveButton.IsEnabled(false);
+
+            if (kind == L"mcp") {
+                const auto id = trimCopy(std::wstring(mcpIdBox.Text().c_str()));
+                const auto displayName = trimCopy(std::wstring(mcpDisplayNameBox.Text().c_str()));
+                const auto portText = trimCopy(std::wstring(mcpPortBox.Text().c_str()));
+                if (id.empty() || displayName.empty() || portText.empty()) {
+                    statusText.Text(L"MCP server ID, display name, and a port between 1 and 65535 are required.");
+                    saveButton.IsEnabled(true);
+                    co_return;
+                }
+
+                uint16_t port = 0;
+                try {
+                    const auto parsedPort = std::stoul(portText);
+                    if (parsedPort == 0U || parsedPort > 65535U) {
+                        statusText.Text(L"MCP server ID, display name, and a port between 1 and 65535 are required.");
+                        saveButton.IsEnabled(true);
+                        co_return;
+                    }
+                    port = static_cast<uint16_t>(parsedPort);
+                } catch (...) {
+                    statusText.Text(L"MCP server ID, display name, and a port between 1 and 65535 are required.");
+                    saveButton.IsEnabled(true);
+                    co_return;
+                }
+
+                statusText.Text(L"Saving the shared MCP lane through the local admin API.");
+                ::MasterControlShell::ShellRuntimeEndpoint endpoint{
+                    id,
+                    displayName,
+                    L"mcp_server",
+                    trimCopy(std::wstring(mcpHostBox.Text().c_str())),
+                    port,
+                    trimCopy(std::wstring(mcpProtocolBox.Text().c_str())),
+                    L"unknown",
+                    trimCopy(std::wstring(mcpDescriptionBox.Text().c_str())),
+                    trimCopy(std::wstring(mcpRoutePathBox.Text().c_str())),
+                    L"",
+                    true
+                };
+
+                co_await winrt::resume_background();
+                const auto result = runtime_.UpsertMcpServer(endpoint);
+                co_await uiThread;
+                statusText.Text(winrt::hstring(result.message));
+                if (!result.succeeded) {
+                    saveButton.IsEnabled(true);
+                    GuidedWorkflowStatusText().Text(L"Runtime maintenance needs attention. Review the wizard message and try again.");
+                    co_return;
+                }
+                GuidedWorkflowStatusText().Text(winrt::hstring(L"Updated shared MCP lane '" + displayName + L"'."));
+            } else if (kind == L"subagent") {
+                const auto id = trimCopy(std::wstring(subAgentIdBox.Text().c_str()));
+                const auto displayName = trimCopy(std::wstring(subAgentDisplayNameBox.Text().c_str()));
+                if (id.empty() || displayName.empty()) {
+                    statusText.Text(L"Sub-agent ID and display name are required, and the port must be blank or between 0 and 65535.");
+                    saveButton.IsEnabled(true);
+                    co_return;
+                }
+
+                uint16_t port = 0;
+                const auto portText = trimCopy(std::wstring(subAgentPortBox.Text().c_str()));
+                if (!portText.empty()) {
+                    try {
+                        const auto parsedPort = std::stoul(portText);
+                        if (parsedPort > 65535U) {
+                            statusText.Text(L"Sub-agent ID and display name are required, and the port must be blank or between 0 and 65535.");
+                            saveButton.IsEnabled(true);
+                            co_return;
+                        }
+                        port = static_cast<uint16_t>(parsedPort);
+                    } catch (...) {
+                        statusText.Text(L"Sub-agent ID and display name are required, and the port must be blank or between 0 and 65535.");
+                        saveButton.IsEnabled(true);
+                        co_return;
+                    }
+                }
+
+                statusText.Text(L"Saving the custom sub-agent through the local admin API.");
+                ::MasterControlShell::ShellRuntimeEndpoint endpoint{
+                    id,
+                    displayName,
+                    L"sub_agent",
+                    trimCopy(std::wstring(subAgentHostBox.Text().c_str())),
+                    port,
+                    trimCopy(std::wstring(subAgentProtocolBox.Text().c_str())),
+                    L"unknown",
+                    trimCopy(std::wstring(subAgentDescriptionBox.Text().c_str())),
+                    trimCopy(std::wstring(subAgentRoutePathBox.Text().c_str())),
+                    trimCopy(std::wstring(subAgentSpecializationBox.Text().c_str())),
+                    true
+                };
+
+                co_await winrt::resume_background();
+                const auto result = runtime_.UpsertSubAgent(endpoint);
+                co_await uiThread;
+                statusText.Text(winrt::hstring(result.message));
+                if (!result.succeeded) {
+                    saveButton.IsEnabled(true);
+                    GuidedWorkflowStatusText().Text(L"Runtime maintenance needs attention. Review the wizard message and try again.");
+                    co_return;
+                }
+                GuidedWorkflowStatusText().Text(winrt::hstring(L"Updated custom sub-agent lane '" + displayName + L"'."));
+            } else {
+                const auto hostId = trimCopy(std::wstring(appleHostIdBox.Text().c_str()));
+                const auto displayName = trimCopy(std::wstring(appleDisplayNameBox.Text().c_str()));
+                if (hostId.empty() || displayName.empty()) {
+                    statusText.Text(L"Apple host ID, display name, transport, and at least one platform are required. Ports must be blank or between 0 and 65535.");
+                    saveButton.IsEnabled(true);
+                    co_return;
+                }
+
+                uint16_t port = 0;
+                const auto portText = trimCopy(std::wstring(applePortBox.Text().c_str()));
+                if (!portText.empty()) {
+                    try {
+                        const auto parsedPort = std::stoul(portText);
+                        if (parsedPort > 65535U) {
+                            statusText.Text(L"Apple host ID, display name, transport, and at least one platform are required. Ports must be blank or between 0 and 65535.");
+                            saveButton.IsEnabled(true);
+                            co_return;
+                        }
+                        port = static_cast<uint16_t>(parsedPort);
+                    } catch (...) {
+                        statusText.Text(L"Apple host ID, display name, transport, and at least one platform are required. Ports must be blank or between 0 and 65535.");
+                        saveButton.IsEnabled(true);
+                        co_return;
+                    }
+                }
+
+                std::vector<std::wstring> platforms;
+                const auto macChecked = appleMacPlatformCheckBox.IsChecked();
+                if (macChecked && macChecked.Value()) {
+                    platforms.push_back(L"macos");
+                }
+                const auto iosChecked = appleIosPlatformCheckBox.IsChecked();
+                if (iosChecked && iosChecked.Value()) {
+                    platforms.push_back(L"ios");
+                }
+                if (platforms.empty()) {
+                    statusText.Text(L"Apple host ID, display name, transport, and at least one platform are required. Ports must be blank or between 0 and 65535.");
+                    saveButton.IsEnabled(true);
+                    co_return;
+                }
+
+                const auto selectedTransportItem = appleTransportSelector.SelectedItem().try_as<ComboBoxItem>();
+                const auto transport = selectedTransportItem == nullptr
+                    ? std::wstring(L"companion_service")
+                    : std::wstring(unbox_value_or<hstring>(selectedTransportItem.Tag(), hstring(L"companion_service")).c_str());
+                const auto enabledChecked = appleEnabledCheckBox.IsChecked();
+
+                statusText.Text(L"Saving the Apple host through the local admin API.");
+                ::MasterControlShell::ShellAppleRemoteHost host{
+                    hostId,
+                    displayName,
+                    transport,
+                    platforms,
+                    trimCopy(std::wstring(appleAddressBox.Text().c_str())),
+                    port,
+                    trimCopy(std::wstring(appleUsernameBox.Text().c_str())),
+                    trimCopy(std::wstring(appleServiceBaseUrlBox.Text().c_str())),
+                    trimCopy(std::wstring(appleHealthPathBox.Text().c_str())),
+                    trimCopy(std::wstring(appleExecutePathBox.Text().c_str())),
+                    trimCopy(std::wstring(appleDeveloperDirectoryBox.Text().c_str())),
+                    trimCopy(std::wstring(appleSigningIdentityBox.Text().c_str())),
+                    trimCopy(std::wstring(appleNotaryProfileBox.Text().c_str())),
+                    trimCopy(std::wstring(appleTeamIdBox.Text().c_str())),
+                    enabledChecked && enabledChecked.Value()
+                };
+
+                co_await winrt::resume_background();
+                const auto result = runtime_.UpsertAppleRemoteHost(host);
+                co_await uiThread;
+                statusText.Text(winrt::hstring(result.message));
+                if (!result.succeeded) {
+                    saveButton.IsEnabled(true);
+                    GuidedWorkflowStatusText().Text(L"Runtime maintenance needs attention. Review the wizard message and try again.");
+                    co_return;
+                }
+                GuidedWorkflowStatusText().Text(winrt::hstring(L"Updated Apple host '" + displayName + L"'."));
+            }
+
+            const auto completionMessage = GuidedWorkflowStatusText().Text();
+            dialog.Hide();
+            co_await CompleteGuidedWorkflowAsync(completionMessage, kRuntimeDestination);
+        }();
+        (void)ignored;
+    });
+
+    removeButton.Click([this, dialog, removeButton, saveButton, statusText, kindSelector, recordSelector, customMcpServers, customSubAgents, appleHosts](IInspectable const&, RoutedEventArgs const&) {
+        auto ignored = [this, dialog, removeButton, saveButton, statusText, kindSelector, recordSelector, customMcpServers, customSubAgents, appleHosts]() -> IAsyncAction {
+            if (recordSelector.SelectedIndex() < 0) {
+                statusText.Text(L"Choose a published runtime lane before removing it.");
+                co_return;
+            }
+
+            const auto selectedKindItem = kindSelector.SelectedItem().try_as<ComboBoxItem>();
+            const auto kind = selectedKindItem == nullptr
+                ? std::wstring(L"mcp")
+                : std::wstring(unbox_value_or<hstring>(selectedKindItem.Tag(), hstring(L"mcp")).c_str());
+            const auto index = static_cast<size_t>(recordSelector.SelectedIndex());
+
+            removeButton.IsEnabled(false);
+            saveButton.IsEnabled(false);
+            winrt::apartment_context uiThread;
+
+            if (kind == L"mcp") {
+                statusText.Text(L"Removing the shared MCP lane through the local admin API.");
+                co_await winrt::resume_background();
+                const auto result = runtime_.RemoveMcpServer(customMcpServers[index].id);
+                co_await uiThread;
+                statusText.Text(winrt::hstring(result.message));
+                if (!result.succeeded) {
+                    removeButton.IsEnabled(true);
+                    saveButton.IsEnabled(true);
+                    GuidedWorkflowStatusText().Text(L"Runtime maintenance needs attention. Review the wizard message and try again.");
+                    co_return;
+                }
+                GuidedWorkflowStatusText().Text(winrt::hstring(L"Removed shared MCP lane '" + customMcpServers[index].displayName + L"'."));
+            } else if (kind == L"subagent") {
+                statusText.Text(L"Removing the custom sub-agent through the local admin API.");
+                co_await winrt::resume_background();
+                const auto result = runtime_.RemoveSubAgent(customSubAgents[index].id);
+                co_await uiThread;
+                statusText.Text(winrt::hstring(result.message));
+                if (!result.succeeded) {
+                    removeButton.IsEnabled(true);
+                    saveButton.IsEnabled(true);
+                    GuidedWorkflowStatusText().Text(L"Runtime maintenance needs attention. Review the wizard message and try again.");
+                    co_return;
+                }
+                GuidedWorkflowStatusText().Text(winrt::hstring(L"Removed custom sub-agent lane '" + customSubAgents[index].displayName + L"'."));
+            } else {
+                statusText.Text(L"Removing the Apple host through the local admin API.");
+                co_await winrt::resume_background();
+                const auto result = runtime_.RemoveAppleRemoteHost(appleHosts[index].hostId);
+                co_await uiThread;
+                statusText.Text(winrt::hstring(result.message));
+                if (!result.succeeded) {
+                    removeButton.IsEnabled(true);
+                    saveButton.IsEnabled(true);
+                    GuidedWorkflowStatusText().Text(L"Runtime maintenance needs attention. Review the wizard message and try again.");
+                    co_return;
+                }
+                GuidedWorkflowStatusText().Text(winrt::hstring(L"Removed Apple host '" + appleHosts[index].displayName + L"'."));
+            }
+
+            const auto completionMessage = GuidedWorkflowStatusText().Text();
+            dialog.Hide();
+            co_await CompleteGuidedWorkflowAsync(completionMessage, kRuntimeDestination);
+        }();
+        (void)ignored;
+    });
+
+    refreshRecordSelector();
+    populateCurrentSelection();
 
     co_await dialog.ShowAsync();
 }
@@ -2863,6 +4651,21 @@ IAsyncAction MainWindow::OpenOverlayRouteAsync(std::wstring routeId) {
     if (co_await dialog.ShowAsync() == ContentDialogResult::Primary && !workspaceDestination.empty()) {
         SetCurrentDestination(workspaceDestination);
     }
+}
+
+IAsyncAction MainWindow::CompleteGuidedWorkflowAsync(winrt::hstring const& message, std::wstring const& destinationId) {
+    UpdateStatusBar(message, InfoBarSeverity::Success);
+    SetCurrentDestination(destinationId);
+    co_await RefreshAsync();
+
+    std::wstring detail = std::wstring(message.c_str());
+    const auto followThrough = guidedFollowThroughForDestination(destinationId);
+    if (!followThrough.empty()) {
+        detail += L"\n\n";
+        detail += followThrough;
+    }
+
+    co_await ShowDialogAsync(L"Guided Workflow Complete", winrt::hstring(detail));
 }
 
 IAsyncAction MainWindow::ShowDialogAsync(winrt::hstring const& title, winrt::hstring const& message) {

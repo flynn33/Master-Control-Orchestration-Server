@@ -16,8 +16,18 @@
             <StackPanel Spacing="20">
                 <Border Style="{StaticResource ShellCardStyle}">
                     <StackPanel Spacing="14">
+                        <TextBlock Text="Guided Security Workflow" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock Text="Use the guided security hardening workflow first when you want the orchestration server to walk you through posture and trust decisions. The raw form below remains available for precise control." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
+                        <Grid>
+                            <Button Tag="guided-security" Click="GuidedSecurityActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Security Hardening" HorizontalAlignment="Left" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="14">
                         <TextBlock Text="Protection Envelope" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                        <TextBlock Text="These settings are written through the local admin API and persisted in the runtime configuration." Style="{StaticResource ShellBodyTextStyle}" />
+                        <TextBlock Text="Advanced direct security editor. These settings are written through the local admin API and persisted in the runtime configuration." Style="{StaticResource ShellBodyTextStyle}" />
 
                         <StackPanel Orientation="Horizontal" Spacing="18">
                             <ToggleSwitch x:Name="SecurityProtocolsToggle" Header="Security protocols enabled" Toggled="SecurityToggle_Toggled" />

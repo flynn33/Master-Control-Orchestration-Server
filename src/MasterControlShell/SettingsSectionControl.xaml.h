@@ -14,7 +14,13 @@ namespace winrt::MasterControlShell::implementation {
 struct SettingsSectionControl : SettingsSectionControlT<SettingsSectionControl> {
     SettingsSectionControl();
 
+    void AttachActions(std::function<void(const std::wstring&)> actionRequested);
     void ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void GuidedSettingsActionButton_Click(Windows::Foundation::IInspectable const&,
+                                          Microsoft::UI::Xaml::RoutedEventArgs const&);
+
+private:
+    std::function<void(const std::wstring&)> actionRequested_;
 };
 
 } // namespace winrt::MasterControlShell::implementation

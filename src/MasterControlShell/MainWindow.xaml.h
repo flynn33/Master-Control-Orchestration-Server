@@ -32,6 +32,10 @@ struct MainWindow : MainWindowT<MainWindow> {
     void GuidedProviderAssignmentWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void GuidedForsettiModuleWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void GuidedImportWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void GuidedSecurityWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void GuidedSettingsWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void GuidedProviderExecutionWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void GuidedRuntimeMaintenanceWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void SurfaceToolbarButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
 
 private:
@@ -65,7 +69,14 @@ private:
     winrt::Windows::Foundation::IAsyncAction ShowProviderAssignmentWizardAsync();
     winrt::Windows::Foundation::IAsyncAction ShowForsettiModuleWizardAsync();
     winrt::Windows::Foundation::IAsyncAction ShowImportWizardAsync();
+    winrt::Windows::Foundation::IAsyncAction ShowSecurityWizardAsync();
+    winrt::Windows::Foundation::IAsyncAction ShowSettingsWizardAsync();
+    winrt::Windows::Foundation::IAsyncAction ShowProviderExecutionWizardAsync();
+    winrt::Windows::Foundation::IAsyncAction ShowRuntimeMaintenanceWizardAsync();
     winrt::Windows::Foundation::IAsyncAction OpenOverlayRouteAsync(std::wstring routeId);
+    winrt::Windows::Foundation::IAsyncAction CompleteGuidedWorkflowAsync(
+        winrt::hstring const& message,
+        std::wstring const& destinationId);
     winrt::Windows::Foundation::IAsyncAction ShowDialogAsync(winrt::hstring const& title, winrt::hstring const& message);
 
     HWND windowHandle_ = nullptr;

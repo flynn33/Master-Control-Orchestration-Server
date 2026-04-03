@@ -8,6 +8,27 @@
     mc:Ignorable="d">
     <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="20">
+            <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="Guided Runtime Workflows" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock Text="Use the guided runtime workflows first when you want to publish or maintain MCP servers, custom sub-agents, and Apple hosts. The editors below remain available for advanced direct control." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
+                    <Grid ColumnSpacing="12" RowSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Button Grid.Row="0" Grid.Column="0" Tag="guided-runtime-maintenance" Click="GuidedRuntimeActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Runtime Lanes" />
+                        <Button Grid.Row="0" Grid.Column="1" Tag="new-mcp" Click="GuidedRuntimeActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New MCP Server" />
+                        <Button Grid.Row="1" Grid.Column="0" Tag="new-subagent" Click="GuidedRuntimeActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent" />
+                        <Button Grid.Row="1" Grid.Column="1" Tag="new-apple-host" Click="GuidedRuntimeActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Apple Host" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
             <Grid ColumnSpacing="20">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />

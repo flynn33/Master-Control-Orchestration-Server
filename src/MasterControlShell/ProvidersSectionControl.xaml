@@ -16,8 +16,29 @@
             <StackPanel Spacing="20">
                 <Border Style="{StaticResource ShellCardStyle}">
                     <StackPanel Spacing="14">
+                        <TextBlock Text="Guided Provider Workflows" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock Text="Start with the guided workflows when you want to connect models, assign ownership, validate routing, or create specialist groups. The editors below stay available for advanced direct control." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
+                        <Grid ColumnSpacing="12" RowSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Button Grid.Row="0" Grid.Column="0" Tag="connect-model" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Connect AI Model" />
+                            <Button Grid.Row="0" Grid.Column="1" Tag="assign-responsibility" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Assign Responsibility" />
+                            <Button Grid.Row="1" Grid.Column="0" Tag="guided-provider-execution" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Validate Provider Routing" />
+                            <Button Grid.Row="1" Grid.Column="1" Tag="new-subagent-group" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent Group" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="14">
                         <TextBlock Text="Provider Editor" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                        <TextBlock Text="Select an existing route or stage a new provider integration for the runtime." Style="{StaticResource ShellBodyTextStyle}" />
+                        <TextBlock Text="Advanced direct provider editor. Use this when you already know the exact route details you want to change." Style="{StaticResource ShellBodyTextStyle}" />
 
                         <TextBlock Text="Provider" Style="{StaticResource ShellLabelTextStyle}" />
                         <ComboBox

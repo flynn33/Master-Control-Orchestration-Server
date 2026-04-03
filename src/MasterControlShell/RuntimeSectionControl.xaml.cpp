@@ -71,10 +71,33 @@ RuntimeSectionControl::RuntimeSectionControl() {
 }
 
 void RuntimeSectionControl::AttachRuntime(::MasterControlShell::ShellRuntime* runtime,
-                                          std::function<void()> refreshRequested) {
+                                          std::function<void()> refreshRequested,
+                                          std::function<void(const std::wstring&)> actionRequested) {
     runtime_ = runtime;
     refreshRequested_ = std::move(refreshRequested);
+    actionRequested_ = std::move(actionRequested);
     UpdateEditorState();
+}
+
+void RuntimeSectionControl::GuidedRuntimeActionButton_Click(
+    Windows::Foundation::IInspectable const& sender,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    const auto button = sender.try_as<Microsoft::UI::Xaml::Controls::Button>();
+    if (button == nullptr) {
+        return;
+    }
+    if (!actionRequested_) {
+        RuntimeNarrativeText().Text(L"Guided runtime workflows are not attached to the shell yet.");
+        return;
+    }
+
+    const auto workflowId = std::wstring(winrt::unbox_value_or<winrt::hstring>(button.Tag(), winrt::hstring()).c_str());
+    if (workflowId.empty()) {
+        RuntimeNarrativeText().Text(L"Runtime could not resolve the requested guided workflow.");
+        return;
+    }
+
+    actionRequested_(workflowId);
 }
 
 void RuntimeSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot) {

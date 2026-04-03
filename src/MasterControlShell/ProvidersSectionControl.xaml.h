@@ -15,8 +15,11 @@ struct ProvidersSectionControl : ProvidersSectionControlT<ProvidersSectionContro
     ProvidersSectionControl();
 
     void AttachRuntime(::MasterControlShell::ShellRuntime* runtime,
-                       std::function<void()> refreshRequested);
+                       std::function<void()> refreshRequested,
+                       std::function<void(const std::wstring&)> actionRequested);
     void ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void GuidedProviderActionButton_Click(Windows::Foundation::IInspectable const&,
+                                          Microsoft::UI::Xaml::RoutedEventArgs const&);
     void ProviderSelector_SelectionChanged(Windows::Foundation::IInspectable const&,
                                            Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
     void ProviderEditor_TextChanged(Windows::Foundation::IInspectable const&,
@@ -89,6 +92,7 @@ private:
 
     ::MasterControlShell::ShellRuntime* runtime_ = nullptr;
     std::function<void()> refreshRequested_;
+    std::function<void(const std::wstring&)> actionRequested_;
     std::vector<::MasterControlShell::ShellProviderConnection> providers_;
     std::vector<::MasterControlShell::ShellProviderCapability> providerCapabilities_;
     std::vector<::MasterControlShell::ShellProviderCredentialStatus> providerCredentialStatuses_;

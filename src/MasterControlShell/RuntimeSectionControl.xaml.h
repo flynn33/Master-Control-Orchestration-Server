@@ -15,8 +15,11 @@ struct RuntimeSectionControl : RuntimeSectionControlT<RuntimeSectionControl> {
     RuntimeSectionControl();
 
     void AttachRuntime(::MasterControlShell::ShellRuntime* runtime,
-                       std::function<void()> refreshRequested);
+                       std::function<void()> refreshRequested,
+                       std::function<void(const std::wstring&)> actionRequested);
     void ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void GuidedRuntimeActionButton_Click(Windows::Foundation::IInspectable const&,
+                                         Microsoft::UI::Xaml::RoutedEventArgs const&);
     void CustomMcpServerSelector_SelectionChanged(Windows::Foundation::IInspectable const&,
                                                   Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
     void CustomMcpServerEditor_TextChanged(Windows::Foundation::IInspectable const&,
@@ -75,6 +78,7 @@ private:
 
     ::MasterControlShell::ShellRuntime* runtime_ = nullptr;
     std::function<void()> refreshRequested_;
+    std::function<void(const std::wstring&)> actionRequested_;
     std::vector<::MasterControlShell::ShellRuntimeEndpoint> customMcpServers_;
     std::vector<::MasterControlShell::ShellRuntimeEndpoint> customSubAgents_;
     std::vector<::MasterControlShell::ShellAppleRemoteHost> appleRemoteHosts_;

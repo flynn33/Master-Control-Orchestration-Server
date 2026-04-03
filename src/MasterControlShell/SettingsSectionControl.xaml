@@ -9,6 +9,16 @@
     <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="20">
             <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="Guided Host Settings" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock Text="Use the host-settings wizard first when you want to shape ports, beacon behavior, and the governed resource envelope. The cards below remain as the live reference view." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
+                    <Grid>
+                        <Button Tag="guided-settings" Click="GuidedSettingsActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Host Settings" HorizontalAlignment="Left" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource ShellCardStyle}">
                 <StackPanel Spacing="10">
                     <TextBlock Text="Resource Envelope" Style="{StaticResource ShellSectionTitleTextStyle}" />
                     <TextBlock x:Name="ResourceEnvelopeText" Style="{StaticResource ShellDataTextStyle}" />

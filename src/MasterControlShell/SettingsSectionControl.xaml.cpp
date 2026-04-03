@@ -20,6 +20,24 @@ SettingsSectionControl::SettingsSectionControl() {
     InitializeComponent();
 }
 
+void SettingsSectionControl::AttachActions(std::function<void(const std::wstring&)> actionRequested) {
+    actionRequested_ = std::move(actionRequested);
+}
+
+void SettingsSectionControl::GuidedSettingsActionButton_Click(
+    Windows::Foundation::IInspectable const& sender,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    const auto button = sender.try_as<Microsoft::UI::Xaml::Controls::Button>();
+    if (button == nullptr || !actionRequested_) {
+        return;
+    }
+
+    const auto workflowId = std::wstring(winrt::unbox_value_or<winrt::hstring>(button.Tag(), winrt::hstring()).c_str());
+    if (!workflowId.empty()) {
+        actionRequested_(workflowId);
+    }
+}
+
 void SettingsSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot) {
     ResourceEnvelopeText().Text(winrt::hstring(formatResourceEnvelope(snapshot)));
     ConfigPathText().Text(winrt::hstring(snapshot.configPath));

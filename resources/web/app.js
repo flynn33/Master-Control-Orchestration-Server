@@ -516,9 +516,32 @@ function defaultGuidedWorkflowState() {
     moduleCatalog: [],
     moduleId: '',
     moduleAction: 'install',
+    runtimeMaintenanceKind: 'mcp',
     importMode: 'package',
     status: makeStatus('Choose a guided workflow to start configuring the orchestration server.', 'info')
   };
+}
+
+function guidedFollowThroughText(destinationId) {
+  if (destinationId === 'runtime') {
+    return 'Review the Runtime surface to confirm the lane or host details, then use Assign Responsibility if that lane should own orchestration work.';
+  }
+  if (destinationId === 'providers') {
+    return 'Review the Providers surface to confirm routing or ownership, then run Validate Provider Routing if you want an operator-safe execution check.';
+  }
+  if (destinationId === 'clu') {
+    return 'Review CLU posture and module state to confirm the action matches the current governance plan.';
+  }
+  if (destinationId === 'imports') {
+    return 'Review Imports for staging status and provenance, then continue deployment or validation once the intake is confirmed.';
+  }
+  if (destinationId === 'security') {
+    return 'Review the Security surface to confirm the protection envelope and trusted-host posture.';
+  }
+  if (destinationId === 'settings') {
+    return 'Review Settings to confirm ports, beacon behavior, and governed resource budgets.';
+  }
+  return 'Review the updated workspace section to confirm the guided change landed as expected.';
 }
 
 function guidedWorkflowDefinitions() {
@@ -534,6 +557,18 @@ function guidedWorkflowDefinitions() {
       eyebrow: 'GUIDED SETUP',
       description: 'Map connected AI models to planner, coding, review, or specialist targets so CLU and execution routing agree.',
       destinationId: 'providers'
+    },
+    'guided-provider-execution': {
+      title: 'Validate Provider Routing',
+      eyebrow: 'GUIDED SETUP',
+      description: 'Choose an orchestration lane, select a validation pattern, and dispatch a guided provider-owned task through the local admin API.',
+      destinationId: 'providers'
+    },
+    'guided-runtime-maintenance': {
+      title: 'Manage Runtime Lanes',
+      eyebrow: 'GUIDED SETUP',
+      description: 'Load an existing MCP server, sub-agent, or Apple host and update or remove it without working through the raw runtime editors.',
+      destinationId: 'runtime'
     },
     'new-mcp': {
       title: 'New MCP Server',
@@ -564,6 +599,18 @@ function guidedWorkflowDefinitions() {
       eyebrow: 'GUIDED SETUP',
       description: 'Install, enable, update, or disable Forsetti modules without dropping into raw runtime state.',
       destinationId: 'clu'
+    },
+    'guided-security': {
+      title: 'Guided Security Hardening',
+      eyebrow: 'GUIDED SETUP',
+      description: 'Choose the security posture, review trusted-host access, and publish the protection envelope without working through the raw security editor.',
+      destinationId: 'security'
+    },
+    'guided-settings': {
+      title: 'Guided Host Settings',
+      eyebrow: 'GUIDED SETUP',
+      description: 'Confirm bind ports, beacon behavior, and the governed resource envelope through a guided host configuration flow.',
+      destinationId: 'settings'
     },
     'guided-import': {
       title: 'Guided Import',
@@ -605,6 +652,32 @@ function selectedGuidedForsettiModule() {
     return modules[0] || null;
   }
   return modules.find((moduleRecord) => moduleRecord.moduleId === moduleId) || modules[0] || null;
+}
+
+function runtimeMaintenanceCollections() {
+  const snapshot = dashboardSnapshot();
+  return {
+    mcpServers: snapshot.endpoints.filter((endpoint) => String(endpoint.kind || '').toLowerCase() === 'mcp_server' && !!endpoint.userDefined),
+    subAgents: snapshot.endpoints.filter((endpoint) => String(endpoint.kind || '').toLowerCase() === 'sub_agent' && !!endpoint.userDefined),
+    appleHosts: safeArray(governanceSnapshot().appleRemoteHosts)
+  };
+}
+
+function runtimeMaintenanceKind() {
+  return state.guidedWorkflow?.runtimeMaintenanceKind || 'mcp';
+}
+
+function primeRuntimeMaintenanceDraft(kind = runtimeMaintenanceKind()) {
+  const collections = runtimeMaintenanceCollections();
+  if (kind === 'subagent') {
+    applySubAgentDraft(collections.subAgents[0]?.id || '');
+    return;
+  }
+  if (kind === 'apple') {
+    applyAppleHostDraft(collections.appleHosts[0]?.hostId || '');
+    return;
+  }
+  applyMcpServerDraft(collections.mcpServers[0]?.id || '');
 }
 
 function renderGuidedWorkflowLaunchers(workflowIds) {
@@ -784,6 +857,211 @@ function renderGuidedWorkflowContent() {
           </article>
           <div class="button-row">
             <button type="submit"${providers.length && providerAssignmentTargets.length ? '' : ' disabled'}>Assign Responsibility</button>
+            <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  if (workflow.id === 'guided-provider-execution') {
+    const executionDraft = state.providerExecutionDraft;
+    const targetOptions = providerAssignmentTargets.map((target) => `
+      <option value="${escapeHtml(target.targetId)}"${selectedAttr(target.targetId === executionDraft.targetId)}>
+        ${escapeHtml(target.displayName || target.targetId)}${target.kind ? ` | ${escapeHtml(target.kind)}` : ''}
+      </option>
+    `).join('');
+    const promptTemplates = [
+      {
+        label: 'Planning Check',
+        prompt: 'Create a concise plan for this orchestration lane and explain the first action you would take.'
+      },
+      {
+        label: 'Coding Check',
+        prompt: 'Describe how you would implement the next coding task for this lane and note any MCP tools you would need.'
+      },
+      {
+        label: 'Review Check',
+        prompt: 'Review the current state of this lane, identify the highest-risk issue, and recommend the next operator action.'
+      },
+      {
+        label: 'Specialist Coordination',
+        prompt: 'Summarize how this lane would coordinate with related specialists and what inputs it needs before execution.'
+      }
+    ];
+    const activeTemplatePrompt = executionDraft.prompt || promptTemplates[0].prompt;
+    const templateOptions = promptTemplates.map((template) => `
+      <option value="${escapeHtml(template.prompt)}"${selectedAttr(activeTemplatePrompt === template.prompt)}>${escapeHtml(template.label)}</option>
+    `).join('');
+
+    return `
+      <section class="wizard-shell">
+        ${statusMessage(workflow.status)}
+        <div class="wizard-step-list">
+          <article class="wizard-step-card"><p class="eyebrow">Step 1</p><h3>Choose the lane</h3><p class="narrative-copy">Pick the responsibility lane whose ownership and credentials you want to validate.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 2</p><h3>Choose the validation pattern</h3><p class="narrative-copy">Start from a planning, coding, review, or specialist coordination prompt instead of writing one from scratch.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 3</p><h3>Run the guided check</h3><p class="narrative-copy">Dispatch the provider-owned task through the local admin API and publish the result back into execution history.</p></article>
+        </div>
+
+        <form class="surface-form wizard-form" data-form-kind="guided-provider-execution">
+          <div class="wizard-field-grid">
+            <label>Execution Target
+              <select name="targetId"${providerAssignmentTargets.length ? '' : ' disabled'}>
+                ${targetOptions || '<option value="">No role or sub-agent lanes available</option>'}
+              </select>
+            </label>
+            <label>Validation Pattern
+              <select name="templatePrompt" data-guided-field="providerExecutionTemplatePrompt"${providerAssignmentTargets.length ? '' : ' disabled'}>
+                ${templateOptions}
+              </select>
+            </label>
+            <label>Max Turns
+              <input name="maxTurns" type="number" min="1" max="12" value="${escapeHtml(executionDraft.maxTurns || 4)}">
+            </label>
+          </div>
+
+          <label class="checkbox-field">
+            <input name="allowToolAccess" type="checkbox"${checkedAttr(executionDraft.allowToolAccess)}>
+            <span>Allow shared MCP tool access during validation.</span>
+          </label>
+
+          <label>Prompt
+            <textarea name="prompt" rows="6" placeholder="Ask the assigned provider to work within its orchestration lane.">${escapeHtml(activeTemplatePrompt)}</textarea>
+          </label>
+
+          <article class="wizard-summary-card">
+            <p class="eyebrow">Validation Result</p>
+            <h3>Provider Routing Check</h3>
+            <p class="narrative-copy">Use this to confirm responsibility ownership, credentials, and shared MCP access without dropping into the raw execution console first.</p>
+          </article>
+
+          <div class="button-row">
+            <button type="submit"${providerAssignmentTargets.length ? '' : ' disabled'}>Run Guided Validation</button>
+            <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  if (workflow.id === 'guided-runtime-maintenance') {
+    const collections = runtimeMaintenanceCollections();
+    const maintenanceKind = runtimeMaintenanceKind();
+    const activeDraft = maintenanceKind === 'subagent'
+      ? state.subAgentDraft
+      : (maintenanceKind === 'apple' ? state.appleHostDraft : state.mcpServerDraft);
+    const options = maintenanceKind === 'subagent'
+      ? collections.subAgents.map((endpoint) => ({
+        value: endpoint.id,
+        label: `${endpoint.displayName || endpoint.id}${endpoint.specialization ? ` | ${endpoint.specialization}` : ''}`
+      }))
+      : (maintenanceKind === 'apple'
+        ? collections.appleHosts.map((host) => ({
+          value: host.hostId,
+          label: `${host.displayName || host.hostId}${host.transport ? ` | ${transportLabel(host.transport)}` : ''}`
+        }))
+        : collections.mcpServers.map((endpoint) => ({
+          value: endpoint.id,
+          label: `${endpoint.displayName || endpoint.id}${endpoint.routePath ? ` | ${endpoint.routePath}` : ''}`
+        })));
+    const selectedValue = maintenanceKind === 'apple' ? activeDraft.hostId : activeDraft.id;
+    const selectorOptions = options.map((option) => `
+      <option value="${escapeHtml(option.value)}"${selectedAttr(option.value === selectedValue)}>${escapeHtml(option.label)}</option>
+    `).join('');
+
+    return `
+      <section class="wizard-shell">
+        ${statusMessage(workflow.status)}
+        <div class="wizard-step-list">
+          <article class="wizard-step-card"><p class="eyebrow">Step 1</p><h3>Choose the lane type</h3><p class="narrative-copy">Switch between shared MCP servers, custom sub-agents, and Apple remote hosts.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 2</p><h3>Load a published lane</h3><p class="narrative-copy">Pick an existing lane instead of editing the runtime card directly.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 3</p><h3>Save or remove it</h3><p class="narrative-copy">Apply changes through the same local admin API used by the runtime view.</p></article>
+        </div>
+
+        <form class="surface-form wizard-form" data-form-kind="guided-runtime-maintenance">
+          <div class="wizard-field-grid">
+            <label>Runtime Lane Type
+              <select name="maintenanceKind" data-guided-field="runtimeMaintenanceKind">
+                <option value="mcp"${selectedAttr(maintenanceKind === 'mcp')}>Shared MCP Server</option>
+                <option value="subagent"${selectedAttr(maintenanceKind === 'subagent')}>Custom Sub-Agent</option>
+                <option value="apple"${selectedAttr(maintenanceKind === 'apple')}>Apple Remote Host</option>
+              </select>
+            </label>
+            <label>Published Lane
+              <select name="laneId" data-guided-field="runtimeMaintenanceTarget"${options.length ? '' : ' disabled'}>
+                ${selectorOptions || '<option value="">No published lanes available</option>'}
+              </select>
+            </label>
+          </div>
+
+          ${maintenanceKind === 'mcp' ? `
+            <div class="wizard-field-grid">
+              <label>MCP Server ID<input name="id" value="${escapeHtml(state.mcpServerDraft.id)}" required></label>
+              <label>Display Name<input name="displayName" value="${escapeHtml(state.mcpServerDraft.displayName)}" required></label>
+              <label>Host<input name="host" value="${escapeHtml(state.mcpServerDraft.host)}"></label>
+              <label>Port<input name="port" type="number" min="1" max="65535" value="${escapeHtml(state.mcpServerDraft.port)}" required></label>
+              <label>Protocol<input name="protocol" value="${escapeHtml(state.mcpServerDraft.protocol || 'http')}"></label>
+              <label>Route Path<input name="routePath" value="${escapeHtml(state.mcpServerDraft.routePath || '/mcp')}"></label>
+            </div>
+            <label>Notes
+              <textarea name="description" rows="4">${escapeHtml(state.mcpServerDraft.description || '')}</textarea>
+            </label>
+          ` : ''}
+
+          ${maintenanceKind === 'subagent' ? `
+            <div class="wizard-field-grid">
+              <label>Sub-Agent ID<input name="id" value="${escapeHtml(state.subAgentDraft.id)}" required></label>
+              <label>Display Name<input name="displayName" value="${escapeHtml(state.subAgentDraft.displayName)}" required></label>
+              <label>Specialization<input name="specialization" value="${escapeHtml(state.subAgentDraft.specialization || '')}"></label>
+              <label>Host<input name="host" value="${escapeHtml(state.subAgentDraft.host || '')}"></label>
+              <label>Port<input name="port" type="number" min="0" max="65535" value="${escapeHtml(state.subAgentDraft.port)}"></label>
+              <label>Protocol<input name="protocol" value="${escapeHtml(state.subAgentDraft.protocol || 'virtual')}"></label>
+              <label>Route Path<input name="routePath" value="${escapeHtml(state.subAgentDraft.routePath || '')}"></label>
+            </div>
+            <label>Notes
+              <textarea name="description" rows="4">${escapeHtml(state.subAgentDraft.description || '')}</textarea>
+            </label>
+          ` : ''}
+
+          ${maintenanceKind === 'apple' ? `
+            <div class="wizard-field-grid">
+              <label>Host ID<input name="hostId" value="${escapeHtml(state.appleHostDraft.hostId)}" required></label>
+              <label>Display Name<input name="displayName" value="${escapeHtml(state.appleHostDraft.displayName)}" required></label>
+              <label>Transport
+                <select name="transport">
+                  <option value="companion_service"${selectedAttr(state.appleHostDraft.transport === 'companion_service')}>Companion Service</option>
+                  <option value="ssh"${selectedAttr(state.appleHostDraft.transport === 'ssh')}>SSH</option>
+                </select>
+              </label>
+              <label>Address or Hostname<input name="address" value="${escapeHtml(state.appleHostDraft.address || '')}"></label>
+              <label>Port<input name="port" type="number" min="0" max="65535" value="${escapeHtml(state.appleHostDraft.port)}"></label>
+              <label>Username<input name="username" value="${escapeHtml(state.appleHostDraft.username || '')}"></label>
+              <label>Companion Base URL<input name="serviceBaseUrl" value="${escapeHtml(state.appleHostDraft.serviceBaseUrl || '')}"></label>
+              <label>Health Path<input name="companionHealthPath" value="${escapeHtml(state.appleHostDraft.companionHealthPath || '/healthz')}"></label>
+              <label>Execute Path<input name="companionExecutePath" value="${escapeHtml(state.appleHostDraft.companionExecutePath || '/execute')}"></label>
+              <label>Preferred Developer Directory<input name="preferredDeveloperDirectory" value="${escapeHtml(state.appleHostDraft.preferredDeveloperDirectory || '')}"></label>
+              <label>Default Signing Identity<input name="defaultSigningIdentity" value="${escapeHtml(state.appleHostDraft.defaultSigningIdentity || '')}"></label>
+              <label>Default Notary Profile<input name="defaultNotaryKeychainProfile" value="${escapeHtml(state.appleHostDraft.defaultNotaryKeychainProfile || '')}"></label>
+              <label>Default Notary Team ID<input name="defaultNotaryTeamId" value="${escapeHtml(state.appleHostDraft.defaultNotaryTeamId || '')}"></label>
+            </div>
+            <div class="wizard-toggles">
+              <label class="checkbox-field"><input type="checkbox" name="platform" value="macos"${checkedAttr(safeArray(state.appleHostDraft.platforms).includes('macos'))}><span>macOS lane enabled</span></label>
+              <label class="checkbox-field"><input type="checkbox" name="platform" value="ios"${checkedAttr(safeArray(state.appleHostDraft.platforms).includes('ios'))}><span>iOS lane enabled</span></label>
+              <label class="checkbox-field"><input type="checkbox" name="enabled"${checkedAttr(state.appleHostDraft.enabled ?? true)}><span>Host enabled</span></label>
+            </div>
+          ` : ''}
+
+          <article class="wizard-summary-card">
+            <p class="eyebrow">Maintenance Scope</p>
+            <h3>${escapeHtml(options.length ? 'Published Runtime Lane' : 'No Published Lane')}</h3>
+            <p class="narrative-copy">${escapeHtml(options.length
+              ? 'Update the loaded lane here or remove it cleanly without dropping into the raw runtime editors.'
+              : 'Use the creation wizards first, then come back here to maintain published lanes.')}</p>
+          </article>
+
+          <div class="button-row">
+            <button type="submit"${options.length ? '' : ' disabled'}>Save Runtime Lane</button>
+            <button type="button" class="route-button" data-action="guided-runtime-maintenance-remove"${options.length ? '' : ' disabled'}>Remove Runtime Lane</button>
             <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
           </div>
         </form>
@@ -1053,6 +1331,96 @@ function renderGuidedWorkflowContent() {
           </label>
           <div class="button-row">
             <button type="submit">Install Zip Bundle</button>
+            <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  if (workflow.id === 'guided-security') {
+    const security = currentConfig().security;
+    return `
+      <section class="wizard-shell">
+        ${statusMessage(workflow.status)}
+        <div class="wizard-step-list">
+          <article class="wizard-step-card"><p class="eyebrow">Step 1</p><h3>Choose the posture</h3><p class="narrative-copy">Start from a balanced, restricted, or troubleshooting profile instead of flipping every toggle by hand.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 2</p><h3>Review access controls</h3><p class="narrative-copy">Confirm transport protection, authentication, troubleshooting bypass, and trusted hosts.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 3</p><h3>Publish the envelope</h3><p class="narrative-copy">Apply the protection posture through the same local admin API used by the desktop shell.</p></article>
+        </div>
+
+        <form class="surface-form wizard-form" data-form-kind="guided-security">
+          <div class="wizard-field-grid">
+            <label>Security Posture
+              <select name="posture">
+                <option value="balanced">Balanced Default</option>
+                <option value="restricted">Restricted Operations</option>
+                <option value="troubleshooting">Controlled Troubleshooting</option>
+              </select>
+            </label>
+          </div>
+          <div class="wizard-checklist">
+            <label class="checkbox-field">
+              <input name="securityProtocolsEnabled" type="checkbox"${checkedAttr(security.securityProtocolsEnabled)}>
+              <span>Keep security protocols enabled for normal operation.</span>
+            </label>
+            <label class="checkbox-field">
+              <input name="enableTls" type="checkbox"${checkedAttr(security.enableTls)}>
+              <span>Require TLS wherever the service supports it.</span>
+            </label>
+            <label class="checkbox-field">
+              <input name="enableAuthentication" type="checkbox"${checkedAttr(security.enableAuthentication)}>
+              <span>Require authenticated access for protected operations.</span>
+            </label>
+            <label class="checkbox-field">
+              <input name="allowTroubleshootingBypass" type="checkbox"${checkedAttr(security.allowTroubleshootingBypass)}>
+              <span>Allow a tightly controlled troubleshooting bypass.</span>
+            </label>
+            <label class="checkbox-field">
+              <input name="allowOpenLanAccess" type="checkbox"${checkedAttr(security.allowOpenLanAccess)}>
+              <span>Expose the browser surface to the wider local LAN.</span>
+            </label>
+          </div>
+          <label>Trusted Remote Hosts
+            <textarea name="trustedRemoteHosts" rows="6" placeholder="one host per line or comma-separated">${escapeHtml(security.trustedRemoteHosts.join('\n'))}</textarea>
+          </label>
+          <div class="button-row">
+            <button type="submit">Apply Security Hardening</button>
+            <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  if (workflow.id === 'guided-settings') {
+    const config = currentConfig();
+    return `
+      <section class="wizard-shell">
+        ${statusMessage(workflow.status)}
+        <div class="wizard-step-list">
+          <article class="wizard-step-card"><p class="eyebrow">Step 1</p><h3>Confirm host identity</h3><p class="narrative-copy">Set the instance name, bind address, and service ports that operators should rely on.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 2</p><h3>Choose discovery behavior</h3><p class="narrative-copy">Decide whether the LAN beacon should keep broadcasting runtime presence and metadata.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 3</p><h3>Shape the budget</h3><p class="narrative-copy">Tune the governed CPU, memory, bandwidth, and storage envelope for managed launches.</p></article>
+        </div>
+
+        <form class="surface-form wizard-form" data-form-kind="guided-settings">
+          <div class="wizard-field-grid">
+            <label>Instance Name<input name="instanceName" value="${escapeHtml(config.instanceName)}" required></label>
+            <label>Bind Address<input name="bindAddress" value="${escapeHtml(config.bindAddress)}" required></label>
+            <label>Browser Port<input name="browserPort" type="number" min="1" max="65535" value="${escapeHtml(config.browserPort)}"></label>
+            <label>Beacon Port<input name="beaconPort" type="number" min="1" max="65535" value="${escapeHtml(config.beaconPort)}"></label>
+            <label>CPU Allocation %<input name="cpuPercent" type="number" min="0" max="100" value="${escapeHtml(config.resourceAllocation.cpuPercent)}"></label>
+            <label>Memory Allocation %<input name="memoryPercent" type="number" min="0" max="100" value="${escapeHtml(config.resourceAllocation.memoryPercent)}"></label>
+            <label>Bandwidth Allocation %<input name="bandwidthPercent" type="number" min="0" max="100" value="${escapeHtml(config.resourceAllocation.bandwidthPercent)}"></label>
+            <label>Storage Allocation %<input name="storagePercent" type="number" min="0" max="100" value="${escapeHtml(config.resourceAllocation.storagePercent)}"></label>
+          </div>
+          <label class="checkbox-field">
+            <input name="beaconEnabled" type="checkbox"${checkedAttr(config.beaconEnabled)}>
+            <span>Broadcast the LAN beacon and gateway metadata.</span>
+          </label>
+          <div class="button-row">
+            <button type="submit">Apply Host Settings</button>
             <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
           </div>
         </form>
@@ -1336,8 +1704,13 @@ async function openGuidedWorkflow(workflowId) {
   state.guidedWorkflow.id = workflowId;
   state.guidedWorkflow.providerCapabilityId = dashboardSnapshot().providerCapabilities[0]?.providerId || '';
   state.guidedWorkflow.importMode = 'package';
+  state.guidedWorkflow.runtimeMaintenanceKind = 'mcp';
   state.guidedWorkflow.status = makeStatus(definition.description, 'info');
   state.overlayWorkspaceDestination = definition.destinationId || '';
+
+  if (workflowId === 'guided-runtime-maintenance') {
+    primeRuntimeMaintenanceDraft('mcp');
+  }
 
   renderGuidedWorkflowOverlay();
 
@@ -1856,8 +2229,9 @@ function renderRuntimeView() {
       <article class="panel-block">
         <p class="eyebrow">Guided Runtime Setup</p>
         <h3>Publish Shared Lanes</h3>
-        <p class="narrative-copy">Walk through the core runtime setup flows instead of filling out the runtime editors by hand.</p>
+        <p class="narrative-copy">Walk through creation and maintenance flows instead of filling out the runtime editors by hand.</p>
         ${renderGuidedWorkflowLaunchers([
+          'guided-runtime-maintenance',
           'new-mcp',
           'new-subagent',
           'new-apple-host'
@@ -2410,10 +2784,11 @@ function renderProvidersView() {
       <article class="panel-block">
         <p class="eyebrow">Guided Provider Setup</p>
         <h3>Connect And Assign Models</h3>
-        <p class="narrative-copy">Use guided workflows when you want to bring new models online, define ownership, or create specialist groups without working through the full provider editor stack.</p>
+        <p class="narrative-copy">Use guided workflows when you want to bring new models online, define ownership, validate routing, or create specialist groups without working through the full provider editor stack.</p>
         ${renderGuidedWorkflowLaunchers([
           'connect-model',
           'assign-responsibility',
+          'guided-provider-execution',
           'new-subagent-group'
         ])}
       </article>
@@ -2684,6 +3059,13 @@ function renderSecurityView() {
 
       ${statusMessage(state.securityStatus)}
 
+      <article class="panel-block">
+        <p class="eyebrow">Guided Security</p>
+        <h3>Harden The Protection Envelope</h3>
+        <p class="narrative-copy">Use the guided workflow when you want the orchestration server to walk you through security posture, LAN access, and trusted-host decisions instead of working directly in the raw control form.</p>
+        ${renderGuidedWorkflowLaunchers(['guided-security'])}
+      </article>
+
       <form class="surface-form panel-block" data-form-kind="security">
         <p class="eyebrow">Security Envelope</p>
         <h3>Operator Controls</h3>
@@ -2721,26 +3103,35 @@ function renderSettingsView() {
   return `
     <section class="section-shell">
       <div class="split-grid">
-        <form class="surface-form panel-block" data-form-kind="settings">
-          <p class="eyebrow">Instance Settings</p>
-          <h3>Host Configuration</h3>
-          ${statusMessage(state.settingsStatus)}
-          <div class="two-column">
-            <label>Instance Name<input name="instanceName" value="${escapeHtml(config.instanceName)}" required></label>
-            <label>Bind Address<input name="bindAddress" value="${escapeHtml(config.bindAddress)}" required></label>
-            <label>Browser Port<input name="browserPort" type="number" min="1" max="65535" value="${escapeHtml(config.browserPort)}"></label>
-            <label>Beacon Port<input name="beaconPort" type="number" min="1" max="65535" value="${escapeHtml(config.beaconPort)}"></label>
-            <label>CPU Allocation %<input name="cpuPercent" type="number" min="0" max="100" value="${escapeHtml(config.resourceAllocation.cpuPercent)}"></label>
-            <label>Memory Allocation %<input name="memoryPercent" type="number" min="0" max="100" value="${escapeHtml(config.resourceAllocation.memoryPercent)}"></label>
-            <label>Bandwidth Allocation %<input name="bandwidthPercent" type="number" min="0" max="100" value="${escapeHtml(config.resourceAllocation.bandwidthPercent)}"></label>
-            <label>Storage Allocation %<input name="storagePercent" type="number" min="0" max="100" value="${escapeHtml(config.resourceAllocation.storagePercent)}"></label>
-          </div>
-          <label class="checkbox-field">
-            <input name="beaconEnabled" type="checkbox"${checkedAttr(config.beaconEnabled)}>
-            <span>Broadcast the LAN beacon and gateway metadata.</span>
-          </label>
-          <button type="submit">Save Settings</button>
-        </form>
+        <div class="surface-stack">
+          <article class="panel-block">
+            <p class="eyebrow">Guided Host Setup</p>
+            <h3>Configure Identity And Capacity</h3>
+            <p class="narrative-copy">Use the guided host-settings workflow when you want to tune bind ports, beacon behavior, and the governed resource envelope without working directly in the raw settings form.</p>
+            ${renderGuidedWorkflowLaunchers(['guided-settings'])}
+          </article>
+
+          <form class="surface-form panel-block" data-form-kind="settings">
+            <p class="eyebrow">Instance Settings</p>
+            <h3>Host Configuration</h3>
+            ${statusMessage(state.settingsStatus)}
+            <div class="two-column">
+              <label>Instance Name<input name="instanceName" value="${escapeHtml(config.instanceName)}" required></label>
+              <label>Bind Address<input name="bindAddress" value="${escapeHtml(config.bindAddress)}" required></label>
+              <label>Browser Port<input name="browserPort" type="number" min="1" max="65535" value="${escapeHtml(config.browserPort)}"></label>
+              <label>Beacon Port<input name="beaconPort" type="number" min="1" max="65535" value="${escapeHtml(config.beaconPort)}"></label>
+              <label>CPU Allocation %<input name="cpuPercent" type="number" min="0" max="100" value="${escapeHtml(config.resourceAllocation.cpuPercent)}"></label>
+              <label>Memory Allocation %<input name="memoryPercent" type="number" min="0" max="100" value="${escapeHtml(config.resourceAllocation.memoryPercent)}"></label>
+              <label>Bandwidth Allocation %<input name="bandwidthPercent" type="number" min="0" max="100" value="${escapeHtml(config.resourceAllocation.bandwidthPercent)}"></label>
+              <label>Storage Allocation %<input name="storagePercent" type="number" min="0" max="100" value="${escapeHtml(config.resourceAllocation.storagePercent)}"></label>
+            </div>
+            <label class="checkbox-field">
+              <input name="beaconEnabled" type="checkbox"${checkedAttr(config.beaconEnabled)}>
+              <span>Broadcast the LAN beacon and gateway metadata.</span>
+            </label>
+            <button type="submit">Save Settings</button>
+          </form>
+        </div>
 
         <div class="surface-stack">
           ${narrativePanel('Environment Profile', config.activeProfile.environmentName, [
@@ -3209,14 +3600,20 @@ async function submitProviderCredentialsForm(form) {
 }
 
 async function completeGuidedWorkflow({ destinationId, statusBucket, message }) {
+  const nextStep = guidedFollowThroughText(destinationId);
+  const completionMessage = nextStep ? `${message} Next: ${nextStep}` : message;
   if (statusBucket === 'provider') {
-    state.providerStatus = makeStatus(message, 'success');
+    state.providerStatus = makeStatus(completionMessage, 'success');
   } else if (statusBucket === 'runtime') {
-    state.runtimeStatus = makeStatus(message, 'success');
+    state.runtimeStatus = makeStatus(completionMessage, 'success');
   } else if (statusBucket === 'clu') {
-    state.cluStatus = makeStatus(message, 'success');
+    state.cluStatus = makeStatus(completionMessage, 'success');
+  } else if (statusBucket === 'security') {
+    state.securityStatus = makeStatus(completionMessage, 'success');
+  } else if (statusBucket === 'settings') {
+    state.settingsStatus = makeStatus(completionMessage, 'success');
   } else if (statusBucket === 'import') {
-    state.importStatus = makeStatus(message, 'success');
+    state.importStatus = makeStatus(completionMessage, 'success');
   }
 
   if (destinationId) {
@@ -3460,6 +3857,223 @@ async function submitGuidedForsettiModuleForm(form) {
       destinationId: 'clu',
       statusBucket: 'clu',
       message: result.message || 'Applied Forsetti module action.'
+    });
+  } catch (error) {
+    state.guidedWorkflow.status = makeStatus(error.message, 'error');
+    renderGuidedWorkflowOverlay();
+  }
+}
+
+async function submitGuidedSecurityForm(form) {
+  try {
+    const posture = form.elements.posture.value || 'balanced';
+    if (posture === 'restricted') {
+      form.elements.securityProtocolsEnabled.checked = true;
+      form.elements.enableTls.checked = true;
+      form.elements.enableAuthentication.checked = true;
+      form.elements.allowTroubleshootingBypass.checked = false;
+      form.elements.allowOpenLanAccess.checked = false;
+    } else if (posture === 'troubleshooting') {
+      form.elements.securityProtocolsEnabled.checked = true;
+      form.elements.enableTls.checked = false;
+      form.elements.enableAuthentication.checked = false;
+      form.elements.allowTroubleshootingBypass.checked = true;
+      form.elements.allowOpenLanAccess.checked = false;
+    }
+
+    const nextConfig = cloneConfig();
+    nextConfig.security = nextConfig.security || {};
+    nextConfig.security.securityProtocolsEnabled = form.elements.securityProtocolsEnabled.checked;
+    nextConfig.security.enableTls = form.elements.enableTls.checked;
+    nextConfig.security.enableAuthentication = form.elements.enableAuthentication.checked;
+    nextConfig.security.allowTroubleshootingBypass = form.elements.allowTroubleshootingBypass.checked;
+    nextConfig.security.allowOpenLanAccess = form.elements.allowOpenLanAccess.checked;
+    nextConfig.security.trustedRemoteHosts = parseTrustedHosts(form.elements.trustedRemoteHosts.value);
+
+    const disablingProtocols = currentConfig().security.securityProtocolsEnabled && !nextConfig.security.securityProtocolsEnabled;
+    const confirmed = disablingProtocols ? await confirmDangerousChange() : false;
+    if (disablingProtocols && !confirmed) {
+      state.guidedWorkflow.status = makeStatus('Security protocol disable request was cancelled.', 'warning');
+      renderGuidedWorkflowOverlay();
+      return;
+    }
+
+    const result = await postConfiguration(nextConfig, confirmed);
+    await completeGuidedWorkflow({
+      destinationId: 'security',
+      statusBucket: 'security',
+      message: result.message
+    });
+  } catch (error) {
+    state.guidedWorkflow.status = makeStatus(error.message, 'error');
+    renderGuidedWorkflowOverlay();
+  }
+}
+
+async function submitGuidedSettingsForm(form) {
+  try {
+    const nextConfig = cloneConfig();
+    nextConfig.instanceName = form.elements.instanceName.value;
+    nextConfig.bindAddress = form.elements.bindAddress.value;
+    nextConfig.browserPort = coerceInteger(form.elements.browserPort.value, currentConfig().browserPort);
+    nextConfig.beaconPort = coerceInteger(form.elements.beaconPort.value, currentConfig().beaconPort);
+    nextConfig.beaconEnabled = form.elements.beaconEnabled.checked;
+    nextConfig.resourceAllocation = nextConfig.resourceAllocation || {};
+    nextConfig.resourceAllocation.cpuPercent = coerceInteger(form.elements.cpuPercent.value, currentConfig().resourceAllocation.cpuPercent);
+    nextConfig.resourceAllocation.memoryPercent = coerceInteger(form.elements.memoryPercent.value, currentConfig().resourceAllocation.memoryPercent);
+    nextConfig.resourceAllocation.bandwidthPercent = coerceInteger(form.elements.bandwidthPercent.value, currentConfig().resourceAllocation.bandwidthPercent);
+    nextConfig.resourceAllocation.storagePercent = coerceInteger(form.elements.storagePercent.value, currentConfig().resourceAllocation.storagePercent);
+
+    const result = await postConfiguration(nextConfig, false);
+    await completeGuidedWorkflow({
+      destinationId: 'settings',
+      statusBucket: 'settings',
+      message: result.message
+    });
+  } catch (error) {
+    state.guidedWorkflow.status = makeStatus(error.message, 'error');
+    renderGuidedWorkflowOverlay();
+  }
+}
+
+async function submitGuidedRuntimeMaintenanceForm(form) {
+  const kind = runtimeMaintenanceKind();
+  try {
+    if (kind === 'subagent') {
+      const result = await loadJson('/api/runtime/subagents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: form.elements.id.value,
+          displayName: form.elements.displayName.value,
+          kind: 'sub_agent',
+          host: form.elements.host.value,
+          port: coerceInteger(form.elements.port.value, 0),
+          protocol: form.elements.protocol.value || 'virtual',
+          description: form.elements.description.value,
+          routePath: form.elements.routePath.value,
+          specialization: form.elements.specialization.value,
+          userDefined: true
+        })
+      });
+      await completeGuidedWorkflow({
+        destinationId: 'runtime',
+        statusBucket: 'runtime',
+        message: result.message || `Updated sub-agent lane '${form.elements.displayName.value}'.`
+      });
+      return;
+    }
+
+    if (kind === 'apple') {
+      const platforms = Array.from(form.querySelectorAll('input[name="platform"]:checked')).map((input) => input.value);
+      const result = await loadJson('/api/platform-services/apple-hosts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hostId: form.elements.hostId.value,
+          displayName: form.elements.displayName.value,
+          transport: form.elements.transport.value,
+          platforms,
+          address: form.elements.address.value,
+          port: coerceInteger(form.elements.port.value, 0),
+          username: form.elements.username.value,
+          serviceBaseUrl: form.elements.serviceBaseUrl.value,
+          companionHealthPath: form.elements.companionHealthPath.value || '/healthz',
+          companionExecutePath: form.elements.companionExecutePath.value || '/execute',
+          preferredDeveloperDirectory: form.elements.preferredDeveloperDirectory.value,
+          defaultSigningIdentity: form.elements.defaultSigningIdentity.value,
+          defaultNotaryKeychainProfile: form.elements.defaultNotaryKeychainProfile.value,
+          defaultNotaryTeamId: form.elements.defaultNotaryTeamId.value,
+          enabled: form.elements.enabled.checked
+        })
+      });
+      await completeGuidedWorkflow({
+        destinationId: 'runtime',
+        statusBucket: 'runtime',
+        message: result.message || `Updated Apple host '${form.elements.displayName.value}'.`
+      });
+      return;
+    }
+
+    const result = await loadJson('/api/runtime/mcp-servers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: form.elements.id.value,
+        displayName: form.elements.displayName.value,
+        kind: 'mcp_server',
+        host: form.elements.host.value,
+        port: coerceInteger(form.elements.port.value, 0),
+        protocol: form.elements.protocol.value || 'http',
+        description: form.elements.description.value,
+        routePath: form.elements.routePath.value,
+        specialization: '',
+        userDefined: true
+      })
+    });
+    await completeGuidedWorkflow({
+      destinationId: 'runtime',
+      statusBucket: 'runtime',
+      message: result.message || `Updated MCP server lane '${form.elements.displayName.value}'.`
+    });
+  } catch (error) {
+    state.guidedWorkflow.status = makeStatus(error.message, 'error');
+    renderGuidedWorkflowOverlay();
+  }
+}
+
+async function removeGuidedRuntimeMaintenance() {
+  const kind = runtimeMaintenanceKind();
+  try {
+    if (kind === 'subagent') {
+      if (!state.subAgentDraft.id) {
+        throw new Error('Choose a custom sub-agent before removing it.');
+      }
+      const result = await loadJson('/api/runtime/subagents/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subAgentId: state.subAgentDraft.id })
+      });
+      state.subAgentDraft = defaultSubAgentDraft();
+      await completeGuidedWorkflow({
+        destinationId: 'runtime',
+        statusBucket: 'runtime',
+        message: result.message || 'Removed the selected sub-agent lane.'
+      });
+      return;
+    }
+
+    if (kind === 'apple') {
+      if (!state.appleHostDraft.hostId) {
+        throw new Error('Choose an Apple host before removing it.');
+      }
+      const result = await loadJson('/api/platform-services/apple-hosts/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hostId: state.appleHostDraft.hostId })
+      });
+      state.appleHostDraft = defaultAppleHostDraft();
+      await completeGuidedWorkflow({
+        destinationId: 'runtime',
+        statusBucket: 'runtime',
+        message: result.message || 'Removed the selected Apple host.'
+      });
+      return;
+    }
+
+    if (!state.mcpServerDraft.id) {
+      throw new Error('Choose a custom MCP server before removing it.');
+    }
+    const result = await loadJson('/api/runtime/mcp-servers/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mcpServerId: state.mcpServerDraft.id })
+    });
+    state.mcpServerDraft = defaultMcpServerDraft();
+    await completeGuidedWorkflow({
+      destinationId: 'runtime',
+      statusBucket: 'runtime',
+      message: result.message || 'Removed the selected MCP server lane.'
     });
   } catch (error) {
     state.guidedWorkflow.status = makeStatus(error.message, 'error');
@@ -3727,6 +4341,49 @@ async function submitProviderExecutionForm(form) {
   }
 }
 
+async function submitGuidedProviderExecutionForm(form) {
+  const prompt = form.elements.prompt.value.trim() || form.elements.templatePrompt.value.trim();
+  state.providerExecutionDraft = {
+    targetId: form.elements.targetId.value,
+    prompt,
+    allowToolAccess: form.elements.allowToolAccess.checked,
+    maxTurns: coerceInteger(form.elements.maxTurns.value, 4)
+  };
+
+  if (!state.providerExecutionDraft.targetId || !state.providerExecutionDraft.prompt) {
+    state.guidedWorkflow.status = makeStatus('Choose a lane and prompt before running guided provider validation.', 'warning');
+    renderGuidedWorkflowOverlay();
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/providers/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetId: state.providerExecutionDraft.targetId,
+        prompt: state.providerExecutionDraft.prompt,
+        allowToolAccess: state.providerExecutionDraft.allowToolAccess,
+        maxTurns: state.providerExecutionDraft.maxTurns
+      })
+    });
+    const record = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(record.errorMessage || record.message || 'Provider execution failed.');
+    }
+
+    const summary = record.outputText || record.rawResponse || 'Provider task completed.';
+    await completeGuidedWorkflow({
+      destinationId: 'providers',
+      statusBucket: 'provider',
+      message: summary
+    });
+  } catch (error) {
+    state.guidedWorkflow.status = makeStatus(error.message, 'error');
+    renderGuidedWorkflowOverlay();
+  }
+}
+
 function handleSurfaceClick(event) {
   const destinationButton = event.target.closest('[data-destination]');
   if (destinationButton) {
@@ -3837,6 +4494,10 @@ function handleSurfaceClick(event) {
   if (action === 'set-guided-import-mode') {
     state.guidedWorkflow.importMode = actionButton.dataset.guidedImportMode || 'package';
     renderGuidedWorkflowOverlay();
+    return;
+  }
+  if (action === 'guided-runtime-maintenance-remove') {
+    removeGuidedRuntimeMaintenance();
     return;
   }
   if (action === 'reset-provider-draft') {
@@ -4005,6 +4666,29 @@ function handleDynamicChange(event) {
       renderGuidedWorkflowOverlay();
       return;
     }
+    if (field === 'providerExecutionTemplatePrompt') {
+      state.providerExecutionDraft.prompt = guidedField.value || '';
+      renderGuidedWorkflowOverlay();
+      return;
+    }
+    if (field === 'runtimeMaintenanceKind') {
+      state.guidedWorkflow.runtimeMaintenanceKind = guidedField.value || 'mcp';
+      primeRuntimeMaintenanceDraft(state.guidedWorkflow.runtimeMaintenanceKind);
+      renderGuidedWorkflowOverlay();
+      return;
+    }
+    if (field === 'runtimeMaintenanceTarget') {
+      const kind = runtimeMaintenanceKind();
+      if (kind === 'subagent') {
+        applySubAgentDraft(guidedField.value || '');
+      } else if (kind === 'apple') {
+        applyAppleHostDraft(guidedField.value || '');
+      } else {
+        applyMcpServerDraft(guidedField.value || '');
+      }
+      renderGuidedWorkflowOverlay();
+      return;
+    }
   }
 
   const exportSelector = event.target.closest('[data-role="export-selector"]');
@@ -4031,6 +4715,10 @@ async function handleFormSubmit(event) {
     await submitSecurityForm(form);
     return;
   }
+  if (kind === 'guided-security') {
+    await submitGuidedSecurityForm(form);
+    return;
+  }
   if (kind === 'ai-autonomy') {
     await submitAiAutonomyForm(form);
     return;
@@ -4049,6 +4737,14 @@ async function handleFormSubmit(event) {
   }
   if (kind === 'guided-provider-assignment') {
     await submitGuidedProviderAssignmentForm(form);
+    return;
+  }
+  if (kind === 'guided-provider-execution') {
+    await submitGuidedProviderExecutionForm(form);
+    return;
+  }
+  if (kind === 'guided-runtime-maintenance') {
+    await submitGuidedRuntimeMaintenanceForm(form);
     return;
   }
   if (kind === 'mcp-server') {
@@ -4089,6 +4785,10 @@ async function handleFormSubmit(event) {
   }
   if (kind === 'guided-forsetti-module') {
     await submitGuidedForsettiModuleForm(form);
+    return;
+  }
+  if (kind === 'guided-settings') {
+    await submitGuidedSettingsForm(form);
     return;
   }
   if (kind === 'provider-execution') {

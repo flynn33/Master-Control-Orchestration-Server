@@ -1602,8 +1602,10 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.canStartService = service.state == ServiceState::Missing || service.state == ServiceState::Stopped || service.state == ServiceState::Unknown;
     snapshot.canStopService = service.state == ServiceState::Running || service.state == ServiceState::StartPending;
 
+    std::string instanceName = "Master Control Orchestration Server";
     std::string bindAddress = "0.0.0.0";
     uint16_t browserPort = 7300;
+    uint16_t beaconPort = 7301;
     std::string environmentName = "Pending service snapshot";
     std::string preferredBindAddress = "127.0.0.1";
     std::string macAddress = "n/a";
@@ -1630,8 +1632,10 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
 
     if (const auto configurationText = readFileUtf8(configurationFile); configurationText.has_value()) {
         if (const auto configuration = parseJsonObject(*configurationText); configuration.has_value()) {
+            instanceName = jsonStringOr(*configuration, L"instanceName", instanceName);
             bindAddress = jsonStringOr(*configuration, L"bindAddress", bindAddress);
             browserPort = static_cast<uint16_t>(jsonNumberOr(*configuration, L"browserPort", browserPort));
+            beaconPort = static_cast<uint16_t>(jsonNumberOr(*configuration, L"beaconPort", beaconPort));
 
             if (configuration->HasKey(L"activeProfile")) {
                 const auto profile = configuration->GetNamedObject(L"activeProfile", JsonObject());
@@ -2041,7 +2045,9 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                       << L"Primary MAC: " << wideFromUtf8(macAddress);
 
     std::wostringstream configurationStream;
-    configurationStream << L"Browser port: " << browserPort << L'\n'
+    configurationStream << L"Instance name: " << wideFromUtf8(instanceName) << L'\n'
+                        << L"Browser port: " << browserPort << L'\n'
+                        << L"Beacon port: " << beaconPort << L'\n'
                         << L"Bind address: " << wideFromUtf8(bindAddress) << L'\n'
                         << L"Beacon enabled: " << boolLabel(beaconEnabled) << L'\n'
                         << L"AI autonomy: " << boolLabel(aiAutonomyEnabled) << L'\n'
@@ -2086,6 +2092,7 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.governanceNarrative = governanceStream.str();
     snapshot.governanceLastEvaluatedUtc = governanceLastEvaluatedUtc;
     snapshot.browserPort = browserPort;
+    snapshot.beaconPort = beaconPort;
     snapshot.beaconEnabled = beaconEnabled;
     snapshot.aiAutonomyEnabled = aiAutonomyEnabled;
     snapshot.securityProtocolsEnabled = securityProtocolsEnabled;
@@ -2101,6 +2108,7 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.operatingSystem = operatingSystem;
     snapshot.primaryIpAddress = ipAddress;
     snapshot.primaryMacAddress = wideFromUtf8(macAddress);
+    snapshot.instanceName = wideFromUtf8(instanceName);
     snapshot.bindAddress = wideFromUtf8(bindAddress);
     snapshot.providers = std::move(providers);
     snapshot.providerCapabilities = std::move(providerCapabilities);
@@ -2449,6 +2457,54 @@ ShellOperationResult ShellRuntime::UpdateSecuritySettings(const ShellSecuritySet
     configuration->SetNamedValue(L"security", security);
 
     return postConfigurationToAdminApi(ResolveConfigurationFile(), *configuration, confirmUnsafeChanges);
+}
+
+ShellOperationResult ShellRuntime::UpdateHostSettings(const ShellHostSettings& settings) const {
+    if (trimWideCopy(settings.instanceName).empty()) {
+        return ShellOperationResult{ false, false, L"Instance name is required." };
+    }
+    if (trimWideCopy(settings.bindAddress).empty()) {
+        return ShellOperationResult{ false, false, L"Bind address is required." };
+    }
+    if (settings.browserPort == 0) {
+        return ShellOperationResult{ false, false, L"Browser port must be between 1 and 65535." };
+    }
+    if (settings.beaconPort == 0) {
+        return ShellOperationResult{ false, false, L"Beacon port must be between 1 and 65535." };
+    }
+
+    const auto percentInRange = [](const int value) {
+        return value >= 0 && value <= 100;
+    };
+    if (!percentInRange(settings.cpuAllocationPercent) ||
+        !percentInRange(settings.memoryAllocationPercent) ||
+        !percentInRange(settings.bandwidthAllocationPercent) ||
+        !percentInRange(settings.storageAllocationPercent)) {
+        return ShellOperationResult{ false, false, L"Resource allocation percentages must stay between 0 and 100." };
+    }
+
+    std::wstring errorMessage;
+    auto configuration = fetchConfigurationFromAdminApi(ResolveConfigurationFile(), errorMessage);
+    if (!configuration.has_value()) {
+        return ShellOperationResult{ false, false, errorMessage.empty() ? L"Unable to load the current configuration." : errorMessage };
+    }
+
+    configuration->SetNamedValue(L"instanceName", JsonValue::CreateStringValue(trimWideCopy(settings.instanceName)));
+    configuration->SetNamedValue(L"bindAddress", JsonValue::CreateStringValue(trimWideCopy(settings.bindAddress)));
+    configuration->SetNamedValue(L"browserPort", JsonValue::CreateNumberValue(settings.browserPort));
+    configuration->SetNamedValue(L"beaconPort", JsonValue::CreateNumberValue(settings.beaconPort));
+    configuration->SetNamedValue(L"beaconEnabled", JsonValue::CreateBooleanValue(settings.beaconEnabled));
+
+    JsonObject resourceAllocation = configuration->HasKey(L"resourceAllocation")
+        ? configuration->GetNamedObject(L"resourceAllocation", JsonObject())
+        : JsonObject();
+    resourceAllocation.SetNamedValue(L"cpuPercent", JsonValue::CreateNumberValue(settings.cpuAllocationPercent));
+    resourceAllocation.SetNamedValue(L"memoryPercent", JsonValue::CreateNumberValue(settings.memoryAllocationPercent));
+    resourceAllocation.SetNamedValue(L"bandwidthPercent", JsonValue::CreateNumberValue(settings.bandwidthAllocationPercent));
+    resourceAllocation.SetNamedValue(L"storagePercent", JsonValue::CreateNumberValue(settings.storageAllocationPercent));
+    configuration->SetNamedValue(L"resourceAllocation", resourceAllocation);
+
+    return postConfigurationToAdminApi(ResolveConfigurationFile(), *configuration, false);
 }
 
 ShellOperationResult ShellRuntime::InstallPackage(const ShellInstallerPackageSpec& spec) const {
