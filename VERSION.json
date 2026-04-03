@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.57",
-  "current_tag": "v0.1.57",
+  "current_version": "0.1.58",
+  "current_tag": "v0.1.58",
   "released_at": "2026-04-03",
-  "last_release_commit": "e698c536cd4f9ae94ae0a295da797ff004d08398",
+  "last_release_commit": "a5b46c413342069f84f83c2a8d0ae575c391a10e",
   "history": [
+    {
+      "version": "0.1.58",
+      "tag": "v0.1.58",
+      "released_at": "2026-04-03",
+      "commit": "a5b46c413342069f84f83c2a8d0ae575c391a10e",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Fix installer compatibility and package entry point (flynn33)"
+      ]
+    },
     {
       "version": "0.1.57",
       "tag": "v0.1.57",
