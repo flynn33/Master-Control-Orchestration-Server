@@ -455,6 +455,560 @@ function makeStatus(message, tone = 'info') {
   return { message, tone };
 }
 
+function defaultGuidedWorkflowState() {
+  return {
+    id: '',
+    providerCapabilityId: '',
+    moduleCatalog: [],
+    moduleId: '',
+    moduleAction: 'install',
+    importMode: 'package',
+    status: makeStatus('Choose a guided workflow to start configuring the orchestration server.', 'info')
+  };
+}
+
+function guidedWorkflowDefinitions() {
+  return {
+    'connect-model': {
+      title: 'Connect AI Model',
+      eyebrow: 'GUIDED SETUP',
+      description: 'Choose the model connector, confirm route defaults, and optionally assign responsibility to planning, coding, review, or specialist lanes.',
+      destinationId: 'providers'
+    },
+    'assign-responsibility': {
+      title: 'Assign Responsibility',
+      eyebrow: 'GUIDED SETUP',
+      description: 'Map connected AI models to planner, coding, review, or specialist targets so CLU and execution routing agree.',
+      destinationId: 'providers'
+    },
+    'new-mcp': {
+      title: 'New MCP Server',
+      eyebrow: 'GUIDED SETUP',
+      description: 'Publish a shared MCP lane with host, port, and route details so providers can reuse one tool surface.',
+      destinationId: 'runtime'
+    },
+    'new-subagent': {
+      title: 'New Sub-Agent',
+      eyebrow: 'GUIDED SETUP',
+      description: 'Create a specialist lane with a clear purpose so provider ownership can target exactly the work you want automated.',
+      destinationId: 'runtime'
+    },
+    'new-subagent-group': {
+      title: 'New Sub-Agent Group',
+      eyebrow: 'GUIDED SETUP',
+      description: 'Bundle specialist lanes into a reusable team so one provider can own a focused multi-agent squad.',
+      destinationId: 'providers'
+    },
+    'new-apple-host': {
+      title: 'New Apple Host',
+      eyebrow: 'GUIDED SETUP',
+      description: 'Register the remote Mac infrastructure that powers macOS and iOS build, sign, notarize, and install operations.',
+      destinationId: 'runtime'
+    },
+    'manage-forsetti-modules': {
+      title: 'Manage Forsetti Modules',
+      eyebrow: 'GUIDED SETUP',
+      description: 'Install, enable, update, or disable Forsetti modules without dropping into raw runtime state.',
+      destinationId: 'clu'
+    },
+    'guided-import': {
+      title: 'Guided Import',
+      eyebrow: 'GUIDED SETUP',
+      description: 'Walk through package, repository, or zip onboarding with the same browser control plane used by the desktop shell.',
+      destinationId: 'imports'
+    }
+  };
+}
+
+function guidedWorkflowDefinition(workflowId) {
+  return guidedWorkflowDefinitions()[workflowId] || null;
+}
+
+function recommendedForsettiAction(moduleRecord) {
+  const recommended = String(moduleRecord?.recommendedAction || '').toLowerCase();
+  if (recommended.includes('update') || recommended.includes('reload')) {
+    return 'update';
+  }
+  if (recommended.includes('disable') || recommended.includes('remove')) {
+    return 'disable';
+  }
+  return 'install';
+}
+
+function selectedGuidedProviderCapability() {
+  const capabilityId = state.guidedWorkflow?.providerCapabilityId || '';
+  const capabilities = dashboardSnapshot().providerCapabilities;
+  if (!capabilityId) {
+    return capabilities[0] || null;
+  }
+  return capabilities.find((capability) => capability.providerId === capabilityId) || capabilities[0] || null;
+}
+
+function selectedGuidedForsettiModule() {
+  const moduleId = state.guidedWorkflow?.moduleId || '';
+  const modules = safeArray(state.guidedWorkflow?.moduleCatalog);
+  if (!moduleId) {
+    return modules[0] || null;
+  }
+  return modules.find((moduleRecord) => moduleRecord.moduleId === moduleId) || modules[0] || null;
+}
+
+function renderGuidedWorkflowLaunchers(workflowIds) {
+  return `
+    <div class="wizard-launcher-grid">
+      ${workflowIds.map((workflowId) => {
+        const definition = guidedWorkflowDefinition(workflowId);
+        if (!definition) {
+          return '';
+        }
+        return `
+          <button type="button" class="wizard-launcher" data-action="open-guided-workflow" data-workflow-id="${escapeHtml(workflowId)}">
+            <strong>${escapeHtml(definition.title)}</strong>
+            <span>${escapeHtml(definition.description)}</span>
+          </button>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function renderGuidedWorkflowContent() {
+  const workflow = state.guidedWorkflow || defaultGuidedWorkflowState();
+  const definition = guidedWorkflowDefinition(workflow.id);
+  if (!definition) {
+    return renderUnavailableView('Guided workflow unavailable', 'The selected setup workflow could not be resolved.');
+  }
+
+  const snapshot = dashboardSnapshot();
+  const capability = selectedGuidedProviderCapability();
+  const credentialFields = safeArray(capability?.credentialFields);
+  const providerAssignmentTargets = snapshot.providerAssignmentTargets;
+  const providers = snapshot.providers;
+  const subAgentTargets = providerAssignmentTargets.filter((target) => target.kind === 'sub_agent');
+  const moduleCatalog = safeArray(workflow.moduleCatalog);
+  const selectedModule = selectedGuidedForsettiModule();
+
+  if (workflow.id === 'connect-model') {
+    const capabilityOptions = snapshot.providerCapabilities.map((entry) => `
+      <option value="${escapeHtml(entry.providerId)}"${selectedAttr(entry.providerId === (capability?.providerId || ''))}>
+        ${escapeHtml(entry.displayName || entry.providerId)}
+      </option>
+    `).join('');
+    const targetOptions = `
+      <option value="">(Leave unassigned)</option>
+      ${providerAssignmentTargets.map((target) => `
+        <option value="${escapeHtml(target.targetId)}">
+          ${escapeHtml(target.displayName)}${target.kind ? ` | ${escapeHtml(target.kind)}` : ''}
+        </option>
+      `).join('')}
+    `;
+
+    return `
+      <section class="wizard-shell">
+        ${statusMessage(workflow.status)}
+        <div class="wizard-step-list">
+          <article class="wizard-step-card">
+            <p class="eyebrow">Step 1</p>
+            <h3>Choose AI model connector</h3>
+            <p class="narrative-copy">Start with the provider module that represents the model family or service you want to route through the orchestration server.</p>
+          </article>
+          <article class="wizard-step-card">
+            <p class="eyebrow">Step 2</p>
+            <h3>Confirm route defaults</h3>
+            <p class="narrative-copy">Review route identity, base URL, model defaults, and autonomy posture before enabling the lane.</p>
+          </article>
+          <article class="wizard-step-card">
+            <p class="eyebrow">Step 3</p>
+            <h3>Secure and assign it</h3>
+            <p class="narrative-copy">Add credentials and optionally give that model ownership of planning, coding, review, or specialist work.</p>
+          </article>
+        </div>
+
+        <form class="surface-form wizard-form" data-form-kind="guided-provider">
+          <div class="wizard-field-grid">
+            <label>AI Model Connector
+              <select name="capabilityId" data-guided-field="providerCapabilityId">
+                ${capabilityOptions}
+              </select>
+            </label>
+            <label>Route ID
+              <input name="id" value="${escapeHtml(capability?.providerId || '')}" placeholder="codex">
+            </label>
+            <label>Display Name
+              <input name="displayName" value="${escapeHtml(capability?.displayName || capability?.providerId || '')}" placeholder="Codex">
+            </label>
+            <label>Base URL
+              <input name="baseUrl" value="${escapeHtml(capability?.defaultBaseUrl || '')}" placeholder="https://api.openai.com/v1">
+            </label>
+            <label>Recommended Model
+              <input name="modelId" value="${escapeHtml(capability?.recommendedModel || '')}" placeholder="gpt-5.4">
+            </label>
+            <label>Assign This Model To
+              <select name="targetId">
+                ${targetOptions}
+              </select>
+            </label>
+          </div>
+
+          <div class="wizard-toggles">
+            <label class="checkbox-field">
+              <input name="enabled" type="checkbox" checked>
+              <span>Route is enabled for orchestration.</span>
+            </label>
+            <label class="checkbox-field">
+              <input name="allowAutonomousControl" type="checkbox"${checkedAttr(!!capability?.supportsAutonomousControl)}>
+              <span>Allow autonomous control when the global autonomy gate is enabled.</span>
+            </label>
+          </div>
+
+          <article class="wizard-summary-card">
+            <p class="eyebrow">Credentials</p>
+            <h3>Secure Route Setup</h3>
+            ${credentialFields.length ? credentialFields.slice(0, 2).map((field) => `
+              <label>${escapeHtml(field.label)}
+                <input
+                  name="credential:${escapeHtml(field.fieldId)}"
+                  type="password"
+                  placeholder="${escapeHtml(field.placeholder || 'Credential value')}">
+              </label>
+              <p class="form-help">${escapeHtml([field.helpText, field.environmentVariableHint ? `Env: ${field.environmentVariableHint}` : ''].filter(Boolean).join(' '))}</p>
+            `).join('') : '<p class="narrative-copy">This connector does not publish credential requirements. You can still connect the route and add credentials later if needed.</p>'}
+          </article>
+
+          <article class="wizard-summary-card">
+            <p class="eyebrow">Connector Summary</p>
+            <h3>${escapeHtml(capability?.displayName || 'No connector selected')}</h3>
+            <p class="narrative-copy">${escapeHtml(capability?.description || 'Select a provider module to view its connector guidance.')}</p>
+            <p class="narrative-copy">${escapeHtml(`Supported targets: ${safeArray(capability?.supportedTargets).join(', ') || 'No published targets'}`)}</p>
+          </article>
+
+          <div class="button-row">
+            <button type="submit">Connect AI Model</button>
+            <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  if (workflow.id === 'assign-responsibility') {
+    const providerOptions = providers.map((provider) => `
+      <option value="${escapeHtml(provider.id)}">${escapeHtml(provider.displayName || provider.id)}</option>
+    `).join('');
+    const targetOptions = providerAssignmentTargets.map((target) => `
+      <option value="${escapeHtml(target.targetId)}" data-kind="${escapeHtml(target.kind || 'role')}">
+        ${escapeHtml(target.displayName || target.targetId)}${target.kind ? ` | ${escapeHtml(target.kind)}` : ''}
+      </option>
+    `).join('');
+
+    return `
+      <section class="wizard-shell">
+        ${statusMessage(workflow.status)}
+        <div class="wizard-step-list">
+          <article class="wizard-step-card"><p class="eyebrow">Step 1</p><h3>Choose connected AI model</h3><p class="narrative-copy">Pick the provider route that should own one orchestration lane.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 2</p><h3>Choose the responsibility lane</h3><p class="narrative-copy">Select planner, coding, review, specialist, or group ownership.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 3</p><h3>Save routing</h3><p class="narrative-copy">CLU and provider execution will use the same ownership map after you save.</p></article>
+        </div>
+
+        <form class="surface-form wizard-form" data-form-kind="guided-provider-assignment">
+          <div class="wizard-field-grid">
+            <label>Connected AI Model
+              <select name="providerId"${providers.length ? '' : ' disabled'}>
+                ${providerOptions || '<option value="">No providers available</option>'}
+              </select>
+            </label>
+            <label>Responsibility Lane
+              <select name="targetId"${providerAssignmentTargets.length ? '' : ' disabled'}>
+                ${targetOptions || '<option value="">No lanes available</option>'}
+              </select>
+            </label>
+          </div>
+          <article class="wizard-summary-card">
+            <p class="eyebrow">Responsibility Mapping</p>
+            <h3>Model-to-Lane Ownership</h3>
+            <p class="narrative-copy">Use this when you want one model planning, another coding, and others reviewing or handling specialist groups.</p>
+          </article>
+          <div class="button-row">
+            <button type="submit"${providers.length && providerAssignmentTargets.length ? '' : ' disabled'}>Assign Responsibility</button>
+            <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  if (workflow.id === 'new-mcp') {
+    return `
+      <section class="wizard-shell">
+        ${statusMessage(workflow.status)}
+        <div class="wizard-step-list">
+          <article class="wizard-step-card"><p class="eyebrow">Step 1</p><h3>Name the MCP lane</h3><p class="narrative-copy">Choose an ID and display name operators will recognize later.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 2</p><h3>Point it at the host</h3><p class="narrative-copy">Provide host, port, and protocol for the shared MCP surface.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 3</p><h3>Publish route details</h3><p class="narrative-copy">Set the route path and description so every provider can reuse it.</p></article>
+        </div>
+
+        <form class="surface-form wizard-form" data-form-kind="guided-mcp-server">
+          <div class="wizard-field-grid">
+            <label>MCP Server ID<input name="id" placeholder="swift-tools-mcp" required></label>
+            <label>Display Name<input name="displayName" placeholder="Swift Tools MCP" required></label>
+            <label>Host<input name="host" placeholder="127.0.0.1 or LAN host" required></label>
+            <label>Port<input name="port" type="number" min="1" max="65535" placeholder="7305" required></label>
+            <label>Protocol<input name="protocol" value="http" placeholder="http or https"></label>
+            <label>Route Path<input name="routePath" value="/mcp" placeholder="/mcp"></label>
+          </div>
+          <label>Description
+            <textarea name="description" rows="4" placeholder="What tools or capabilities does this shared MCP lane expose?"></textarea>
+          </label>
+          <div class="button-row">
+            <button type="submit">Create MCP Server</button>
+            <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  if (workflow.id === 'new-subagent') {
+    return `
+      <section class="wizard-shell">
+        ${statusMessage(workflow.status)}
+        <div class="wizard-step-list">
+          <article class="wizard-step-card"><p class="eyebrow">Step 1</p><h3>Name the specialist lane</h3><p class="narrative-copy">Create a sub-agent identity your team will recognize in routing and history.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 2</p><h3>Define its specialty</h3><p class="narrative-copy">Capture what this lane is responsible for so assignments stay obvious.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 3</p><h3>Publish optional endpoint details</h3><p class="narrative-copy">Add host, port, and route values only if this lane maps to a live endpoint.</p></article>
+        </div>
+
+        <form class="surface-form wizard-form" data-form-kind="guided-subagent">
+          <div class="wizard-field-grid">
+            <label>Sub-Agent ID<input name="id" placeholder="swift-specialist" required></label>
+            <label>Display Name<input name="displayName" placeholder="Swift Specialist" required></label>
+            <label>Specialization<input name="specialization" placeholder="Swift, C++, documentation, test automation..." required></label>
+            <label>Host<input name="host" placeholder="Optional bind or LAN host"></label>
+            <label>Port<input name="port" type="number" min="0" max="65535" value="0"></label>
+            <label>Protocol<input name="protocol" value="virtual" placeholder="virtual or http"></label>
+            <label>Route Path<input name="routePath" placeholder="/status or blank for logical lanes"></label>
+          </div>
+          <label>Description
+            <textarea name="description" rows="4" placeholder="Optional notes about this specialist lane."></textarea>
+          </label>
+          <div class="button-row">
+            <button type="submit">Create Sub-Agent</button>
+            <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  if (workflow.id === 'new-subagent-group') {
+    return `
+      <section class="wizard-shell">
+        ${statusMessage(workflow.status)}
+        <div class="wizard-step-list">
+          <article class="wizard-step-card"><p class="eyebrow">Step 1</p><h3>Name the group</h3><p class="narrative-copy">Create a stable group identity for a specialist lane or squad.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 2</p><h3>Describe the responsibility</h3><p class="narrative-copy">Make the purpose obvious to operators and CLU routing decisions.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 3</p><h3>Select members</h3><p class="narrative-copy">Choose the sub-agents that should work together when this group is assigned a provider.</p></article>
+        </div>
+
+        <form class="surface-form wizard-form" data-form-kind="guided-subagent-group">
+          <div class="wizard-field-grid">
+            <label>Group ID<input name="groupId" placeholder="coding-squad" required></label>
+            <label>Display Name<input name="displayName" placeholder="Coding Squad" required></label>
+          </div>
+          <label>Description
+            <textarea name="description" rows="4" placeholder="Explain what this specialist group owns."></textarea>
+          </label>
+          <article class="wizard-summary-card">
+            <p class="eyebrow">Sub-Agent Members</p>
+            <h3>Specialist Squad</h3>
+            ${subAgentTargets.length ? subAgentTargets.map((target) => `
+              <label class="checkbox-field">
+                <input name="memberTargetId" type="checkbox" value="${escapeHtml(target.targetId)}">
+                <span>${escapeHtml(target.displayName || target.targetId)}</span>
+              </label>
+            `).join('') : '<p class="narrative-copy">Create at least one sub-agent before building a group.</p>'}
+          </article>
+          <div class="button-row">
+            <button type="submit"${subAgentTargets.length ? '' : ' disabled'}>Create Sub-Agent Group</button>
+            <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  if (workflow.id === 'new-apple-host') {
+    return `
+      <section class="wizard-shell">
+        ${statusMessage(workflow.status)}
+        <div class="wizard-step-list">
+          <article class="wizard-step-card"><p class="eyebrow">Step 1</p><h3>Name the Apple host</h3><p class="narrative-copy">Register a stable identity operators can route Mac and iOS work to.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 2</p><h3>Choose transport</h3><p class="narrative-copy">Use SSH or Companion Service and publish how the orchestration server reaches the host.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 3</p><h3>Set defaults</h3><p class="narrative-copy">Publish developer, signing, and notary defaults that CLU can reuse safely.</p></article>
+        </div>
+
+        <form class="surface-form wizard-form" data-form-kind="guided-apple-host">
+          <div class="wizard-field-grid">
+            <label>Host ID<input name="hostId" placeholder="apple-host-01" required></label>
+            <label>Display Name<input name="displayName" placeholder="Primary Apple Build Host" required></label>
+            <label>Transport
+              <select name="transport">
+                <option value="companion_service">Companion Service</option>
+                <option value="ssh">SSH</option>
+              </select>
+            </label>
+            <label>Address or Hostname<input name="address" placeholder="mac-builder.local"></label>
+            <label>Port<input name="port" type="number" min="0" max="65535" placeholder="22"></label>
+            <label>Username<input name="username" placeholder="builder"></label>
+            <label>Companion Base URL<input name="serviceBaseUrl" placeholder="http://mac-builder.local:8081"></label>
+            <label>Preferred Developer Directory<input name="preferredDeveloperDirectory" placeholder="/Applications/Xcode.app/Contents/Developer"></label>
+            <label>Default Signing Identity<input name="defaultSigningIdentity" placeholder="Developer ID Application: Example Corp"></label>
+            <label>Default Notary Profile<input name="defaultNotaryKeychainProfile" placeholder="mastercontrol-notary"></label>
+            <label>Default Notary Team ID<input name="defaultNotaryTeamId" placeholder="ABCDE12345"></label>
+          </div>
+          <div class="wizard-toggles">
+            <label class="checkbox-field"><input type="checkbox" name="platform" value="macos" checked><span>macOS lane enabled</span></label>
+            <label class="checkbox-field"><input type="checkbox" name="platform" value="ios" checked><span>iOS lane enabled</span></label>
+            <label class="checkbox-field"><input type="checkbox" name="enabled" checked><span>Host is enabled for routing</span></label>
+          </div>
+          <div class="button-row">
+            <button type="submit">Create Apple Host</button>
+            <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  if (workflow.id === 'manage-forsetti-modules') {
+    const moduleOptions = moduleCatalog.map((moduleRecord) => `
+      <option value="${escapeHtml(moduleRecord.moduleId)}"${selectedAttr(moduleRecord.moduleId === (selectedModule?.moduleId || ''))}>
+        ${escapeHtml(moduleRecord.displayName || moduleRecord.moduleId)}
+      </option>
+    `).join('');
+    const moduleDetails = selectedModule ? [
+      selectedModule.displayName || selectedModule.moduleId,
+      selectedModule.version ? `Version: ${selectedModule.version}` : '',
+      selectedModule.moduleType ? `Type: ${selectedModule.moduleType}` : '',
+      `Status: ${selectedModule.statusSummary || (selectedModule.active ? 'active' : 'inactive')}`,
+      `Unlocked: ${selectedModule.unlocked ? 'yes' : 'no'}`,
+      `Protected: ${selectedModule.protectedModule ? 'yes' : 'no'}`,
+      safeArray(selectedModule.supportedPlatforms).length ? `Platforms: ${safeArray(selectedModule.supportedPlatforms).join(', ')}` : '',
+      safeArray(selectedModule.capabilitiesRequested).length ? `Capabilities: ${safeArray(selectedModule.capabilitiesRequested).join(', ')}` : '',
+      selectedModule.recommendedAction ? `Recommended action: ${selectedModule.recommendedAction}` : ''
+    ].filter(Boolean).join('\n') : 'No Forsetti module is selected.';
+
+    return `
+      <section class="wizard-shell">
+        ${statusMessage(workflow.status)}
+        <div class="wizard-step-list">
+          <article class="wizard-step-card"><p class="eyebrow">Step 1</p><h3>Choose the module</h3><p class="narrative-copy">Select the Forsetti module you want to activate, refresh, or disable.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 2</p><h3>Review its status</h3><p class="narrative-copy">Check version, platforms, protections, and recommended action before changing it.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 3</p><h3>Apply module action</h3><p class="narrative-copy">Install, update, or disable the module through the local orchestration runtime.</p></article>
+        </div>
+
+        <form class="surface-form wizard-form" data-form-kind="guided-forsetti-module">
+          <div class="wizard-field-grid">
+            <label>Forsetti Module
+              <select name="moduleId" data-guided-field="moduleId"${moduleCatalog.length ? '' : ' disabled'}>
+                ${moduleOptions || '<option value="">No modules available</option>'}
+              </select>
+            </label>
+            <label>Module Action
+              <select name="action">
+                <option value="install"${selectedAttr(workflow.moduleAction === 'install')}>Install or Enable</option>
+                <option value="update"${selectedAttr(workflow.moduleAction === 'update')}>Update or Reload</option>
+                <option value="disable"${selectedAttr(workflow.moduleAction === 'disable')}>Disable or Remove</option>
+              </select>
+            </label>
+          </div>
+          <article class="wizard-summary-card">
+            <p class="eyebrow">Module Status</p>
+            <h3>${escapeHtml(selectedModule?.displayName || 'Forsetti module status')}</h3>
+            <p class="narrative-copy">${multilineHtml(moduleDetails)}</p>
+          </article>
+          <div class="button-row">
+            <button type="button" class="route-button" data-action="refresh-guided-module-catalog">Refresh Catalog</button>
+            <button type="submit"${moduleCatalog.length ? '' : ' disabled'}>Apply Module Action</button>
+            <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  if (workflow.id === 'guided-import') {
+    const importMode = workflow.importMode || 'package';
+    return `
+      <section class="wizard-shell">
+        ${statusMessage(workflow.status)}
+        <div class="wizard-step-list">
+          <article class="wizard-step-card"><p class="eyebrow">Step 1</p><h3>Choose input type</h3><p class="narrative-copy">Select package, repository, or zip import based on what you already have.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 2</p><h3>Provide source details</h3><p class="narrative-copy">Point the orchestration server at the source and any manifest or branch details it needs.</p></article>
+          <article class="wizard-step-card"><p class="eyebrow">Step 3</p><h3>Launch onboarding</h3><p class="narrative-copy">Run the import through the local admin API and let the server stage the software for you.</p></article>
+        </div>
+
+        <div class="button-row">
+          <button type="button" class="${importMode === 'package' ? 'route-button active' : 'route-button'}" data-action="set-guided-import-mode" data-guided-import-mode="package">Installer Package</button>
+          <button type="button" class="${importMode === 'repo' ? 'route-button active' : 'route-button'}" data-action="set-guided-import-mode" data-guided-import-mode="repo">Bootstrap Repository</button>
+          <button type="button" class="${importMode === 'zip' ? 'route-button active' : 'route-button'}" data-action="set-guided-import-mode" data-guided-import-mode="zip">Zip Bundle</button>
+        </div>
+
+        <form class="surface-form wizard-form ${importMode === 'package' ? '' : 'is-hidden'}" data-form-kind="guided-import-package">
+          <div class="wizard-field-grid">
+            <label>Source URL or Path<input name="source" required></label>
+            <label>Kind
+              <select name="kind">${packageKindOptions('exe')}</select>
+            </label>
+          </div>
+          <label>Arguments<input name="arguments" placeholder="-EnvironmentName lab -Force"></label>
+          <label class="checkbox-field">
+            <input name="allowUntrustedExecution" type="checkbox">
+            <span>Explicitly approve an untrusted source for this run.</span>
+          </label>
+          <div class="button-row">
+            <button type="submit">Run Package Installer</button>
+            <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
+          </div>
+        </form>
+
+        <form class="surface-form wizard-form ${importMode === 'repo' ? '' : 'is-hidden'}" data-form-kind="guided-import-repo">
+          <div class="wizard-field-grid">
+            <label>Repository URL or Local Path<input name="repositoryUrl" required></label>
+            <label>Branch<input name="branch" value="main"></label>
+            <label>Manifest File<input name="manifestFile" value="mcp-bootstrap.json"></label>
+          </div>
+          <label class="checkbox-field">
+            <input name="allowUntrustedExecution" type="checkbox">
+            <span>Explicitly approve an untrusted repository source for this run.</span>
+          </label>
+          <div class="button-row">
+            <button type="submit">Install Repository</button>
+            <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
+          </div>
+        </form>
+
+        <form class="surface-form wizard-form ${importMode === 'zip' ? '' : 'is-hidden'}" data-form-kind="guided-import-zip">
+          <div class="wizard-field-grid">
+            <label>Source URL or Path<input name="source" required></label>
+            <label>Manifest File<input name="manifestFile" value="mcp-bootstrap.json"></label>
+          </div>
+          <label class="checkbox-field">
+            <input name="allowUntrustedExecution" type="checkbox">
+            <span>Explicitly approve an untrusted zip bundle for this run.</span>
+          </label>
+          <div class="button-row">
+            <button type="submit">Install Zip Bundle</button>
+            <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  return renderUnavailableView('Guided workflow unavailable', 'The selected setup workflow does not have browser content yet.');
+}
+
 function normalizeNavigationPointer(pointer) {
   return {
     id: pointer?.pointerID || pointer?.id || '',
@@ -612,6 +1166,7 @@ const state = {
   cluStatus: makeStatus('CLU governance operations are executed through the local admin API.', 'info'),
   settingsStatus: makeStatus('Settings are authored locally and committed through the configuration API.', 'info'),
   securityStatus: makeStatus('Security changes require explicit confirmation before unsafe modes are applied.', 'info'),
+  guidedWorkflow: defaultGuidedWorkflowState(),
   surfaceNotice: makeStatus('Browser host waiting for the first Forsetti surface snapshot.', 'info'),
   lastRefreshLabel: 'Pending'
 };
@@ -682,6 +1237,58 @@ function syncStateSelections() {
   }
   if (!state.exports.some((artifact) => artifact.id === state.selectedExportId)) {
     state.selectedExportId = state.exports[0]?.id || '';
+  }
+}
+
+async function refreshGuidedForsettiModuleCatalog() {
+  if (state.guidedWorkflow.id !== 'manage-forsetti-modules') {
+    return;
+  }
+
+  state.guidedWorkflow.status = makeStatus('Loading the Forsetti module catalog from the local admin API.', 'info');
+  renderGuidedWorkflowOverlay();
+
+  try {
+    const payload = await loadJson('/api/forsetti/modules');
+    const modules = safeArray(payload.modules);
+    const selectedModuleId = state.guidedWorkflow.moduleId;
+    state.guidedWorkflow.moduleCatalog = modules;
+    state.guidedWorkflow.moduleId = modules.some((moduleRecord) => moduleRecord.moduleId === selectedModuleId)
+      ? selectedModuleId
+      : (modules[0]?.moduleId || '');
+    state.guidedWorkflow.moduleAction = recommendedForsettiAction(
+      modules.find((moduleRecord) => moduleRecord.moduleId === state.guidedWorkflow.moduleId) || modules[0]
+    );
+    state.guidedWorkflow.status = makeStatus(payload.message || 'Forsetti module catalog loaded.', 'success');
+  } catch (error) {
+    state.guidedWorkflow.moduleCatalog = [];
+    state.guidedWorkflow.moduleId = '';
+    state.guidedWorkflow.status = makeStatus(error.message || 'Unable to load the Forsetti module catalog.', 'error');
+  }
+
+  renderGuidedWorkflowOverlay();
+}
+
+async function openGuidedWorkflow(workflowId) {
+  const definition = guidedWorkflowDefinition(workflowId);
+  if (!definition) {
+    setSurfaceNotice(`Unknown guided workflow request: ${workflowId}`, 'warning');
+    renderSurfaceSummary();
+    return;
+  }
+
+  state.overlayRouteId = '';
+  state.guidedWorkflow = defaultGuidedWorkflowState();
+  state.guidedWorkflow.id = workflowId;
+  state.guidedWorkflow.providerCapabilityId = dashboardSnapshot().providerCapabilities[0]?.providerId || '';
+  state.guidedWorkflow.importMode = 'package';
+  state.guidedWorkflow.status = makeStatus(definition.description, 'info');
+  state.overlayWorkspaceDestination = definition.destinationId || '';
+
+  renderGuidedWorkflowOverlay();
+
+  if (workflowId === 'manage-forsetti-modules') {
+    await refreshGuidedForsettiModuleCatalog();
   }
 }
 
@@ -864,9 +1471,11 @@ function renderSurfaceSummary() {
   const config = currentConfig();
   const onlineEndpoints = snapshot.endpoints.filter((endpoint) => String(endpoint.status || '').toLowerCase() === 'online').length;
   const enabledProviders = snapshot.providers.filter((provider) => provider.enabled).length;
-  const currentOverlay = state.overlayRouteId
-    ? state.surface.overlayRoutes.find((route) => route.id === state.overlayRouteId)?.label || 'Overlay open'
-    : 'No overlay open';
+  const currentOverlay = state.guidedWorkflow.id
+    ? guidedWorkflowDefinition(state.guidedWorkflow.id)?.title || 'Guided setup open'
+    : state.overlayRouteId
+      ? state.surface.overlayRoutes.find((route) => route.id === state.overlayRouteId)?.label || 'Overlay open'
+      : 'No overlay open';
 
   surfaceSummary.innerHTML = `
     <div class="summary-grid">
@@ -934,6 +1543,19 @@ function renderOverviewView() {
         <button type="button" data-open-overlay="exports-overlay">Preview Exports</button>
         <button type="button" data-destination="security">Inspect Security</button>
       </div>
+
+      <article class="panel-block">
+        <p class="eyebrow">Guided Setup</p>
+        <h3>Fast Start Workflows</h3>
+        <p class="narrative-copy">Use walkthroughs instead of raw admin forms when you need to connect models, publish MCP lanes, create sub-agents, or manage Forsetti modules quickly.</p>
+        ${renderGuidedWorkflowLaunchers([
+          'connect-model',
+          'new-mcp',
+          'new-subagent',
+          'manage-forsetti-modules',
+          'guided-import'
+        ])}
+      </article>
 
       <div class="split-grid">
         ${narrativePanel('Mission Brief', 'Control Deck', missionBrief)}
@@ -1067,6 +1689,17 @@ function renderRuntimeView() {
         ${metricCard('Apple Hosts', formatCount(appleHosts.length), 'remote toolchains')}
         ${metricCard('Gov Servers', formatCount(governanceServers.length), 'platform enforcement')}
       </div>
+
+      <article class="panel-block">
+        <p class="eyebrow">Guided Runtime Setup</p>
+        <h3>Publish Shared Lanes</h3>
+        <p class="narrative-copy">Walk through the core runtime setup flows instead of filling out the runtime editors by hand.</p>
+        ${renderGuidedWorkflowLaunchers([
+          'new-mcp',
+          'new-subagent',
+          'new-apple-host'
+        ])}
+      </article>
 
       <div class="split-grid">
         <article class="panel-block">
@@ -1370,6 +2003,22 @@ function renderCluView() {
         ${narrativePanel('Recommended Actions', 'Operator Queue', actionNarrative)}
       </div>
 
+      <article class="panel-block">
+        <p class="eyebrow">Guided Setup</p>
+        <h3>CLU Quick Actions</h3>
+        <p class="narrative-copy">Launch the same setup workflows the desktop shell uses so operators can connect AI models, assign responsibilities, publish runtime lanes, manage Forsetti modules, and onboard software without hunting for raw editors.</p>
+        ${renderGuidedWorkflowLaunchers([
+          'connect-model',
+          'assign-responsibility',
+          'new-mcp',
+          'new-subagent',
+          'new-subagent-group',
+          'new-apple-host',
+          'manage-forsetti-modules',
+          'guided-import'
+        ])}
+      </article>
+
       <div class="split-grid">
         <article class="panel-block">
           <p class="eyebrow">Operator Checklist</p>
@@ -1594,6 +2243,17 @@ function renderProvidersView() {
         ${metricCard('Execution History', formatCount(snapshot.providerExecutionHistory.length), 'recent provider runs')}
         ${metricCard('Global AI Autonomy', config.aiAutonomyEnabled ? 'On' : 'Off', 'instance-wide switch')}
       </div>
+
+      <article class="panel-block">
+        <p class="eyebrow">Guided Provider Setup</p>
+        <h3>Connect And Assign Models</h3>
+        <p class="narrative-copy">Use guided workflows when you want to bring new models online, define ownership, or create specialist groups without working through the full provider editor stack.</p>
+        ${renderGuidedWorkflowLaunchers([
+          'connect-model',
+          'assign-responsibility',
+          'new-subagent-group'
+        ])}
+      </article>
 
       ${statusMessage(state.providerStatus)}
 
@@ -1999,6 +2659,25 @@ function renderOverlayRoute() {
   }
 }
 
+function renderGuidedWorkflowOverlay() {
+  const workflow = state.guidedWorkflow || defaultGuidedWorkflowState();
+  const definition = guidedWorkflowDefinition(workflow.id);
+  if (!definition) {
+    return;
+  }
+
+  overlayEyebrow.textContent = definition.eyebrow;
+  overlayTitle.textContent = definition.title;
+  overlayDescription.textContent = definition.description;
+  state.overlayWorkspaceDestination = definition.destinationId || '';
+  overlayWorkspaceButton.hidden = !state.overlayWorkspaceDestination;
+  surfaceOverlayContent.innerHTML = renderGuidedWorkflowContent();
+
+  if (!surfaceOverlayDialog.open) {
+    surfaceOverlayDialog.showModal();
+  }
+}
+
 function renderShell(options = {}) {
   const preserveDynamicContent = !!options.preserveDynamicContent;
   syncStateSelections();
@@ -2008,7 +2687,9 @@ function renderShell(options = {}) {
   renderViewChrome();
   if (!preserveDynamicContent) {
     renderCurrentContent();
-    if (state.overlayRouteId) {
+    if (state.guidedWorkflow.id) {
+      renderGuidedWorkflowOverlay();
+    } else if (state.overlayRouteId) {
       renderOverlayRoute();
     }
   }
@@ -2364,6 +3045,284 @@ async function submitProviderCredentialsForm(form) {
   }
 }
 
+async function completeGuidedWorkflow({ destinationId, statusBucket, message }) {
+  if (statusBucket === 'provider') {
+    state.providerStatus = makeStatus(message, 'success');
+  } else if (statusBucket === 'runtime') {
+    state.runtimeStatus = makeStatus(message, 'success');
+  } else if (statusBucket === 'clu') {
+    state.cluStatus = makeStatus(message, 'success');
+  } else if (statusBucket === 'import') {
+    state.importStatus = makeStatus(message, 'success');
+  }
+
+  if (destinationId) {
+    state.currentDestination = destinationId;
+  }
+
+  closeOverlayDialog('cancel');
+  await refreshDashboard({ preserveDynamicContent: false });
+}
+
+async function submitGuidedProviderForm(form) {
+  const capability = selectedGuidedProviderCapability();
+  if (!capability) {
+    state.guidedWorkflow.status = makeStatus('Select a provider module before creating the route.', 'warning');
+    renderGuidedWorkflowOverlay();
+    return;
+  }
+
+  const id = form.elements.id.value.trim();
+  const displayName = form.elements.displayName.value.trim();
+  const baseUrl = form.elements.baseUrl.value.trim();
+  if (!id || !displayName || !baseUrl) {
+    state.guidedWorkflow.status = makeStatus('Provider route ID, display name, and base URL are all required.', 'warning');
+    renderGuidedWorkflowOverlay();
+    return;
+  }
+
+  try {
+    const providerResult = await loadJson('/api/providers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id,
+        displayName,
+        baseUrl,
+        modelId: form.elements.modelId.value.trim(),
+        kind: capability.kind || 'generic',
+        enabled: form.elements.enabled.checked,
+        allowAutonomousControl: form.elements.allowAutonomousControl.checked
+      })
+    });
+
+    const values = {};
+    for (const element of Array.from(form.elements)) {
+      if (!element?.name || !element.name.startsWith('credential:') || !element.value) {
+        continue;
+      }
+      values[element.name.slice('credential:'.length)] = element.value;
+    }
+    if (Object.keys(values).length) {
+      await loadJson('/api/providers/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerId: id, values })
+      });
+    }
+
+    const targetId = form.elements.targetId.value;
+    if (targetId) {
+      const target = dashboardSnapshot().providerAssignmentTargets.find((candidate) => candidate.targetId === targetId);
+      await loadJson('/api/providers/assignments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetId,
+          kind: target?.kind || 'role',
+          providerId: id
+        })
+      });
+    }
+
+    await completeGuidedWorkflow({
+      destinationId: 'providers',
+      statusBucket: 'provider',
+      message: providerResult.message || `Connected AI model route '${displayName}'.`
+    });
+  } catch (error) {
+    state.guidedWorkflow.status = makeStatus(error.message, 'error');
+    renderGuidedWorkflowOverlay();
+  }
+}
+
+async function submitGuidedProviderAssignmentForm(form) {
+  const targetSelect = form.elements.targetId;
+  const selectedOption = targetSelect.options[targetSelect.selectedIndex];
+  try {
+    const result = await loadJson('/api/providers/assignments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        targetId: targetSelect.value,
+        kind: selectedOption?.dataset.kind || 'role',
+        providerId: form.elements.providerId.value
+      })
+    });
+
+    await completeGuidedWorkflow({
+      destinationId: 'providers',
+      statusBucket: 'provider',
+      message: result.message || 'Saved provider responsibility mapping.'
+    });
+  } catch (error) {
+    state.guidedWorkflow.status = makeStatus(error.message, 'error');
+    renderGuidedWorkflowOverlay();
+  }
+}
+
+async function submitGuidedMcpServerForm(form) {
+  try {
+    const result = await loadJson('/api/runtime/mcp-servers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: form.elements.id.value,
+        displayName: form.elements.displayName.value,
+        kind: 'mcp_server',
+        host: form.elements.host.value,
+        port: coerceInteger(form.elements.port.value, 0),
+        protocol: form.elements.protocol.value || 'http',
+        description: form.elements.description.value,
+        routePath: form.elements.routePath.value || '/mcp',
+        specialization: '',
+        userDefined: true
+      })
+    });
+
+    await completeGuidedWorkflow({
+      destinationId: 'runtime',
+      statusBucket: 'runtime',
+      message: result.message || `Published MCP server lane '${form.elements.displayName.value}'.`
+    });
+  } catch (error) {
+    state.guidedWorkflow.status = makeStatus(error.message, 'error');
+    renderGuidedWorkflowOverlay();
+  }
+}
+
+async function submitGuidedSubAgentForm(form) {
+  try {
+    const result = await loadJson('/api/runtime/subagents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: form.elements.id.value,
+        displayName: form.elements.displayName.value,
+        kind: 'sub_agent',
+        host: form.elements.host.value,
+        port: coerceInteger(form.elements.port.value, 0),
+        protocol: form.elements.protocol.value || 'virtual',
+        description: form.elements.description.value,
+        routePath: form.elements.routePath.value,
+        specialization: form.elements.specialization.value,
+        userDefined: true
+      })
+    });
+
+    await completeGuidedWorkflow({
+      destinationId: 'runtime',
+      statusBucket: 'runtime',
+      message: result.message || `Created sub-agent lane '${form.elements.displayName.value}'.`
+    });
+  } catch (error) {
+    state.guidedWorkflow.status = makeStatus(error.message, 'error');
+    renderGuidedWorkflowOverlay();
+  }
+}
+
+async function submitGuidedSubAgentGroupForm(form) {
+  try {
+    const memberTargetIds = Array.from(form.querySelectorAll('input[name="memberTargetId"]:checked')).map((input) => input.value);
+    const result = await loadJson('/api/providers/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        groupId: form.elements.groupId.value,
+        displayName: form.elements.displayName.value,
+        description: form.elements.description.value,
+        memberTargetIds
+      })
+    });
+
+    await completeGuidedWorkflow({
+      destinationId: 'providers',
+      statusBucket: 'provider',
+      message: result.message || `Created sub-agent group '${form.elements.displayName.value}'.`
+    });
+  } catch (error) {
+    state.guidedWorkflow.status = makeStatus(error.message, 'error');
+    renderGuidedWorkflowOverlay();
+  }
+}
+
+async function submitGuidedAppleHostForm(form) {
+  try {
+    const platforms = Array.from(form.querySelectorAll('input[name="platform"]:checked')).map((input) => input.value);
+    const result = await loadJson('/api/platform-services/apple-hosts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        hostId: form.elements.hostId.value,
+        displayName: form.elements.displayName.value,
+        transport: form.elements.transport.value,
+        platforms,
+        address: form.elements.address.value,
+        port: coerceInteger(form.elements.port.value, 0),
+        username: form.elements.username.value,
+        serviceBaseUrl: form.elements.serviceBaseUrl.value,
+        companionHealthPath: '/healthz',
+        companionExecutePath: '/execute',
+        preferredDeveloperDirectory: form.elements.preferredDeveloperDirectory.value,
+        defaultSigningIdentity: form.elements.defaultSigningIdentity.value,
+        defaultNotaryKeychainProfile: form.elements.defaultNotaryKeychainProfile.value,
+        defaultNotaryTeamId: form.elements.defaultNotaryTeamId.value,
+        enabled: form.elements.enabled.checked
+      })
+    });
+
+    await completeGuidedWorkflow({
+      destinationId: 'runtime',
+      statusBucket: 'runtime',
+      message: result.message || `Registered Apple host '${form.elements.displayName.value}'.`
+    });
+  } catch (error) {
+    state.guidedWorkflow.status = makeStatus(error.message, 'error');
+    renderGuidedWorkflowOverlay();
+  }
+}
+
+async function submitGuidedForsettiModuleForm(form) {
+  try {
+    const result = await loadJson('/api/forsetti/modules/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        moduleId: form.elements.moduleId.value,
+        action: form.elements.action.value
+      })
+    });
+
+    await completeGuidedWorkflow({
+      destinationId: 'clu',
+      statusBucket: 'clu',
+      message: result.message || 'Applied Forsetti module action.'
+    });
+  } catch (error) {
+    state.guidedWorkflow.status = makeStatus(error.message, 'error');
+    renderGuidedWorkflowOverlay();
+  }
+}
+
+async function submitGuidedImportForm(url, payload) {
+  try {
+    const result = await loadJson(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    await completeGuidedWorkflow({
+      destinationId: 'imports',
+      statusBucket: 'import',
+      message: result.message || 'Import request submitted successfully.'
+    });
+  } catch (error) {
+    state.guidedWorkflow.status = makeStatus(error.message, 'error');
+    renderGuidedWorkflowOverlay();
+  }
+}
+
 async function submitSubAgentForm(form) {
   try {
     const result = await loadJson('/api/runtime/subagents', {
@@ -2620,6 +3579,12 @@ function handleSurfaceClick(event) {
     return;
   }
 
+  const workflowButton = event.target.closest('[data-workflow-id]');
+  if (workflowButton && workflowButton.dataset.action === 'open-guided-workflow') {
+    openGuidedWorkflow(workflowButton.dataset.workflowId);
+    return;
+  }
+
   const toolbarButton = event.target.closest('[data-toolbar-id]');
   if (toolbarButton) {
     const item = state.surface.toolbarItems.find((candidate) => candidate.id === toolbarButton.dataset.toolbarId);
@@ -2694,6 +3659,23 @@ function handleSurfaceClick(event) {
   }
 
   const action = actionButton.dataset.action;
+  if (action === 'open-guided-workflow') {
+    openGuidedWorkflow(actionButton.dataset.workflowId);
+    return;
+  }
+  if (action === 'close-guided-workflow') {
+    closeOverlayDialog('cancel');
+    return;
+  }
+  if (action === 'refresh-guided-module-catalog') {
+    refreshGuidedForsettiModuleCatalog();
+    return;
+  }
+  if (action === 'set-guided-import-mode') {
+    state.guidedWorkflow.importMode = actionButton.dataset.guidedImportMode || 'package';
+    renderGuidedWorkflowOverlay();
+    return;
+  }
   if (action === 'reset-provider-draft') {
     state.providerDraft = defaultProviderDraft();
     renderShell();
@@ -2846,6 +3828,22 @@ function handleSurfaceClick(event) {
 }
 
 function handleDynamicChange(event) {
+  const guidedField = event.target.closest('[data-guided-field]');
+  if (guidedField) {
+    const field = guidedField.dataset.guidedField;
+    if (field === 'providerCapabilityId') {
+      state.guidedWorkflow.providerCapabilityId = guidedField.value || '';
+      renderGuidedWorkflowOverlay();
+      return;
+    }
+    if (field === 'moduleId') {
+      state.guidedWorkflow.moduleId = guidedField.value || '';
+      state.guidedWorkflow.moduleAction = recommendedForsettiAction(selectedGuidedForsettiModule());
+      renderGuidedWorkflowOverlay();
+      return;
+    }
+  }
+
   const exportSelector = event.target.closest('[data-role="export-selector"]');
   if (exportSelector) {
     state.selectedExportId = exportSelector.value;
@@ -2882,24 +3880,52 @@ async function handleFormSubmit(event) {
     await submitProviderCredentialsForm(form);
     return;
   }
+  if (kind === 'guided-provider') {
+    await submitGuidedProviderForm(form);
+    return;
+  }
+  if (kind === 'guided-provider-assignment') {
+    await submitGuidedProviderAssignmentForm(form);
+    return;
+  }
   if (kind === 'mcp-server') {
     await submitMcpServerForm(form);
+    return;
+  }
+  if (kind === 'guided-mcp-server') {
+    await submitGuidedMcpServerForm(form);
     return;
   }
   if (kind === 'apple-host') {
     await submitAppleHostForm(form);
     return;
   }
+  if (kind === 'guided-apple-host') {
+    await submitGuidedAppleHostForm(form);
+    return;
+  }
   if (kind === 'subagent') {
     await submitSubAgentForm(form);
+    return;
+  }
+  if (kind === 'guided-subagent') {
+    await submitGuidedSubAgentForm(form);
     return;
   }
   if (kind === 'subagent-group') {
     await submitSubAgentGroupForm(form);
     return;
   }
+  if (kind === 'guided-subagent-group') {
+    await submitGuidedSubAgentGroupForm(form);
+    return;
+  }
   if (kind === 'provider-assignment') {
     await submitProviderAssignmentForm(form);
+    return;
+  }
+  if (kind === 'guided-forsetti-module') {
+    await submitGuidedForsettiModuleForm(form);
     return;
   }
   if (kind === 'provider-execution') {
@@ -2931,10 +3957,39 @@ async function handleFormSubmit(event) {
       manifestFile: currentForm.elements.manifestFile.value || 'mcp-bootstrap.json',
       allowUntrustedExecution: currentForm.elements.allowUntrustedExecution.checked
     }));
+    return;
+  }
+  if (kind === 'guided-import-package') {
+    await submitGuidedImportForm('/api/install/package', {
+      source: form.elements.source.value,
+      localPath: '',
+      kind: form.elements.kind.value,
+      arguments: form.elements.arguments.value,
+      allowUntrustedExecution: form.elements.allowUntrustedExecution.checked
+    });
+    return;
+  }
+  if (kind === 'guided-import-repo') {
+    await submitGuidedImportForm('/api/install/repo', {
+      repositoryUrl: form.elements.repositoryUrl.value,
+      branch: form.elements.branch.value || 'main',
+      manifestFile: form.elements.manifestFile.value || 'mcp-bootstrap.json',
+      allowUntrustedExecution: form.elements.allowUntrustedExecution.checked
+    });
+    return;
+  }
+  if (kind === 'guided-import-zip') {
+    await submitGuidedImportForm('/api/install/zip', {
+      source: form.elements.source.value,
+      manifestFile: form.elements.manifestFile.value || 'mcp-bootstrap.json',
+      allowUntrustedExecution: form.elements.allowUntrustedExecution.checked
+    });
+    return;
   }
 }
 
 function openOverlayRoute(routeId) {
+  state.guidedWorkflow = defaultGuidedWorkflowState();
   state.overlayRouteId = routeId;
   renderOverlayRoute();
   renderSurfaceSummary();
@@ -2956,6 +4011,7 @@ surfaceOverlayDialog.addEventListener('close', () => {
   const openInWorkspace = surfaceOverlayDialog.returnValue === 'workspace' && state.overlayWorkspaceDestination;
   const destination = state.overlayWorkspaceDestination;
   state.overlayRouteId = '';
+  state.guidedWorkflow = defaultGuidedWorkflowState();
   state.overlayWorkspaceDestination = '';
   if (openInWorkspace) {
     state.currentDestination = destination;
