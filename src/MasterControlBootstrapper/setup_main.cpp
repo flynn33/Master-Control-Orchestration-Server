@@ -10,6 +10,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <cstddef>
+#include <cwctype>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -23,6 +25,9 @@ constexpr wchar_t kBootstrapperName[] = L"MasterControlBootstrapper.exe";
 constexpr wchar_t kShellBinaryName[] = L"MasterControlShell.exe";
 constexpr wchar_t kLogDirectoryEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_LOG_DIR";
 constexpr wchar_t kDefaultInstallLeaf[] = L"Master Control Orchestration Server";
+constexpr wchar_t kLegacyInstallLeaf[] = L"Master Control Program";
+constexpr wchar_t kServiceName[] = L"MasterControlProgram";
+constexpr wchar_t kUninstallRegistryKey[] = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MasterControlProgram";
 
 struct LauncherOptions final {
     std::filesystem::path installDirectory;
@@ -113,7 +118,177 @@ std::optional<std::wstring> readEnvironmentVariable(const wchar_t* name) {
     return value;
 }
 
+std::optional<std::wstring> queryRegistryStringFromPath(const std::wstring& subKey, const wchar_t* valueName) {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, subKey.c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS) {
+        return std::nullopt;
+    }
+
+    DWORD type = 0;
+    DWORD bytesNeeded = 0;
+    if (RegQueryValueExW(key, valueName, nullptr, &type, nullptr, &bytesNeeded) != ERROR_SUCCESS ||
+        type != REG_SZ ||
+        bytesNeeded == 0) {
+        RegCloseKey(key);
+        return std::nullopt;
+    }
+
+    std::wstring value(bytesNeeded / sizeof(wchar_t), L'\0');
+    const auto result = RegQueryValueExW(
+        key,
+        valueName,
+        nullptr,
+        &type,
+        reinterpret_cast<LPBYTE>(value.data()),
+        &bytesNeeded);
+    RegCloseKey(key);
+    if (result != ERROR_SUCCESS) {
+        return std::nullopt;
+    }
+
+    if (!value.empty() && value.back() == L'\0') {
+        value.pop_back();
+    }
+    return value;
+}
+
+std::wstring extractExecutablePath(std::wstring commandLine) {
+    while (!commandLine.empty() && iswspace(commandLine.front())) {
+        commandLine.erase(commandLine.begin());
+    }
+
+    if (commandLine.empty()) {
+        return {};
+    }
+
+    if (commandLine.front() == L'"') {
+        const auto closingQuote = commandLine.find(L'"', 1);
+        if (closingQuote != std::wstring::npos) {
+            return commandLine.substr(1, closingQuote - 1);
+        }
+    }
+
+    const auto separator = commandLine.find(L' ');
+    return separator == std::wstring::npos ? commandLine : commandLine.substr(0, separator);
+}
+
+bool directoryContainsInstallPayload(const std::filesystem::path& directory) {
+    std::error_code error;
+    if (!std::filesystem::exists(directory, error) || !std::filesystem::is_directory(directory, error)) {
+        return false;
+    }
+
+    if (std::filesystem::exists(directory / kBootstrapperName, error) ||
+        std::filesystem::exists(directory / "MasterControlServiceHost.exe", error) ||
+        std::filesystem::exists(directory / kShellBinaryName, error) ||
+        std::filesystem::exists(directory / "installation-state.json", error)) {
+        return true;
+    }
+
+    for (const auto* shareLeaf : { L"MasterControlOrchestrationServer", L"MasterControlProgram" }) {
+        if (std::filesystem::exists(directory / "share" / shareLeaf / "ForsettiManifests", error) ||
+            std::filesystem::exists(directory / "share" / shareLeaf / "web", error)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+std::optional<std::filesystem::path> normalizeInstalledDirectoryCandidate(const std::filesystem::path& candidate) {
+    std::error_code error;
+    const auto normalized = std::filesystem::weakly_canonical(candidate, error);
+    const auto resolved = error ? candidate.lexically_normal() : normalized;
+    if (!directoryContainsInstallPayload(resolved)) {
+        return std::nullopt;
+    }
+
+    return resolved;
+}
+
+std::optional<std::filesystem::path> detectInstalledDirectoryFromUninstallRegistration() {
+    const auto installLocation = queryRegistryStringFromPath(kUninstallRegistryKey, L"InstallLocation");
+    if (!installLocation.has_value() || installLocation->empty()) {
+        return std::nullopt;
+    }
+
+    return normalizeInstalledDirectoryCandidate(std::filesystem::path(*installLocation));
+}
+
+std::optional<std::filesystem::path> detectInstalledDirectoryFromServiceRegistration() {
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (scm == nullptr) {
+        return std::nullopt;
+    }
+
+    SC_HANDLE service = OpenServiceW(scm, kServiceName, SERVICE_QUERY_CONFIG);
+    if (service == nullptr) {
+        CloseServiceHandle(scm);
+        return std::nullopt;
+    }
+
+    DWORD bytesNeeded = 0;
+    QueryServiceConfigW(service, nullptr, 0, &bytesNeeded);
+    if (bytesNeeded == 0) {
+        CloseServiceHandle(service);
+        CloseServiceHandle(scm);
+        return std::nullopt;
+    }
+
+    std::vector<std::byte> buffer(bytesNeeded);
+    auto* configuration = reinterpret_cast<QUERY_SERVICE_CONFIGW*>(buffer.data());
+    const auto result = QueryServiceConfigW(service, configuration, bytesNeeded, &bytesNeeded);
+    CloseServiceHandle(service);
+    CloseServiceHandle(scm);
+    if (result == 0 || configuration->lpBinaryPathName == nullptr) {
+        return std::nullopt;
+    }
+
+    const auto executable = extractExecutablePath(configuration->lpBinaryPathName);
+    if (executable.empty()) {
+        return std::nullopt;
+    }
+
+    return normalizeInstalledDirectoryCandidate(std::filesystem::path(executable).parent_path());
+}
+
+std::optional<std::filesystem::path> detectLegacyInstalledDirectory() {
+    std::vector<std::filesystem::path> candidates;
+    if (const auto folder = tryKnownFolder(FOLDERID_ProgramFiles); folder.has_value()) {
+        candidates.push_back(*folder / kLegacyInstallLeaf);
+    }
+    if (const auto env = readEnvironmentVariable(L"ProgramW6432"); env.has_value() && !env->empty()) {
+        candidates.emplace_back(std::filesystem::path(*env) / kLegacyInstallLeaf);
+    }
+    if (const auto env = readEnvironmentVariable(L"ProgramFiles"); env.has_value() && !env->empty()) {
+        candidates.emplace_back(std::filesystem::path(*env) / kLegacyInstallLeaf);
+    }
+    if (const auto env = readEnvironmentVariable(L"SystemDrive"); env.has_value() && !env->empty()) {
+        candidates.emplace_back(std::filesystem::path(*env) / "Program Files" / kLegacyInstallLeaf);
+    }
+
+    for (const auto& candidate : candidates) {
+        if (const auto normalized = normalizeInstalledDirectoryCandidate(candidate); normalized.has_value()) {
+            return normalized;
+        }
+    }
+
+    return std::nullopt;
+}
+
 std::filesystem::path defaultInstallDirectory() {
+    if (const auto installedDirectory = detectInstalledDirectoryFromUninstallRegistration(); installedDirectory.has_value()) {
+        return *installedDirectory;
+    }
+
+    if (const auto installedDirectory = detectInstalledDirectoryFromServiceRegistration(); installedDirectory.has_value()) {
+        return *installedDirectory;
+    }
+
+    if (const auto legacyDirectory = detectLegacyInstalledDirectory(); legacyDirectory.has_value()) {
+        return *legacyDirectory;
+    }
+
     if (const auto programFilesPath = tryKnownFolder(FOLDERID_ProgramFiles); programFilesPath.has_value()) {
         return *programFilesPath / kDefaultInstallLeaf;
     }

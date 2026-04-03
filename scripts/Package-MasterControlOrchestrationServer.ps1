@@ -149,8 +149,10 @@ $zipPath = Join-Path $OutputRoot ($packageName + ".zip")
 $validationPath = Join-Path $OutputRoot ($packageName + ".preflight.json")
 $metadataPath = Join-Path $stageDirectory "PACKAGE-METADATA.json"
 $instructionsPath = Join-Path $stageDirectory "INSTALL.txt"
+$startHerePath = Join-Path $stageDirectory "START-HERE.txt"
 $installLauncherPath = Join-Path $stageDirectory "Install-MasterControlOrchestrationServer.ps1"
 $setupPath = Join-Path $stageDirectory "MasterControlOrchestrationServerSetup.exe"
+$primaryInstallerPath = Join-Path $stageDirectory "Install Master Control Orchestration Server.exe"
 $validationTarget = Join-Path $OutputRoot ($packageName + ".validation-target")
 
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
@@ -187,6 +189,10 @@ Invoke-DevShell -Commands @(
 $vcRuntimeFiles = @(Get-ChildItem -Path $vcRuntimeDirectory -Filter *.dll -File | Sort-Object Name)
 foreach ($vcRuntimeFile in $vcRuntimeFiles) {
     Copy-Item -Path $vcRuntimeFile.FullName -Destination (Join-Path $stageDirectory $vcRuntimeFile.Name) -Force
+}
+
+if (Test-Path $setupPath) {
+    Copy-Item -Path $setupPath -Destination $primaryInstallerPath -Force
 }
 
 $installLauncher = @'
@@ -363,19 +369,21 @@ Commit: $gitCommit
 Quick start
 1. Extract this package to a writable local folder.
 2. Keep the bundled VC++ runtime DLL files beside the executables.
-3. Prefer .\MasterControlOrchestrationServerSetup.exe for the standard interactive install experience.
+3. Run .\Install Master Control Orchestration Server.exe first for the standard interactive install experience.
 4. Use .\Install-MasterControlOrchestrationServer.ps1 as the diagnostic fallback because it always writes a desktop log and will request elevation for the default managed install path.
 5. Open PowerShell only when you need the bootstrapper or fallback launcher directly.
 6. Run a preflight check before installing.
 7. If included, review RELEASE-READINESS.md before target-host deployment validation.
 
 Fully managed install (requires Administrator)
+.\Install Master Control Orchestration Server.exe
 .\MasterControlOrchestrationServerSetup.exe
 .\Install-MasterControlOrchestrationServer.ps1 -InstallDirectory "C:\Program Files\Master Control Orchestration Server"
 .\MasterControlBootstrapper.exe preflight "C:\Program Files\Master Control Orchestration Server" --json
 .\MasterControlBootstrapper.exe install "C:\Program Files\Master Control Orchestration Server" --json
 
 Non-admin test install
+.\Install Master Control Orchestration Server.exe --install-directory "$env:LOCALAPPDATA\MasterControlOrchestrationServer" --skip-service --skip-firewall --skip-uninstall-registration --quiet
 .\MasterControlOrchestrationServerSetup.exe --install-directory "$env:LOCALAPPDATA\MasterControlOrchestrationServer" --skip-service --skip-firewall --skip-uninstall-registration --quiet
 .\Install-MasterControlOrchestrationServer.ps1 -InstallDirectory "$env:LOCALAPPDATA\MasterControlOrchestrationServer" -SkipService -SkipFirewall -SkipUninstallRegistration
 .\MasterControlBootstrapper.exe preflight "$env:LOCALAPPDATA\MasterControlOrchestrationServer" --skip-service --skip-firewall --skip-uninstall-registration --json
@@ -388,6 +396,22 @@ Uninstall
 .\MasterControlBootstrapper.exe uninstall "C:\Program Files\Master Control Orchestration Server" --json
 "@
 Set-Content -Path $instructionsPath -Value $instructions -Encoding UTF8
+
+$startHere = @"
+MASTER CONTROL ORCHESTRATION SERVER
+
+START HERE
+
+Run this file first:
+.\Install Master Control Orchestration Server.exe
+
+If you need a diagnostic fallback that always writes a desktop log:
+.\Install-MasterControlOrchestrationServer.ps1
+
+More details:
+.\INSTALL.txt
+"@
+Set-Content -Path $startHerePath -Value $startHere -Encoding UTF8
 
 $preflightResult = Invoke-CapturedProcess -FilePath (Join-Path $stageDirectory "MasterControlBootstrapper.exe") -Arguments @(
     "preflight",
@@ -423,8 +447,10 @@ $metadata = [pscustomobject][ordered]@{
     zipPath = $zipPath
     validationPath = $validationPath
     bootstrapperPath = (Join-Path $stageDirectory "MasterControlBootstrapper.exe")
+    primaryInstallerPath = $primaryInstallerPath
     setupPath = $setupPath
     installLauncherPath = $installLauncherPath
+    startHerePath = $startHerePath
     serviceHostPath = (Join-Path $stageDirectory "MasterControlServiceHost.exe")
     shellPath = (Join-Path $stageDirectory "MasterControlShell.exe")
     manifestRoot = (Join-Path $stageDirectory "share\MasterControlOrchestrationServer\ForsettiManifests")
@@ -475,10 +501,12 @@ Compress-Archive -Path $stageDirectory -DestinationPath $zipPath -Force
     zipPath = $zipPath
     validationPath = $validationPath
     bootstrapperPath = (Join-Path $stageDirectory "MasterControlBootstrapper.exe")
+    primaryInstallerPath = $primaryInstallerPath
     setupPath = $setupPath
     packageMetadataPath = $metadataPath
     installInstructionsPath = $instructionsPath
     installLauncherPath = $installLauncherPath
+    startHerePath = $startHerePath
     vcRuntimeDirectory = $vcRuntimeDirectory
     vcRuntimeFiles = @($vcRuntimeFiles | ForEach-Object { $_.Name })
     readinessJsonPath = if ($metadata.PSObject.Properties.Name -contains "readinessJsonPath") { $metadata.readinessJsonPath } else { "" }
