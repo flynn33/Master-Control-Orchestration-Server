@@ -3,6 +3,7 @@
 // Proprietary and Confidential.
 
 #include "MasterControl/MasterControlDefaults.h"
+#include "InstallerLogSupport.h"
 
 #include <nlohmann/json.hpp>
 
@@ -813,6 +814,25 @@ std::filesystem::path bootstrapperLogDirectory() {
     return executableDirectory();
 }
 
+std::string bootstrapperLogMessage(const bool succeeded, const nlohmann::json& payload) {
+    if (payload.contains("message") && payload.at("message").is_string()) {
+        return payload.at("message").get<std::string>();
+    }
+
+    if (payload.contains("error") && payload.at("error").is_string()) {
+        return payload.at("error").get<std::string>();
+    }
+
+    if (payload.contains("issues") && payload.at("issues").is_array() && !payload.at("issues").empty()) {
+        const auto& firstIssue = payload.at("issues").front();
+        if (firstIssue.is_string()) {
+            return firstIssue.get<std::string>();
+        }
+    }
+
+    return succeeded ? "Bootstrapper action completed successfully." : "Bootstrapper action failed.";
+}
+
 void writeBootstrapperActionLog(const std::wstring& mode,
                                 const bool succeeded,
                                 const std::filesystem::path& installDirectory,
@@ -835,14 +855,27 @@ void writeBootstrapperActionLog(const std::wstring& mode,
         const auto logPath = logDirectory /
             (L"MasterControlOrchestrationServer-" + action + L"-" + wideFromUtf8(succeeded ? "succeeded" : "failed") +
              L"-" + wideFromUtf8(localTimestampForFileName()) + L".txt");
+        const auto runId = MasterControl::InstallerLogSupport::runId();
+        const auto persistentPaths =
+            MasterControl::InstallerLogSupport::persistentLogPaths(executableDirectory());
 
         std::ostringstream output;
         output << "Master Control Orchestration Server Bootstrapper Log\r\n\r\n";
         output << "GeneratedAt: " << localTimestampForDisplay() << "\r\n";
+        output << "RunId: " << MasterControl::InstallerLogSupport::utf8FromWide(runId) << "\r\n";
         output << "Action: " << utf8FromWide(mode) << "\r\n";
         output << "Succeeded: " << (succeeded ? "true" : "false") << "\r\n";
         output << "InstallDirectory: " << installDirectory.string() << "\r\n";
         output << "BootstrapperPath: " << utf8FromWide(executablePath().wstring()) << "\r\n";
+        output << "PersistentLogRoot: " << MasterControl::InstallerLogSupport::pathToUtf8(persistentPaths.root) << "\r\n";
+        output << "PersistentHistoryPath: " << MasterControl::InstallerLogSupport::pathToUtf8(persistentPaths.history)
+               << "\r\n";
+        output << "PersistentFailurePath: " << MasterControl::InstallerLogSupport::pathToUtf8(persistentPaths.failures)
+               << "\r\n";
+        output << "LatestPersistentRecordPath: " << MasterControl::InstallerLogSupport::pathToUtf8(persistentPaths.latest)
+               << "\r\n";
+        output << "LatestPersistentFailurePath: "
+               << MasterControl::InstallerLogSupport::pathToUtf8(persistentPaths.latestFailure) << "\r\n";
         output << "ManageService: " << (options.manageService ? "true" : "false") << "\r\n";
         output << "ManageFirewall: " << (options.manageFirewall ? "true" : "false") << "\r\n";
         output << "ManageShortcuts: " << (options.manageShortcuts ? "true" : "false") << "\r\n";
@@ -852,7 +885,42 @@ void writeBootstrapperActionLog(const std::wstring& mode,
         output << "\r\nDetails\r\n-------\r\n";
         output << payload.dump(2) << "\r\n";
 
-        writeTextFile(logPath, output.str());
+        const bool wroteTextLog = writeTextFile(logPath, output.str());
+        const auto message = bootstrapperLogMessage(succeeded, payload);
+        MasterControl::InstallerLogSupport::persistRecord(
+            persistentPaths,
+            nlohmann::json{
+                { "schema", "mastercontrol.installer-log.v1" },
+                { "component", "bootstrapper" },
+                { "action", utf8FromWide(mode) },
+                { "outcome", succeeded ? "succeeded" : "failed" },
+                { "succeeded", succeeded },
+                { "message", message },
+                { "runId", MasterControl::InstallerLogSupport::utf8FromWide(runId) },
+                { "generatedAtLocal", localTimestampForDisplay() },
+                { "processId", GetCurrentProcessId() },
+                { "bootstrapperVersion", MASTERCONTROL_BOOTSTRAPPER_VERSION },
+                { "installDirectory", installDirectory.string() },
+                { "bootstrapperPath", utf8FromWide(executablePath().wstring()) },
+                { "textLogWritten", wroteTextLog },
+                { "logPaths",
+                  {
+                      { "text", MasterControl::InstallerLogSupport::pathToUtf8(logPath) },
+                      { "reportDirectory", MasterControl::InstallerLogSupport::pathToUtf8(logDirectory) }
+                  } },
+                { "persistentPaths", MasterControl::InstallerLogSupport::persistentPathsToJson(persistentPaths) },
+                { "options",
+                  {
+                      { "manageService", options.manageService },
+                      { "manageFirewall", options.manageFirewall },
+                      { "manageShortcuts", options.manageShortcuts },
+                      { "manageUninstallRegistration", options.manageUninstallRegistration },
+                      { "purgeInstallDirectory", options.purgeInstallDirectory },
+                      { "purgeData", options.purgeData },
+                      { "jsonOutput", options.jsonOutput }
+                  } },
+                { "details", payload }
+            });
     } catch (...) {
     }
 }
@@ -2469,7 +2537,9 @@ IntegrationOptions parseOptions(int argc, wchar_t* argv[], int startIndex) {
     IntegrationOptions options;
     for (int index = startIndex; index < argc; ++index) {
         const std::wstring_view argument(argv[index]);
-        if (argument == L"--skip-service") {
+        if (argument == L"--run-id") {
+            ++index;
+        } else if (argument == L"--skip-service") {
             options.manageService = false;
         } else if (argument == L"--skip-firewall") {
             options.manageFirewall = false;
@@ -2491,6 +2561,11 @@ IntegrationOptions parseOptions(int argc, wchar_t* argv[], int startIndex) {
 std::optional<std::filesystem::path> parseInstallDirectoryArgument(int argc, wchar_t* argv[]) {
     for (int index = 2; index < argc; ++index) {
         const std::wstring_view argument(argv[index]);
+        if (argument == L"--run-id") {
+            ++index;
+            continue;
+        }
+
         if (!argument.empty() && argument.front() != L'-') {
             return std::filesystem::path(argv[index]);
         }
@@ -2517,6 +2592,8 @@ int wmain(int argc, wchar_t* argv[]) {
     const std::wstring mode = argc > 1 ? argv[1] : L"detect";
     const auto options = parseOptions(argc, argv, 2);
     const auto parsedInstallDirectory = parseInstallDirectoryArgument(argc, argv);
+    const auto explicitRunId = MasterControl::InstallerLogSupport::findArgumentValue(argc, argv, L"--run-id");
+    MasterControl::InstallerLogSupport::initializeRunId(explicitRunId);
 
     try {
         const auto installDirectory = parsedInstallDirectory.has_value() ? *parsedInstallDirectory : defaultInstallDirectory();

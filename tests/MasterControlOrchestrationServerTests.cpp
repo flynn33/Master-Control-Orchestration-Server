@@ -3002,7 +3002,11 @@ int main() {
         const auto failedBootstrapInstallDirectory = tempRoot / "bootstrapper-install-failed";
         const auto bootstrapDataDirectory = tempRoot / "bootstrapper-data";
         const auto bootstrapLogDirectory = tempRoot / "bootstrapper-desktop";
-    const auto bootstrapConfigurationFile = bootstrapDataDirectory / "config" / "master-control-orchestration-server.json";
+        const auto bootstrapPersistentLogDirectory = tempRoot / "bootstrapper-persistent";
+        const auto bootstrapPersistentHistoryPath = bootstrapPersistentLogDirectory / "installer-history.jsonl";
+        const auto bootstrapPersistentFailurePath = bootstrapPersistentLogDirectory / "installer-failures.jsonl";
+        const auto bootstrapLatestPersistentFailurePath = bootstrapPersistentLogDirectory / "installer-latest-failure.json";
+        const auto bootstrapConfigurationFile = bootstrapDataDirectory / "config" / "master-control-orchestration-server.json";
         const auto bootstrapInstallStateFile = bootstrapInstallDirectory / "installation-state.json";
         const auto readJsonFile = [](const std::filesystem::path& path) -> std::optional<nlohmann::json> {
             std::ifstream input(path);
@@ -3015,6 +3019,40 @@ int main() {
             } catch (...) {
                 return std::nullopt;
             }
+        };
+        const auto readJsonLines = [](const std::filesystem::path& path) {
+            std::vector<nlohmann::json> records;
+            std::ifstream input(path);
+            if (!input) {
+                return records;
+            }
+
+            std::string line;
+            while (std::getline(input, line)) {
+                if (line.empty()) {
+                    continue;
+                }
+
+                const auto record = nlohmann::json::parse(line, nullptr, false);
+                if (record.is_object()) {
+                    records.push_back(record);
+                }
+            }
+
+            return records;
+        };
+        const auto findBootstrapperPersistentRecord = [](const std::vector<nlohmann::json>& records,
+                                                         const std::string& action,
+                                                         const bool succeeded) -> std::optional<nlohmann::json> {
+            for (auto iterator = records.rbegin(); iterator != records.rend(); ++iterator) {
+                if (iterator->value("component", std::string{}) == "bootstrapper" &&
+                    iterator->value("action", std::string{}) == action &&
+                    iterator->value("succeeded", !succeeded) == succeeded) {
+                    return std::optional<nlohmann::json>(*iterator);
+                }
+            }
+
+            return std::nullopt;
         };
         const auto findBootstrapperLog = [&](const std::string& action,
                                              const std::string& outcome) -> std::optional<std::filesystem::path> {
@@ -3048,6 +3086,9 @@ int main() {
 
         ScopedEnvironmentOverride bootstrapDataOverride(L"MASTERCONTROL_DATA_DIR", bootstrapDataDirectory.wstring());
         ScopedEnvironmentOverride bootstrapLogOverride(L"MASTERCONTROL_BOOTSTRAPPER_LOG_DIR", bootstrapLogDirectory.wstring());
+        ScopedEnvironmentOverride bootstrapPersistentLogOverride(
+            L"MASTERCONTROL_BOOTSTRAPPER_PERSISTENT_LOG_DIR",
+            bootstrapPersistentLogDirectory.wstring());
         ScopedEnvironmentOverride bootstrapServiceNameOverride(L"MASTERCONTROL_BOOTSTRAPPER_SERVICE_NAME", bootstrapperServiceName);
         ScopedEnvironmentOverride bootstrapUninstallKeyOverride(L"MASTERCONTROL_BOOTSTRAPPER_UNINSTALL_KEY", bootstrapperUninstallKey);
 
@@ -3080,14 +3121,37 @@ int main() {
         success &= expect(
             successfulInstallLogPath.has_value(),
             "Bootstrapper install should write a success log to the desktop report directory.");
+        success &= expect(
+            std::filesystem::exists(bootstrapPersistentHistoryPath),
+            "Bootstrapper install should append a persistent installer history record.");
         if (successfulInstallLogPath.has_value()) {
             const auto successfulInstallLog = readFileUtf8(*successfulInstallLogPath);
             success &= expect(
                 successfulInstallLog.has_value() &&
                     successfulInstallLog->find("Action: install") != std::string::npos &&
                     successfulInstallLog->find("Succeeded: true") != std::string::npos &&
-                    successfulInstallLog->find(bootstrapInstallDirectory.string()) != std::string::npos,
+                    successfulInstallLog->find(bootstrapInstallDirectory.string()) != std::string::npos &&
+                    successfulInstallLog->find("RunId: ") != std::string::npos &&
+                    successfulInstallLog->find("PersistentLogRoot: " + bootstrapPersistentLogDirectory.string()) != std::string::npos,
                 "Bootstrapper install success log should describe the installed target and success state.");
+        }
+        const auto bootstrapHistoryRecords = readJsonLines(bootstrapPersistentHistoryPath);
+        const auto successfulInstallRecord = findBootstrapperPersistentRecord(bootstrapHistoryRecords, "install", true);
+        success &= expect(
+            successfulInstallRecord.has_value(),
+            "Bootstrapper install should record a successful install in the persistent history journal.");
+        if (successfulInstallRecord.has_value()) {
+            success &= expect(
+                successfulInstallRecord->value("runId", std::string{}).size() > 10 &&
+                    successfulInstallRecord->value("message", std::string{}).find("successfully") != std::string::npos &&
+                    successfulInstallRecord->value("installDirectory", std::string{}) == bootstrapInstallDirectory.string() &&
+                    successfulInstallRecord->value("textLogWritten", false) &&
+                    successfulInstallRecord->contains("persistentPaths") &&
+                    successfulInstallRecord->at("persistentPaths").value("root", std::string{}) ==
+                        bootstrapPersistentLogDirectory.string() &&
+                    successfulInstallRecord->contains("details") &&
+                    successfulInstallRecord->at("details").value("succeeded", false),
+                "Bootstrapper install persistent history should retain the run id, log root, and success payload.");
         }
         const auto validateCommand = L"\"" + bootstrapperBinary.wstring() + L"\" validate \"" +
             bootstrapInstallDirectory.wstring() + L"\"";
@@ -3222,15 +3286,43 @@ int main() {
             success &= expect(
                 failedInstallLogPath.has_value(),
                 "Bootstrapper install failure should write a failure log to the desktop report directory.");
+            success &= expect(
+                std::filesystem::exists(bootstrapPersistentFailurePath),
+                "Bootstrapper install failure should append a persistent installer failure record.");
             if (failedInstallLogPath.has_value()) {
                 const auto failedInstallLog = readFileUtf8(*failedInstallLogPath);
                 success &= expect(
                     failedInstallLog.has_value() &&
                         failedInstallLog->find("Action: install") != std::string::npos &&
                         failedInstallLog->find("Succeeded: false") != std::string::npos &&
+                        failedInstallLog->find("PersistentFailurePath: " + bootstrapPersistentFailurePath.string()) != std::string::npos &&
                         failedInstallLog->find("Simulated bootstrapper failure after staging payload and installation state.") != std::string::npos,
                     "Bootstrapper install failure log should capture the failure reason.");
             }
+            const auto bootstrapFailureRecords = readJsonLines(bootstrapPersistentFailurePath);
+            const auto failedInstallRecord = findBootstrapperPersistentRecord(bootstrapFailureRecords, "install", false);
+            success &= expect(
+                failedInstallRecord.has_value(),
+                "Bootstrapper install failure should record the failed install in the persistent failure journal.");
+            if (failedInstallRecord.has_value()) {
+                success &= expect(
+                    failedInstallRecord->value("message", std::string{}).find(
+                        "Simulated bootstrapper failure after staging payload and installation state.") != std::string::npos &&
+                        failedInstallRecord->contains("details") &&
+                        failedInstallRecord->at("details").value("succeeded", true) == false &&
+                        failedInstallRecord->at("details").value("rollbackAttempted", true) == false &&
+                        failedInstallRecord->contains("logPaths") &&
+                        failedInstallRecord->at("logPaths").value("text", std::string{}) ==
+                            (failedInstallLogPath.has_value() ? failedInstallLogPath->string() : std::string{}),
+                    "Bootstrapper install failure journal should retain the failure reason and associated text log path.");
+            }
+            const auto latestPersistentFailureRecord = readJsonFile(bootstrapLatestPersistentFailurePath);
+            success &= expect(
+                latestPersistentFailureRecord.has_value() &&
+                    latestPersistentFailureRecord->value("component", std::string{}) == "bootstrapper" &&
+                    latestPersistentFailureRecord->value("action", std::string{}) == "install" &&
+                    !latestPersistentFailureRecord->value("succeeded", true),
+                "Bootstrapper install failure should refresh the latest persistent failure record.");
         }
 
         const auto upgradeCommand = L"\"" + bootstrapperBinary.wstring() + L"\" upgrade \"" +

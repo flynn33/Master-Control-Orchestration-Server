@@ -27,6 +27,7 @@ set_target_properties(MasterControlOrchestrationServerSetup PROPERTIES
 target_link_libraries(MasterControlOrchestrationServerSetup PRIVATE
     advapi32
     comctl32
+    nlohmann_json::nlohmann_json
     shell32
     user32
     ole32
