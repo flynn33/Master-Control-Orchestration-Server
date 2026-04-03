@@ -363,6 +363,7 @@ struct ShellSnapshot final {
     std::wstring operatingSystem;
     std::wstring primaryIpAddress;
     std::wstring primaryMacAddress;
+    std::wstring telemetryCapturedAtUtc;
     std::wstring bindAddress;
     std::wstring overviewText;
     std::wstring telemetryText;

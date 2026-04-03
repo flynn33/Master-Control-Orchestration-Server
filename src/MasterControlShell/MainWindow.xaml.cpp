@@ -192,7 +192,7 @@ std::wstring destinationForViewId(const std::wstring& viewId) {
 
 SectionMetadata metadataForDestination(const std::wstring& destinationId, const std::wstring& title) {
     if (destinationId == kTelemetryDestination) {
-        return { L"TELEMETRY", title, L"Track live CPU, memory, disk, network, and environment discovery details from the local service snapshot." };
+        return { L"TELEMETRY", title, L"Use the dense monitoring deck to keep live host pressure, governed resource budgets, runtime activity, and environment discovery visible at a glance." };
     }
     if (destinationId == kRuntimeDestination) {
         return { L"RUNTIME", title, L"Inspect MCP runtime lanes, platform gateway inventory, Apple remote hosts, and the current operational map exposed by the service." };

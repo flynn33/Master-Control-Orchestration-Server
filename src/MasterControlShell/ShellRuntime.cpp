@@ -1731,6 +1731,7 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                     snapshot.diskPercent = jsonNumberOr(telemetry, L"diskPercent");
                     snapshot.bytesSentPerSecond = static_cast<uint64_t>(jsonNumberOr(telemetry, L"bytesSentPerSecond"));
                     snapshot.bytesReceivedPerSecond = static_cast<uint64_t>(jsonNumberOr(telemetry, L"bytesReceivedPerSecond"));
+                    snapshot.telemetryCapturedAtUtc = wideFromUtf8(jsonStringOr(telemetry, L"capturedAtUtc", ""));
                     if (const auto telemetryMac = jsonStringOr(telemetry, L"primaryMacAddress", ""); !telemetryMac.empty()) {
                         macAddress = telemetryMac;
                     }

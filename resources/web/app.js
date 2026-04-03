@@ -336,6 +336,60 @@ function metricCard(label, value, detail = '') {
   `;
 }
 
+function telemetryToneForPercent(value) {
+  const percent = safeNumber(value, 0);
+  if (percent >= 85) {
+    return 'danger';
+  }
+  if (percent >= 65) {
+    return 'warning';
+  }
+  return 'ok';
+}
+
+function telemetryMeterCard(label, value, percent, detail = '', tone = '') {
+  const normalizedPercent = Math.max(0, Math.min(100, safeNumber(percent, 0)));
+  const resolvedTone = tone || telemetryToneForPercent(normalizedPercent);
+  return `
+    <article class="telemetry-monitor-card" data-tone="${escapeHtml(resolvedTone)}">
+      <div class="telemetry-monitor-header">
+        <div class="card-label">${escapeHtml(label)}</div>
+        <div class="telemetry-monitor-detail">${escapeHtml(detail)}</div>
+      </div>
+      <div class="telemetry-monitor-value">${escapeHtml(value)}</div>
+      <div class="telemetry-meter"><span style="width:${normalizedPercent}%"></span></div>
+    </article>
+  `;
+}
+
+function telemetrySignalCard(label, value, detail = '') {
+  return `
+    <article class="telemetry-monitor-card telemetry-monitor-card--signal">
+      <div class="telemetry-monitor-header">
+        <div class="card-label">${escapeHtml(label)}</div>
+      </div>
+      <div class="telemetry-monitor-value">${escapeHtml(value)}</div>
+      <div class="telemetry-monitor-detail">${escapeHtml(detail)}</div>
+    </article>
+  `;
+}
+
+function telemetryStatTable(rows) {
+  return `
+    <div class="telemetry-stat-list">
+      ${rows.map((row) => `
+        <div class="telemetry-stat-row">
+          <div>
+            <div class="card-label">${escapeHtml(row.label)}</div>
+            <div class="telemetry-stat-value">${escapeHtml(row.value)}</div>
+          </div>
+          <div class="telemetry-stat-meta">${escapeHtml(row.detail || '')}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
 function narrativePanel(label, title, body) {
   return `
     <article class="panel-block narrative-panel">
@@ -1326,7 +1380,7 @@ function metadataForDestination(destinationId) {
     return {
       eyebrow: 'TELEMETRY',
       title,
-      description: 'Track live CPU, memory, disk, network, and environment discovery data published by the local Forsetti service host.'
+      description: 'Use the dense monitoring deck to keep live host pressure, governed resource budgets, runtime activity, and environment discovery visible at a glance.'
     };
   }
   if (destinationId === 'runtime') {
@@ -1568,31 +1622,140 @@ function renderOverviewView() {
 
 function renderTelemetryView() {
   const config = currentConfig();
-  const telemetry = dashboardSnapshot().telemetry;
+  const snapshot = dashboardSnapshot();
+  const governance = governanceSnapshot();
+  const telemetry = snapshot.telemetry;
+  const resourceAllocation = config.resourceAllocation;
+  const appleHosts = safeArray(governance.appleRemoteHosts);
+  const appleOperations = safeArray(governance.appleOperations);
+  const gateways = safeArray(governance.platformGateways);
+  const governanceServers = safeArray(governance.governanceServers);
+  const findings = safeArray(governance.findings);
+  const recentExecutions = safeArray(governance.recentExecutions);
+  const providerExecutionHistory = safeArray(snapshot.providerExecutionHistory);
+  const activeAppleOperationCount = appleOperations.filter(isActiveAppleOperation).length;
+  const attentionAppleOperationCount = appleOperations.filter(isAttentionAppleOperation).length;
+  const totalTraffic = safeNumber(telemetry.bytesSentPerSecond, 0) + safeNumber(telemetry.bytesReceivedPerSecond, 0);
+  const telemetryHeadline = telemetry.hostName
+    ? `Telemetry Grid · ${telemetry.hostName}`
+    : 'Telemetry Grid';
+  const telemetrySummary = [
+    `CPU ${formatPercent(telemetry.cpuPercent || 0)}`,
+    `RAM ${formatPercent(telemetry.memoryPercent || 0)}`,
+    `Disk ${formatPercent(telemetry.diskPercent || 0)}`,
+    `Traffic ${formatCount(totalTraffic)}/s`
+  ].join('  |  ');
+  const hostIdentityRows = [
+    { label: 'Host', value: telemetry.hostName || 'pending', detail: telemetry.operatingSystem || 'Windows' },
+    { label: 'Primary IP', value: telemetry.primaryIpAddress || 'pending', detail: `Browser :${config.browserPort}` },
+    { label: 'Primary MAC', value: telemetry.primaryMacAddress || 'pending', detail: `Beacon ${boolLabel(config.beaconEnabled)}` },
+    { label: 'Captured', value: telemetry.capturedAtUtc || state.lastRefreshLabel, detail: 'Latest telemetry sample' }
+  ];
+  const controlPlaneRows = [
+    { label: 'Environment', value: config.activeProfile.environmentName || 'default', detail: `Bind ${config.bindAddress}:${config.browserPort}` },
+    { label: 'Security', value: boolLabel(config.security.securityProtocolsEnabled), detail: `Open LAN ${boolLabel(config.security.allowOpenLanAccess)}` },
+    { label: 'AI Autonomy', value: boolLabel(config.aiAutonomyEnabled), detail: `TLS ${boolLabel(config.security.enableTls)}` },
+    { label: 'Runtime Paths', value: 'Live Payload', detail: telemetry.primaryIpAddress || config.bindAddress }
+  ];
+  const activityRows = [
+    { label: 'Runtime Lanes', value: formatCount(snapshot.endpoints.length), detail: 'published service routes' },
+    { label: 'Providers', value: formatCount(snapshot.providers.length), detail: 'connected model lanes' },
+    { label: 'Execution History', value: formatCount(providerExecutionHistory.length), detail: 'recent provider runs' },
+    { label: 'Governance Findings', value: formatCount(findings.length), detail: governance.lastEvaluatedUtc || 'awaiting evaluation' },
+    { label: 'Apple Hosts', value: formatCount(appleHosts.length), detail: `${formatCount(appleOperations.length)} operations tracked` },
+    { label: 'Apple Attention', value: formatCount(attentionAppleOperationCount), detail: `${formatCount(activeAppleOperationCount)} active now` },
+    { label: 'Gateway Lanes', value: formatCount(gateways.length), detail: `${formatCount(governanceServers.length)} governance servers` },
+    { label: 'Recent Executions', value: formatCount(recentExecutions.length), detail: 'platform governance runs' }
+  ];
+  const telemetryNarrative = [
+    `Telemetry capture: ${telemetry.capturedAtUtc || 'pending'}`,
+    `CPU load: ${formatPercent(telemetry.cpuPercent || 0)}`,
+    `Memory pressure: ${formatPercent(telemetry.memoryPercent || 0)}`,
+    `Disk occupancy: ${formatPercent(telemetry.diskPercent || 0)}`,
+    `Outbound: ${formatCount(telemetry.bytesSentPerSecond || 0)} B/s`,
+    `Inbound: ${formatCount(telemetry.bytesReceivedPerSecond || 0)} B/s`
+  ].join('\n');
+  const environmentNarrative = [
+    `Environment: ${config.activeProfile.environmentName}`,
+    `Bind address: ${config.bindAddress}:${config.browserPort}`,
+    `Beacon port: ${config.beaconPort}`,
+    `Beacon enabled: ${boolLabel(config.beaconEnabled)}`,
+    `Preferred bind address: ${config.activeProfile.preferredBindAddress}`,
+    `Telemetry MAC: ${telemetry.primaryMacAddress || 'pending'}`
+  ].join('\n');
+  const controlPlaneNarrative = [
+    `Security protocols: ${boolLabel(config.security.securityProtocolsEnabled)}`,
+    `TLS: ${boolLabel(config.security.enableTls)}`,
+    `Authentication: ${boolLabel(config.security.enableAuthentication)}`,
+    `AI autonomy: ${boolLabel(config.aiAutonomyEnabled)}`,
+    `Open LAN access: ${boolLabel(config.security.allowOpenLanAccess)}`,
+    `Trusted hosts: ${safeArray(config.security.trustedRemoteHosts).join(', ') || 'none'}`
+  ].join('\n');
   return `
-    <section class="section-shell">
-      <div class="card-grid">
-        ${metricCard('CPU', formatPercent(telemetry.cpuPercent || 0), 'host utilization')}
-        ${metricCard('Memory', formatPercent(telemetry.memoryPercent || 0), 'resident pressure')}
-        ${metricCard('Disk', formatPercent(telemetry.diskPercent || 0), 'storage occupancy')}
-        ${metricCard('TX/s', formatCount(telemetry.bytesSentPerSecond || 0), 'bytes per second')}
-        ${metricCard('RX/s', formatCount(telemetry.bytesReceivedPerSecond || 0), 'bytes per second')}
-        ${metricCard('Beacon MAC', telemetry.primaryMacAddress || 'n/a', telemetry.operatingSystem || 'Windows')}
+    <section class="section-shell telemetry-command-deck">
+      <article class="panel-block telemetry-command-hero">
+        <div class="telemetry-command-hero-grid">
+          <div class="surface-stack">
+            <p class="eyebrow">PRIMARY MONITORING SURFACE</p>
+            <h3>${escapeHtml(telemetryHeadline)}</h3>
+            <p class="summary-copy">${escapeHtml(telemetrySummary)}</p>
+            <div class="telemetry-command-badges">
+              <span class="badge">${escapeHtml(telemetry.capturedAtUtc || state.lastRefreshLabel)}</span>
+              <span class="badge">${escapeHtml(config.activeProfile.environmentName || 'Environment pending')}</span>
+              <span class="badge">${escapeHtml(`${config.bindAddress}:${config.browserPort}`)}</span>
+            </div>
+          </div>
+          <div class="telemetry-panel">
+            <p class="eyebrow">HOST IDENTITY</p>
+            ${telemetryStatTable(hostIdentityRows)}
+          </div>
+          <div class="telemetry-panel">
+            <p class="eyebrow">CONTROL PLANE</p>
+            ${telemetryStatTable(controlPlaneRows)}
+          </div>
+        </div>
+      </article>
+
+      <div class="telemetry-monitor-grid">
+        ${telemetryMeterCard('CPU Load', formatPercent(telemetry.cpuPercent || 0), telemetry.cpuPercent || 0, 'live host utilization')}
+        ${telemetryMeterCard('Memory Pressure', formatPercent(telemetry.memoryPercent || 0), telemetry.memoryPercent || 0, 'resident pressure')}
+        ${telemetryMeterCard('Disk Occupancy', formatPercent(telemetry.diskPercent || 0), telemetry.diskPercent || 0, 'storage occupancy')}
+        ${telemetrySignalCard('TX / sec', formatCount(telemetry.bytesSentPerSecond || 0), 'outbound bytes per second')}
+        ${telemetrySignalCard('RX / sec', formatCount(telemetry.bytesReceivedPerSecond || 0), 'inbound bytes per second')}
+        ${telemetrySignalCard('Runtime Lanes', formatCount(snapshot.endpoints.length), 'published service routes')}
+        ${telemetrySignalCard('Providers', formatCount(snapshot.providers.length), 'connected model lanes')}
+        ${telemetrySignalCard('Apple Jobs', formatCount(appleOperations.length), `${formatCount(attentionAppleOperationCount)} attention / ${formatCount(activeAppleOperationCount)} active`)}
       </div>
 
-      <div class="split-grid">
-        ${narrativePanel('Host Identity', telemetry.hostName || 'Host pending', [
-          `Primary IP: ${telemetry.primaryIpAddress || 'n/a'}`,
-          `Primary MAC: ${telemetry.primaryMacAddress || 'n/a'}`,
-          `Operating system: ${telemetry.operatingSystem || 'Windows'}`,
-          `Captured: ${telemetry.capturedAtUtc || 'pending'}`
-        ].join('\n'))}
-        ${narrativePanel('Environment Profile', config.activeProfile.environmentName, [
-          `Preferred bind address: ${config.activeProfile.preferredBindAddress}`,
-          `Configured bind address: ${config.bindAddress}`,
-          `Browser port: ${config.browserPort}`,
-          `Beacon port: ${config.beaconPort}`
-        ].join('\n'))}
+      <div class="telemetry-command-grid">
+        <div class="surface-stack">
+          <article class="telemetry-panel">
+            <p class="eyebrow">GOVERNED RESOURCE ENVELOPE</p>
+            <div class="telemetry-cluster-grid">
+              ${telemetryMeterCard('CPU Budget', `${safeNumber(resourceAllocation.cpuPercent, 0)}%`, resourceAllocation.cpuPercent, 'governed launch budget', safeNumber(resourceAllocation.cpuPercent, 0) <= 0 ? 'danger' : '')}
+              ${telemetryMeterCard('RAM Budget', `${safeNumber(resourceAllocation.memoryPercent, 0)}%`, resourceAllocation.memoryPercent, 'managed memory ceiling', safeNumber(resourceAllocation.memoryPercent, 0) <= 0 ? 'danger' : '')}
+              ${telemetryMeterCard('Bandwidth Budget', `${safeNumber(resourceAllocation.bandwidthPercent, 0)}%`, resourceAllocation.bandwidthPercent, 'provider and Apple traffic', safeNumber(resourceAllocation.bandwidthPercent, 0) <= 0 ? 'danger' : '')}
+              ${telemetryMeterCard('Storage Budget', `${safeNumber(resourceAllocation.storagePercent, 0)}%`, resourceAllocation.storagePercent, 'exports and staging budget', safeNumber(resourceAllocation.storagePercent, 0) <= 0 ? 'danger' : '')}
+            </div>
+          </article>
+
+          <article class="telemetry-panel">
+            <p class="eyebrow">OPERATIONAL ACTIVITY</p>
+            ${telemetryStatTable(activityRows)}
+          </article>
+        </div>
+
+        <div class="surface-stack">
+          ${narrativePanel('Host Identity', telemetry.hostName || 'Host pending', [
+            `Primary IP: ${telemetry.primaryIpAddress || 'n/a'}`,
+            `Primary MAC: ${telemetry.primaryMacAddress || 'n/a'}`,
+            `Operating system: ${telemetry.operatingSystem || 'Windows'}`,
+            `Captured: ${telemetry.capturedAtUtc || state.lastRefreshLabel}`
+          ].join('\n'))}
+          ${narrativePanel('Environment Profile', config.activeProfile.environmentName, environmentNarrative)}
+          ${narrativePanel('Telemetry Narrative', 'Live Host Pressure', telemetryNarrative)}
+          ${narrativePanel('Control Plane Narrative', 'Trust Envelope', controlPlaneNarrative)}
+        </div>
       </div>
     </section>
   `;
