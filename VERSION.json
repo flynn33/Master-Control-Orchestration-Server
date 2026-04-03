@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.58",
-  "current_tag": "v0.1.58",
+  "current_version": "0.1.59",
+  "current_tag": "v0.1.59",
   "released_at": "2026-04-03",
-  "last_release_commit": "a5b46c413342069f84f83c2a8d0ae575c391a10e",
+  "last_release_commit": "5861d9d5fa5524ec04c8910ede44d7e2bb389a43",
   "history": [
+    {
+      "version": "0.1.59",
+      "tag": "v0.1.59",
+      "released_at": "2026-04-03",
+      "commit": "5861d9d5fa5524ec04c8910ede44d7e2bb389a43",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Fix installer reliability and shell drag behavior (flynn33)"
+      ]
+    },
     {
       "version": "0.1.58",
       "tag": "v0.1.58",
