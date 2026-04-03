@@ -5,6 +5,13 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.1.55] - 2026-04-03
+### Summary
+Automated patch release for Master Control Orchestration Server.
+
+### Included Changes
+- Redesign telemetry as the primary monitoring deck (flynn33)
+
 ## [0.1.54] - 2026-04-03
 ### Summary
 Automated patch release for Master Control Orchestration Server.

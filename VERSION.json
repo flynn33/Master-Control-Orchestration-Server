@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.54",
-  "current_tag": "v0.1.54",
+  "current_version": "0.1.55",
+  "current_tag": "v0.1.55",
   "released_at": "2026-04-03",
-  "last_release_commit": "4c70f2a3410fcdd68f5465f6e2e508f624195b17",
+  "last_release_commit": "e65abb33a3001a90bcd5eb282f8c8df55fd62059",
   "history": [
+    {
+      "version": "0.1.55",
+      "tag": "v0.1.55",
+      "released_at": "2026-04-03",
+      "commit": "e65abb33a3001a90bcd5eb282f8c8df55fd62059",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Redesign telemetry as the primary monitoring deck (flynn33)"
+      ]
+    },
     {
       "version": "0.1.54",
       "tag": "v0.1.54",
