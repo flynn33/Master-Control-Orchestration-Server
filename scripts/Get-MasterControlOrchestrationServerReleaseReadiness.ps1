@@ -116,11 +116,8 @@ function New-ReleaseReadinessSummary {
     $lines.Add("* File count: $($Report.package.fileCount)")
     $lines.Add("* Size bytes: $($Report.package.packageSizeBytes)")
     $lines.Add("* Packaged preflight ready: $($Report.package.packagedPreflight.ready)")
-    if ($Report.package.PSObject.Properties.Name -contains "lastReleaseCommit" -and -not [string]::IsNullOrWhiteSpace($Report.package.lastReleaseCommit)) {
-        $lines.Add("* Last released commit: $($Report.package.lastReleaseCommit)")
-    }
-    if ($Report.package.PSObject.Properties.Name -contains "sourceMatchesLastReleaseCommit") {
-        $lines.Add("* Source matches last released commit: $($Report.package.sourceMatchesLastReleaseCommit)")
+    if ($Report.package.PSObject.Properties.Name -contains "trackedReleaseCommit" -and -not [string]::IsNullOrWhiteSpace($Report.package.trackedReleaseCommit)) {
+        $lines.Add("* Tracked release commit: $($Report.package.trackedReleaseCommit)")
     }
     $lines.Add("")
 
@@ -266,8 +263,8 @@ $notes = @(
     "The current package is suitable for installer testing because packaged preflight and local mixed-lifecycle acceptance both passed.",
     "Final deployment confidence still depends on the elevated managed Windows 11 pass and a Windows Server 2022 pass."
 )
-if ($packageMetadata.PSObject.Properties.Name -contains "sourceMatchesLastReleaseCommit" -and -not [bool]$packageMetadata.sourceMatchesLastReleaseCommit) {
-    $notes += ("This package was built from repo head " + $headShort + " after the last tagged release commit " + $packageMetadata.lastReleaseCommit + ".")
+if ($packageMetadata.PSObject.Properties.Name -contains "trackedReleaseCommit" -and -not [string]::IsNullOrWhiteSpace($packageMetadata.trackedReleaseCommit)) {
+    $notes += ("Tracked release metadata currently references source commit " + $packageMetadata.trackedReleaseCommit + ". Package validation is determined by package commit, packaged acceptance, and repository cleanliness.")
 }
 
 $report = [pscustomobject][ordered]@{
@@ -308,8 +305,7 @@ $report = [pscustomobject][ordered]@{
         fileCount = $packageMetadata.fileCount
         packageSizeBytes = $packageMetadata.packageSizeBytes
         packagedPreflight = $packageMetadata.packagedPreflight
-        lastReleaseCommit = if ($packageMetadata.PSObject.Properties.Name -contains "lastReleaseCommit") { $packageMetadata.lastReleaseCommit } else { "" }
-        sourceMatchesLastReleaseCommit = if ($packageMetadata.PSObject.Properties.Name -contains "sourceMatchesLastReleaseCommit") { [bool]$packageMetadata.sourceMatchesLastReleaseCommit } else { $true }
+        trackedReleaseCommit = if ($packageMetadata.PSObject.Properties.Name -contains "trackedReleaseCommit") { $packageMetadata.trackedReleaseCommit } else { "" }
     }
     acceptance = [pscustomobject][ordered]@{
         reportPath = (Resolve-Path $AcceptanceReportPath).Path
