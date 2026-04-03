@@ -40,6 +40,7 @@ struct MainWindow : MainWindowT<MainWindow> {
 
 private:
     void ConfigureWindow();
+    void ConfigureCustomTitleBar();
     void ConfigureTimer();
     void EnsureBootstrapSurface(::MasterControlShell::ShellSnapshot& snapshot);
     void SetCurrentDestination(std::wstring const& destinationId);

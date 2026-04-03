@@ -29,11 +29,13 @@
                 <Border x:Name="TitleBarHost" Padding="22,18" Background="#2400F6FF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="24">
                     <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition x:Name="TitleBarLeftInsetColumn" Width="0" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition x:Name="TitleBarRightInsetColumn" Width="0" />
                         </Grid.ColumnDefinitions>
 
-                        <StackPanel Orientation="Horizontal" Spacing="16">
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16">
                             <Border Width="52" Height="52" Background="#1800F6FF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="18">
                                 <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="28" Foreground="{StaticResource ShellAccentBrush}" Glyph="&#xE7F4;" />
                             </Border>
@@ -44,7 +46,7 @@
                             </StackPanel>
                         </StackPanel>
 
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                             <Border x:Name="ApiBadgeBorder" Padding="12,6" Background="#2200F6FF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="999">
                                 <TextBlock x:Name="ApiBadgeText" Text="API UNKNOWN" Style="{StaticResource ShellEyebrowTextStyle}" />
                             </Border>

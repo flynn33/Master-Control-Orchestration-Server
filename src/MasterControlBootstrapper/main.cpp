@@ -507,6 +507,46 @@ bool directoryHasEntries(const std::filesystem::path& directory) {
     return std::filesystem::directory_iterator(directory, error) != std::filesystem::directory_iterator();
 }
 
+bool isTransientCopyError(const std::error_code& error) {
+    if (!error) {
+        return false;
+    }
+
+    switch (static_cast<DWORD>(error.value())) {
+    case ERROR_SHARING_VIOLATION:
+    case ERROR_LOCK_VIOLATION:
+    case ERROR_ACCESS_DENIED:
+    case ERROR_USER_MAPPED_FILE:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void copyFileWithRetry(const std::filesystem::path& source, const std::filesystem::path& destination) {
+    constexpr auto kRetryDelayMilliseconds = 250UL;
+    constexpr auto kMaxAttempts = 24;
+
+    for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+        std::error_code error;
+        const bool copied = std::filesystem::copy_file(
+            source,
+            destination,
+            std::filesystem::copy_options::overwrite_existing,
+            error);
+
+        if (copied || !error) {
+            return;
+        }
+
+        if (!isTransientCopyError(error) || attempt + 1 >= kMaxAttempts) {
+            throw std::filesystem::filesystem_error("copy_file", source, destination, error);
+        }
+
+        Sleep(kRetryDelayMilliseconds);
+    }
+}
+
 void copyRecursive(const std::filesystem::path& source, const std::filesystem::path& destination) {
     if (samePath(source, destination)) {
         return;
@@ -520,7 +560,7 @@ void copyRecursive(const std::filesystem::path& source, const std::filesystem::p
             std::filesystem::create_directories(targetPath);
         } else if (entry.is_regular_file()) {
             std::filesystem::create_directories(targetPath.parent_path());
-            std::filesystem::copy_file(entry.path(), targetPath, std::filesystem::copy_options::overwrite_existing);
+            copyFileWithRetry(entry.path(), targetPath);
         }
     }
 }
@@ -749,16 +789,28 @@ std::string localTimestampForFileName() {
     return buffer;
 }
 
+std::optional<std::filesystem::path> localUserDesktopDirectory() {
+    if (const auto userProfile = readEnvironmentVariable(L"USERPROFILE"); userProfile.has_value() && !userProfile->empty()) {
+        const auto candidate = std::filesystem::path(*userProfile) / L"Desktop";
+        std::error_code error;
+        if (std::filesystem::exists(candidate, error) && std::filesystem::is_directory(candidate, error)) {
+            return candidate;
+        }
+    }
+
+    return std::nullopt;
+}
+
 std::filesystem::path bootstrapperLogDirectory() {
     if (const auto overrideDirectory = readEnvironmentVariable(kBootstrapperLogDirectoryEnv); overrideDirectory.has_value()) {
         return std::filesystem::path(*overrideDirectory);
     }
 
-    try {
-        return knownFolder(FOLDERID_Desktop);
-    } catch (...) {
-        return executableDirectory();
+    if (const auto localDesktop = localUserDesktopDirectory(); localDesktop.has_value()) {
+        return *localDesktop;
     }
+
+    return executableDirectory();
 }
 
 void writeBootstrapperActionLog(const std::wstring& mode,

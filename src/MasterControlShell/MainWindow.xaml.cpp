@@ -689,17 +689,29 @@ void MainWindow::ConfigureWindow() {
         writeShellLog(L"Mica backdrop unavailable: " + std::wstring(error.message().c_str()));
     }
 
-    try {
-        window.ExtendsContentIntoTitleBar(false);
-        writeShellLog(L"Using the system title bar for reliable shell dragging.");
-    } catch (const winrt::hresult_error& error) {
-        writeShellLog(L"System title bar configuration failed: " + std::wstring(error.message().c_str()));
-    }
+    ConfigureCustomTitleBar();
 
     if (windowHandle_ != nullptr) {
         setWindowSize(windowHandle_, 1560, 1024);
         centerWindow(windowHandle_);
     }
+}
+
+void MainWindow::ConfigureCustomTitleBar() {
+    Window window = *this;
+
+    try {
+        window.ExtendsContentIntoTitleBar(true);
+        window.SetTitleBar(TitleBarHost());
+        writeShellLog(L"Configured TitleBarHost as the custom draggable title bar.");
+    } catch (const winrt::hresult_error& error) {
+        writeShellLog(L"Custom title bar configuration failed: " + std::wstring(error.message().c_str()));
+        return;
+    }
+
+    TitleBarLeftInsetColumn().Width(GridLengthHelper::FromPixels(14));
+    TitleBarRightInsetColumn().Width(GridLengthHelper::FromPixels(156));
+    writeShellLog(L"Reserved caption-button space for the custom title bar drag surface.");
 }
 
 void MainWindow::ConfigureTimer() {

@@ -8,6 +8,7 @@
 #include <commctrl.h>
 #include <shellapi.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <cstddef>
@@ -311,17 +312,47 @@ std::filesystem::path defaultInstallDirectory() {
     return executableDirectory() / kDefaultInstallLeaf;
 }
 
-std::filesystem::path desktopDirectory() {
+std::optional<std::filesystem::path> localUserDesktopDirectory() {
+    const auto userProfile = readEnvironmentVariable(L"USERPROFILE");
+    if (!userProfile.has_value() || userProfile->empty()) {
+        return std::nullopt;
+    }
+
+    const auto candidate = std::filesystem::path(*userProfile) / L"Desktop";
+    std::error_code error;
+    if (std::filesystem::exists(candidate, error) && std::filesystem::is_directory(candidate, error)) {
+        return candidate;
+    }
+
+    return std::nullopt;
+}
+
+std::vector<std::filesystem::path> desktopDirectories() {
     if (const auto overridePath = readEnvironmentVariable(kLogDirectoryEnv); overridePath.has_value() &&
                                                                           !overridePath->empty()) {
-        return std::filesystem::path(*overridePath);
+        return { std::filesystem::path(*overridePath) };
     }
 
-    if (const auto folder = tryKnownFolder(FOLDERID_Desktop); folder.has_value()) {
-        return *folder;
+    std::vector<std::filesystem::path> directories;
+    auto appendUnique = [&directories](const std::filesystem::path& path) {
+        if (std::find(directories.begin(), directories.end(), path) == directories.end()) {
+            directories.push_back(path);
+        }
+    };
+
+    if (const auto localDesktop = localUserDesktopDirectory(); localDesktop.has_value()) {
+        appendUnique(*localDesktop);
     }
 
-    return executableDirectory();
+    if (directories.empty()) {
+        directories.push_back(executableDirectory());
+    }
+
+    return directories;
+}
+
+std::filesystem::path desktopDirectory() {
+    return desktopDirectories().front();
 }
 
 bool isAdministrator() {
@@ -464,6 +495,72 @@ std::filesystem::path launcherLogPath() {
     return desktopDirectory() / std::filesystem::path(L"MasterControlOrchestrationServer-setup-launcher-" + timestamp + L".txt");
 }
 
+std::wstring bootstrapperActionName(const LauncherOptions& options) {
+    if (options.bootstrapperArguments.empty()) {
+        return L"install";
+    }
+
+    return options.bootstrapperArguments.front();
+}
+
+std::vector<std::filesystem::path> collectBootstrapperActionLogs(const std::wstring& action) {
+    std::vector<std::filesystem::path> logs;
+    const std::wstring prefix = L"MasterControlOrchestrationServer-" + action + L"-";
+
+    std::error_code error;
+    for (const auto& directory : desktopDirectories()) {
+        error.clear();
+        if (!std::filesystem::exists(directory, error) || !std::filesystem::is_directory(directory, error)) {
+            continue;
+        }
+
+        for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
+            if (error || !entry.is_regular_file(error)) {
+                continue;
+            }
+
+            const auto name = entry.path().filename().wstring();
+            if (name.rfind(prefix, 0) == 0 && entry.path().extension() == L".txt") {
+                logs.push_back(entry.path());
+            }
+        }
+    }
+
+    return logs;
+}
+
+bool bootstrapperActionProducesDesktopLog(const std::wstring& action) {
+    return action == L"install" || action == L"repair" || action == L"upgrade" || action == L"uninstall";
+}
+
+std::optional<std::filesystem::path> findLatestBootstrapperActionLog(
+    const std::wstring& action,
+    const std::optional<std::filesystem::file_time_type>& notBefore = std::nullopt) {
+    std::optional<std::filesystem::path> newestPath;
+    std::filesystem::file_time_type newestWriteTime{};
+    bool found = false;
+    std::error_code error;
+
+    for (const auto& candidate : collectBootstrapperActionLogs(action)) {
+        const auto writeTime = std::filesystem::last_write_time(candidate, error);
+        if (error) {
+            continue;
+        }
+
+        if (notBefore.has_value() && writeTime < *notBefore) {
+            continue;
+        }
+
+        if (!found || writeTime > newestWriteTime) {
+            newestWriteTime = writeTime;
+            newestPath = candidate;
+            found = true;
+        }
+    }
+
+    return newestPath;
+}
+
 bool writeLauncherLog(const std::filesystem::path& logPath,
                       const LauncherOptions& options,
                       const bool administrator,
@@ -471,7 +568,8 @@ bool writeLauncherLog(const std::filesystem::path& logPath,
                       const bool elevationAttempted,
                       const DWORD exitCode,
                       const std::wstring& message,
-                      const bool launchedShell) {
+                      const bool launchedShell,
+                      const std::optional<std::filesystem::path>& bootstrapperLogPath = std::nullopt) {
     std::error_code error;
     std::filesystem::create_directories(logPath.parent_path(), error);
 
@@ -491,6 +589,9 @@ bool writeLauncherLog(const std::filesystem::path& logPath,
     output << L"LaunchedShell: " << (launchedShell ? L"true" : L"false") << L"\r\n";
     output << L"ExitCode: " << exitCode << L"\r\n";
     output << L"Arguments: " << joinArguments(options.bootstrapperArguments) << L"\r\n";
+    if (bootstrapperLogPath.has_value()) {
+        output << L"BootstrapperLogPath: " << bootstrapperLogPath->wstring() << L"\r\n";
+    }
     output << L"\r\nMessage\r\n-------\r\n";
     output << message << L"\r\n";
     return true;
@@ -987,6 +1088,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
 
     DWORD exitCode = 1;
     std::wstring launchMessage;
+    const auto bootstrapperLogSearchStart = std::filesystem::file_time_type::clock::now() - std::chrono::seconds(2);
     if (!launchProcess(bootstrapperPath, options->bootstrapperArguments, elevationAttempted, &(*options), exitCode, launchMessage)) {
         const std::wstring message =
             L"Failed to start the installer engine.\n\n" + launchMessage + L"\n\nA launcher log was written to:\n" + logPath.wstring();
@@ -995,26 +1097,59 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         exitSetupProcess(static_cast<int>(exitCode == 0 ? 1 : exitCode), shouldUninitializeCom);
     }
 
+    const auto actionName = bootstrapperActionName(*options);
+    const auto bootstrapperLogPath = findLatestBootstrapperActionLog(actionName, bootstrapperLogSearchStart);
+    if (exitCode == 0 && bootstrapperActionProducesDesktopLog(actionName) && !bootstrapperLogPath.has_value()) {
+        exitCode = 1;
+        launchMessage =
+            L"Installer engine did not produce a bootstrapper log for this run. Review the launcher log and retry the install.";
+    }
+
+    if (exitCode == 0 && !directoryContainsInstallPayload(options->installDirectory)) {
+        exitCode = 1;
+        launchMessage =
+            L"Bootstrapper reported success, but no installed payload was found at:\n" + options->installDirectory.wstring();
+    }
+
     const bool launchedShell = (exitCode == 0) ? maybeLaunchShell(*options) : false;
     const std::wstring outcomeMessage =
         exitCode == 0
             ? L"Bootstrapper completed successfully."
-            : L"Bootstrapper exited with code " + std::to_wstring(exitCode) + L". Check the desktop logs for details.";
-    writeLauncherLog(logPath, *options, administrator, requiresElevation, elevationAttempted, exitCode, outcomeMessage, launchedShell);
+            : (!launchMessage.empty()
+                   ? launchMessage
+                   : L"Bootstrapper exited with code " + std::to_wstring(exitCode) + L". Check the desktop logs for details.");
+    writeLauncherLog(
+        logPath,
+        *options,
+        administrator,
+        requiresElevation,
+        elevationAttempted,
+        exitCode,
+        outcomeMessage,
+        launchedShell,
+        bootstrapperLogPath);
 
     if (exitCode != 0) {
-        const std::wstring message =
+        std::wstring message =
             L"Master Control Orchestration Server installation failed.\n\nReview the desktop logs for details.\n\nLauncher log:\n" +
             logPath.wstring();
+        if (bootstrapperLogPath.has_value()) {
+            message += L"\n\nBootstrapper log:\n" + bootstrapperLogPath->wstring();
+        }
         showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", message);
         exitSetupProcess(static_cast<int>(exitCode), shouldUninitializeCom);
     }
 
     if (!options->quiet && !launchedShell) {
+        std::wstring successMessage =
+            L"Master Control Orchestration Server installed successfully.\n\nA launcher log was written to:\n" + logPath.wstring();
+        if (bootstrapperLogPath.has_value()) {
+            successMessage += L"\n\nBootstrapper log:\n" + bootstrapperLogPath->wstring();
+        }
         showMessage(
             MB_ICONINFORMATION | MB_OK,
             L"Master Control Orchestration Server Setup",
-            L"Master Control Orchestration Server installed successfully.\n\nA launcher log was written to:\n" + logPath.wstring());
+            successMessage);
     }
 
     exitSetupProcess(0, shouldUninitializeCom);

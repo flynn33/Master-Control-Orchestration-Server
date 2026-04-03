@@ -494,6 +494,50 @@ std::filesystem::path bootstrapperBinaryPath() {
     return buildRoot / "src" / "MasterControlBootstrapper" / configurationName / "MasterControlBootstrapper.exe";
 }
 
+std::filesystem::path serviceHostPayloadBinaryPath() {
+    const auto executablePath = currentExecutablePath();
+    const auto configurationName = executablePath.parent_path().filename();
+    const auto buildRoot = executablePath.parent_path().parent_path().parent_path();
+    return buildRoot / "src" / "MasterControlServiceHost" / configurationName / "MasterControlServiceHost.exe";
+}
+
+class DelayedExclusiveFileLock final {
+public:
+    DelayedExclusiveFileLock(const std::filesystem::path& filePath, const DWORD holdMilliseconds) {
+        const auto handle = CreateFileW(
+            filePath.wstring().c_str(),
+            GENERIC_READ,
+            0,
+            nullptr,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr);
+        if (handle == INVALID_HANDLE_VALUE) {
+            return;
+        }
+
+        active_ = true;
+        releaser_ = std::thread([handle, holdMilliseconds]() {
+            Sleep(holdMilliseconds);
+            CloseHandle(handle);
+        });
+    }
+
+    ~DelayedExclusiveFileLock() {
+        if (releaser_.joinable()) {
+            releaser_.join();
+        }
+    }
+
+    bool active() const {
+        return active_;
+    }
+
+private:
+    bool active_ = false;
+    std::thread releaser_;
+};
+
 int runProcess(const std::wstring& command, const std::filesystem::path& workingDirectory) {
     STARTUPINFOW startupInfo{};
     startupInfo.cb = sizeof(startupInfo);
@@ -3118,6 +3162,30 @@ int main() {
             auto downgradedState = *installedState;
             downgradedState["version"] = "0.0.0";
             writeTextFile(bootstrapInstallStateFile, downgradedState.dump(2));
+        }
+
+        const auto retryLockedInstallDirectory = tempRoot / "bootstrapper-install-retry";
+        {
+            DelayedExclusiveFileLock sourcePayloadLock(serviceHostPayloadBinaryPath(), 1500);
+            success &= expect(
+                sourcePayloadLock.active(),
+                "Tests should be able to acquire a transient exclusive lock on the source service payload.");
+            const auto retryInstallCommand = L"\"" + bootstrapperBinary.wstring() + L"\" install \"" +
+                retryLockedInstallDirectory.wstring() +
+                L"\" --skip-service --skip-firewall --skip-shortcuts --skip-uninstall-registration --json";
+            const auto retryInstallResult = runProcessWithOutput(retryInstallCommand, tempRoot);
+            success &= expect(
+                retryInstallResult.exitCode == 0,
+                "Bootstrapper install should retry staging when a source payload executable is transiently locked.");
+            const auto retryInstallJson = nlohmann::json::parse(retryInstallResult.rawOutput, nullptr, false);
+            success &= expect(
+                retryInstallJson.is_object() &&
+                    retryInstallJson.value("succeeded", false) &&
+                    retryInstallJson.value("action", std::string{}) == "install",
+                "Bootstrapper retry install JSON mode should still report a successful install.");
+            success &= expect(
+                std::filesystem::exists(retryLockedInstallDirectory / "MasterControlServiceHost.exe"),
+                "Bootstrapper retry install should stage the locked service payload after the transient file lock clears.");
         }
 
         {
