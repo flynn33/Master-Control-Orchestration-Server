@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.55",
-  "current_tag": "v0.1.55",
+  "current_version": "0.1.56",
+  "current_tag": "v0.1.56",
   "released_at": "2026-04-03",
-  "last_release_commit": "e65abb33a3001a90bcd5eb282f8c8df55fd62059",
+  "last_release_commit": "acb6ff82f6989e2cd5d6301161d2d3032655238b",
   "history": [
+    {
+      "version": "0.1.56",
+      "tag": "v0.1.56",
+      "released_at": "2026-04-03",
+      "commit": "acb6ff82f6989e2cd5d6301161d2d3032655238b",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Promote wizard-first admin workflows (flynn33)"
+      ]
+    },
     {
       "version": "0.1.55",
       "tag": "v0.1.55",
