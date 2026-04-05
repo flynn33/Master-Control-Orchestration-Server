@@ -21,6 +21,7 @@ endif()
 include(CTest)
 
 find_package(nlohmann_json CONFIG REQUIRED)
+find_program(MASTERCONTROL_POWERSHELL NAMES pwsh.exe pwsh powershell.exe powershell)
 find_program(
     MASTERCONTROL_VSTEST_CONSOLE
     NAMES vstest.console.exe
@@ -51,6 +52,54 @@ if(BUILD_TESTING)
     if(NOT MASTERCONTROL_VSTEST_CONSOLE)
         message(WARNING "vstest.console.exe was not found at configure time. The local proxy will fall back to runtime discovery.")
     endif()
+endif()
+
+if(WIN32 AND MASTERCONTROL_POWERSHELL)
+    set(MASTERCONTROL_ACTIVE_PRESET "$<IF:$<CONFIG:Debug>,debug,release>")
+    set(MASTERCONTROL_PACKAGE_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/Package-MasterControlOrchestrationServer.ps1")
+    set(MASTERCONTROL_IDE_ACCEPTANCE_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/Invoke-MasterControlOrchestrationServerIdeAcceptance.ps1")
+    set(MASTERCONTROL_RUNTIME_TARGETS
+        MasterControlModules
+        MasterControlApp
+        MasterControlServiceHost
+        MasterControlShell
+        MasterControlBootstrapper
+        MasterControlOrchestrationServerSetup
+    )
+
+    add_custom_target(IDE_PACKAGE
+        COMMAND "${MASTERCONTROL_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass -File "${MASTERCONTROL_PACKAGE_SCRIPT}" -Preset "${MASTERCONTROL_ACTIVE_PRESET}" -SkipBuild -SkipTests
+        USES_TERMINAL
+        VERBATIM
+        COMMENT "Package Master Control Orchestration Server for the active IDE configuration"
+    )
+    add_dependencies(IDE_PACKAGE ${MASTERCONTROL_RUNTIME_TARGETS})
+    set_target_properties(IDE_PACKAGE PROPERTIES FOLDER "IDEValidationTargets")
+
+    foreach(MASTERCONTROL_ACCEPTANCE_SCENARIO IN ITEMS mixed managed both)
+        string(TOUPPER "${MASTERCONTROL_ACCEPTANCE_SCENARIO}" MASTERCONTROL_ACCEPTANCE_SUFFIX)
+        set(MASTERCONTROL_ACCEPTANCE_TARGET "IDE_ACCEPTANCE_${MASTERCONTROL_ACCEPTANCE_SUFFIX}")
+        set(MASTERCONTROL_ACCEPTANCE_ARGUMENTS
+            -Preset "${MASTERCONTROL_ACTIVE_PRESET}"
+            -Scenario "${MASTERCONTROL_ACCEPTANCE_SCENARIO}"
+            -SkipBuild
+            -SkipTests
+            -KeepArtifacts
+        )
+
+        if(MASTERCONTROL_ACCEPTANCE_SCENARIO STREQUAL "managed" OR MASTERCONTROL_ACCEPTANCE_SCENARIO STREQUAL "both")
+            list(APPEND MASTERCONTROL_ACCEPTANCE_ARGUMENTS -ManagedMutating)
+        endif()
+
+        add_custom_target(${MASTERCONTROL_ACCEPTANCE_TARGET}
+            COMMAND "${MASTERCONTROL_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass -File "${MASTERCONTROL_IDE_ACCEPTANCE_SCRIPT}" ${MASTERCONTROL_ACCEPTANCE_ARGUMENTS}
+            USES_TERMINAL
+            VERBATIM
+            COMMENT "Run ${MASTERCONTROL_ACCEPTANCE_SCENARIO} deployment acceptance for the active IDE configuration"
+        )
+        add_dependencies(${MASTERCONTROL_ACCEPTANCE_TARGET} IDE_PACKAGE)
+        set_target_properties(${MASTERCONTROL_ACCEPTANCE_TARGET} PROPERTIES FOLDER "IDEValidationTargets")
+    endforeach()
 endif()
 
 install(
