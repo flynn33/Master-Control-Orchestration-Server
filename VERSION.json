@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.65",
-  "current_tag": "v0.1.65",
+  "current_version": "0.1.66",
+  "current_tag": "v0.1.66",
   "released_at": "2026-04-10",
-  "last_release_commit": "810748ab203cba194ca33642b7c1bf0f3e075813",
+  "last_release_commit": "a3a57912078a611c69d515f98bfb01cd23ff8198",
   "history": [
+    {
+      "version": "0.1.66",
+      "tag": "v0.1.66",
+      "released_at": "2026-04-10",
+      "commit": "a3a57912078a611c69d515f98bfb01cd23ff8198",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Refocus shell on readable operator workflows (flynn33)"
+      ]
+    },
     {
       "version": "0.1.65",
       "tag": "v0.1.65",
