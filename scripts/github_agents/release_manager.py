@@ -249,35 +249,6 @@ def bump_state(metadata_out: Path | None) -> dict:
     return metadata
 
 
-def seal_state(commit: str | None, metadata_out: Path | None) -> dict:
-    state = init_state()
-    if not state.get("history"):
-        raise RuntimeError("Version history must be initialized before sealing a release.")
-
-    target_commit = commit or current_head()
-    current_release = state["history"][0]
-    changed = (
-        current_release.get("commit") != target_commit
-        or state.get("last_release_commit") != target_commit
-    )
-
-    if changed:
-        current_release["commit"] = target_commit
-        state["last_release_commit"] = target_commit
-        write_release_artifacts(state)
-
-    metadata = {
-        "version": state["current_version"],
-        "tag": state["current_tag"],
-        "notes_path": str(VERSIONS_DIR / f"v{state['current_version']}.md"),
-        "target_commit": target_commit,
-        "changed": changed,
-    }
-    if metadata_out is not None:
-        write_json(metadata_out, metadata)
-    return metadata
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Manage repository version and changelog artifacts.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -286,13 +257,6 @@ def parse_args() -> argparse.Namespace:
 
     bump_parser = subparsers.add_parser("bump", help="Create the next tracked release from commits since the last release.")
     bump_parser.add_argument("--metadata-out", type=Path, help="Optional JSON file to write release metadata into.")
-
-    seal_parser = subparsers.add_parser(
-        "seal",
-        help="Retarget the current tracked release to the final published commit after generated artifacts are committed.",
-    )
-    seal_parser.add_argument("--commit", help="Commit SHA to seal into the current tracked release. Defaults to HEAD.")
-    seal_parser.add_argument("--metadata-out", type=Path, help="Optional JSON file to write release metadata into.")
     return parser.parse_args()
 
 
@@ -304,10 +268,6 @@ def main() -> int:
 
     if args.command == "bump":
         bump_state(args.metadata_out)
-        return 0
-
-    if args.command == "seal":
-        seal_state(args.commit, args.metadata_out)
         return 0
 
     raise ValueError(f"Unsupported command: {args.command}")
