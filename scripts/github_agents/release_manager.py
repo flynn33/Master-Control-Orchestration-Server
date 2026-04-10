@@ -144,7 +144,6 @@ def render_release_page(release: dict) -> str:
         "",
         f"- Version: `{release['version']}`",
         f"- Release date: `{release['released_at']}`",
-        f"- Commit: `{release['commit']}`",
         "",
         "## Summary",
         release["summary"],

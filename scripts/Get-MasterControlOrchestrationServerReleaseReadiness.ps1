@@ -116,9 +116,6 @@ function New-ReleaseReadinessSummary {
     $lines.Add("* File count: $($Report.package.fileCount)")
     $lines.Add("* Size bytes: $($Report.package.packageSizeBytes)")
     $lines.Add("* Packaged preflight ready: $($Report.package.packagedPreflight.ready)")
-    if ($Report.package.PSObject.Properties.Name -contains "trackedReleaseCommit" -and -not [string]::IsNullOrWhiteSpace($Report.package.trackedReleaseCommit)) {
-        $lines.Add("* Tracked release commit: $($Report.package.trackedReleaseCommit)")
-    }
     $lines.Add("")
 
     $lines.Add("## Local Acceptance")
@@ -178,6 +175,15 @@ if ([string]::IsNullOrWhiteSpace($AcceptanceReportPath)) {
 
 $acceptanceReport = Read-JsonDocument -Path $AcceptanceReportPath
 $versionDocument = Read-JsonDocument -Path (Join-Path $repoRoot "VERSION.json")
+
+$packageVersionTrackingBaseCommit = ""
+if ($packageMetadata.PSObject.Properties.Name -contains "versionTrackingBaseCommit") {
+    $packageVersionTrackingBaseCommit = [string]$packageMetadata.versionTrackingBaseCommit
+} elseif ($packageMetadata.PSObject.Properties.Name -contains "releaseSourceCommit") {
+    $packageVersionTrackingBaseCommit = [string]$packageMetadata.releaseSourceCommit
+} elseif ($packageMetadata.PSObject.Properties.Name -contains "trackedReleaseCommit") {
+    $packageVersionTrackingBaseCommit = [string]$packageMetadata.trackedReleaseCommit
+}
 
 $headFull = (git -C $repoRoot rev-parse HEAD).Trim()
 $headShort = (git -C $repoRoot rev-parse --short HEAD).Trim()
@@ -263,8 +269,8 @@ $notes = @(
     "The current package is suitable for installer testing because packaged preflight and local mixed-lifecycle acceptance both passed.",
     "Final deployment confidence still depends on the elevated managed Windows 11 pass and a Windows Server 2022 pass."
 )
-if ($packageMetadata.PSObject.Properties.Name -contains "trackedReleaseCommit" -and -not [string]::IsNullOrWhiteSpace($packageMetadata.trackedReleaseCommit)) {
-    $notes += ("Tracked release metadata currently references source commit " + $packageMetadata.trackedReleaseCommit + ". Package validation is determined by package commit, packaged acceptance, and repository cleanliness.")
+if (-not [string]::IsNullOrWhiteSpace($packageVersionTrackingBaseCommit)) {
+    $notes += ("Version tracking currently uses base commit " + $packageVersionTrackingBaseCommit + " for automated bump calculations. Package validation is determined by package commit, packaged acceptance, and repository cleanliness.")
 }
 
 $report = [pscustomobject][ordered]@{
@@ -305,7 +311,7 @@ $report = [pscustomobject][ordered]@{
         fileCount = $packageMetadata.fileCount
         packageSizeBytes = $packageMetadata.packageSizeBytes
         packagedPreflight = $packageMetadata.packagedPreflight
-        trackedReleaseCommit = if ($packageMetadata.PSObject.Properties.Name -contains "trackedReleaseCommit") { $packageMetadata.trackedReleaseCommit } else { "" }
+        versionTrackingBaseCommit = $packageVersionTrackingBaseCommit
     }
     acceptance = [pscustomobject][ordered]@{
         reportPath = (Resolve-Path $AcceptanceReportPath).Path
