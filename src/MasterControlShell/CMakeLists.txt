@@ -4,14 +4,28 @@
 
 set(MASTERCONTROL_SHELL_PROJECT "${CMAKE_CURRENT_SOURCE_DIR}/MasterControlShell.vcxproj")
 
+set(MASTERCONTROL_MSBUILD_HINTS)
+if(CMAKE_GENERATOR_INSTANCE)
+    # Keep the inner WinUI project build aligned with the active IDE generator.
+    list(APPEND MASTERCONTROL_MSBUILD_HINTS
+        "${CMAKE_GENERATOR_INSTANCE}/MSBuild/Current/Bin"
+    )
+endif()
+
+list(APPEND MASTERCONTROL_MSBUILD_HINTS
+    "C:/Program Files/Microsoft Visual Studio/18/Community/MSBuild/Current/Bin"
+    "C:/Program Files/Microsoft Visual Studio/18/BuildTools/MSBuild/Current/Bin"
+    "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin"
+    "C:/Program Files/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin"
+)
+
+# Re-resolve this on each configure so a prior VS installation choice does not linger in the cache.
+unset(MASTERCONTROL_MSBUILD CACHE)
 find_program(
     MASTERCONTROL_MSBUILD
     NAMES MSBuild.exe
-    HINTS
-        "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin"
-        "C:/Program Files/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin"
-        "C:/Program Files/Microsoft Visual Studio/18/Community/MSBuild/Current/Bin"
-        "C:/Program Files/Microsoft Visual Studio/18/BuildTools/MSBuild/Current/Bin"
+    HINTS ${MASTERCONTROL_MSBUILD_HINTS}
+    NO_CACHE
 )
 
 if(NOT MASTERCONTROL_MSBUILD)
