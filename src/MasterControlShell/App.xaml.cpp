@@ -6,6 +6,7 @@
 
 #include "App.xaml.h"
 #include "MainWindow.xaml.h"
+#include "../../include/MasterControl/DeploymentLogPaths.h"
 
 namespace winrt::MasterControlShell::implementation {
 
@@ -15,17 +16,22 @@ namespace {
 
 void writeStartupLog(const std::wstring& message) {
     try {
-        const auto logPath = std::filesystem::temp_directory_path() / L"MasterControlShell-startup.log";
-        std::wofstream stream(logPath, std::ios::app);
-        if (!stream.is_open()) {
-            return;
-        }
+        wchar_t buffer[MAX_PATH]{};
+        const auto length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+        const auto executableDirectory = std::filesystem::path(std::wstring(buffer, length)).parent_path();
+        const auto paths = MasterControl::DeploymentLogPaths::build(executableDirectory);
 
         const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
         tm localTime{};
         localtime_s(&localTime, &now);
 
-        stream << std::put_time(&localTime, L"%Y-%m-%d %H:%M:%S") << L"  " << message << std::endl;
+        std::wostringstream line;
+        line << std::put_time(&localTime, L"%Y-%m-%d %H:%M:%S") << L"  " << message << std::endl;
+        (void)MasterControl::DeploymentLogPaths::appendComponentLog(
+            paths,
+            paths.shellLatest,
+            paths.shellSessionLog,
+            line.str());
     } catch (...) {
     }
 }

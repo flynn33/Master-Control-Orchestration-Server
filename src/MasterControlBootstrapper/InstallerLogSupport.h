@@ -24,6 +24,18 @@ struct PersistentLogPaths final {
     std::filesystem::path failures;
     std::filesystem::path latest;
     std::filesystem::path latestFailure;
+    std::filesystem::path sessions;
+    std::filesystem::path sessionDirectory;
+    std::filesystem::path sessionHistory;
+    std::filesystem::path sessionLatest;
+    std::filesystem::path latestSession;
+    std::filesystem::path components;
+    std::filesystem::path shellLatest;
+    std::filesystem::path serviceLatest;
+    std::filesystem::path launcherSessionLog;
+    std::filesystem::path bootstrapperSessionLog;
+    std::filesystem::path shellSessionLog;
+    std::filesystem::path serviceSessionLog;
 };
 
 inline std::optional<std::wstring> readEnvironmentVariable(const wchar_t* name) {
@@ -198,8 +210,11 @@ inline PersistentLogPaths persistentLogPaths(const std::filesystem::path& execut
     if (const auto overrideDirectory = readEnvironmentVariable(kPersistentLogDirectoryEnv);
         overrideDirectory.has_value() && !overrideDirectory->empty()) {
         root = std::filesystem::path(*overrideDirectory);
-    } else if (const auto localAppData = tryKnownFolder(FOLDERID_LocalAppData); localAppData.has_value()) {
-        root = *localAppData / "Master Control Orchestration Server" / "logs" / "installer";
+    } else if (const auto publicDocuments = tryKnownFolder(FOLDERID_PublicDocuments); publicDocuments.has_value()) {
+        root = *publicDocuments / "Master Control Orchestration Server" / "logs" / "installer";
+    } else if (const auto publicPath = readEnvironmentVariable(L"PUBLIC");
+               publicPath.has_value() && !publicPath->empty()) {
+        root = std::filesystem::path(*publicPath) / "Documents" / "Master Control Orchestration Server" / "logs" / "installer";
     } else if (const auto localAppDataEnv = readEnvironmentVariable(L"LOCALAPPDATA");
                localAppDataEnv.has_value() && !localAppDataEnv->empty()) {
         root = std::filesystem::path(*localAppDataEnv) / "Master Control Orchestration Server" / "logs" / "installer";
@@ -207,12 +222,29 @@ inline PersistentLogPaths persistentLogPaths(const std::filesystem::path& execut
         root = executableDirectory / "logs" / "installer";
     }
 
+    const auto activeRunId = runId();
+    const auto sessions = root / "sessions";
+    const auto sessionDirectory = sessions / activeRunId;
+    const auto components = root / "components";
+
     return PersistentLogPaths{
         root,
         root / "installer-history.jsonl",
         root / "installer-failures.jsonl",
         root / "installer-latest.json",
-        root / "installer-latest-failure.json"
+        root / "installer-latest-failure.json",
+        sessions,
+        sessionDirectory,
+        sessionDirectory / "events.jsonl",
+        sessionDirectory / "latest.json",
+        root / "latest-session.json",
+        components,
+        components / "shell-latest.log",
+        components / "service-latest.log",
+        sessionDirectory / "setup-launcher.log",
+        sessionDirectory / "bootstrapper.log",
+        sessionDirectory / "shell-startup.log",
+        sessionDirectory / "service-host.log"
     };
 }
 
@@ -222,7 +254,19 @@ inline nlohmann::json persistentPathsToJson(const PersistentLogPaths& paths) {
         { "history", pathToUtf8(paths.history) },
         { "failures", pathToUtf8(paths.failures) },
         { "latest", pathToUtf8(paths.latest) },
-        { "latestFailure", pathToUtf8(paths.latestFailure) }
+        { "latestFailure", pathToUtf8(paths.latestFailure) },
+        { "sessions", pathToUtf8(paths.sessions) },
+        { "sessionDirectory", pathToUtf8(paths.sessionDirectory) },
+        { "sessionHistory", pathToUtf8(paths.sessionHistory) },
+        { "sessionLatest", pathToUtf8(paths.sessionLatest) },
+        { "latestSession", pathToUtf8(paths.latestSession) },
+        { "components", pathToUtf8(paths.components) },
+        { "shellLatest", pathToUtf8(paths.shellLatest) },
+        { "serviceLatest", pathToUtf8(paths.serviceLatest) },
+        { "launcherSessionLog", pathToUtf8(paths.launcherSessionLog) },
+        { "bootstrapperSessionLog", pathToUtf8(paths.bootstrapperSessionLog) },
+        { "shellSessionLog", pathToUtf8(paths.shellSessionLog) },
+        { "serviceSessionLog", pathToUtf8(paths.serviceSessionLog) }
     };
 }
 
@@ -252,6 +296,74 @@ inline bool writeJsonFile(const std::filesystem::path& filePath, const nlohmann:
     return output.good();
 }
 
+inline bool writeTextFile(const std::filesystem::path& filePath, const std::string& payload) {
+    std::error_code error;
+    std::filesystem::create_directories(filePath.parent_path(), error);
+
+    std::ofstream output(filePath, std::ios::binary | std::ios::trunc);
+    if (!output.is_open()) {
+        return false;
+    }
+
+    output << payload;
+    return output.good();
+}
+
+inline bool appendTextFile(const std::filesystem::path& filePath, const std::string& payload) {
+    std::error_code error;
+    std::filesystem::create_directories(filePath.parent_path(), error);
+
+    std::ofstream output(filePath, std::ios::binary | std::ios::app);
+    if (!output.is_open()) {
+        return false;
+    }
+
+    output << payload;
+    return output.good();
+}
+
+inline bool writeWideTextFile(const std::filesystem::path& filePath, const std::wstring& payload) {
+    std::error_code error;
+    std::filesystem::create_directories(filePath.parent_path(), error);
+
+    std::wofstream output(filePath, std::ios::binary | std::ios::trunc);
+    if (!output.is_open()) {
+        return false;
+    }
+
+    output << payload;
+    return output.good();
+}
+
+inline bool appendWideTextFile(const std::filesystem::path& filePath, const std::wstring& payload) {
+    std::error_code error;
+    std::filesystem::create_directories(filePath.parent_path(), error);
+
+    std::wofstream output(filePath, std::ios::binary | std::ios::app);
+    if (!output.is_open()) {
+        return false;
+    }
+
+    output << payload;
+    return output.good();
+}
+
+inline bool hasActiveInstallerRun() {
+    const auto activeRunId = readEnvironmentVariable(kInstallerRunIdEnv);
+    return activeRunId.has_value() && !activeRunId->empty();
+}
+
+inline bool appendComponentLog(const PersistentLogPaths&,
+                               const std::filesystem::path& latestLogPath,
+                               const std::filesystem::path& sessionLogPath,
+                               const std::wstring& payload) {
+    bool wroteAnything = appendWideTextFile(latestLogPath, payload);
+    if (hasActiveInstallerRun()) {
+        wroteAnything |= appendWideTextFile(sessionLogPath, payload);
+    }
+    return wroteAnything;
+}
+
 inline bool persistRecord(const PersistentLogPaths& paths, const nlohmann::json& payload) {
     nlohmann::json record = payload;
     if (!record.contains("generatedAtUtc")) {
@@ -269,6 +381,28 @@ inline bool persistRecord(const PersistentLogPaths& paths, const nlohmann::json&
     bool wroteAnything = false;
     wroteAnything |= appendJsonLine(paths.history, record);
     wroteAnything |= writeJsonFile(paths.latest, record);
+    wroteAnything |= appendJsonLine(paths.sessionHistory, record);
+    wroteAnything |= writeJsonFile(paths.sessionLatest, record);
+    wroteAnything |= writeJsonFile(
+        paths.latestSession,
+        nlohmann::json{
+            { "runId", record.at("runId") },
+            { "generatedAtUtc", record.at("generatedAtUtc") },
+            { "component", record.value("component", std::string{}) },
+            { "action", record.value("action", std::string{}) },
+            { "outcome", record.value("outcome", std::string{}) },
+            { "succeeded", record.value("succeeded", false) },
+            { "message", record.value("message", std::string{}) },
+            { "sessionDirectory", pathToUtf8(paths.sessionDirectory) },
+            { "sessionHistory", pathToUtf8(paths.sessionHistory) },
+            { "sessionLatest", pathToUtf8(paths.sessionLatest) },
+            { "shellLatest", pathToUtf8(paths.shellLatest) },
+            { "serviceLatest", pathToUtf8(paths.serviceLatest) },
+            { "launcherSessionLog", pathToUtf8(paths.launcherSessionLog) },
+            { "bootstrapperSessionLog", pathToUtf8(paths.bootstrapperSessionLog) },
+            { "shellSessionLog", pathToUtf8(paths.shellSessionLog) },
+            { "serviceSessionLog", pathToUtf8(paths.serviceSessionLog) }
+        });
 
     if (!record.value("succeeded", false)) {
         wroteAnything |= appendJsonLine(paths.failures, record);

@@ -53,6 +53,15 @@ struct ProgressWindow final {
     HWND progressBar = nullptr;
 };
 
+struct ShellLaunchResult final {
+    bool promptShown = false;
+    bool userAccepted = false;
+    bool attempted = false;
+    bool launched = false;
+    DWORD shellExecuteCode = 0;
+    std::wstring message = L"Shell launch was not requested.";
+};
+
 constexpr wchar_t kProgressWindowClassName[] = L"MasterControlOrchestrationServerSetupProgressWindow";
 
 std::wstring formatWindowsMessage(const DWORD errorCode) {
@@ -78,6 +87,21 @@ std::wstring formatWindowsMessage(const DWORD errorCode) {
         message.pop_back();
     }
     return message;
+}
+
+std::wstring wideFromUtf8(const std::string& input) {
+    if (input.empty()) {
+        return {};
+    }
+
+    const int required = MultiByteToWideChar(CP_UTF8, 0, input.c_str(), static_cast<int>(input.size()), nullptr, 0);
+    if (required <= 0) {
+        return {};
+    }
+
+    std::wstring output(static_cast<size_t>(required), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, input.c_str(), static_cast<int>(input.size()), output.data(), required);
+    return output;
 }
 
 std::filesystem::path executablePath() {
@@ -584,6 +608,30 @@ std::optional<std::filesystem::path> findLatestBootstrapperActionLog(
     return newestMatchingPath(false);
 }
 
+std::optional<nlohmann::json> waitForBootstrapperRecord(
+    const MasterControl::InstallerLogSupport::PersistentLogPaths& persistentPaths,
+    const std::wstring& runId,
+    const std::chrono::milliseconds timeout = std::chrono::seconds(90)) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const auto expectedRunId = MasterControl::InstallerLogSupport::utf8FromWide(runId);
+
+    while (std::chrono::steady_clock::now() <= deadline) {
+        if (const auto contents = MasterControl::InstallerLogSupport::readTextFileUtf8(persistentPaths.sessionLatest);
+            contents.has_value() && !contents->empty()) {
+            const auto payload = nlohmann::json::parse(*contents, nullptr, false);
+            if (!payload.is_discarded() &&
+                payload.value("component", std::string{}) == "bootstrapper" &&
+                payload.value("runId", std::string{}) == expectedRunId) {
+                return std::optional<nlohmann::json>(payload);
+            }
+        }
+
+        Sleep(200);
+    }
+
+    return std::nullopt;
+}
+
 std::vector<std::wstring> bootstrapperLaunchArguments(const LauncherOptions& options) {
     std::vector<std::wstring> arguments = options.bootstrapperArguments;
     if (std::find(arguments.begin(), arguments.end(), std::wstring(L"--run-id")) == arguments.end()) {
@@ -602,14 +650,30 @@ std::wstring launcherOutcome(const DWORD exitCode, const std::wstring& message) 
     return exitCode == 0 ? L"succeeded" : L"failed";
 }
 
+void persistSetupTrace(const MasterControl::InstallerLogSupport::PersistentLogPaths& persistentPaths,
+                       const std::wstring& stage,
+                       const nlohmann::json& payload = {}) {
+    nlohmann::json record = payload;
+    record["schema"] = "mastercontrol.installer-log.v1";
+    record["component"] = "setup-launcher-trace";
+    record["action"] = "install";
+    record["outcome"] = "trace";
+    record["succeeded"] = true;
+    record["stage"] = MasterControl::InstallerLogSupport::utf8FromWide(stage);
+    record["message"] = MasterControl::InstallerLogSupport::utf8FromWide(stage);
+    record["runId"] = MasterControl::InstallerLogSupport::utf8FromWide(MasterControl::InstallerLogSupport::runId());
+    MasterControl::InstallerLogSupport::appendJsonLine(persistentPaths.sessionHistory, record);
+}
+
 bool writeLauncherLog(const std::filesystem::path& logPath,
                       const LauncherOptions& options,
                       const bool administrator,
                       const bool requiresElevation,
                       const bool elevationAttempted,
-                      const DWORD exitCode,
+                      const DWORD bootstrapperExitCode,
+                      const int intendedProcessExitCode,
                       const std::wstring& message,
-                      const bool launchedShell,
+                      const ShellLaunchResult& shellLaunch,
                       const std::optional<std::filesystem::path>& bootstrapperLogPath = std::nullopt) {
     const auto runId = MasterControl::InstallerLogSupport::runId();
     const auto persistentPaths =
@@ -618,43 +682,64 @@ bool writeLauncherLog(const std::filesystem::path& logPath,
     std::filesystem::create_directories(logPath.parent_path(), error);
 
     bool wroteTextLog = false;
+    std::wostringstream contents;
+    {
+        contents << L"Master Control Orchestration Server Setup Launcher\r\n\r\n";
+        contents << L"GeneratedAt: " << currentTimestamp().c_str() << L"\r\n";
+        contents << L"RunId: " << runId << L"\r\n";
+        contents << L"BootstrapperPath: " << (executableDirectory() / kBootstrapperName).wstring() << L"\r\n";
+        contents << L"InstallDirectory: " << options.installDirectory.wstring() << L"\r\n";
+        contents << L"PersistentLogRoot: " << persistentPaths.root.wstring() << L"\r\n";
+        contents << L"PersistentHistoryPath: " << persistentPaths.history.wstring() << L"\r\n";
+        contents << L"PersistentFailurePath: " << persistentPaths.failures.wstring() << L"\r\n";
+        contents << L"LatestPersistentRecordPath: " << persistentPaths.latest.wstring() << L"\r\n";
+        contents << L"LatestPersistentFailurePath: " << persistentPaths.latestFailure.wstring() << L"\r\n";
+        contents << L"LatestSessionPath: " << persistentPaths.latestSession.wstring() << L"\r\n";
+        contents << L"SessionDirectory: " << persistentPaths.sessionDirectory.wstring() << L"\r\n";
+        contents << L"SessionHistoryPath: " << persistentPaths.sessionHistory.wstring() << L"\r\n";
+        contents << L"SessionLauncherLogPath: " << persistentPaths.launcherSessionLog.wstring() << L"\r\n";
+        contents << L"SessionBootstrapperLogPath: " << persistentPaths.bootstrapperSessionLog.wstring() << L"\r\n";
+        contents << L"ShellLatestLogPath: " << persistentPaths.shellLatest.wstring() << L"\r\n";
+        contents << L"ServiceLatestLogPath: " << persistentPaths.serviceLatest.wstring() << L"\r\n";
+        contents << L"IsAdministrator: " << (administrator ? L"true" : L"false") << L"\r\n";
+        contents << L"RequiresElevation: " << (requiresElevation ? L"true" : L"false") << L"\r\n";
+        contents << L"ElevationAttempted: " << (elevationAttempted ? L"true" : L"false") << L"\r\n";
+        contents << L"Quiet: " << (options.quiet ? L"true" : L"false") << L"\r\n";
+        contents << L"LaunchedShell: " << (shellLaunch.launched ? L"true" : L"false") << L"\r\n";
+        contents << L"ShellLaunchPromptShown: " << (shellLaunch.promptShown ? L"true" : L"false") << L"\r\n";
+        contents << L"ShellLaunchAccepted: " << (shellLaunch.userAccepted ? L"true" : L"false") << L"\r\n";
+        contents << L"ShellLaunchAttempted: " << (shellLaunch.attempted ? L"true" : L"false") << L"\r\n";
+        contents << L"ShellLaunchResultCode: " << shellLaunch.shellExecuteCode << L"\r\n";
+        contents << L"BootstrapperExitCode: " << bootstrapperExitCode << L"\r\n";
+        contents << L"IntendedProcessExitCode: " << intendedProcessExitCode << L"\r\n";
+        contents << L"Arguments: " << joinArguments(options.bootstrapperArguments) << L"\r\n";
+        if (bootstrapperLogPath.has_value()) {
+            contents << L"BootstrapperLogPath: " << bootstrapperLogPath->wstring() << L"\r\n";
+        }
+        contents << L"ShellLaunchMessage: " << shellLaunch.message << L"\r\n";
+        contents << L"\r\nMessage\r\n-------\r\n";
+        contents << message << L"\r\n";
+    }
+
     {
         std::wofstream output(logPath, std::ios::binary);
         if (output.is_open()) {
-            output << L"Master Control Orchestration Server Setup Launcher\r\n\r\n";
-            output << L"GeneratedAt: " << currentTimestamp().c_str() << L"\r\n";
-            output << L"RunId: " << runId << L"\r\n";
-            output << L"BootstrapperPath: " << (executableDirectory() / kBootstrapperName).wstring() << L"\r\n";
-            output << L"InstallDirectory: " << options.installDirectory.wstring() << L"\r\n";
-            output << L"PersistentLogRoot: " << persistentPaths.root.wstring() << L"\r\n";
-            output << L"PersistentHistoryPath: " << persistentPaths.history.wstring() << L"\r\n";
-            output << L"PersistentFailurePath: " << persistentPaths.failures.wstring() << L"\r\n";
-            output << L"LatestPersistentRecordPath: " << persistentPaths.latest.wstring() << L"\r\n";
-            output << L"LatestPersistentFailurePath: " << persistentPaths.latestFailure.wstring() << L"\r\n";
-            output << L"IsAdministrator: " << (administrator ? L"true" : L"false") << L"\r\n";
-            output << L"RequiresElevation: " << (requiresElevation ? L"true" : L"false") << L"\r\n";
-            output << L"ElevationAttempted: " << (elevationAttempted ? L"true" : L"false") << L"\r\n";
-            output << L"Quiet: " << (options.quiet ? L"true" : L"false") << L"\r\n";
-            output << L"LaunchedShell: " << (launchedShell ? L"true" : L"false") << L"\r\n";
-            output << L"ExitCode: " << exitCode << L"\r\n";
-            output << L"Arguments: " << joinArguments(options.bootstrapperArguments) << L"\r\n";
-            if (bootstrapperLogPath.has_value()) {
-                output << L"BootstrapperLogPath: " << bootstrapperLogPath->wstring() << L"\r\n";
-            }
-            output << L"\r\nMessage\r\n-------\r\n";
-            output << message << L"\r\n";
+            output << contents.str();
             wroteTextLog = output.good();
         }
     }
 
-    MasterControl::InstallerLogSupport::persistRecord(
+    const bool wroteSessionTextLog =
+        MasterControl::InstallerLogSupport::writeWideTextFile(persistentPaths.launcherSessionLog, contents.str());
+
+        MasterControl::InstallerLogSupport::persistRecord(
         persistentPaths,
         nlohmann::json{
             { "schema", "mastercontrol.installer-log.v1" },
             { "component", "setup-launcher" },
             { "action", MasterControl::InstallerLogSupport::utf8FromWide(bootstrapperActionName(options)) },
-            { "outcome", MasterControl::InstallerLogSupport::utf8FromWide(launcherOutcome(exitCode, message)) },
-            { "succeeded", exitCode == 0 },
+            { "outcome", MasterControl::InstallerLogSupport::utf8FromWide(launcherOutcome(static_cast<DWORD>(intendedProcessExitCode), message)) },
+            { "succeeded", intendedProcessExitCode == 0 },
             { "message", MasterControl::InstallerLogSupport::utf8FromWide(message) },
             { "runId", MasterControl::InstallerLogSupport::utf8FromWide(runId) },
             { "generatedAtLocal", MasterControl::InstallerLogSupport::localTimestampForDisplay() },
@@ -665,13 +750,25 @@ bool writeLauncherLog(const std::filesystem::path& logPath,
             { "requiresElevation", requiresElevation },
             { "elevationAttempted", elevationAttempted },
             { "quiet", options.quiet },
-            { "launchedShell", launchedShell },
-            { "exitCode", exitCode },
+            { "launchedShell", shellLaunch.launched },
+            { "exitCode", bootstrapperExitCode },
+            { "intendedProcessExitCode", intendedProcessExitCode },
+            { "shellLaunch",
+              {
+                  { "promptShown", shellLaunch.promptShown },
+                  { "userAccepted", shellLaunch.userAccepted },
+                  { "attempted", shellLaunch.attempted },
+                  { "launched", shellLaunch.launched },
+                  { "resultCode", shellLaunch.shellExecuteCode },
+                  { "message", MasterControl::InstallerLogSupport::utf8FromWide(shellLaunch.message) }
+              } },
             { "arguments", MasterControl::InstallerLogSupport::utf8FromWide(joinArguments(options.bootstrapperArguments)) },
             { "textLogWritten", wroteTextLog },
+            { "sessionTextLogWritten", wroteSessionTextLog },
             { "logPaths",
               {
                   { "text", MasterControl::InstallerLogSupport::pathToUtf8(logPath) },
+                  { "sessionText", MasterControl::InstallerLogSupport::pathToUtf8(persistentPaths.launcherSessionLog) },
                   { "bootstrapperText", bootstrapperLogPath.has_value()
                       ? MasterControl::InstallerLogSupport::pathToUtf8(*bootstrapperLogPath)
                       : std::string{} }
@@ -1006,22 +1103,59 @@ bool launchProcess(const std::filesystem::path& executable,
                    const LauncherOptions* options,
                    DWORD& exitCode,
                    std::wstring& errorMessage) {
-    SHELLEXECUTEINFOW executeInfo{};
-    executeInfo.cbSize = sizeof(executeInfo);
-    executeInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
-    executeInfo.lpVerb = elevate ? L"runas" : L"open";
-    executeInfo.lpFile = executable.c_str();
-
     const auto argumentLine = joinArguments(arguments);
-    executeInfo.lpParameters = argumentLine.c_str();
-    executeInfo.lpDirectory = executable.parent_path().c_str();
-    executeInfo.nShow = SW_HIDE;
+    HANDLE processHandle = nullptr;
 
-    if (!ShellExecuteExW(&executeInfo)) {
-        const DWORD error = GetLastError();
-        exitCode = error;
-        errorMessage = formatWindowsMessage(error);
-        return false;
+    if (elevate) {
+        SHELLEXECUTEINFOW executeInfo{};
+        executeInfo.cbSize = sizeof(executeInfo);
+        executeInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
+        executeInfo.lpVerb = L"runas";
+        executeInfo.lpFile = executable.c_str();
+        executeInfo.lpParameters = argumentLine.c_str();
+        executeInfo.lpDirectory = executable.parent_path().c_str();
+        executeInfo.nShow = SW_HIDE;
+
+        if (!ShellExecuteExW(&executeInfo)) {
+            const DWORD error = GetLastError();
+            exitCode = error;
+            errorMessage = formatWindowsMessage(error);
+            return false;
+        }
+
+        processHandle = executeInfo.hProcess;
+    } else {
+        STARTUPINFOW startupInfo{};
+        startupInfo.cb = sizeof(startupInfo);
+        startupInfo.dwFlags = STARTF_USESHOWWINDOW;
+        startupInfo.wShowWindow = SW_HIDE;
+
+        PROCESS_INFORMATION processInformation{};
+        std::wstring commandLine = quoteArgument(executable.wstring());
+        if (!argumentLine.empty()) {
+            commandLine.push_back(L' ');
+            commandLine += argumentLine;
+        }
+
+        if (!CreateProcessW(
+                executable.c_str(),
+                commandLine.data(),
+                nullptr,
+                nullptr,
+                FALSE,
+                CREATE_UNICODE_ENVIRONMENT,
+                nullptr,
+                executable.parent_path().c_str(),
+                &startupInfo,
+                &processInformation)) {
+            const DWORD error = GetLastError();
+            exitCode = error;
+            errorMessage = formatWindowsMessage(error);
+            return false;
+        }
+
+        CloseHandle(processInformation.hThread);
+        processHandle = processInformation.hProcess;
     }
 
     ProgressWindow progressWindow{};
@@ -1034,13 +1168,13 @@ bool launchProcess(const std::filesystem::path& executable,
     };
 
     for (;;) {
-        const HANDLE waitHandle = executeInfo.hProcess;
-        const DWORD waitResult = MsgWaitForMultipleObjects(1, &waitHandle, FALSE, 100, QS_ALLINPUT);
+        const DWORD waitTimeout = progressWindow.handle != nullptr ? 100 : INFINITE;
+        const DWORD waitResult = WaitForSingleObject(processHandle, waitTimeout);
         if (waitResult == WAIT_OBJECT_0) {
             break;
         }
 
-        if (waitResult == WAIT_OBJECT_0 + 1) {
+        if (waitResult == WAIT_TIMEOUT && progressWindow.handle != nullptr) {
             MSG message{};
             while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
                 TranslateMessage(&message);
@@ -1049,24 +1183,24 @@ bool launchProcess(const std::filesystem::path& executable,
             continue;
         }
 
-        const DWORD error = GetLastError();
+        const DWORD error = (waitResult == WAIT_FAILED) ? GetLastError() : ERROR_GEN_FAILURE;
         exitCode = error;
         errorMessage = formatWindowsMessage(error);
         cleanupProgressWindow();
-        CloseHandle(executeInfo.hProcess);
+        CloseHandle(processHandle);
         return false;
     }
 
-    if (!GetExitCodeProcess(executeInfo.hProcess, &exitCode)) {
+    if (!GetExitCodeProcess(processHandle, &exitCode)) {
         const DWORD error = GetLastError();
         errorMessage = formatWindowsMessage(error);
         cleanupProgressWindow();
-        CloseHandle(executeInfo.hProcess);
+        CloseHandle(processHandle);
         return false;
     }
 
     cleanupProgressWindow();
-    CloseHandle(executeInfo.hProcess);
+    CloseHandle(processHandle);
     return true;
 }
 
@@ -1074,42 +1208,54 @@ void showMessage(const UINT flags, const std::wstring& title, const std::wstring
     MessageBoxW(nullptr, text.c_str(), title.c_str(), flags | MB_SETFOREGROUND);
 }
 
-[[noreturn]] void exitSetupProcess(const int exitCode, const bool shouldUninitializeCom) {
+int finalizeSetupProcess(const int exitCode, const bool shouldUninitializeCom) {
     if (shouldUninitializeCom) {
         CoUninitialize();
     }
-
-    ExitProcess(static_cast<UINT>(exitCode));
+    return exitCode;
 }
 
-bool maybeLaunchShell(const LauncherOptions& options) {
+ShellLaunchResult maybeLaunchShell(const LauncherOptions& options) {
+    ShellLaunchResult result;
     if (options.noLaunchShell) {
-        return false;
+        result.message = L"Shell launch disabled by setup option.";
+        return result;
     }
 
     bool launchShell = options.autoLaunchShell;
     if (!options.quiet && !launchShell) {
-        const int result = MessageBoxW(
+        result.promptShown = true;
+        const int promptChoice = MessageBoxW(
             nullptr,
             L"Master Control Orchestration Server installed successfully.\n\nLaunch the desktop shell now?",
             L"Master Control Orchestration Server Setup",
             MB_ICONQUESTION | MB_YESNO | MB_SETFOREGROUND);
-        launchShell = (result == IDYES);
+        result.userAccepted = (promptChoice == IDYES);
+        launchShell = result.userAccepted;
     }
 
     if (!launchShell) {
-        return false;
+        result.message = options.autoLaunchShell
+            ? L"Shell launch was requested but not started."
+            : L"User declined shell launch after install.";
+        return result;
     }
 
     const auto shellPath = options.installDirectory / kShellBinaryName;
-    const HINSTANCE result = ShellExecuteW(
+    result.attempted = true;
+    const HINSTANCE shellExecuteResult = ShellExecuteW(
         nullptr,
         L"open",
         shellPath.c_str(),
         nullptr,
         options.installDirectory.c_str(),
         SW_SHOWNORMAL);
-    return reinterpret_cast<INT_PTR>(result) > 32;
+    result.shellExecuteCode = static_cast<DWORD>(reinterpret_cast<INT_PTR>(shellExecuteResult));
+    result.launched = reinterpret_cast<INT_PTR>(shellExecuteResult) > 32;
+    result.message = result.launched
+        ? L"Desktop shell launched successfully."
+        : L"Desktop shell launch failed with ShellExecute code " + std::to_wstring(result.shellExecuteCode) + L".";
+    return result;
 }
 
 } // namespace
@@ -1122,7 +1268,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv == nullptr) {
         showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", L"Failed to read launcher arguments.");
-        exitSetupProcess(1, shouldUninitializeCom);
+        return finalizeSetupProcess(1, shouldUninitializeCom);
     }
 
     MasterControl::InstallerLogSupport::initializeRunId();
@@ -1135,9 +1281,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     LocalFree(argv);
 
     if (!options.has_value()) {
-        writeLauncherLog(logPath, LauncherOptions{}, isAdministrator(), false, false, 2, parseError + L"\n\n" + usageText(), false);
+        writeLauncherLog(logPath, LauncherOptions{}, isAdministrator(), false, false, 2, 2, parseError + L"\n\n" + usageText(), ShellLaunchResult{});
         showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", parseError + L"\n\n" + usageText());
-        exitSetupProcess(2, shouldUninitializeCom);
+        return finalizeSetupProcess(2, shouldUninitializeCom);
     }
 
     if (!options->quiet && !options->installDirectoryExplicit) {
@@ -1145,14 +1291,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         const auto promptResult = promptForInstallDirectory(*options, installPromptError);
         if (promptResult == InstallDirectoryPromptResult::failed) {
             const std::wstring message = installPromptError + L"\n\nSetup will now exit.";
-            writeLauncherLog(logPath, *options, isAdministrator(), false, false, 4, installPromptError, false);
+            writeLauncherLog(logPath, *options, isAdministrator(), false, false, 4, 4, installPromptError, ShellLaunchResult{});
             showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", message);
-            exitSetupProcess(4, shouldUninitializeCom);
+            return finalizeSetupProcess(4, shouldUninitializeCom);
         }
 
         if (promptResult == InstallDirectoryPromptResult::canceled) {
-            writeLauncherLog(logPath, *options, isAdministrator(), false, false, 0, L"Setup canceled before install started.", false);
-            exitSetupProcess(0, shouldUninitializeCom);
+            writeLauncherLog(logPath, *options, isAdministrator(), false, false, 0, 0, L"Setup canceled before install started.", ShellLaunchResult{});
+            return finalizeSetupProcess(0, shouldUninitializeCom);
         }
 
         options->bootstrapperArguments.back() = options->installDirectory.wstring();
@@ -1161,9 +1307,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     const auto bootstrapperPath = executableDirectory() / kBootstrapperName;
     if (!std::filesystem::exists(bootstrapperPath)) {
         const std::wstring message = L"Required installer engine was not found:\n" + bootstrapperPath.wstring();
-        writeLauncherLog(logPath, *options, isAdministrator(), false, false, 3, message, false);
+        writeLauncherLog(logPath, *options, isAdministrator(), false, false, 3, 3, message, ShellLaunchResult{});
         showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", message);
-        exitSetupProcess(3, shouldUninitializeCom);
+        return finalizeSetupProcess(3, shouldUninitializeCom);
     }
 
     const bool administrator = isAdministrator();
@@ -1178,22 +1324,64 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     const auto runId = MasterControl::InstallerLogSupport::runId();
     const auto launchArguments = bootstrapperLaunchArguments(*options);
     const auto bootstrapperLogSearchStart = std::filesystem::file_time_type::clock::now() - std::chrono::seconds(2);
+    persistSetupTrace(
+        persistentPaths,
+        L"before-launchProcess",
+        nlohmann::json{
+            { "bootstrapperPath", MasterControl::InstallerLogSupport::pathToUtf8(bootstrapperPath) },
+            { "arguments", MasterControl::InstallerLogSupport::utf8FromWide(joinArguments(launchArguments)) },
+            { "requiresElevation", requiresElevation },
+            { "elevationAttempted", elevationAttempted }
+        });
     if (!launchProcess(bootstrapperPath, launchArguments, elevationAttempted, &(*options), exitCode, launchMessage)) {
         const std::wstring message =
             L"Failed to start the installer engine.\n\n" + launchMessage +
             L"\n\nA launcher log was written to:\n" + logPath.wstring() +
             L"\n\nPersistent installer failure log:\n" + persistentPaths.latestFailure.wstring();
-        writeLauncherLog(logPath, *options, administrator, requiresElevation, elevationAttempted, exitCode, launchMessage, false);
+        writeLauncherLog(logPath, *options, administrator, requiresElevation, elevationAttempted, exitCode, static_cast<int>(exitCode == 0 ? 1 : exitCode), launchMessage, ShellLaunchResult{});
         showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", message);
-        exitSetupProcess(static_cast<int>(exitCode == 0 ? 1 : exitCode), shouldUninitializeCom);
+        return finalizeSetupProcess(static_cast<int>(exitCode == 0 ? 1 : exitCode), shouldUninitializeCom);
     }
 
+    persistSetupTrace(
+        persistentPaths,
+        L"after-launchProcess",
+        nlohmann::json{
+            { "bootstrapperExitCode", exitCode },
+            { "launchMessage", MasterControl::InstallerLogSupport::utf8FromWide(launchMessage) }
+        });
+
     const auto actionName = bootstrapperActionName(*options);
-    const auto bootstrapperLogPath = findLatestBootstrapperActionLog(actionName, bootstrapperLogSearchStart, runId);
-    if (exitCode == 0 && bootstrapperActionProducesDesktopLog(actionName) && !bootstrapperLogPath.has_value()) {
+    persistSetupTrace(persistentPaths, L"before-waitForBootstrapperRecord");
+    const auto bootstrapperRecord = waitForBootstrapperRecord(persistentPaths, runId);
+    persistSetupTrace(
+        persistentPaths,
+        L"after-waitForBootstrapperRecord",
+        nlohmann::json{
+            { "observedBootstrapperRecord", bootstrapperRecord.has_value() }
+        });
+    std::optional<std::filesystem::path> bootstrapperLogPath;
+    if (std::filesystem::exists(persistentPaths.bootstrapperSessionLog)) {
+        bootstrapperLogPath = persistentPaths.bootstrapperSessionLog;
+    } else {
+        bootstrapperLogPath = findLatestBootstrapperActionLog(actionName, bootstrapperLogSearchStart, runId);
+    }
+
+    if (exitCode == 0 && !bootstrapperRecord.has_value()) {
         exitCode = 1;
         launchMessage =
-            L"Installer engine did not produce a bootstrapper log for this run. Review the launcher log and retry the install.";
+            L"Installer engine did not publish a completed bootstrapper session record for this run. Review the persistent installer logs and retry the install.";
+    }
+
+    if (bootstrapperRecord.has_value()) {
+        const bool bootstrapperSucceeded = bootstrapperRecord->value("succeeded", exitCode == 0);
+        if (!bootstrapperSucceeded) {
+            exitCode = static_cast<DWORD>(bootstrapperRecord->value("exitCode", static_cast<int>(exitCode == 0 ? 1 : exitCode)));
+            const auto recordMessage = wideFromUtf8(bootstrapperRecord->value("message", std::string{}));
+            if (!recordMessage.empty()) {
+                launchMessage = recordMessage;
+            }
+        }
     }
 
     if (exitCode == 0 && !directoryContainsInstallPayload(options->installDirectory)) {
@@ -1202,7 +1390,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             L"Bootstrapper reported success, but no installed payload was found at:\n" + options->installDirectory.wstring();
     }
 
-    const bool launchedShell = (exitCode == 0) ? maybeLaunchShell(*options) : false;
+    const ShellLaunchResult shellLaunch = (exitCode == 0) ? maybeLaunchShell(*options) : ShellLaunchResult{};
+    const int intendedProcessExitCode = static_cast<int>(exitCode);
     const std::wstring outcomeMessage =
         exitCode == 0
             ? L"Bootstrapper completed successfully."
@@ -1216,8 +1405,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         requiresElevation,
         elevationAttempted,
         exitCode,
+        intendedProcessExitCode,
         outcomeMessage,
-        launchedShell,
+        shellLaunch,
         bootstrapperLogPath);
 
     if (exitCode != 0) {
@@ -1229,10 +1419,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             message += L"\n\nBootstrapper log:\n" + bootstrapperLogPath->wstring();
         }
         showMessage(MB_ICONERROR | MB_OK, L"Master Control Orchestration Server Setup", message);
-        exitSetupProcess(static_cast<int>(exitCode), shouldUninitializeCom);
+        return finalizeSetupProcess(static_cast<int>(exitCode), shouldUninitializeCom);
     }
 
-    if (!options->quiet && !launchedShell) {
+    if (!options->quiet && !shellLaunch.launched) {
         std::wstring successMessage =
             L"Master Control Orchestration Server installed successfully.\n\nA launcher log was written to:\n" + logPath.wstring();
         if (bootstrapperLogPath.has_value()) {
@@ -1244,5 +1434,5 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             successMessage);
     }
 
-    exitSetupProcess(0, shouldUninitializeCom);
+    return finalizeSetupProcess(0, shouldUninitializeCom);
 }

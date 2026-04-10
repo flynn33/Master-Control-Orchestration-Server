@@ -45,12 +45,24 @@ function Get-DesktopDirectories {
         $directories.Add($primaryDesktop)
     }
 
-    $oneDriveDesktop = Join-Path $env:USERPROFILE "OneDrive\\Desktop"
-    if ((Test-Path $oneDriveDesktop) -and -not $directories.Contains($oneDriveDesktop)) {
-        $directories.Add($oneDriveDesktop)
+    return @($directories)
+}
+
+function Get-PersistentInstallerLogRoot {
+    if (-not [string]::IsNullOrWhiteSpace($env:MASTERCONTROL_BOOTSTRAPPER_PERSISTENT_LOG_DIR)) {
+        return $env:MASTERCONTROL_BOOTSTRAPPER_PERSISTENT_LOG_DIR
     }
 
-    return @($directories)
+    $publicDocuments = [Environment]::GetFolderPath("CommonDocuments")
+    if (-not [string]::IsNullOrWhiteSpace($publicDocuments)) {
+        return (Join-Path $publicDocuments "Master Control Orchestration Server\logs\installer")
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        return (Join-Path $env:LOCALAPPDATA "Master Control Orchestration Server\logs\installer")
+    }
+
+    return (Join-Path $env:TEMP "Master Control Orchestration Server\logs\installer")
 }
 
 function Resolve-SetupLauncherLoggedExitCode {
@@ -488,6 +500,8 @@ function Capture-HostDiagnostics {
     $serviceEventsPath = Join-Path $diagnosticsDirectory "service-events.json"
     $uninstallStatusPath = Join-Path $diagnosticsDirectory "uninstall-registration.json"
     $shortcutStatusPath = Join-Path $diagnosticsDirectory "shortcut-surfaces.json"
+    $persistentLogsPath = Join-Path $diagnosticsDirectory "persistent-installer-logs.json"
+    $persistentLogsDirectory = Join-Path $diagnosticsDirectory "persistent-installer-logs"
 
     $hostContext = [pscustomobject][ordered]@{
         collectedAt = (Get-Date).ToString("o")
@@ -578,6 +592,50 @@ function Capture-HostDiagnostics {
     [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "netsh.exe" -Arguments @("advfirewall", "firewall", "show", "rule", "name=Master Control Orchestration Server - Browser Access") -ArtifactDirectory $diagnosticsDirectory -Name "netsh-browser-rule"))
     [void]$nativeCaptures.Add((Invoke-NativeCapture -FilePath "netsh.exe" -Arguments @("advfirewall", "firewall", "show", "rule", "name=Master Control Orchestration Server - Beacon Discovery") -ArtifactDirectory $diagnosticsDirectory -Name "netsh-beacon-rule"))
 
+    New-Item -ItemType Directory -Force -Path $persistentLogsDirectory | Out-Null
+    $persistentLogRoot = Get-PersistentInstallerLogRoot
+    $persistentLogSummary = [ordered]@{
+        root = $persistentLogRoot
+        latestRecordPath = Join-Path $persistentLogRoot "installer-latest.json"
+        latestFailurePath = Join-Path $persistentLogRoot "installer-latest-failure.json"
+        latestSessionPath = Join-Path $persistentLogRoot "latest-session.json"
+        shellLatestPath = Join-Path $persistentLogRoot "components\\shell-latest.log"
+        serviceLatestPath = Join-Path $persistentLogRoot "components\\service-latest.log"
+        copiedArtifacts = @()
+    }
+
+    foreach ($candidatePath in @(
+            $persistentLogSummary.latestRecordPath,
+            $persistentLogSummary.latestFailurePath,
+            $persistentLogSummary.latestSessionPath,
+            $persistentLogSummary.shellLatestPath,
+            $persistentLogSummary.serviceLatestPath)) {
+        if (Test-Path $candidatePath) {
+            $destinationPath = Join-Path $persistentLogsDirectory ([System.IO.Path]::GetFileName($candidatePath))
+            Copy-Item -Path $candidatePath -Destination $destinationPath -Force
+            $persistentLogSummary.copiedArtifacts += $destinationPath
+        }
+    }
+
+    if (Test-Path $persistentLogSummary.latestSessionPath) {
+        try {
+            $latestSession = Get-Content $persistentLogSummary.latestSessionPath -Raw | ConvertFrom-Json
+            $persistentLogSummary.latestSession = $latestSession
+            if ($latestSession.PSObject.Properties.Name -contains "sessionDirectory" -and
+                -not [string]::IsNullOrWhiteSpace($latestSession.sessionDirectory) -and
+                (Test-Path $latestSession.sessionDirectory)) {
+                $sessionCopyRoot = Join-Path $persistentLogsDirectory "session"
+                Copy-Item -Path $latestSession.sessionDirectory -Destination $sessionCopyRoot -Recurse -Force
+                $persistentLogSummary.sessionDirectory = $latestSession.sessionDirectory
+                $persistentLogSummary.sessionArtifacts = $sessionCopyRoot
+            }
+        } catch {
+            $persistentLogSummary.latestSessionReadError = $_.Exception.Message
+        }
+    }
+
+    Set-Content -Path $persistentLogsPath -Value ($persistentLogSummary | ConvertTo-Json -Depth 8) -Encoding UTF8
+
     return [pscustomobject][ordered]@{
         directory = $diagnosticsDirectory
         hostContextPath = $hostContextPath
@@ -585,6 +643,8 @@ function Capture-HostDiagnostics {
         serviceEventsPath = $serviceEventsPath
         uninstallStatusPath = $uninstallStatusPath
         shortcutStatusPath = $shortcutStatusPath
+        persistentLogsPath = $persistentLogsPath
+        persistentLogsDirectory = $persistentLogsDirectory
         nativeCaptures = $nativeCaptures
     }
 }
@@ -1021,30 +1081,6 @@ if (-not $report.isAdministrator -and $report.effectiveScenario -in @("managed",
     if (-not $AutoElevateManaged) {
         [void]$followUpActions.Add("Run the fully managed lifecycle from an elevated PowerShell session: $elevatedCommand")
     }
-}
-
-if ($report.host.caption -notmatch "Windows Server 2022") {
-    $serverReportPath = if (-not [string]::IsNullOrWhiteSpace($ReportPath)) {
-        [System.IO.Path]::ChangeExtension([System.IO.Path]::GetFullPath($ReportPath), ".server2022.json")
-    } else {
-        "<server-2022-report-path>"
-    }
-    $serverHostLabel = if ([string]::IsNullOrWhiteSpace($HostLabel)) {
-        "server2022"
-    } else {
-        $HostLabel + "-server2022"
-    }
-    $serverCommand = @(
-        "powershell.exe",
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-File", $PSCommandPath,
-        "-BootstrapperPath", $bootstrapper.Path,
-        "-Scenario", "both",
-        "-HostLabel", $serverHostLabel,
-        "-ReportPath", $serverReportPath
-    ) -join " "
-    [void]$followUpActions.Add("Run the same acceptance harness on a Windows Server 2022 host: $serverCommand")
 }
 
 if ($followUpActions.Count -gt 0) {

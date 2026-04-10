@@ -885,7 +885,10 @@ void writeBootstrapperActionLog(const std::wstring& mode,
         output << "\r\nDetails\r\n-------\r\n";
         output << payload.dump(2) << "\r\n";
 
-        const bool wroteTextLog = writeTextFile(logPath, output.str());
+        const auto textLogContents = output.str();
+        const bool wroteTextLog = writeTextFile(logPath, textLogContents);
+        const bool wroteSessionTextLog =
+            MasterControl::InstallerLogSupport::appendTextFile(persistentPaths.bootstrapperSessionLog, textLogContents);
         const auto message = bootstrapperLogMessage(succeeded, payload);
         MasterControl::InstallerLogSupport::persistRecord(
             persistentPaths,
@@ -903,10 +906,12 @@ void writeBootstrapperActionLog(const std::wstring& mode,
                 { "installDirectory", installDirectory.string() },
                 { "bootstrapperPath", utf8FromWide(executablePath().wstring()) },
                 { "textLogWritten", wroteTextLog },
+                { "sessionTextLogWritten", wroteSessionTextLog },
                 { "logPaths",
                   {
                       { "text", MasterControl::InstallerLogSupport::pathToUtf8(logPath) },
-                      { "reportDirectory", MasterControl::InstallerLogSupport::pathToUtf8(logDirectory) }
+                      { "reportDirectory", MasterControl::InstallerLogSupport::pathToUtf8(logDirectory) },
+                      { "sessionText", MasterControl::InstallerLogSupport::pathToUtf8(persistentPaths.bootstrapperSessionLog) }
                   } },
                 { "persistentPaths", MasterControl::InstallerLogSupport::persistentPathsToJson(persistentPaths) },
                 { "options",
