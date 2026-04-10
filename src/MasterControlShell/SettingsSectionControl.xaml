@@ -11,10 +11,68 @@
             <Border Style="{StaticResource ShellCardStyle}">
                 <StackPanel Spacing="14">
                     <TextBlock Text="Guided Host Settings" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                    <TextBlock Text="Use the host-settings wizard first when you want to shape ports, beacon behavior, and the governed resource envelope. The cards below remain as the live reference view." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
-                    <Grid>
-                        <Button Tag="guided-settings" Click="GuidedSettingsActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Host Settings" HorizontalAlignment="Left" />
+                    <TextBlock Text="Configure this host directly here. Change the instance identity, bind ports, beacon behavior, and governed resource envelope, then apply the update through the local admin API." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
+
+                    <TextBlock Text="Instance Name" Style="{StaticResource ShellLabelTextStyle}" />
+                    <TextBox x:Name="InstanceNameTextBox" TextChanged="SettingsEditor_TextChanged" PlaceholderText="Master Control Orchestration Server" />
+
+                    <TextBlock Text="Bind Address" Style="{StaticResource ShellLabelTextStyle}" />
+                    <TextBox x:Name="BindAddressTextBox" TextChanged="SettingsEditor_TextChanged" PlaceholderText="0.0.0.0" />
+
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Browser Port" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="BrowserPortTextBox" TextChanged="SettingsEditor_TextChanged" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Spacing="8">
+                            <TextBlock Text="Beacon Port" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="BeaconPortTextBox" TextChanged="SettingsEditor_TextChanged" />
+                        </StackPanel>
                     </Grid>
+
+                    <ToggleSwitch x:Name="BeaconEnabledToggle" Header="Broadcast LAN beacon and gateway metadata" Toggled="SettingsToggle_Toggled" />
+
+                    <TextBlock Text="Governed Resource Envelope" Style="{StaticResource ShellLabelTextStyle}" />
+                    <Grid ColumnSpacing="12" RowSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="CPU Allocation %" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="CpuAllocationTextBox" TextChanged="SettingsEditor_TextChanged" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Spacing="8">
+                            <TextBlock Text="Memory Allocation %" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="MemoryAllocationTextBox" TextChanged="SettingsEditor_TextChanged" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="1" Spacing="8">
+                            <TextBlock Text="Bandwidth Allocation %" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="BandwidthAllocationTextBox" TextChanged="SettingsEditor_TextChanged" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Row="1" Grid.Column="1" Spacing="8">
+                            <TextBlock Text="Storage Allocation %" Style="{StaticResource ShellLabelTextStyle}" />
+                            <TextBox x:Name="StorageAllocationTextBox" TextChanged="SettingsEditor_TextChanged" />
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock x:Name="SettingsSummaryText" Style="{StaticResource ShellDataTextStyle}" TextWrapping="WrapWholeWords" />
+                    <TextBlock x:Name="SettingsStatusText" Style="{StaticResource ShellDataTextStyle}" Text="Host settings are applied through the local admin API." TextWrapping="WrapWholeWords" />
+                    <Button x:Name="ApplySettingsButton" Click="ApplySettingsButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Apply Host Settings" HorizontalAlignment="Left" />
                 </StackPanel>
             </Border>
 

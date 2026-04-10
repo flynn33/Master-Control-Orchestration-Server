@@ -14,13 +14,29 @@ namespace winrt::MasterControlShell::implementation {
 struct SettingsSectionControl : SettingsSectionControlT<SettingsSectionControl> {
     SettingsSectionControl();
 
-    void AttachActions(std::function<void(const std::wstring&)> actionRequested);
+    void AttachRuntime(::MasterControlShell::ShellRuntime* runtime,
+                       std::function<void()> refreshRequested,
+                       std::function<void(const std::wstring&)> actionRequested);
     void ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
-    void GuidedSettingsActionButton_Click(Windows::Foundation::IInspectable const&,
-                                          Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void SettingsEditor_TextChanged(Windows::Foundation::IInspectable const&,
+                                    Microsoft::UI::Xaml::Controls::TextChangedEventArgs const&);
+    void SettingsToggle_Toggled(Windows::Foundation::IInspectable const&,
+                                Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void ApplySettingsButton_Click(Windows::Foundation::IInspectable const&,
+                                   Microsoft::UI::Xaml::RoutedEventArgs const&);
 
 private:
+    void PopulateEditorFromSnapshot();
+    void UpdateSummary();
+    void UpdateEditorState();
+    winrt::Windows::Foundation::IAsyncAction ApplySettingsAsync();
+
+    ::MasterControlShell::ShellRuntime* runtime_ = nullptr;
+    std::function<void()> refreshRequested_;
     std::function<void(const std::wstring&)> actionRequested_;
+    ::MasterControlShell::ShellSnapshot snapshot_{};
+    bool dirty_ = false;
+    bool suspendDirtyTracking_ = false;
 };
 
 } // namespace winrt::MasterControlShell::implementation

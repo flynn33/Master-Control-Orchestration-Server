@@ -26,7 +26,7 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <Border x:Name="TitleBarHost" Padding="22,18" Background="#2400F6FF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="24">
+                <Border x:Name="TitleBarHost" Padding="16,12" Background="#1400DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="6">
                     <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition x:Name="TitleBarLeftInsetColumn" Width="0" />
@@ -36,7 +36,7 @@
                         </Grid.ColumnDefinitions>
 
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16">
-                            <Border Width="52" Height="52" Background="#1800F6FF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="18">
+                            <Border Width="44" Height="44" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="4">
                                 <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="28" Foreground="{StaticResource ShellAccentBrush}" Glyph="&#xE7F4;" />
                             </Border>
 
@@ -47,17 +47,17 @@
                         </StackPanel>
 
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                            <Border x:Name="ApiBadgeBorder" Padding="12,6" Background="#2200F6FF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="999">
+                            <Border x:Name="ApiBadgeBorder" Padding="10,4" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="3">
                                 <TextBlock x:Name="ApiBadgeText" Text="API UNKNOWN" Style="{StaticResource ShellEyebrowTextStyle}" />
                             </Border>
-                            <Border x:Name="ServiceBadgeBorder" Padding="12,6" Background="#2200F6FF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="999">
+                            <Border x:Name="ServiceBadgeBorder" Padding="10,4" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="3">
                                 <TextBlock x:Name="ServiceBadgeText" Text="SERVICE UNKNOWN" Style="{StaticResource ShellEyebrowTextStyle}" />
                             </Border>
                         </StackPanel>
                     </Grid>
                 </Border>
 
-                <Border x:Name="StatusBannerBorder" Grid.Row="1" Margin="0,18,0,0" Padding="18,14" Background="#1A103045" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="18">
+                <Border x:Name="StatusBannerBorder" Grid.Row="1" Margin="0,12,0,0" Padding="14,10" Background="#120B1620" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="4">
                     <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -69,7 +69,7 @@
                     </Grid>
                 </Border>
 
-                <Border Grid.Row="2" Margin="0,22,0,0" Background="#96060E15" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="28">
+                <Border Grid.Row="2" Margin="0,14,0,0" Background="#AA04090E" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="6">
                     <NavigationView
                         x:Name="ShellNavigation"
                         Background="Transparent"
@@ -78,9 +78,9 @@
                         IsPaneOpen="True"
                         IsSettingsVisible="False"
                         OpenPaneLength="252"
-                        PaneTitle="GRID INDEX"
+                        PaneTitle="SURFACES"
                         SelectionChanged="ShellNavigation_SelectionChanged">
-                        <Grid Margin="20,16,20,20">
+                        <Grid Margin="14,12,14,14">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
@@ -90,15 +90,65 @@
                             <Border Style="{StaticResource ShellHeroCardStyle}">
                                 <Grid ColumnSpacing="24">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="1.3*" />
-                                        <ColumnDefinition Width="1.15*" />
-                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="1.55*" />
+                                        <ColumnDefinition Width="1.05*" />
+                                        <ColumnDefinition Width="0.9*" />
                                     </Grid.ColumnDefinitions>
 
-                                    <StackPanel Spacing="12">
+                                    <StackPanel Spacing="14">
                                         <TextBlock x:Name="CurrentViewEyebrowText" Text="OVERVIEW" Style="{StaticResource ShellEyebrowTextStyle}" />
                                         <TextBlock x:Name="CurrentViewTitleText" Text="Command Deck" Style="{StaticResource ShellHeroTitleTextStyle}" />
                                         <TextBlock x:Name="CurrentViewDescriptionText" MaxWidth="560" Style="{StaticResource ShellBodyTextStyle}" Text="Navigate operational surfaces for telemetry, runtime orchestration, provider routing, and secure configuration." />
+
+                                        <Border Background="#1000DFFF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="4" Padding="10,8">
+                                            <StackPanel Spacing="12">
+                                                <TextBlock Text="ALWAYS-ON COMMAND TELEMETRY" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                                <Grid ColumnSpacing="12" RowSpacing="12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+
+                                                    <Border Style="{StaticResource ShellMetricTileStyle}">
+                                                        <StackPanel Spacing="6">
+                                                            <TextBlock Text="CPU LOAD" Style="{StaticResource ShellLabelTextStyle}" />
+                                                            <TextBlock x:Name="HeroCpuValueText" Style="{StaticResource ShellValueTextStyle}" Text="0%" />
+                                                            <ProgressBar x:Name="HeroCpuProgressBar" Height="6" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                                                        </StackPanel>
+                                                    </Border>
+
+                                                    <Border Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
+                                                        <StackPanel Spacing="6">
+                                                            <TextBlock Text="MEMORY" Style="{StaticResource ShellLabelTextStyle}" />
+                                                            <TextBlock x:Name="HeroMemoryValueText" Style="{StaticResource ShellValueTextStyle}" Text="0%" />
+                                                            <ProgressBar x:Name="HeroMemoryProgressBar" Height="6" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                                                        </StackPanel>
+                                                    </Border>
+
+                                                    <Border Grid.Row="1" Style="{StaticResource ShellMetricTileStyle}">
+                                                        <StackPanel Spacing="6">
+                                                            <TextBlock Text="DISK" Style="{StaticResource ShellLabelTextStyle}" />
+                                                            <TextBlock x:Name="HeroDiskValueText" Style="{StaticResource ShellValueTextStyle}" Text="0%" />
+                                                            <ProgressBar x:Name="HeroDiskProgressBar" Height="6" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                                                        </StackPanel>
+                                                    </Border>
+
+                                                    <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
+                                                        <StackPanel Spacing="6">
+                                                            <TextBlock Text="LIVE TRAFFIC" Style="{StaticResource ShellLabelTextStyle}" />
+                                                            <TextBlock x:Name="HeroTrafficValueText" Style="{StaticResource ShellValueTextStyle}" Text="0 B/s" />
+                                                            <TextBlock x:Name="HeroTrafficDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Awaiting telemetry." TextWrapping="WrapWholeWords" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </Grid>
+
+                                                <TextBlock x:Name="HeroTelemetrySummaryText" Style="{StaticResource ShellLabelTextStyle}" Text="Waiting for a live orchestration snapshot." TextWrapping="WrapWholeWords" />
+                                            </StackPanel>
+                                        </Border>
                                     </StackPanel>
 
                                     <StackPanel Grid.Column="1" Spacing="16">
@@ -115,19 +165,19 @@
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
                                                 </Grid.RowDefinitions>
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="*" />
                                                 </Grid.ColumnDefinitions>
 
                                                 <Button x:Name="RefreshButton" Click="RefreshButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Refresh" />
                                                 <Button x:Name="StartServiceButton" Grid.Column="1" Click="StartServiceButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Start Service" />
-                                                <Button x:Name="StopServiceButton" Grid.Column="2" Click="StopServiceButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Stop Service" />
-                                                <Button x:Name="OpenDashboardButton" Grid.Row="1" Click="OpenDashboardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Dashboard" />
-                                                <Button x:Name="OpenConfigButton" Grid.Row="1" Grid.Column="1" Click="OpenConfigButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Config" />
-                                                <Button x:Name="OpenDataButton" Grid.Row="1" Grid.Column="2" Click="OpenDataButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Data" />
+                                                <Button x:Name="StopServiceButton" Grid.Row="1" Click="StopServiceButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Stop Service" />
+                                                <Button x:Name="OpenDashboardButton" Grid.Row="1" Grid.Column="1" Click="OpenDashboardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Dashboard" />
+                                                <Button x:Name="OpenConfigButton" Grid.Row="2" Click="OpenConfigButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Config" />
+                                                <Button x:Name="OpenDataButton" Grid.Row="2" Grid.Column="1" Click="OpenDataButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Data" />
                                             </Grid>
                                         </StackPanel>
 
@@ -140,27 +190,28 @@
                                                     <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
                                                 </Grid.RowDefinitions>
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="*" />
                                                 </Grid.ColumnDefinitions>
 
                                                 <Button x:Name="GuidedProviderWizardButton" Click="GuidedProviderWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Connect AI Model" />
-                                                <Button x:Name="GuidedMcpWizardButton" Grid.Column="1" Click="GuidedMcpWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New MCP Server" />
-                                                <Button x:Name="GuidedSubAgentWizardButton" Grid.Column="2" Click="GuidedSubAgentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent" />
-                                                <Button x:Name="GuidedSubAgentGroupWizardButton" Grid.Row="1" Click="GuidedSubAgentGroupWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent Group" />
-                                                <Button x:Name="GuidedAppleHostWizardButton" Grid.Row="1" Grid.Column="1" Click="GuidedAppleHostWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Apple Host" />
-                                                <Button x:Name="GuidedProviderAssignmentWizardButton" Grid.Row="1" Grid.Column="2" Click="GuidedProviderAssignmentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Assign Responsibility" />
-                                                <Button x:Name="GuidedForsettiModuleWizardButton" Grid.Row="2" Click="GuidedForsettiModuleWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Forsetti Modules" />
-                                                <Button x:Name="GuidedImportWizardButton" Grid.Row="2" Grid.Column="1" Click="GuidedImportWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Guided Import" />
-                                                <Button x:Name="GuidedSecurityWizardButton" Grid.Row="2" Grid.Column="2" Click="GuidedSecurityWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Security Hardening" />
-                                                <Button x:Name="GuidedSettingsWizardButton" Grid.Row="3" Click="GuidedSettingsWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Host Settings" />
-                                                <Button x:Name="GuidedProviderExecutionWizardButton" Grid.Row="3" Grid.Column="1" Click="GuidedProviderExecutionWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Validate Provider Routing" />
-                                                <Button x:Name="GuidedRuntimeMaintenanceWizardButton" Grid.Row="3" Grid.Column="2" Click="GuidedRuntimeMaintenanceWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Runtime Lanes" />
+                                                <Button x:Name="GuidedProviderAssignmentWizardButton" Grid.Column="1" Click="GuidedProviderAssignmentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Assign Responsibility" />
+                                                <Button x:Name="GuidedMcpWizardButton" Grid.Row="1" Click="GuidedMcpWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New MCP Server" />
+                                                <Button x:Name="GuidedRuntimeMaintenanceWizardButton" Grid.Row="1" Grid.Column="1" Click="GuidedRuntimeMaintenanceWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Runtime Lanes" />
+                                                <Button x:Name="GuidedSubAgentWizardButton" Grid.Row="2" Click="GuidedSubAgentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent" />
+                                                <Button x:Name="GuidedSubAgentGroupWizardButton" Grid.Row="2" Grid.Column="1" Click="GuidedSubAgentGroupWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent Group" />
+                                                <Button x:Name="GuidedAppleHostWizardButton" Grid.Row="3" Click="GuidedAppleHostWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Apple Host" />
+                                                <Button x:Name="GuidedForsettiModuleWizardButton" Grid.Row="3" Grid.Column="1" Click="GuidedForsettiModuleWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Forsetti Modules" />
+                                                <Button x:Name="GuidedImportWizardButton" Grid.Row="4" Click="GuidedImportWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Guided Import" />
+                                                <Button x:Name="GuidedProviderExecutionWizardButton" Grid.Row="4" Grid.Column="1" Click="GuidedProviderExecutionWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Validate Provider Routing" />
+                                                <Button x:Name="GuidedSecurityWizardButton" Grid.Row="5" Click="GuidedSecurityWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Security Hardening" />
+                                                <Button x:Name="GuidedSettingsWizardButton" Grid.Row="5" Grid.Column="1" Click="GuidedSettingsWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Host Settings" />
 
-                                                <Border Grid.Row="4" Grid.ColumnSpan="3" Padding="12,10" Background="#1200F6FF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="14">
+                                                <Border Grid.Row="6" Grid.ColumnSpan="2" Padding="10,8" Background="#1000DFFF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="3">
                                                     <TextBlock
                                                         x:Name="GuidedWorkflowStatusText"
                                                         Style="{StaticResource ShellLabelTextStyle}"
@@ -171,21 +222,33 @@
                                         </StackPanel>
                                     </StackPanel>
 
-                                    <Border Grid.Column="2" Padding="10" Background="#1200F6FF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="22">
-                                        <Grid Width="232" Height="232" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                            <Ellipse Stroke="#1800F6FF" StrokeThickness="2" />
-                                            <Ellipse Width="188" Height="188" Stroke="#3200F6FF" StrokeThickness="2" />
-                                            <Ellipse Width="140" Height="140" Stroke="#5000F6FF" StrokeThickness="2" />
-                                            <Ellipse Width="88" Height="88" Fill="#1800F6FF" Stroke="{StaticResource ShellAccentBrush}" StrokeThickness="2" />
-                                            <Rectangle Width="2" Height="232" Fill="{StaticResource ShellGridlineBrush}" HorizontalAlignment="Center" />
-                                            <Rectangle Width="232" Height="2" Fill="{StaticResource ShellGridlineBrush}" VerticalAlignment="Center" />
+                                    <Border Grid.Column="2" Style="{StaticResource ShellCardStyle}" MinWidth="320">
+                                        <StackPanel Spacing="12">
+                                            <TextBlock Text="LIVE OPERATIONS" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                            <TextBlock x:Name="HeroOperationsHeadlineText" Style="{StaticResource ShellStatusTextStyle}" Text="STANDBY" />
+                                            <TextBlock x:Name="HeroOperationsBodyText" Style="{StaticResource ShellBodyTextStyle}" Text="Waiting for a live orchestration snapshot." TextWrapping="WrapWholeWords" />
 
-                                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
-                                                <TextBlock Text="GRID PULSE" HorizontalAlignment="Center" Style="{StaticResource ShellEyebrowTextStyle}" />
-                                                <TextBlock x:Name="PulseStateText" HorizontalAlignment="Center" Style="{StaticResource ShellStatusTextStyle}" Text="SYNC" />
-                                                <TextBlock x:Name="PulseCaptionText" HorizontalAlignment="Center" Style="{StaticResource ShellLabelTextStyle}" Text="Awaiting runtime telemetry." />
-                                            </StackPanel>
-                                        </Grid>
+                                            <Border Style="{StaticResource ShellMetricTileStyle}">
+                                                <StackPanel Spacing="6">
+                                                    <TextBlock Text="HOST IDENTITY" Style="{StaticResource ShellLabelTextStyle}" />
+                                                    <TextBlock x:Name="HeroIdentityText" Style="{StaticResource ShellDataTextStyle}" Text="Awaiting host identity." />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Style="{StaticResource ShellMetricTileStyle}">
+                                                <StackPanel Spacing="6">
+                                                    <TextBlock Text="GOVERNANCE POSTURE" Style="{StaticResource ShellLabelTextStyle}" />
+                                                    <TextBlock x:Name="HeroGovernanceText" Style="{StaticResource ShellDataTextStyle}" Text="Awaiting CLU and governance posture." />
+                                                </StackPanel>
+                                            </Border>
+
+                                            <Border Style="{StaticResource ShellMetricTileStyle}">
+                                                <StackPanel Spacing="6">
+                                                    <TextBlock Text="RUNTIME LEDGER" Style="{StaticResource ShellLabelTextStyle}" />
+                                                    <TextBlock x:Name="HeroRuntimeLedgerText" Style="{StaticResource ShellDataTextStyle}" Text="Awaiting runtime inventory." />
+                                                </StackPanel>
+                                            </Border>
+                                        </StackPanel>
                                     </Border>
                                 </Grid>
                             </Border>

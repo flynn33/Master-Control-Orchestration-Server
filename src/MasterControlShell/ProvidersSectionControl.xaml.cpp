@@ -42,6 +42,21 @@ const ::MasterControlShell::ShellProviderCredentialStatus* findCredentialStatus(
     return iterator == statuses.end() ? nullptr : &(*iterator);
 }
 
+const ::MasterControlShell::ShellProviderCapability* findCapabilityByProviderId(
+    const std::vector<::MasterControlShell::ShellProviderCapability>& capabilities,
+    std::wstring_view providerId) {
+    const auto iterator = std::find_if(
+        capabilities.begin(),
+        capabilities.end(),
+        [providerId](const auto& capability) { return capability.providerId == providerId; });
+    return iterator == capabilities.end() ? nullptr : &(*iterator);
+}
+
+bool providerSupportsTarget(const ::MasterControlShell::ShellProviderCapability& capability, std::wstring_view targetId) {
+    return capability.supportedTargets.empty() ||
+           std::find(capability.supportedTargets.begin(), capability.supportedTargets.end(), targetId) != capability.supportedTargets.end();
+}
+
 std::wstring executionRegistrationRow(const ::MasterControlShell::ShellProviderExecutionRegistration& registration) {
     std::wstring label = registration.displayName.empty() ? registration.providerId : registration.displayName;
     label += L"  |  ";
@@ -67,6 +82,17 @@ std::wstring executionHistoryRow(const ::MasterControlShell::ShellProviderExecut
     return label;
 }
 
+std::wstring joinValues(const std::vector<std::wstring>& values, const wchar_t* separator = L", ") {
+    std::wstring result;
+    for (size_t index = 0; index < values.size(); ++index) {
+        if (index > 0) {
+            result += separator;
+        }
+        result += values[index];
+    }
+    return result;
+}
+
 } // namespace
 
 ProvidersSectionControl::ProvidersSectionControl() {
@@ -79,6 +105,9 @@ void ProvidersSectionControl::AttachRuntime(::MasterControlShell::ShellRuntime* 
     runtime_ = runtime;
     refreshRequested_ = std::move(refreshRequested);
     actionRequested_ = std::move(actionRequested);
+    RefreshQuickConnectProviderSelector();
+    RefreshQuickConnectResponsibilitySelector();
+    ApplyQuickConnectFields();
     ApplyCredentialFields();
     RefreshSubAgentGroupSelector();
     RefreshSubAgentMemberSelector();
@@ -108,6 +137,54 @@ void ProvidersSectionControl::GuidedProviderActionButton_Click(
     actionRequested_(workflowId);
 }
 
+void ProvidersSectionControl::QuickConnectProviderSelector_SelectionChanged(
+    Windows::Foundation::IInspectable const&,
+    SelectionChangedEventArgs const&) {
+    if (suspendDirtyTracking_) {
+        return;
+    }
+
+    selectedQuickConnectProviderId_.clear();
+    if (const auto selectedItem = QuickConnectProviderSelector().SelectedItem().try_as<ComboBoxItem>()) {
+        selectedQuickConnectProviderId_ =
+            std::wstring(unbox_value_or<winrt::hstring>(selectedItem.Tag(), winrt::hstring()).c_str());
+    }
+
+    QuickConnectCredentialFieldOneValueBox().Password(L"");
+    QuickConnectCredentialFieldTwoValueBox().Password(L"");
+    selectedQuickConnectResponsibilityTargetId_.clear();
+    RefreshQuickConnectResponsibilitySelector();
+    ApplyQuickConnectFields();
+    QuickConnectStatusText().Text(
+        selectedQuickConnectProviderId_.empty()
+            ? L"Choose a provider to start the quick-connect flow."
+            : L"Paste the required credentials and click Connect Provider.");
+    UpdateEditorState();
+}
+
+void ProvidersSectionControl::QuickConnectResponsibilitySelector_SelectionChanged(
+    Windows::Foundation::IInspectable const&,
+    SelectionChangedEventArgs const&) {
+    selectedQuickConnectResponsibilityTargetId_.clear();
+    if (const auto selectedItem = QuickConnectResponsibilitySelector().SelectedItem().try_as<ComboBoxItem>()) {
+        selectedQuickConnectResponsibilityTargetId_ =
+            std::wstring(unbox_value_or<winrt::hstring>(selectedItem.Tag(), winrt::hstring()).c_str());
+    }
+    UpdateEditorState();
+}
+
+void ProvidersSectionControl::QuickConnectCredentialEditor_PasswordChanged(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    UpdateEditorState();
+}
+
+void ProvidersSectionControl::ConnectQuickProviderButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    ConnectQuickProviderAsync();
+}
+
 void ProvidersSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot) {
     providers_ = snapshot.providers;
     providerCapabilities_ = snapshot.providerCapabilities;
@@ -135,11 +212,13 @@ void ProvidersSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
     }
     populateListView(ProviderExecutionHistoryListView(), executionHistoryRows);
 
+    RefreshQuickConnectProviderSelector();
     RefreshProviderSelector();
     RefreshSubAgentGroupSelector();
     RefreshSubAgentMemberSelector();
     RefreshAssignmentSelectors();
     RefreshExecutionTargetSelector();
+    RefreshQuickConnectResponsibilitySelector();
 
     if (!autonomyDirty_) {
         suspendDirtyTracking_ = true;
@@ -187,6 +266,7 @@ void ProvidersSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
         }
     }
 
+    ApplyQuickConnectFields();
     ApplyCredentialFields();
     if (!providerExecutionHistory_.empty()) {
         const auto& lastRecord = providerExecutionHistory_.front();
@@ -427,6 +507,7 @@ void ProvidersSectionControl::PopulateProviderEditor(const size_t index) {
     suspendDirtyTracking_ = true;
     selectedProviderIndex_ = static_cast<int>(index);
     selectedProviderId_ = providers_[index].id;
+    selectedQuickConnectProviderId_ = providers_[index].id;
 
     const auto& provider = providers_[index];
     ProviderSelector().SelectedIndex(selectedProviderIndex_);
@@ -437,22 +518,41 @@ void ProvidersSectionControl::PopulateProviderEditor(const size_t index) {
     ProviderEnabledToggle().IsOn(provider.enabled);
     ProviderAutonomousToggle().IsOn(provider.allowAutonomousControl);
 
-    int selectedKindIndex = 3;
+    int selectedKindIndex = 4;
     const auto desiredKind = provider.kind.empty() ? std::wstring(L"generic") : provider.kind;
     for (uint32_t itemIndex = 0; itemIndex < ProviderKindComboBox().Items().Size(); ++itemIndex) {
         if (const auto item = ProviderKindComboBox().Items().GetAt(itemIndex).try_as<ComboBoxItem>()) {
-            if (std::wstring(unbox_value_or<winrt::hstring>(item.Tag(), winrt::hstring(L"generic")).c_str()) == desiredKind) {
-                selectedKindIndex = static_cast<int>(itemIndex);
-                break;
+            const auto tagValue =
+                std::wstring(unbox_value_or<winrt::hstring>(item.Tag(), winrt::hstring(L"generic")).c_str());
+            const auto contentValue =
+                std::wstring(unbox_value_or<winrt::hstring>(item.Content(), winrt::hstring()).c_str());
+            if (tagValue == desiredKind) {
+                if (provider.id == L"chatgpt" && contentValue == L"ChatGPT") {
+                    selectedKindIndex = static_cast<int>(itemIndex);
+                    break;
+                }
+                if (provider.id == L"xai-grok" && contentValue == L"Grok") {
+                    selectedKindIndex = static_cast<int>(itemIndex);
+                    break;
+                }
+                if (provider.id != L"chatgpt" && provider.id != L"xai-grok") {
+                    selectedKindIndex = static_cast<int>(itemIndex);
+                    break;
+                }
             }
         }
     }
     ProviderKindComboBox().SelectedIndex(selectedKindIndex);
     suspendDirtyTracking_ = false;
+    RefreshQuickConnectProviderSelector();
+    RefreshQuickConnectResponsibilitySelector();
+    ApplyQuickConnectFields();
 }
 
 void ProvidersSectionControl::ClearProviderEditor() {
     suspendDirtyTracking_ = true;
+    selectedProviderId_.clear();
+    selectedProviderIndex_ = -1;
     ProviderSelector().SelectedIndex(-1);
     ProviderIdTextBox().Text(L"");
     ProviderDisplayNameTextBox().Text(L"");
@@ -460,7 +560,7 @@ void ProvidersSectionControl::ClearProviderEditor() {
     ProviderModelIdTextBox().Text(L"");
     ProviderEnabledToggle().IsOn(true);
     ProviderAutonomousToggle().IsOn(false);
-    ProviderKindComboBox().SelectedIndex(3);
+    ProviderKindComboBox().SelectedIndex(4);
     ProviderCredentialFieldOneValueBox().Password(L"");
     ProviderCredentialFieldTwoValueBox().Password(L"");
     suspendDirtyTracking_ = false;
@@ -526,6 +626,96 @@ void ProvidersSectionControl::RefreshProviderSelector() {
                 ProviderSelector().SelectedIndex(static_cast<int>(index));
                 break;
             }
+        }
+    }
+    suspendDirtyTracking_ = false;
+}
+
+void ProvidersSectionControl::RefreshQuickConnectProviderSelector() {
+    const auto previousSelection = selectedQuickConnectProviderId_;
+    suspendDirtyTracking_ = true;
+    selectedQuickConnectProviderId_.clear();
+    QuickConnectProviderSelector().Items().Clear();
+
+    for (const auto& capability : providerCapabilities_) {
+        ComboBoxItem item;
+        item.Content(winrt::box_value(winrt::hstring(
+            capability.displayName.empty() ? capability.providerId : capability.displayName)));
+        item.Tag(winrt::box_value(winrt::hstring(capability.providerId)));
+        QuickConnectProviderSelector().Items().Append(item);
+    }
+
+    int selectedIndex = -1;
+    if (!previousSelection.empty()) {
+        for (uint32_t itemIndex = 0; itemIndex < QuickConnectProviderSelector().Items().Size(); ++itemIndex) {
+            if (const auto item = QuickConnectProviderSelector().Items().GetAt(itemIndex).try_as<ComboBoxItem>()) {
+                const auto providerId =
+                    std::wstring(unbox_value_or<winrt::hstring>(item.Tag(), winrt::hstring()).c_str());
+                if (providerId == previousSelection) {
+                    selectedIndex = static_cast<int>(itemIndex);
+                    break;
+                }
+            }
+        }
+    }
+
+    if (selectedIndex < 0 && QuickConnectProviderSelector().Items().Size() > 0) {
+        selectedIndex = 0;
+        if (const auto item = QuickConnectProviderSelector().Items().GetAt(0).try_as<ComboBoxItem>()) {
+            selectedQuickConnectProviderId_ =
+                std::wstring(unbox_value_or<winrt::hstring>(item.Tag(), winrt::hstring()).c_str());
+        }
+    }
+
+    QuickConnectProviderSelector().SelectedIndex(selectedIndex);
+    suspendDirtyTracking_ = false;
+}
+
+void ProvidersSectionControl::RefreshQuickConnectResponsibilitySelector() {
+    const auto previousSelection = selectedQuickConnectResponsibilityTargetId_;
+    suspendDirtyTracking_ = true;
+    QuickConnectResponsibilitySelector().Items().Clear();
+
+    ComboBoxItem unassigned;
+    unassigned.Content(winrt::box_value(winrt::hstring(L"(Leave unassigned)")));
+    unassigned.Tag(winrt::box_value(winrt::hstring(L"")));
+    QuickConnectResponsibilitySelector().Items().Append(unassigned);
+
+    const auto* capability = findCapabilityByProviderId(providerCapabilities_, selectedQuickConnectProviderId_);
+    for (const auto& target : providerAssignmentTargets_) {
+        if (target.kind != L"role") {
+            continue;
+        }
+        if (capability != nullptr && !providerSupportsTarget(*capability, target.targetId)) {
+            continue;
+        }
+
+        ComboBoxItem item;
+        item.Content(winrt::box_value(winrt::hstring(target.displayName.empty() ? target.targetId : target.displayName)));
+        item.Tag(winrt::box_value(winrt::hstring(target.targetId)));
+        QuickConnectResponsibilitySelector().Items().Append(item);
+    }
+
+    int selectedIndex = 0;
+    if (!previousSelection.empty()) {
+        for (uint32_t itemIndex = 1; itemIndex < QuickConnectResponsibilitySelector().Items().Size(); ++itemIndex) {
+            if (const auto item = QuickConnectResponsibilitySelector().Items().GetAt(itemIndex).try_as<ComboBoxItem>()) {
+                const auto targetId =
+                    std::wstring(unbox_value_or<winrt::hstring>(item.Tag(), winrt::hstring()).c_str());
+                if (targetId == previousSelection) {
+                    selectedIndex = static_cast<int>(itemIndex);
+                    break;
+                }
+            }
+        }
+    }
+
+    QuickConnectResponsibilitySelector().SelectedIndex(selectedIndex);
+    selectedQuickConnectResponsibilityTargetId_.clear();
+    if (selectedIndex > 0) {
+        if (const auto item = QuickConnectResponsibilitySelector().SelectedItem().try_as<ComboBoxItem>()) {
+            selectedQuickConnectResponsibilityTargetId_ =
+                std::wstring(unbox_value_or<winrt::hstring>(item.Tag(), winrt::hstring()).c_str());
         }
     }
     suspendDirtyTracking_ = false;
@@ -722,8 +912,125 @@ void ProvidersSectionControl::ApplyCredentialFields() {
     setField(ProviderCredentialFieldTwoPanel(), ProviderCredentialFieldTwoLabel(), ProviderCredentialFieldTwoValueBox(), ProviderCredentialFieldTwoHint(), fieldTwo, L"Credential Field");
 }
 
+void ProvidersSectionControl::ApplyQuickConnectFields() {
+    auto setField = [](StackPanel const& panel,
+                       TextBlock const& label,
+                       PasswordBox const& box,
+                       TextBlock const& hint,
+                       const std::optional<::MasterControlShell::ShellProviderCredentialField>& field,
+                       const std::wstring& fallbackLabel) {
+        if (!field.has_value()) {
+            panel.Visibility(Visibility::Collapsed);
+            label.Text(fallbackLabel);
+            box.Password(L"");
+            hint.Text(L"");
+            return;
+        }
+
+        panel.Visibility(Visibility::Visible);
+        label.Text(winrt::hstring(field->label));
+        box.PlaceholderText(winrt::hstring(field->placeholder.empty() ? L"Credential value" : field->placeholder));
+        std::wstring hintText = field->helpText;
+        if (!field->environmentVariableHint.empty()) {
+            if (!hintText.empty()) {
+                hintText += L" ";
+            }
+            hintText += L"Env: ";
+            hintText += field->environmentVariableHint;
+        }
+        hint.Text(winrt::hstring(hintText));
+    };
+
+    if (selectedQuickConnectProviderId_.empty()) {
+        QuickConnectSummaryText().Text(L"Select a provider to load its recommended endpoint, model, and supported orchestration roles.");
+        setField(
+            QuickConnectCredentialFieldOnePanel(),
+            QuickConnectCredentialFieldOneLabel(),
+            QuickConnectCredentialFieldOneValueBox(),
+            QuickConnectCredentialFieldOneHint(),
+            std::nullopt,
+            L"Credential");
+        setField(
+            QuickConnectCredentialFieldTwoPanel(),
+            QuickConnectCredentialFieldTwoLabel(),
+            QuickConnectCredentialFieldTwoValueBox(),
+            QuickConnectCredentialFieldTwoHint(),
+            std::nullopt,
+            L"Credential");
+        return;
+    }
+
+    const auto* capability = findCapabilityByProviderId(providerCapabilities_, selectedQuickConnectProviderId_);
+    if (capability == nullptr) {
+        QuickConnectSummaryText().Text(L"The selected provider does not have a published connection profile.");
+        setField(
+            QuickConnectCredentialFieldOnePanel(),
+            QuickConnectCredentialFieldOneLabel(),
+            QuickConnectCredentialFieldOneValueBox(),
+            QuickConnectCredentialFieldOneHint(),
+            std::nullopt,
+            L"Credential");
+        setField(
+            QuickConnectCredentialFieldTwoPanel(),
+            QuickConnectCredentialFieldTwoLabel(),
+            QuickConnectCredentialFieldTwoValueBox(),
+            QuickConnectCredentialFieldTwoHint(),
+            std::nullopt,
+            L"Credential");
+        return;
+    }
+
+    std::wstring summary = capability->displayName.empty() ? capability->providerId : capability->displayName;
+    if (!capability->defaultBaseUrl.empty()) {
+        summary += L"  |  endpoint: ";
+        summary += capability->defaultBaseUrl;
+    }
+    if (!capability->recommendedModel.empty()) {
+        summary += L"  |  model: ";
+        summary += capability->recommendedModel;
+    }
+    if (!capability->supportedTargets.empty()) {
+        summary += L"  |  roles: ";
+        summary += joinValues(capability->supportedTargets);
+    }
+
+    if (const auto* status = findCredentialStatus(providerCredentialStatuses_, capability->providerId)) {
+        if (!status->message.empty()) {
+            summary += L"\n";
+            summary += status->message;
+        }
+    }
+
+    QuickConnectSummaryText().Text(winrt::hstring(summary));
+
+    std::optional<::MasterControlShell::ShellProviderCredentialField> fieldOne;
+    std::optional<::MasterControlShell::ShellProviderCredentialField> fieldTwo;
+    if (!capability->credentialFields.empty()) {
+        fieldOne = capability->credentialFields[0];
+    }
+    if (capability->credentialFields.size() > 1U) {
+        fieldTwo = capability->credentialFields[1];
+    }
+
+    setField(
+        QuickConnectCredentialFieldOnePanel(),
+        QuickConnectCredentialFieldOneLabel(),
+        QuickConnectCredentialFieldOneValueBox(),
+        QuickConnectCredentialFieldOneHint(),
+        fieldOne,
+        L"Credential");
+    setField(
+        QuickConnectCredentialFieldTwoPanel(),
+        QuickConnectCredentialFieldTwoLabel(),
+        QuickConnectCredentialFieldTwoValueBox(),
+        QuickConnectCredentialFieldTwoHint(),
+        fieldTwo,
+        L"Credential");
+}
+
 void ProvidersSectionControl::UpdateEditorState() {
     const bool hasRuntime = runtime_ != nullptr;
+    ConnectQuickProviderButton().IsEnabled(hasRuntime && !selectedQuickConnectProviderId_.empty());
     SaveProviderButton().IsEnabled(hasRuntime && providerDirty_);
     SaveProviderCredentialsButton().IsEnabled(hasRuntime && !selectedProviderId_.empty() && providerCredentialsDirty_);
     SaveSubAgentGroupButton().IsEnabled(hasRuntime && subAgentGroupDirty_);
@@ -800,6 +1107,171 @@ std::optional<::MasterControlShell::ShellSubAgentGroupDefinition> ProvidersSecti
         memberTargetIds,
         L""
     };
+}
+
+winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ConnectQuickProviderAsync() {
+    if (runtime_ == nullptr) {
+        QuickConnectStatusText().Text(L"Quick connect is unavailable until the shell runtime is attached.");
+        co_return;
+    }
+
+    if (selectedQuickConnectProviderId_.empty()) {
+        QuickConnectStatusText().Text(L"Choose a provider before trying to connect it.");
+        co_return;
+    }
+
+    const auto* capability = findCapabilityByProviderId(providerCapabilities_, selectedQuickConnectProviderId_);
+    if (capability == nullptr) {
+        QuickConnectStatusText().Text(L"The selected provider does not have a published connection profile.");
+        co_return;
+    }
+
+    ::MasterControlShell::ShellProviderConnection provider{};
+    if (const auto iterator = std::find_if(
+            providers_.begin(),
+            providers_.end(),
+            [this](const auto& connection) { return connection.id == selectedQuickConnectProviderId_; });
+        iterator != providers_.end()) {
+        provider = *iterator;
+    }
+
+    provider.id = capability->providerId;
+    provider.kind = capability->kind.empty() ? L"generic" : capability->kind;
+    provider.displayName = capability->displayName.empty() ? capability->providerId : capability->displayName;
+    if (provider.baseUrl.empty()) {
+        provider.baseUrl = capability->defaultBaseUrl;
+    }
+    if (provider.modelId.empty()) {
+        provider.modelId = capability->recommendedModel;
+    }
+    provider.enabled = true;
+    provider.allowAutonomousControl = false;
+
+    if (provider.baseUrl.empty()) {
+        QuickConnectStatusText().Text(L"This provider does not publish a default endpoint yet, so it still needs the advanced editor.");
+        co_return;
+    }
+
+    std::vector<std::pair<std::wstring, std::wstring>> credentialValues;
+    const auto* existingStatus = findCredentialStatus(providerCredentialStatuses_, provider.id);
+    for (size_t fieldIndex = 0; fieldIndex < capability->credentialFields.size(); ++fieldIndex) {
+        const auto& field = capability->credentialFields[fieldIndex];
+        const std::wstring value =
+            fieldIndex == 0
+                ? std::wstring(QuickConnectCredentialFieldOneValueBox().Password().c_str())
+                : std::wstring(QuickConnectCredentialFieldTwoValueBox().Password().c_str());
+        const bool alreadyConfigured =
+            existingStatus != nullptr &&
+            std::find(
+                existingStatus->configuredFieldIds.begin(),
+                existingStatus->configuredFieldIds.end(),
+                field.fieldId) != existingStatus->configuredFieldIds.end();
+
+        if (field.required && value.empty() && !alreadyConfigured) {
+            std::wstring message = L"Enter the required provider credential before connecting.";
+            if (!field.label.empty()) {
+                message = L"Enter ";
+                message += field.label;
+                message += L" before connecting.";
+            }
+            QuickConnectStatusText().Text(winrt::hstring(message));
+            co_return;
+        }
+
+        if (!value.empty()) {
+            credentialValues.emplace_back(field.fieldId, value);
+        }
+    }
+
+    std::wstring assignmentTargetId = selectedQuickConnectResponsibilityTargetId_;
+    std::wstring assignmentTargetKind = L"role";
+    if (!assignmentTargetId.empty()) {
+        const auto targetIterator = std::find_if(
+            providerAssignmentTargets_.begin(),
+            providerAssignmentTargets_.end(),
+            [&assignmentTargetId](const auto& target) { return target.targetId == assignmentTargetId; });
+        if (targetIterator == providerAssignmentTargets_.end()) {
+            QuickConnectStatusText().Text(L"The selected orchestration responsibility is no longer available.");
+            co_return;
+        }
+        assignmentTargetKind = targetIterator->kind;
+    }
+
+    ConnectQuickProviderButton().IsEnabled(false);
+    QuickConnectStatusText().Text(L"Connecting provider through the local admin API...");
+    winrt::apartment_context uiThread;
+    const auto providerValue = provider;
+    const auto credentialValueCopy = credentialValues;
+    const auto assignmentTargetIdCopy = assignmentTargetId;
+    const auto assignmentTargetKindCopy = assignmentTargetKind;
+    co_await winrt::resume_background();
+
+    const auto providerResult = runtime_->UpsertProvider(providerValue);
+    ::MasterControlShell::ShellOperationResult credentialResult{ true, false, L"" };
+    ::MasterControlShell::ShellOperationResult assignmentResult{ true, false, L"" };
+
+    if (providerResult.succeeded && !credentialValueCopy.empty()) {
+        credentialResult = runtime_->UpsertProviderCredentials(providerValue.id, credentialValueCopy);
+    }
+
+    if (providerResult.succeeded && credentialResult.succeeded && !assignmentTargetIdCopy.empty()) {
+        assignmentResult = runtime_->UpsertProviderAssignment(::MasterControlShell::ShellProviderAssignment{
+            assignmentTargetIdCopy,
+            assignmentTargetKindCopy,
+            providerValue.id,
+            L""
+        });
+    }
+
+    co_await uiThread;
+
+    if (!providerResult.succeeded) {
+        QuickConnectStatusText().Text(winrt::hstring(providerResult.message));
+        UpdateEditorState();
+        co_return;
+    }
+    if (!credentialResult.succeeded) {
+        QuickConnectStatusText().Text(winrt::hstring(credentialResult.message));
+        UpdateEditorState();
+        co_return;
+    }
+    if (!assignmentResult.succeeded) {
+        QuickConnectStatusText().Text(winrt::hstring(assignmentResult.message));
+        UpdateEditorState();
+        co_return;
+    }
+
+    selectedProviderId_ = providerValue.id;
+    selectedQuickConnectProviderId_ = providerValue.id;
+    ProviderCredentialFieldOneValueBox().Password(L"");
+    ProviderCredentialFieldTwoValueBox().Password(L"");
+    QuickConnectCredentialFieldOneValueBox().Password(L"");
+    QuickConnectCredentialFieldTwoValueBox().Password(L"");
+
+    std::wstring message = L"Connected ";
+    message += providerValue.displayName.empty() ? providerValue.id : providerValue.displayName;
+    if (!assignmentTargetIdCopy.empty()) {
+        const auto targetIterator = std::find_if(
+            providerAssignmentTargets_.begin(),
+            providerAssignmentTargets_.end(),
+            [&assignmentTargetIdCopy](const auto& target) { return target.targetId == assignmentTargetIdCopy; });
+        if (targetIterator != providerAssignmentTargets_.end()) {
+            message += L" and assigned ";
+            message += targetIterator->displayName.empty() ? targetIterator->targetId : targetIterator->displayName;
+            message += L".";
+        } else {
+            message += L".";
+        }
+    } else {
+        message += L".";
+    }
+
+    QuickConnectStatusText().Text(winrt::hstring(message));
+    SetStatus(winrt::hstring(message));
+    if (refreshRequested_) {
+        refreshRequested_();
+    }
+    UpdateEditorState();
 }
 
 winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::SaveProviderAsync() {

@@ -2365,6 +2365,13 @@ public:
                 "Architect",
                 "Owns solution architecture and design decisions.",
                 {}
+            },
+            ProviderAssignmentTarget{
+                "auditor",
+                ProviderAssignmentTargetKind::Role,
+                "Auditor",
+                "Owns review, verification, and compliance-oriented delivery checks.",
+                {}
             }
         };
 
@@ -2536,9 +2543,9 @@ public:
     std::vector<ProviderExecutionRegistration> listRegistrations() const override {
         std::lock_guard<std::mutex> lock(mutex_);
         std::vector<ProviderExecutionRegistration> registrations;
-        registrations.reserve(registrationsByKind_.size());
-        for (const auto& [kind, registration] : registrationsByKind_) {
-            (void)kind;
+        registrations.reserve(registrationsByProviderId_.size());
+        for (const auto& [providerId, registration] : registrationsByProviderId_) {
+            (void)providerId;
             registrations.push_back(registration);
         }
 
@@ -2553,14 +2560,14 @@ public:
 
     void upsertRegistration(const ProviderExecutionRegistration& registration) override {
         std::lock_guard<std::mutex> lock(mutex_);
-        registrationsByKind_[registration.kind] = registration;
+        registrationsByProviderId_[registration.providerId] = registration;
     }
 
     void removeRegistration(const std::string& providerId) override {
         std::lock_guard<std::mutex> lock(mutex_);
-        for (auto iterator = registrationsByKind_.begin(); iterator != registrationsByKind_.end();) {
+        for (auto iterator = registrationsByProviderId_.begin(); iterator != registrationsByProviderId_.end();) {
             if (iterator->second.providerId == providerId) {
-                iterator = registrationsByKind_.erase(iterator);
+                iterator = registrationsByProviderId_.erase(iterator);
             } else {
                 ++iterator;
             }
@@ -2569,7 +2576,7 @@ public:
 
 private:
     mutable std::mutex mutex_;
-    std::map<ProviderKind, ProviderExecutionRegistration> registrationsByKind_;
+    std::map<std::string, ProviderExecutionRegistration> registrationsByProviderId_;
 };
 
 class ProviderExecutionService final : public IProviderExecutionService {

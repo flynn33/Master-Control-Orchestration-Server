@@ -20,6 +20,17 @@ struct ProvidersSectionControl : ProvidersSectionControlT<ProvidersSectionContro
     void ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
     void GuidedProviderActionButton_Click(Windows::Foundation::IInspectable const&,
                                           Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void QuickConnectProviderSelector_SelectionChanged(
+        Windows::Foundation::IInspectable const&,
+        Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
+    void QuickConnectResponsibilitySelector_SelectionChanged(
+        Windows::Foundation::IInspectable const&,
+        Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
+    void QuickConnectCredentialEditor_PasswordChanged(
+        Windows::Foundation::IInspectable const&,
+        Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void ConnectQuickProviderButton_Click(Windows::Foundation::IInspectable const&,
+                                          Microsoft::UI::Xaml::RoutedEventArgs const&);
     void ProviderSelector_SelectionChanged(Windows::Foundation::IInspectable const&,
                                            Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
     void ProviderEditor_TextChanged(Windows::Foundation::IInspectable const&,
@@ -71,6 +82,8 @@ private:
     void PopulateProviderEditor(size_t index);
     void ClearProviderEditor();
     void RefreshProviderSelector();
+    void RefreshQuickConnectProviderSelector();
+    void RefreshQuickConnectResponsibilitySelector();
     void PopulateSubAgentGroupEditor(size_t index);
     void ClearSubAgentGroupEditor();
     void RefreshSubAgentGroupSelector();
@@ -78,10 +91,12 @@ private:
     void RefreshAssignmentSelectors();
     void RefreshExecutionTargetSelector();
     void ApplyCredentialFields();
+    void ApplyQuickConnectFields();
     void UpdateEditorState();
     void SetStatus(winrt::hstring const& message);
     std::optional<::MasterControlShell::ShellProviderConnection> BuildProviderFromEditor();
     std::optional<::MasterControlShell::ShellSubAgentGroupDefinition> BuildSubAgentGroupFromEditor();
+    winrt::Windows::Foundation::IAsyncAction ConnectQuickProviderAsync();
     winrt::Windows::Foundation::IAsyncAction SaveProviderAsync();
     winrt::Windows::Foundation::IAsyncAction SaveProviderCredentialsAsync();
     winrt::Windows::Foundation::IAsyncAction SaveSubAgentGroupAsync();
@@ -111,6 +126,8 @@ private:
     bool suspendDirtyTracking_ = false;
     int selectedProviderIndex_ = -1;
     std::wstring selectedProviderId_;
+    std::wstring selectedQuickConnectProviderId_;
+    std::wstring selectedQuickConnectResponsibilityTargetId_;
     int selectedSubAgentGroupIndex_ = -1;
     std::wstring selectedSubAgentGroupId_;
     int selectedAssignmentTargetIndex_ = -1;

@@ -20,55 +20,55 @@
             <SolidColorBrush x:Key="ShellSuccessBrush" Color="#1CF2C1" />
             <SolidColorBrush x:Key="ShellWarningBrush" Color="#FFC857" />
             <SolidColorBrush x:Key="ShellDangerBrush" Color="#FF6A80" />
-            <SolidColorBrush x:Key="ShellPanelFillBrush" Color="#C20A1119" />
-            <SolidColorBrush x:Key="ShellPanelDeepBrush" Color="#D4081017" />
-            <SolidColorBrush x:Key="ShellCardFillBrush" Color="#C4101A27" />
-            <SolidColorBrush x:Key="ShellCardEdgeBrush" Color="#4D00F6FF" />
-            <SolidColorBrush x:Key="ShellTileFillBrush" Color="#99050D18" />
-            <SolidColorBrush x:Key="ShellTileEdgeBrush" Color="#3300F6FF" />
-            <SolidColorBrush x:Key="ShellGridlineBrush" Color="#1A00F6FF" />
+            <SolidColorBrush x:Key="ShellPanelFillBrush" Color="#E0060A10" />
+            <SolidColorBrush x:Key="ShellPanelDeepBrush" Color="#F003070C" />
+            <SolidColorBrush x:Key="ShellCardFillBrush" Color="#E00A1018" />
+            <SolidColorBrush x:Key="ShellCardEdgeBrush" Color="#5A00E8FF" />
+            <SolidColorBrush x:Key="ShellTileFillBrush" Color="#E003070B" />
+            <SolidColorBrush x:Key="ShellTileEdgeBrush" Color="#4400DFFF" />
+            <SolidColorBrush x:Key="ShellGridlineBrush" Color="#2600DFFF" />
 
             <LinearGradientBrush x:Key="ShellBackgroundBrush" StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#010308" Offset="0.0" />
-                <GradientStop Color="#03111B" Offset="0.18" />
-                <GradientStop Color="#062637" Offset="0.58" />
-                <GradientStop Color="#08131D" Offset="1.0" />
+                <GradientStop Color="#010205" Offset="0.0" />
+                <GradientStop Color="#031018" Offset="0.22" />
+                <GradientStop Color="#041C2A" Offset="0.56" />
+                <GradientStop Color="#060A10" Offset="1.0" />
             </LinearGradientBrush>
 
             <LinearGradientBrush x:Key="ShellHeroBrush" StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#D60A2438" Offset="0.0" />
-                <GradientStop Color="#D20A1623" Offset="0.48" />
-                <GradientStop Color="#D0081017" Offset="1.0" />
+                <GradientStop Color="#E0091620" Offset="0.0" />
+                <GradientStop Color="#DD060C13" Offset="0.52" />
+                <GradientStop Color="#E003070B" Offset="1.0" />
             </LinearGradientBrush>
 
             <Style x:Key="ShellCardStyle" TargetType="Border">
                 <Setter Property="Background" Value="{StaticResource ShellPanelFillBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource ShellCardEdgeBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="22" />
-                <Setter Property="Padding" Value="22" />
+                <Setter Property="CornerRadius" Value="2" />
+                <Setter Property="Padding" Value="14" />
             </Style>
 
             <Style x:Key="ShellHeroCardStyle" TargetType="Border" BasedOn="{StaticResource ShellCardStyle}">
                 <Setter Property="Background" Value="{StaticResource ShellHeroBrush}" />
-                <Setter Property="CornerRadius" Value="28" />
-                <Setter Property="Padding" Value="28" />
+                <Setter Property="CornerRadius" Value="2" />
+                <Setter Property="Padding" Value="16" />
             </Style>
 
             <Style x:Key="ShellMetricTileStyle" TargetType="Border">
                 <Setter Property="Background" Value="{StaticResource ShellPanelDeepBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource ShellTileEdgeBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="18" />
-                <Setter Property="Padding" Value="18" />
+                <Setter Property="CornerRadius" Value="2" />
+                <Setter Property="Padding" Value="12" />
             </Style>
 
             <Style x:Key="ShellEyebrowTextStyle" TargetType="TextBlock">
                 <Setter Property="Foreground" Value="{StaticResource ShellAccentBrush}" />
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="FontSize" Value="13" />
-                <Setter Property="CharacterSpacing" Value="180" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="CharacterSpacing" Value="160" />
                 <Setter Property="TextWrapping" Value="Wrap" />
             </Style>
 
@@ -76,7 +76,7 @@
                 <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="FontSize" Value="34" />
+                <Setter Property="FontSize" Value="28" />
                 <Setter Property="TextWrapping" Value="Wrap" />
             </Style>
 
@@ -84,7 +84,7 @@
                 <Setter Property="Foreground" Value="{StaticResource ShellAccentBrush}" />
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="FontSize" Value="20" />
+                <Setter Property="FontSize" Value="17" />
                 <Setter Property="CharacterSpacing" Value="80" />
                 <Setter Property="TextWrapping" Value="Wrap" />
             </Style>
@@ -99,7 +99,7 @@
                 <Setter Property="Foreground" Value="{StaticResource ShellTextMutedBrush}" />
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontSize" Value="12" />
-                <Setter Property="CharacterSpacing" Value="70" />
+                <Setter Property="CharacterSpacing" Value="60" />
                 <Setter Property="TextWrapping" Value="Wrap" />
             </Style>
 
@@ -107,14 +107,14 @@
                 <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="FontSize" Value="21" />
+                <Setter Property="FontSize" Value="20" />
                 <Setter Property="TextWrapping" Value="Wrap" />
             </Style>
 
             <Style x:Key="ShellDataTextStyle" TargetType="TextBlock">
                 <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
                 <Setter Property="FontFamily" Value="Consolas" />
-                <Setter Property="FontSize" Value="13" />
+                <Setter Property="FontSize" Value="12" />
                 <Setter Property="TextWrapping" Value="Wrap" />
             </Style>
 
@@ -122,23 +122,25 @@
                 <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="FontSize" Value="24" />
+                <Setter Property="FontSize" Value="20" />
                 <Setter Property="TextWrapping" Value="Wrap" />
             </Style>
 
             <Style x:Key="ShellCommandButtonStyle" TargetType="Button">
                 <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
-                <Setter Property="Background" Value="#C0121D29" />
-                <Setter Property="BorderBrush" Value="#8A00F6FF" />
+                <Setter Property="Background" Value="#F0071018" />
+                <Setter Property="BorderBrush" Value="#9900E8FF" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="14" />
-                <Setter Property="Padding" Value="18,14" />
+                <Setter Property="CornerRadius" Value="2" />
+                <Setter Property="Padding" Value="14,12" />
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="FontSize" Value="16" />
+                <Setter Property="FontSize" Value="14" />
+                <Setter Property="CharacterSpacing" Value="40" />
                 <Setter Property="HorizontalContentAlignment" Value="Center" />
                 <Setter Property="VerticalContentAlignment" Value="Center" />
-                <Setter Property="MinHeight" Value="48" />
+                <Setter Property="MinHeight" Value="54" />
+                <Setter Property="MinWidth" Value="176" />
             </Style>
 
             <Style x:Key="ShellSecondaryButtonStyle" TargetType="Button" BasedOn="{StaticResource ShellCommandButtonStyle}">
@@ -164,14 +166,44 @@
                 <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
             </Style>
 
+            <Style TargetType="TextBox">
+                <Setter Property="Background" Value="#E0070E14" />
+                <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource ShellTileEdgeBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="MinHeight" Value="40" />
+            </Style>
+
+            <Style TargetType="PasswordBox">
+                <Setter Property="Background" Value="#E0070E14" />
+                <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource ShellTileEdgeBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="MinHeight" Value="40" />
+            </Style>
+
+            <Style TargetType="ComboBox">
+                <Setter Property="Background" Value="#E0070E14" />
+                <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource ShellTileEdgeBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="MinHeight" Value="40" />
+            </Style>
+
             <DataTemplate x:Key="ShellListItemTemplate">
                 <Border
                     Margin="0,0,0,10"
-                    Padding="14,12"
+                    Padding="10,8"
                     Background="{StaticResource ShellPanelDeepBrush}"
                     BorderBrush="{StaticResource ShellTileEdgeBrush}"
                     BorderThickness="1"
-                    CornerRadius="14">
+                    CornerRadius="3">
                     <TextBlock
                         Style="{StaticResource ShellDataTextStyle}"
                         Text="{Binding}"

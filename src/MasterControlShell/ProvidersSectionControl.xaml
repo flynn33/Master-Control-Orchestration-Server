@@ -16,22 +16,81 @@
             <StackPanel Spacing="20">
                 <Border Style="{StaticResource ShellCardStyle}">
                     <StackPanel Spacing="14">
-                        <TextBlock Text="Guided Provider Workflows" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                        <TextBlock Text="Start with the guided workflows when you want to connect models, assign ownership, validate routing, or create specialist groups. The editors below stay available for advanced direct control." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
-                        <Grid ColumnSpacing="12" RowSpacing="12">
+                        <TextBlock Text="Quick Connect AI Models" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock Text="Pick a provider, paste the login information it needs, and click connect. The shell fills in the route, model, and endpoint defaults for you. Use the advanced editor only when you need to override the wiring by hand." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
+
+                        <TextBlock Text="Provider" Style="{StaticResource ShellLabelTextStyle}" />
+                        <ComboBox
+                            x:Name="QuickConnectProviderSelector"
+                            SelectionChanged="QuickConnectProviderSelector_SelectionChanged"
+                            PlaceholderText="Choose ChatGPT, Codex, Claude Code, or Grok" />
+
+                        <Border Background="#1000DFFF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="4" Padding="10,8">
+                            <TextBlock
+                                x:Name="QuickConnectSummaryText"
+                                Style="{StaticResource ShellBodyTextStyle}"
+                                Text="Select a provider to load its recommended endpoint, model, and supported orchestration roles."
+                                TextWrapping="WrapWholeWords" />
+                        </Border>
+
+                        <Grid ColumnSpacing="14">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <Button Grid.Row="0" Grid.Column="0" Tag="connect-model" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Connect AI Model" />
-                            <Button Grid.Row="0" Grid.Column="1" Tag="assign-responsibility" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Assign Responsibility" />
-                            <Button Grid.Row="1" Grid.Column="0" Tag="guided-provider-execution" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Validate Provider Routing" />
-                            <Button Grid.Row="1" Grid.Column="1" Tag="new-subagent-group" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent Group" />
+
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Primary Responsibility" Style="{StaticResource ShellLabelTextStyle}" />
+                                <ComboBox
+                                    x:Name="QuickConnectResponsibilitySelector"
+                                    SelectionChanged="QuickConnectResponsibilitySelector_SelectionChanged"
+                                    PlaceholderText="Leave unassigned or pick the first orchestration lane" />
+                            </StackPanel>
+
+                            <Border Grid.Column="1" Background="#0C071117" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="4" Padding="10,8">
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="AUTOMATION" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                    <TextBlock Text="Connection stores credentials securely, creates or updates the provider route, and can immediately assign the provider to a planning or audit lane." Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" />
+                                </StackPanel>
+                            </Border>
                         </Grid>
+
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel x:Name="QuickConnectCredentialFieldOnePanel" Spacing="8">
+                                <TextBlock x:Name="QuickConnectCredentialFieldOneLabel" Text="Credential" Style="{StaticResource ShellLabelTextStyle}" />
+                                <PasswordBox
+                                    x:Name="QuickConnectCredentialFieldOneValueBox"
+                                    PasswordChanged="QuickConnectCredentialEditor_PasswordChanged"
+                                    PlaceholderText="Credential value" />
+                                <TextBlock x:Name="QuickConnectCredentialFieldOneHint" Style="{StaticResource ShellDataTextStyle}" Text="" TextWrapping="WrapWholeWords" />
+                            </StackPanel>
+
+                            <StackPanel x:Name="QuickConnectCredentialFieldTwoPanel" Grid.Column="1" Spacing="8">
+                                <TextBlock x:Name="QuickConnectCredentialFieldTwoLabel" Text="Credential" Style="{StaticResource ShellLabelTextStyle}" />
+                                <PasswordBox
+                                    x:Name="QuickConnectCredentialFieldTwoValueBox"
+                                    PasswordChanged="QuickConnectCredentialEditor_PasswordChanged"
+                                    PlaceholderText="Credential value" />
+                                <TextBlock x:Name="QuickConnectCredentialFieldTwoHint" Style="{StaticResource ShellDataTextStyle}" Text="" TextWrapping="WrapWholeWords" />
+                            </StackPanel>
+                        </Grid>
+
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <Button x:Name="ConnectQuickProviderButton" Click="ConnectQuickProviderButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Connect Provider" />
+                            <Button Tag="assign-responsibility" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Assignment Wizard" />
+                            <Button Tag="guided-provider-execution" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Validate Routing" />
+                        </StackPanel>
+
+                        <TextBlock
+                            x:Name="QuickConnectStatusText"
+                            Style="{StaticResource ShellDataTextStyle}"
+                            Text="Use this surface to connect providers without opening a cramped wizard dialog."
+                            TextWrapping="WrapWholeWords" />
                     </StackPanel>
                 </Border>
 
@@ -61,8 +120,9 @@
                                 <TextBlock Text="Kind" Style="{StaticResource ShellLabelTextStyle}" />
                                 <ComboBox x:Name="ProviderKindComboBox" SelectionChanged="ProviderKind_SelectionChanged">
                                     <ComboBoxItem Content="Codex" Tag="codex" />
+                                    <ComboBoxItem Content="ChatGPT" Tag="codex" />
                                     <ComboBoxItem Content="Claude Code" Tag="claude_code" />
-                                    <ComboBoxItem Content="xAI / Grok" Tag="xai" />
+                                    <ComboBoxItem Content="Grok" Tag="xai" />
                                     <ComboBoxItem Content="Generic" Tag="generic" />
                                 </ComboBox>
                             </StackPanel>

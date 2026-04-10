@@ -2427,6 +2427,7 @@ int main() {
         success &= expect(hasExport(snapshot.exports, "master-control-gateway-profile.json"), "Exports should include the gateway profile");
         success &= expect(
             hasProviderExecutionRegistration(snapshot.providerExecutionRegistrations, "codex") &&
+                hasProviderExecutionRegistration(snapshot.providerExecutionRegistrations, "chatgpt") &&
                 hasProviderExecutionRegistration(snapshot.providerExecutionRegistrations, "claude-code") &&
                 hasProviderExecutionRegistration(snapshot.providerExecutionRegistrations, "xai-grok"),
             "Provider modules should register their execution transports with the runtime.");

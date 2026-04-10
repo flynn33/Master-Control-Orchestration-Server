@@ -685,7 +685,45 @@ ProviderCapabilityDescriptor makeCodexProviderCapability() {
         {
             "planner",
             "architect",
+            "auditor",
             "coding-specialists"
+        },
+        true,
+        true
+    };
+}
+
+ProviderCapabilityDescriptor makeChatGptProviderCapability() {
+    return ProviderCapabilityDescriptor{
+        "com.mastercontrol.provider-codex",
+        "chatgpt",
+        ProviderKind::Codex,
+        "ChatGPT",
+        "OpenAI ChatGPT routing for planning, auditing, and general orchestration review lanes.",
+        "https://api.openai.com/v1",
+        "gpt-5.4",
+        {
+            ProviderCredentialFieldDescriptor{
+                "openai_api_key",
+                "OpenAI API Key",
+                ProviderCredentialFieldKind::ApiKey,
+                "Bearer key used for OpenAI Responses API and ChatGPT-backed orchestration calls.",
+                "sk-...",
+                "OPENAI_API_KEY",
+                "",
+                true,
+                true
+            }
+        },
+        {
+            "OpenAI Responses API access",
+            "ChatGPT-compatible model access",
+            "Supports shared MCP server and tool access"
+        },
+        {
+            "planner",
+            "architect",
+            "auditor"
         },
         true,
         true
@@ -698,6 +736,18 @@ ProviderExecutionRegistration makeCodexProviderExecutionRegistration() {
         "codex",
         ProviderKind::Codex,
         "Codex",
+        ProviderExecutionTransport::OpenAICompatibleChat,
+        true,
+        false
+    };
+}
+
+ProviderExecutionRegistration makeChatGptProviderExecutionRegistration() {
+    return ProviderExecutionRegistration{
+        "com.mastercontrol.provider-codex",
+        "chatgpt",
+        ProviderKind::Codex,
+        "ChatGPT",
         ProviderExecutionTransport::OpenAICompatibleChat,
         true,
         false
@@ -745,6 +795,7 @@ ProviderCapabilityDescriptor makeClaudeCodeProviderCapability() {
         {
             "planner",
             "architect",
+            "auditor",
             "coding-specialists"
         },
         true,
@@ -769,7 +820,7 @@ ProviderCapabilityDescriptor makeXAIProviderCapability() {
         "com.mastercontrol.provider-xai",
         "xai-grok",
         ProviderKind::XAI,
-        "xAI",
+        "Grok",
         "xAI Grok coding and orchestration routing with shared MCP tool access.",
         "https://api.x.ai/v1",
         "grok-code-fast-1",
@@ -794,6 +845,7 @@ ProviderCapabilityDescriptor makeXAIProviderCapability() {
         {
             "planner",
             "architect",
+            "auditor",
             "coding-specialists"
         },
         true,
@@ -806,7 +858,7 @@ ProviderExecutionRegistration makeXAIProviderExecutionRegistration() {
         "com.mastercontrol.provider-xai",
         "xai-grok",
         ProviderKind::XAI,
-        "xAI",
+        "Grok",
         ProviderExecutionTransport::OpenAICompatibleChat,
         true,
         false
@@ -1508,12 +1560,16 @@ Forsetti::ModuleManifest CodexProviderModule::manifest() const {
 void CodexProviderModule::start(Forsetti::ForsettiContext& context) {
     registerControlSurfaceRequests(context, makeCodexProviderControlSurfaceRequests());
     registerProviderCapability(context, makeCodexProviderCapability());
+    registerProviderCapability(context, makeChatGptProviderCapability());
     registerProviderExecution(context, makeCodexProviderExecutionRegistration());
+    registerProviderExecution(context, makeChatGptProviderExecutionRegistration());
     publishLifecycleEvent(context, "mastercontrol.provider.codex.started", descriptor().moduleID);
 }
 
 void CodexProviderModule::stop(Forsetti::ForsettiContext& context) {
+    unregisterProviderExecution(context, descriptor().moduleID, "chatgpt");
     unregisterProviderExecution(context, descriptor().moduleID, "codex");
+    unregisterProviderCapability(context, descriptor().moduleID, "chatgpt");
     unregisterProviderCapability(context, descriptor().moduleID, "codex");
     unregisterControlSurfaceRequests(context, descriptor().moduleID);
     publishLifecycleEvent(context, "mastercontrol.provider.codex.stopped", descriptor().moduleID);

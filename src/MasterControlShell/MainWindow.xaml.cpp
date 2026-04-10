@@ -18,6 +18,7 @@
 #include "OverviewSectionControl.xaml.h"
 #include "ProvidersSectionControl.xaml.h"
 #include "RuntimeSectionControl.xaml.h"
+#include "ShellFormatting.h"
 #include "SecuritySectionControl.xaml.h"
 #include "SettingsSectionControl.xaml.h"
 #include "TelemetrySectionControl.xaml.h"
@@ -34,6 +35,7 @@ using namespace Microsoft::UI::Xaml::Controls;
 using namespace Microsoft::UI::Xaml::Media;
 using namespace Windows::Foundation;
 using namespace Windows::UI;
+using namespace ::MasterControlShell::Presentation;
 
 namespace {
 
@@ -226,7 +228,7 @@ SectionMetadata metadataForDestination(const std::wstring& destinationId, const 
         return { L"CLU", title, L"Inspect the Command Logic Unit governance profile, launch guided setup wizards, and manage Apple production operations plus operator-visible control rules." };
     }
     if (destinationId == kProvidersDestination) {
-        return { L"PROVIDERS", title, L"Review provider adapters, autonomous control posture, and the current agent service envelope." };
+        return { L"PROVIDERS", title, L"Connect ChatGPT, Codex, Claude Code, and Grok, then assign planner, coding, architect, and auditor ownership without dropping into raw route editors." };
     }
     if (destinationId == kImportsDestination) {
         return { L"IMPORTS", title, L"Audit installer provenance, trusted-source flows, and the current software onboarding trail." };
@@ -429,7 +431,10 @@ void attachInteractiveRuntime(const FrameworkElement& view,
     }
     if (viewId == kSettingsView) {
         const auto typed = view.as<winrt::MasterControlShell::SettingsSectionControl>();
-        winrt::get_self<winrt::MasterControlShell::implementation::SettingsSectionControl>(typed)->AttachActions(std::move(actionRequested));
+        winrt::get_self<winrt::MasterControlShell::implementation::SettingsSectionControl>(typed)->AttachRuntime(
+            &runtime,
+            std::move(refreshRequested),
+            std::move(actionRequested));
     }
 }
 
@@ -602,37 +607,84 @@ void MainWindow::GuidedRuntimeMaintenanceWizardButton_Click(IInspectable const&,
 }
 
 void MainWindow::StartGuidedWorkflow(std::wstring const& workflowId) {
-    IAsyncAction action{ nullptr };
+    const auto navigateToDestination = [this](const std::wstring& destinationId) {
+        SetCurrentDestination(destinationId);
+        for (uint32_t index = 0; index < ShellNavigation().MenuItems().Size(); ++index) {
+            if (const auto item = ShellNavigation().MenuItems().GetAt(index).try_as<NavigationViewItem>()) {
+                const auto taggedDestination = std::wstring(winrt::unbox_value_or<hstring>(item.Tag(), hstring()).c_str());
+                if (taggedDestination == destinationId) {
+                    ShellNavigation().SelectedItem(item);
+                    break;
+                }
+            }
+        }
+    };
+
     if (workflowId == L"connect-model") {
-        action = ShowProviderWizardAsync();
+        navigateToDestination(kProvidersDestination);
+        GuidedWorkflowStatusText().Text(L"Connect AI Model now opens the Providers surface directly. Use the provider section to connect ChatGPT, Codex, Claude Code, or Grok without a cramped modal dialog.");
+        UpdateStatusBar(L"Provider connection now happens directly on the Providers surface.", InfoBarSeverity::Informational);
+        return;
     } else if (workflowId == L"new-mcp") {
-        action = ShowMcpServerWizardAsync();
+        navigateToDestination(kRuntimeDestination);
+        GuidedWorkflowStatusText().Text(L"New MCP Server now opens on the Runtime surface so you can create and review runtime lanes without a cramped modal dialog.");
+        UpdateStatusBar(L"Use the Runtime surface to create or maintain MCP runtime lanes.", InfoBarSeverity::Informational);
+        return;
     } else if (workflowId == L"new-subagent") {
-        action = ShowSubAgentWizardAsync();
+        navigateToDestination(kRuntimeDestination);
+        GuidedWorkflowStatusText().Text(L"New Sub-Agent now opens on the Runtime surface so the main window stays readable while you configure the lane.");
+        UpdateStatusBar(L"Use the Runtime surface to create new sub-agent lanes directly.", InfoBarSeverity::Informational);
+        return;
     } else if (workflowId == L"new-subagent-group") {
-        action = ShowSubAgentGroupWizardAsync();
+        navigateToDestination(kProvidersDestination);
+        GuidedWorkflowStatusText().Text(L"New Sub-Agent Group now opens on the Providers surface so you can select members and ownership lanes in the main shell.");
+        UpdateStatusBar(L"Use the Providers surface to create and maintain sub-agent groups.", InfoBarSeverity::Informational);
+        return;
     } else if (workflowId == L"new-apple-host") {
-        action = ShowAppleHostWizardAsync();
+        navigateToDestination(kRuntimeDestination);
+        GuidedWorkflowStatusText().Text(L"New Apple Host now opens on the Runtime surface so you can add and inspect remote build hosts without a cramped modal dialog.");
+        UpdateStatusBar(L"Use the Runtime surface to add or update Apple hosts.", InfoBarSeverity::Informational);
+        return;
     } else if (workflowId == L"assign-responsibility") {
-        action = ShowProviderAssignmentWizardAsync();
+        navigateToDestination(kProvidersDestination);
+        GuidedWorkflowStatusText().Text(L"Assign Responsibility now opens directly on the Providers surface so you can route planner, coder, and auditor ownership in the main shell.");
+        UpdateStatusBar(L"Use the Providers surface to assign orchestration ownership directly.", InfoBarSeverity::Informational);
+        return;
     } else if (workflowId == L"manage-forsetti-modules") {
-        action = ShowForsettiModuleWizardAsync();
+        navigateToDestination(kCluDestination);
+        GuidedWorkflowStatusText().Text(L"Manage Forsetti Modules now opens the CLU surface directly so governance and module state stay visible while you work.");
+        UpdateStatusBar(L"Use the CLU surface to inspect and manage Forsetti modules.", InfoBarSeverity::Informational);
+        return;
     } else if (workflowId == L"guided-import") {
-        action = ShowImportWizardAsync();
+        navigateToDestination(kImportsDestination);
+        GuidedWorkflowStatusText().Text(L"Guided Import now opens on the Imports surface so you can review source material and onboarding status in the full shell.");
+        UpdateStatusBar(L"Use the Imports surface for guided software onboarding.", InfoBarSeverity::Informational);
+        return;
     } else if (workflowId == L"guided-security") {
-        action = ShowSecurityWizardAsync();
+        navigateToDestination(kSecurityDestination);
+        GuidedWorkflowStatusText().Text(L"Security Hardening now opens directly on the Security surface so the shell can stay full-size while you work.");
+        UpdateStatusBar(L"Use the Security surface to apply security settings directly.", InfoBarSeverity::Informational);
+        return;
     } else if (workflowId == L"guided-settings") {
-        action = ShowSettingsWizardAsync();
+        navigateToDestination(kSettingsDestination);
+        GuidedWorkflowStatusText().Text(L"Host Settings now opens directly on the Settings surface so the main window can be resized while you work.");
+        UpdateStatusBar(L"Use the Settings surface to edit and apply host settings directly.", InfoBarSeverity::Informational);
+        return;
     } else if (workflowId == L"guided-provider-execution") {
-        action = ShowProviderExecutionWizardAsync();
+        navigateToDestination(kProvidersDestination);
+        GuidedWorkflowStatusText().Text(L"Validate Provider Routing now opens on the Providers surface so you can run and inspect provider tasks in the main shell.");
+        UpdateStatusBar(L"Use the Providers surface to validate provider routing directly.", InfoBarSeverity::Informational);
+        return;
     } else if (workflowId == L"guided-runtime-maintenance") {
-        action = ShowRuntimeMaintenanceWizardAsync();
+        navigateToDestination(kRuntimeDestination);
+        GuidedWorkflowStatusText().Text(L"Manage Runtime Lanes now opens on the Runtime surface so you can edit and remove lanes without a cramped modal dialog.");
+        UpdateStatusBar(L"Use the Runtime surface to manage runtime lanes directly.", InfoBarSeverity::Informational);
+        return;
     } else {
         UpdateStatusBar(winrt::hstring(std::wstring(L"Unknown guided workflow request: ") + workflowId), InfoBarSeverity::Warning);
         return;
     }
 
-    (void)action;
 }
 
 void MainWindow::SurfaceToolbarButton_Click(IInspectable const& sender, RoutedEventArgs const&) {
@@ -700,9 +752,9 @@ void MainWindow::ConfigureWindow() {
     ConfigureCustomTitleBar();
 
     if (windowHandle_ != nullptr) {
-        setWindowSize(windowHandle_, 1560, 1024);
-        centerWindow(windowHandle_);
-    }
+    setWindowSize(windowHandle_, 1680, 980);
+    centerWindow(windowHandle_);
+}
 }
 
 void MainWindow::ConfigureCustomTitleBar() {
@@ -738,6 +790,33 @@ void MainWindow::ConfigureCustomTitleBar() {
         }
     } catch (const winrt::hresult_error& error) {
         writeShellLog(L"Window presenter configuration failed: " + std::wstring(error.message().c_str()));
+    }
+
+    const auto currentStyle = GetWindowLongPtrW(windowHandle_, GWL_STYLE);
+    if (currentStyle != 0) {
+        const auto requiredStyle = (currentStyle | WS_OVERLAPPEDWINDOW | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU |
+                                    WS_MINIMIZEBOX | WS_MAXIMIZEBOX) &
+                                   ~static_cast<LONG_PTR>(WS_POPUP);
+        if (requiredStyle != currentStyle) {
+            SetWindowLongPtrW(windowHandle_, GWL_STYLE, requiredStyle);
+        }
+
+        const auto currentExStyle = GetWindowLongPtrW(windowHandle_, GWL_EXSTYLE);
+        if ((currentExStyle & WS_EX_APPWINDOW) == 0) {
+            SetWindowLongPtrW(windowHandle_, GWL_EXSTYLE, currentExStyle | WS_EX_APPWINDOW);
+        }
+
+        SetWindowPos(
+            windowHandle_,
+            nullptr,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        writeShellLog(L"Forced Win32 overlapped window styles so the shell exposes drag and resize handles.");
+    } else {
+        writeShellLog(L"Unable to inspect the native shell window style for drag and resize validation.");
     }
 }
 
@@ -968,13 +1047,75 @@ void MainWindow::ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapsh
     ApiStateText().Text(snapshot.apiHealthy ? L"Reachable" : L"Offline");
     EndpointCountText().Text(winrt::hstring(std::to_wstring(snapshot.endpointCount)));
     ProviderCountText().Text(winrt::hstring(std::to_wstring(snapshot.providerCount)));
-    PulseStateText().Text(winrt::hstring(uppercase(serviceStateLabel(snapshot.serviceState))));
+    HeroCpuProgressBar().Value(snapshot.cpuPercent);
+    HeroMemoryProgressBar().Value(snapshot.memoryPercent);
+    HeroDiskProgressBar().Value(snapshot.diskPercent);
+    HeroCpuValueText().Text(winrt::hstring(formatPercent(snapshot.cpuPercent)));
+    HeroMemoryValueText().Text(winrt::hstring(formatPercent(snapshot.memoryPercent)));
+    HeroDiskValueText().Text(winrt::hstring(formatPercent(snapshot.diskPercent)));
+    HeroTrafficValueText().Text(winrt::hstring(formatTraffic(snapshot.bytesSentPerSecond, snapshot.bytesReceivedPerSecond)));
 
-    std::wstring pulseCaption = snapshot.apiHealthy ? L"Admin API online" : L"Admin API offline";
-    pulseCaption += L"  |  ";
-    pulseCaption += std::to_wstring(snapshot.endpointCount);
-    pulseCaption += L" endpoints";
-    PulseCaptionText().Text(winrt::hstring(pulseCaption));
+    std::wstring heroTrafficDetail = snapshot.primaryIpAddress.empty() ? L"Awaiting telemetry." : L"Primary route: " + snapshot.primaryIpAddress;
+    if (!snapshot.telemetryCapturedAtUtc.empty()) {
+        heroTrafficDetail += L"  |  " + snapshot.telemetryCapturedAtUtc;
+    }
+    HeroTrafficDetailText().Text(winrt::hstring(heroTrafficDetail));
+    HeroTelemetrySummaryText().Text(winrt::hstring(
+        snapshot.telemetryText.empty()
+            ? L"Waiting for a live orchestration snapshot."
+            : snapshot.telemetryText));
+
+    std::wstring operationsHeadline = L"SERVICE " + uppercase(serviceStateLabel(snapshot.serviceState));
+    if (snapshot.apiHealthy) {
+        operationsHeadline += L"  |  API ONLINE";
+    } else {
+        operationsHeadline += L"  |  API OFFLINE";
+    }
+    HeroOperationsHeadlineText().Text(winrt::hstring(operationsHeadline));
+
+    std::wstring operationsBody = !snapshot.statusMessage.empty()
+        ? snapshot.statusMessage
+        : (snapshot.telemetryText.empty()
+            ? L"Waiting for a live orchestration snapshot."
+            : snapshot.telemetryText);
+    if (!snapshot.governanceFindingRows.empty()) {
+        operationsBody += L"\n\nTop finding: " + snapshot.governanceFindingRows.front();
+    } else if (!snapshot.installRows.empty()) {
+        operationsBody += L"\n\nLatest deployment event: " + snapshot.installRows.front();
+    }
+    HeroOperationsBodyText().Text(winrt::hstring(operationsBody));
+
+    std::wstring identity = snapshot.hostName.empty() ? L"Host pending" : snapshot.hostName;
+    if (!snapshot.operatingSystem.empty()) {
+        identity += L"\n" + snapshot.operatingSystem;
+    }
+    if (!snapshot.primaryIpAddress.empty()) {
+        identity += L"\n" + snapshot.primaryIpAddress;
+    }
+    if (!snapshot.primaryMacAddress.empty()) {
+        identity += L"\n" + snapshot.primaryMacAddress;
+    }
+    HeroIdentityText().Text(winrt::hstring(identity));
+
+    std::wstring governance = snapshot.governancePosture.empty()
+        ? L"Awaiting CLU and governance posture."
+        : snapshot.governancePosture;
+    if (!snapshot.governanceDoctrine.empty()) {
+        governance += L"\n" + snapshot.governanceDoctrine;
+    }
+    if (!snapshot.governanceLastEvaluatedUtc.empty()) {
+        governance += L"\nLast evaluated: " + snapshot.governanceLastEvaluatedUtc;
+    }
+    HeroGovernanceText().Text(winrt::hstring(governance));
+
+    std::wostringstream ledger;
+    ledger << L"Routes " << snapshot.endpointCount
+           << L"  |  Providers " << snapshot.providerCount
+           << L"\nAssignments " << snapshot.providerAssignments.size()
+           << L"  |  Gateways " << snapshot.platformGatewayCount
+           << L"\nApple hosts " << snapshot.appleRemoteHostCount
+           << L"  |  Findings " << snapshot.governanceFindingCount;
+    HeroRuntimeLedgerText().Text(winrt::hstring(ledger.str()));
 
     StartServiceButton().IsEnabled(snapshot.canStartService);
     StopServiceButton().IsEnabled(snapshot.canStopService);
