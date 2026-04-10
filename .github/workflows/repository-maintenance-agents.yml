@@ -71,7 +71,20 @@ jobs:
           else
             git commit -m "chore(agents): sync repository docs [skip agents]"
           fi
-          git push
+
+      - name: Seal tracked release to generated commit
+        if: steps.prepare.outputs.repo_changed == 'true' && steps.prepare.outputs.release_changed == 'true'
+        shell: bash
+        run: |
+          python scripts/github_agents/release_manager.py seal --commit "$(git rev-parse HEAD)" --metadata-out .agent-release.json
+          python scripts/github_agents/sync_docs.py
+          git add CHANGELOG.md VERSION.json README.md docs
+          git commit --amend --no-edit
+
+      - name: Push generated repository artifacts
+        if: steps.prepare.outputs.repo_changed == 'true'
+        shell: bash
+        run: git push
 
       - name: Publish GitHub release
         if: steps.prepare.outputs.release_changed == 'true'
@@ -84,8 +97,9 @@ jobs:
             exit 0
           fi
 
+          TARGET_COMMIT="$(git rev-parse HEAD)"
           gh release create "${{ steps.prepare.outputs.tag }}" \
-            --target "${{ steps.prepare.outputs.target_commit }}" \
+            --target "${TARGET_COMMIT}" \
             --title "${{ steps.prepare.outputs.tag }}" \
             --notes-file "${{ steps.prepare.outputs.notes_path }}"
 
