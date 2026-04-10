@@ -7,8 +7,8 @@ Master Control Orchestration Server is a Forsetti-compliant Windows orchestratio
 
 ## Current Release
 
-- Version: `v0.1.59`
-- Release date: `2026-04-03`
+- Version: `v0.1.60`
+- Release date: `2026-04-10`
 - Summary: Automated patch release for Master Control Orchestration Server.
 
 ## Highlights

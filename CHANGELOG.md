@@ -5,6 +5,19 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.1.60] - 2026-04-10
+### Summary
+Automated patch release for Master Control Orchestration Server.
+
+### Included Changes
+- Fix installer reliability and shell drag behavior (flynn33)
+- Sync release metadata for v0.1.59 (flynn33)
+- Stabilize Visual Studio test-machine validation (flynn33)
+- Add persistent installer error logging (flynn33)
+- Add IDE deployment acceptance targets (flynn33)
+- Add VS Code Codex handoff workflow (flynn33)
+- Fix WinUI shell build toolchain resolution (flynn33)
+
 ## [0.1.59] - 2026-04-03
 ### Summary
 Automated patch release for Master Control Orchestration Server.

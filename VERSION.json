@@ -1,11 +1,27 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.59",
-  "current_tag": "v0.1.59",
-  "released_at": "2026-04-03",
-  "last_release_commit": "5861d9d5fa5524ec04c8910ede44d7e2bb389a43",
+  "current_version": "0.1.60",
+  "current_tag": "v0.1.60",
+  "released_at": "2026-04-10",
+  "last_release_commit": "5197161d149c8b1d599df91556489cb726d4a28a",
   "history": [
+    {
+      "version": "0.1.60",
+      "tag": "v0.1.60",
+      "released_at": "2026-04-10",
+      "commit": "5197161d149c8b1d599df91556489cb726d4a28a",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Fix installer reliability and shell drag behavior (flynn33)",
+        "Sync release metadata for v0.1.59 (flynn33)",
+        "Stabilize Visual Studio test-machine validation (flynn33)",
+        "Add persistent installer error logging (flynn33)",
+        "Add IDE deployment acceptance targets (flynn33)",
+        "Add VS Code Codex handoff workflow (flynn33)",
+        "Fix WinUI shell build toolchain resolution (flynn33)"
+      ]
+    },
     {
       "version": "0.1.59",
       "tag": "v0.1.59",
