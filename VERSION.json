@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.64",
-  "current_tag": "v0.1.64",
+  "current_version": "0.1.65",
+  "current_tag": "v0.1.65",
   "released_at": "2026-04-10",
-  "last_release_commit": "f754bdac589bf719988c99a4e89b5e1b45b16ee5",
+  "last_release_commit": "810748ab203cba194ca33642b7c1bf0f3e075813",
   "history": [
+    {
+      "version": "0.1.65",
+      "tag": "v0.1.65",
+      "released_at": "2026-04-10",
+      "commit": "810748ab203cba194ca33642b7c1bf0f3e075813",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Fix uninstall cleanup and restore shell window frame (flynn33)"
+      ]
+    },
     {
       "version": "0.1.64",
       "tag": "v0.1.64",

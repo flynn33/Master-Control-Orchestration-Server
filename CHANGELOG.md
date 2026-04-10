@@ -5,6 +5,13 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.1.65] - 2026-04-10
+### Summary
+Automated patch release for Master Control Orchestration Server.
+
+### Included Changes
+- Fix uninstall cleanup and restore shell window frame (flynn33)
+
 ## [0.1.64] - 2026-04-10
 ### Summary
 Automated patch release for Master Control Orchestration Server.
