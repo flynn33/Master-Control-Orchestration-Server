@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.61",
-  "current_tag": "v0.1.61",
+  "current_version": "0.1.62",
+  "current_tag": "v0.1.62",
   "released_at": "2026-04-10",
-  "last_release_commit": "c32d88ed6ec34f5957dced56221cc65969b7a2e7",
+  "last_release_commit": "8e175381bc8cb1f70be0ccc7b5bda6378f0fe128",
   "history": [
+    {
+      "version": "0.1.62",
+      "tag": "v0.1.62",
+      "released_at": "2026-04-10",
+      "commit": "8e175381bc8cb1f70be0ccc7b5bda6378f0fe128",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Seal release metadata after agent sync (flynn33)"
+      ]
+    },
     {
       "version": "0.1.61",
       "tag": "v0.1.61",
