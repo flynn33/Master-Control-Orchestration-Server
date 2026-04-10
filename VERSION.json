@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.63",
-  "current_tag": "v0.1.63",
+  "current_version": "0.1.64",
+  "current_tag": "v0.1.64",
   "released_at": "2026-04-10",
-  "last_release_commit": "3279979c9aeedc45c53406c66803db73f7de5618",
+  "last_release_commit": "f754bdac589bf719988c99a4e89b5e1b45b16ee5",
   "history": [
+    {
+      "version": "0.1.64",
+      "tag": "v0.1.64",
+      "released_at": "2026-04-10",
+      "commit": "f754bdac589bf719988c99a4e89b5e1b45b16ee5",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Add persistent deployment telemetry and fix setup exit handling (flynn33)"
+      ]
+    },
     {
       "version": "0.1.63",
       "tag": "v0.1.63",

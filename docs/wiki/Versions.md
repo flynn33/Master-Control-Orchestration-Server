@@ -8,7 +8,7 @@ appropriate bump level (patch, minor, or major).
 
 | Property | Value |
 | --- | --- |
-| Version | `v0.1.63` |
+| Version | `v0.1.64` |
 | Released | `2026-04-10` |
 | Summary | Automated patch release for Master Control Orchestration Server. |
 
@@ -29,6 +29,7 @@ Versions are tracked in `VERSION.json` and tagged as GitHub Releases.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| `v0.1.64` | `2026-04-10` | Automated patch release for Master Control Orchestration Server. |
 | `v0.1.63` | `2026-04-10` | Automated patch release for Master Control Orchestration Server. |
 | `v0.1.62` | `2026-04-10` | Automated patch release for Master Control Orchestration Server. |
 | `v0.1.61` | `2026-04-10` | Automated patch release for Master Control Orchestration Server. |
@@ -43,6 +44,5 @@ Versions are tracked in `VERSION.json` and tagged as GitHub Releases.
 | `v0.1.52` | `2026-04-02` | Automated patch release for Master Control Orchestration Server. |
 | `v0.1.51` | `2026-04-02` | Automated patch release for Master Control Orchestration Server. |
 | `v0.1.50` | `2026-04-02` | Automated patch release for Master Control Orchestration Server. |
-| `v0.1.49` | `2026-03-29` | Automated patch release for Master Control Orchestration Server. |
 
 See also: [Automation](Automation) | [Operations](Operations)

@@ -5,6 +5,13 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.1.64] - 2026-04-10
+### Summary
+Automated patch release for Master Control Orchestration Server.
+
+### Included Changes
+- Add persistent deployment telemetry and fix setup exit handling (flynn33)
+
 ## [0.1.63] - 2026-04-10
 ### Summary
 Automated patch release for Master Control Orchestration Server.
