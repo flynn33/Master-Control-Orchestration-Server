@@ -35,6 +35,9 @@ constexpr wchar_t kUninstallRegistryKey[] = L"SOFTWARE\\Microsoft\\Windows\\Curr
 constexpr wchar_t kProgramsFolderName[] = L"Master Control Orchestration Server";
 constexpr wchar_t kShellShortcutName[] = L"Master Control Orchestration Server.lnk";
 constexpr wchar_t kDashboardShortcutName[] = L"Master Control Orchestration Server Dashboard.url";
+constexpr wchar_t kLegacyProgramsFolderName[] = L"Master Control Program";
+constexpr wchar_t kLegacyShellShortcutName[] = L"Master Control Program.lnk";
+constexpr wchar_t kLegacyDashboardShortcutName[] = L"Master Control Dashboard.url";
 constexpr wchar_t kInstallStateFileName[] = L"installation-state.json";
 constexpr wchar_t kBrowserRuleName[] = L"Master Control Orchestration Server - Browser Access";
 constexpr wchar_t kBeaconRuleName[] = L"Master Control Orchestration Server - Beacon Discovery";
@@ -1277,9 +1280,52 @@ bool configureShortcuts(const InstallationState& state) {
 
 void removeShortcuts(const InstallationState& state) {
     std::error_code error;
-    std::filesystem::remove(std::filesystem::path(state.shellShortcutPath), error);
-    std::filesystem::remove(std::filesystem::path(state.dashboardShortcutPath), error);
-    std::filesystem::remove(std::filesystem::path(state.shortcutDirectory), error);
+    const auto removeIfPresent = [&](const std::filesystem::path& path) {
+        if (path.empty()) {
+            return;
+        }
+
+        error.clear();
+        std::filesystem::remove(path, error);
+    };
+
+    const auto removeDirectoryIfEmpty = [&](const std::filesystem::path& directory) {
+        if (directory.empty()) {
+            return;
+        }
+
+        error.clear();
+        if (!std::filesystem::exists(directory, error) || !std::filesystem::is_directory(directory, error)) {
+            return;
+        }
+
+        error.clear();
+        if (std::filesystem::directory_iterator(directory, error) == std::filesystem::directory_iterator()) {
+            error.clear();
+            std::filesystem::remove(directory, error);
+        }
+    };
+
+    removeIfPresent(std::filesystem::path(state.shellShortcutPath));
+    removeIfPresent(std::filesystem::path(state.dashboardShortcutPath));
+    removeDirectoryIfEmpty(std::filesystem::path(state.shortcutDirectory));
+
+    for (const auto& programsRoot : { tryKnownFolder(FOLDERID_CommonPrograms), tryKnownFolder(FOLDERID_Programs) }) {
+        if (!programsRoot.has_value()) {
+            continue;
+        }
+
+        const auto currentDirectory = *programsRoot / kProgramsFolderName;
+        const auto legacyDirectory = *programsRoot / kLegacyProgramsFolderName;
+
+        removeIfPresent(currentDirectory / kShellShortcutName);
+        removeIfPresent(currentDirectory / kDashboardShortcutName);
+        removeDirectoryIfEmpty(currentDirectory);
+
+        removeIfPresent(legacyDirectory / kLegacyShellShortcutName);
+        removeIfPresent(legacyDirectory / kLegacyDashboardShortcutName);
+        removeDirectoryIfEmpty(legacyDirectory);
+    }
 }
 
 bool runNetshCommand(const std::wstring& arguments) {
@@ -1695,21 +1741,32 @@ bool startServiceIfPresent() {
 bool uninstallService() {
     SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
     if (scm == nullptr) {
-        return false;
+        return !queryServiceInstallationStatus().registered;
     }
 
     const auto serviceName = configuredServiceName();
     SC_HANDLE service = OpenServiceW(scm, serviceName.c_str(), SERVICE_STOP | DELETE | SERVICE_QUERY_STATUS);
     if (service == nullptr) {
+        const auto error = GetLastError();
         CloseServiceHandle(scm);
-        return true;
+        return error == ERROR_SERVICE_DOES_NOT_EXIST;
     }
 
     bool success = stopServiceHandle(service);
-    success = (DeleteService(service) != 0 || GetLastError() == ERROR_SERVICE_MARKED_FOR_DELETE) && success;
+    if (DeleteService(service) == 0) {
+        const auto error = GetLastError();
+        if (error != ERROR_SERVICE_MARKED_FOR_DELETE && error != ERROR_SERVICE_DOES_NOT_EXIST) {
+            success = false;
+        }
+    }
     CloseServiceHandle(service);
     CloseServiceHandle(scm);
-    return success && waitForServiceRemoval(30000);
+
+    if (!success) {
+        return !queryServiceInstallationStatus().registered;
+    }
+
+    return waitForServiceRemoval(30000) || !queryServiceInstallationStatus().registered;
 }
 
 bool scheduleDeferredInstallRemoval(const std::filesystem::path& installDirectory) {

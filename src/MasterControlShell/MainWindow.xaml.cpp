@@ -22,6 +22,8 @@
 #include "SettingsSectionControl.xaml.h"
 #include "TelemetrySectionControl.xaml.h"
 
+#include <winrt/Microsoft.UI.Interop.h>
+#include <winrt/Microsoft.UI.Windowing.h>
 #include <winrt/Microsoft.UI.Composition.SystemBackdrops.h>
 
 namespace winrt::MasterControlShell::implementation {
@@ -707,17 +709,36 @@ void MainWindow::ConfigureCustomTitleBar() {
     Window window = *this;
 
     try {
-        window.ExtendsContentIntoTitleBar(true);
-        window.SetTitleBar(TitleBarHost());
-        writeShellLog(L"Configured TitleBarHost as the custom draggable title bar.");
+        window.ExtendsContentIntoTitleBar(false);
+        TitleBarLeftInsetColumn().Width(GridLengthHelper::FromPixels(0));
+        TitleBarRightInsetColumn().Width(GridLengthHelper::FromPixels(0));
+        writeShellLog(L"Disabled custom title bar and restored the standard system frame.");
     } catch (const winrt::hresult_error& error) {
-        writeShellLog(L"Custom title bar configuration failed: " + std::wstring(error.message().c_str()));
+        writeShellLog(L"Standard title bar restoration failed: " + std::wstring(error.message().c_str()));
         return;
     }
 
-    TitleBarLeftInsetColumn().Width(GridLengthHelper::FromPixels(14));
-    TitleBarRightInsetColumn().Width(GridLengthHelper::FromPixels(156));
-    writeShellLog(L"Reserved caption-button space for the custom title bar drag surface.");
+    if (windowHandle_ == nullptr) {
+        return;
+    }
+
+    try {
+        const auto windowId = Microsoft::UI::GetWindowIdFromWindow(windowHandle_);
+        const auto appWindow = Microsoft::UI::Windowing::AppWindow::GetFromWindowId(windowId);
+        if (appWindow.Presenter().Kind() != Microsoft::UI::Windowing::AppWindowPresenterKind::Overlapped) {
+            appWindow.SetPresenter(Microsoft::UI::Windowing::AppWindowPresenterKind::Overlapped);
+        }
+
+        if (const auto presenter = appWindow.Presenter().try_as<Microsoft::UI::Windowing::OverlappedPresenter>()) {
+            presenter.SetBorderAndTitleBar(true, true);
+            presenter.IsMinimizable(true);
+            presenter.IsMaximizable(true);
+            presenter.IsResizable(true);
+            writeShellLog(L"Configured overlapped presenter with standard title bar and resize border.");
+        }
+    } catch (const winrt::hresult_error& error) {
+        writeShellLog(L"Window presenter configuration failed: " + std::wstring(error.message().c_str()));
+    }
 }
 
 void MainWindow::ConfigureTimer() {

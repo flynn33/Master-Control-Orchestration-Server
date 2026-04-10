@@ -128,14 +128,23 @@
 
             <Style x:Key="ShellCommandButtonStyle" TargetType="Button">
                 <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
-                <Setter Property="Background" Value="#1B00F6FF" />
-                <Setter Property="BorderBrush" Value="{StaticResource ShellCardEdgeBrush}" />
+                <Setter Property="Background" Value="#C0121D29" />
+                <Setter Property="BorderBrush" Value="#8A00F6FF" />
                 <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="CornerRadius" Value="14" />
                 <Setter Property="Padding" Value="18,14" />
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="FontSize" Value="16" />
+                <Setter Property="HorizontalContentAlignment" Value="Center" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
                 <Setter Property="MinHeight" Value="48" />
+            </Style>
+
+            <Style x:Key="ShellSecondaryButtonStyle" TargetType="Button" BasedOn="{StaticResource ShellCommandButtonStyle}">
+                <Setter Property="Foreground" Value="{StaticResource ShellAccentBrush}" />
+                <Setter Property="Background" Value="#AA091118" />
+                <Setter Property="BorderBrush" Value="#6600F6FF" />
             </Style>
 
             <Style x:Key="ShellListViewItemStyle" TargetType="ListViewItem">
