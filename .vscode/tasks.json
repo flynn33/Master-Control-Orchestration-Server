@@ -1,0 +1,84 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "MCOS: Build Release",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\scripts\\Invoke-MasterControlOrchestrationServerIdeTarget.ps1",
+        "-Project",
+        "ALL_BUILD"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "MCOS: RUN_TESTS",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\scripts\\Invoke-MasterControlOrchestrationServerIdeTarget.ps1",
+        "-Project",
+        "RUN_TESTS"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "MCOS: IDE_ACCEPTANCE_MIXED",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\scripts\\Invoke-MasterControlOrchestrationServerIdeTarget.ps1",
+        "-Project",
+        "IDE_ACCEPTANCE_MIXED"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "MCOS: IDE_ACCEPTANCE_MANAGED",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\scripts\\Invoke-MasterControlOrchestrationServerIdeTarget.ps1",
+        "-Project",
+        "IDE_ACCEPTANCE_MANAGED"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "MCOS: IDE_ACCEPTANCE_BOTH",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\scripts\\Invoke-MasterControlOrchestrationServerIdeTarget.ps1",
+        "-Project",
+        "IDE_ACCEPTANCE_BOTH"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}
