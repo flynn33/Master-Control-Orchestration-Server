@@ -59,3 +59,10 @@ packages/
 
 # User-specific CMake presets
 CMakeUserPresets.json
+
+# Claude autonomous session runtime artifacts (keep tooling scripts, ignore output)
+.claude-work/logs/
+.claude-work/artifacts/
+.claude-work/smoke-install-dest/
+.claude-work/visual-install-dest/
+.claude-work/*.pid
