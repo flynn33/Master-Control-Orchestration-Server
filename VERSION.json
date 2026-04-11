@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.2.2",
-  "current_tag": "v0.2.2",
+  "current_version": "0.2.3",
+  "current_tag": "v0.2.3",
   "released_at": "2026-04-11",
-  "last_release_commit": "f2af6b93c4c61fd26d5c1b0a8277c542d270e9c0",
+  "last_release_commit": "5eba6c8c7be14acf2577e479d36bc3f829a05347",
   "history": [
+    {
+      "version": "0.2.3",
+      "tag": "v0.2.3",
+      "released_at": "2026-04-11",
+      "commit": "5eba6c8c7be14acf2577e479d36bc3f829a05347",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Live command stream, nav pane removed, hero auto-collapse, Tron palette v2 (flynn33)"
+      ]
+    },
     {
       "version": "0.2.2",
       "tag": "v0.2.2",
