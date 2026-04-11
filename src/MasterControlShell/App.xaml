@@ -11,47 +11,60 @@
                 <controls:XamlControlsResources />
             </ResourceDictionary.MergedDictionaries>
 
-            <SolidColorBrush x:Key="ShellTextPrimaryBrush" Color="#E6FCFF" />
-            <SolidColorBrush x:Key="ShellTextMutedBrush" Color="#8CB7C4" />
-            <SolidColorBrush x:Key="ShellTextFaintBrush" Color="#6A8B95" />
-            <SolidColorBrush x:Key="ShellAccentBrush" Color="#00F6FF" />
-            <SolidColorBrush x:Key="ShellAccentSoftBrush" Color="#5500F6FF" />
-            <SolidColorBrush x:Key="ShellGlowBrush" Color="#2200F6FF" />
-            <SolidColorBrush x:Key="ShellSuccessBrush" Color="#1CF2C1" />
-            <SolidColorBrush x:Key="ShellWarningBrush" Color="#FFC857" />
-            <SolidColorBrush x:Key="ShellDangerBrush" Color="#FF6A80" />
-            <SolidColorBrush x:Key="ShellPanelFillBrush" Color="#E0060A10" />
-            <SolidColorBrush x:Key="ShellPanelDeepBrush" Color="#F003070C" />
-            <SolidColorBrush x:Key="ShellCardFillBrush" Color="#E00A1018" />
-            <SolidColorBrush x:Key="ShellCardEdgeBrush" Color="#5A00E8FF" />
-            <SolidColorBrush x:Key="ShellTileFillBrush" Color="#E003070B" />
-            <SolidColorBrush x:Key="ShellTileEdgeBrush" Color="#4400DFFF" />
-            <SolidColorBrush x:Key="ShellGridlineBrush" Color="#2600DFFF" />
+            <!-- Tron amplification v2: brighter cyan, higher-contrast panels,
+                 thicker border alphas, more saturated danger/success accents.
+                 Every panel is now a proper Tron glass pane — edges glow, text
+                 on text sits in full-opacity cyan, background stays pitch. -->
+            <SolidColorBrush x:Key="ShellTextPrimaryBrush" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ShellTextMutedBrush" Color="#9ECCDA" />
+            <SolidColorBrush x:Key="ShellTextFaintBrush" Color="#7BA4B0" />
+            <SolidColorBrush x:Key="ShellAccentBrush" Color="#00FFFF" />
+            <SolidColorBrush x:Key="ShellAccentBrightBrush" Color="#7DFFFF" />
+            <SolidColorBrush x:Key="ShellAccentSoftBrush" Color="#7000FFFF" />
+            <SolidColorBrush x:Key="ShellGlowBrush" Color="#3300FFFF" />
+            <SolidColorBrush x:Key="ShellHotGlowBrush" Color="#5500FFFF" />
+            <SolidColorBrush x:Key="ShellSuccessBrush" Color="#3BFFCF" />
+            <SolidColorBrush x:Key="ShellWarningBrush" Color="#FFD56B" />
+            <SolidColorBrush x:Key="ShellDangerBrush" Color="#FF5577" />
+            <SolidColorBrush x:Key="ShellPanelFillBrush" Color="#F0020810" />
+            <SolidColorBrush x:Key="ShellPanelDeepBrush" Color="#F8020609" />
+            <SolidColorBrush x:Key="ShellCardFillBrush" Color="#F00A1622" />
+            <SolidColorBrush x:Key="ShellCardEdgeBrush" Color="#8800FFFF" />
+            <SolidColorBrush x:Key="ShellTileFillBrush" Color="#F0040B14" />
+            <SolidColorBrush x:Key="ShellTileEdgeBrush" Color="#6600FFFF" />
+            <SolidColorBrush x:Key="ShellGridlineBrush" Color="#4400FFFF" />
 
+            <!-- Deeper, more saturated Tron background gradient — pure near-black
+                 with a cyan wash in the upper-left quadrant. Cards visibly glow
+                 against it. -->
             <LinearGradientBrush x:Key="ShellBackgroundBrush" StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#010205" Offset="0.0" />
-                <GradientStop Color="#031018" Offset="0.22" />
-                <GradientStop Color="#041C2A" Offset="0.56" />
-                <GradientStop Color="#060A10" Offset="1.0" />
+                <GradientStop Color="#000000" Offset="0.0" />
+                <GradientStop Color="#001420" Offset="0.22" />
+                <GradientStop Color="#00283D" Offset="0.56" />
+                <GradientStop Color="#000507" Offset="1.0" />
             </LinearGradientBrush>
 
             <LinearGradientBrush x:Key="ShellHeroBrush" StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#E0091620" Offset="0.0" />
-                <GradientStop Color="#DD060C13" Offset="0.52" />
-                <GradientStop Color="#E003070B" Offset="1.0" />
+                <GradientStop Color="#F00A2230" Offset="0.0" />
+                <GradientStop Color="#F0061018" Offset="0.52" />
+                <GradientStop Color="#F00A2536" Offset="1.0" />
             </LinearGradientBrush>
 
+            <!-- Thicker borders and a more aggressive 0-corner-radius edge so
+                 cards read as panels punched out of the grid. -->
             <Style x:Key="ShellCardStyle" TargetType="Border">
                 <Setter Property="Background" Value="{StaticResource ShellPanelFillBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource ShellCardEdgeBrush}" />
-                <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="2" />
+                <Setter Property="BorderThickness" Value="2" />
+                <Setter Property="CornerRadius" Value="1" />
                 <Setter Property="Padding" Value="14" />
             </Style>
 
             <Style x:Key="ShellHeroCardStyle" TargetType="Border" BasedOn="{StaticResource ShellCardStyle}">
                 <Setter Property="Background" Value="{StaticResource ShellHeroBrush}" />
-                <Setter Property="CornerRadius" Value="2" />
+                <Setter Property="BorderBrush" Value="{StaticResource ShellAccentBrush}" />
+                <Setter Property="BorderThickness" Value="2" />
+                <Setter Property="CornerRadius" Value="1" />
                 <Setter Property="Padding" Value="16" />
             </Style>
 

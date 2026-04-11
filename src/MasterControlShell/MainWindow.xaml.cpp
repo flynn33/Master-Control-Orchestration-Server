@@ -835,6 +835,24 @@ void MainWindow::ConfigureTimer() {
         writeShellLog(L"Dispatcher timer fallback activated: " + std::wstring(error.message().c_str()));
     }
 
+    // Activity stream poll timer: one-second cadence against /api/activity.
+    // Each tick pulls events strictly newer than activityStreamCursor_ and
+    // appends them to ActivityStreamListView so the operator sees every
+    // incoming command/request in real time.
+    try {
+        activityStreamTimer_ = DispatcherQueue().CreateTimer();
+        activityStreamTimer_.Interval(std::chrono::seconds(1));
+        const auto weakThis = get_weak();
+        activityStreamTimer_.Tick([weakThis](auto&&, auto&&) {
+            if (const auto self = weakThis.get()) {
+                self->PollActivityStreamAsync();
+            }
+        });
+        activityStreamTimer_.Start();
+    } catch (const winrt::hresult_error& error) {
+        writeShellLog(L"Activity stream timer fallback activated: " + std::wstring(error.message().c_str()));
+    }
+
     // Live-clock timer: one-second tick that updates the Tron-style LIVE · HH:MM:SS
     // indicator in the title bar. Kept separate from the 10-second refresh timer so
     // the clock stays smooth without dragging RefreshAsync with it.
@@ -882,6 +900,25 @@ void MainWindow::SetCurrentDestination(const std::wstring& destinationId) {
     currentDestination_ = destinationId.empty() ? std::wstring(kOverviewDestination) : destinationId;
     SectionContentHost().Content(ResolvePrimaryViewForDestination(currentDestination_, currentSnapshot_));
     ApplySectionMetadata(currentSnapshot_);
+
+    // Collapse the 3-column hero card (telemetry + wizards + live ops) when
+    // the operator navigates away from Overview. Otherwise the hero fills the
+    // viewport and pushes the section content off-screen, which is exactly
+    // the "clicking Connect AI Model does nothing" complaint — the
+    // ProvidersSectionControl rendered inside SectionContentHost but the
+    // user could not see it above the fold. On Overview, keep the hero
+    // visible as the command deck.
+    try {
+        const auto heroHost = HeroCardHost();
+        if (heroHost != nullptr) {
+            heroHost.Visibility(currentDestination_ == kOverviewDestination
+                                    ? Visibility::Visible
+                                    : Visibility::Collapsed);
+        }
+    } catch (const winrt::hresult_error&) {
+        // HeroCardHost may not yet be realized during early bootstrap;
+        // ignore and rely on subsequent SetCurrentDestination calls.
+    }
 }
 
 void MainWindow::ApplySurfaceNavigation(const ::MasterControlShell::ShellSnapshot& snapshot) {
@@ -1266,6 +1303,91 @@ IAsyncAction MainWindow::RefreshAsync() {
     ApplySnapshot(currentSnapshot_);
     refreshInFlight_ = false;
     RefreshButton().IsEnabled(true);
+}
+
+IAsyncAction MainWindow::PollActivityStreamAsync() {
+    // Fetch new events since the last cursor, then marshal back to the UI
+    // thread to append them to the list view. Uses the most-recent-first
+    // ordering: each new event is inserted at index 0 and the list is
+    // capped at 120 rows so long-running sessions don't drift into
+    // unbounded memory.
+    winrt::apartment_context uiThread;
+    const auto cursor = activityStreamCursor_;
+    co_await winrt::resume_background();
+
+    const auto result = runtime_.FetchActivityEvents(cursor);
+
+    co_await uiThread;
+
+    if (!result.succeeded) {
+        try {
+            ActivityStreamStatusText().Text(winrt::hstring(
+                result.errorMessage.empty() ? L"activity stream offline" : result.errorMessage));
+        } catch (const winrt::hresult_error&) {}
+        co_return;
+    }
+
+    activityStreamCursor_ = result.highWaterMarkId;
+
+    if (result.events.empty()) {
+        try {
+            ActivityStreamStatusText().Text(winrt::hstring(L"idle"));
+        } catch (const winrt::hresult_error&) {}
+        co_return;
+    }
+
+    try {
+        auto listView = ActivityStreamListView();
+        for (const auto& event : result.events) {
+            // Compose a compact single-line representation:
+            //   HH:MM:SS  <kind>  <method> <target> -> <status>  <latency>ms
+            std::wstring timestamp = event.timestampUtc;
+            // Trim to HH:MM:SS if the timestamp is an ISO string
+            if (timestamp.size() >= 19 && timestamp[10] == L'T') {
+                timestamp = timestamp.substr(11, 8);
+            }
+
+            std::wostringstream line;
+            line << timestamp
+                 << L"  " << event.kind
+                 << L"  " << event.method
+                 << L" " << event.target
+                 << L"  -> " << event.statusCode
+                 << L"  " << event.latencyMs << L"ms";
+            if (!event.message.empty() && event.message.size() < 160) {
+                line << L"  | " << event.message;
+            }
+
+            ListViewItem row;
+            TextBlock text;
+            text.Text(winrt::hstring(line.str()));
+            text.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
+            // Colour-code by status class for quick scanning
+            if (event.statusCode >= 500) {
+                text.Foreground(Application::Current().Resources().Lookup(box_value(L"ShellDangerBrush")).try_as<Brush>());
+            } else if (event.statusCode >= 400) {
+                text.Foreground(Application::Current().Resources().Lookup(box_value(L"ShellWarningBrush")).try_as<Brush>());
+            } else if (event.statusCode >= 200) {
+                text.Foreground(Application::Current().Resources().Lookup(box_value(L"ShellSuccessBrush")).try_as<Brush>());
+            }
+            row.Content(text);
+            listView.Items().InsertAt(0, row);
+            ++activityStreamCount_;
+        }
+
+        // Cap at 120 rows so long soak sessions stay bounded.
+        while (listView.Items().Size() > 120) {
+            listView.Items().RemoveAt(listView.Items().Size() - 1);
+        }
+
+        ActivityStreamCounterText().Text(
+            winrt::hstring(std::to_wstring(activityStreamCount_) + L" events"));
+        ActivityStreamStatusText().Text(
+            winrt::hstring(L"+" + std::to_wstring(result.events.size()) + L" new"));
+    } catch (const winrt::hresult_error&) {
+        // List view not yet realized or collection mutation conflict; the
+        // next tick will try again.
+    }
 }
 
 IAsyncAction MainWindow::RunServiceActionAsync(const bool start) {

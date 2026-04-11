@@ -350,6 +350,38 @@ struct AutoConnectResult final {
     std::string summary; // human-readable one-liner
 };
 
+// ---------------------------------------------------------------------------
+// Live Activity Stream
+// ---------------------------------------------------------------------------
+// Every incoming admin API request, outgoing provider execution, governance
+// decision, and auto-connect step is appended to an in-memory ring buffer
+// (ActivityEventRing) so the shell can render a live command/request stream.
+// Events are also surfaced via GET /api/activity so the browser dashboard and
+// remote observers can subscribe.
+// ---------------------------------------------------------------------------
+
+enum class ActivityEventKind {
+    AdminApiRequest,
+    ProviderExecution,
+    GovernanceDecision,
+    AutoConnect,
+    ServiceLifecycle,
+    Telemetry
+};
+
+struct ActivityEvent final {
+    std::string id;                 // monotonically increasing event id (string for JS safety)
+    std::string kind;               // enum-as-string for JSON: "admin_api_request", etc.
+    std::string timestampUtc;
+    std::string actor;              // "shell", "dashboard", "cli", etc.
+    std::string method;             // HTTP verb or operation verb
+    std::string target;             // path, provider id, rule id, etc.
+    int statusCode = 0;             // HTTP status or custom numeric outcome
+    int latencyMs = 0;
+    std::string message;            // short human-readable summary
+    std::string detail;             // optional expanded payload (JSON-as-string)
+};
+
 struct InstallerPackageSpec final {
     InstallerKind kind = InstallerKind::Exe;
     std::string source;
@@ -1009,6 +1041,19 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     totalLatencyMs,
     errorMessage,
     summary)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ActivityEvent,
+    id,
+    kind,
+    timestampUtc,
+    actor,
+    method,
+    target,
+    statusCode,
+    latencyMs,
+    message,
+    detail)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     InstallerPackageSpec,

@@ -76,25 +76,35 @@
                 </Border>
 
                 <Border Grid.Row="2" Margin="0,14,0,0" Background="#AA04090E" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="6">
+                    <!-- NavigationView kept as a chromeless content host so existing
+                         .cpp references (ShellNavigation, ShellNavigation_SelectionChanged,
+                         MenuItems, SelectedItem) still compile. The entire pane is
+                         collapsed to 0 px and the toggle button is hidden so no blank
+                         left column is rendered. Navigation happens through the
+                         ForsettiToolbarHost buttons in the hero card and the GUIDED
+                         SETUP WIZARDS grid. -->
                     <NavigationView
                         x:Name="ShellNavigation"
                         Background="Transparent"
-                        CompactPaneLength="64"
+                        CompactPaneLength="0"
                         IsBackButtonVisible="Collapsed"
-                        IsPaneOpen="True"
+                        IsPaneOpen="False"
+                        IsPaneToggleButtonVisible="False"
                         IsSettingsVisible="False"
-                        OpenPaneLength="252"
-                        PaneTitle="SURFACES"
+                        OpenPaneLength="0"
+                        PaneDisplayMode="LeftMinimal"
+                        PaneTitle=""
                         SelectionChanged="ShellNavigation_SelectionChanged">
                         <ScrollViewer HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto" Padding="0,0,8,0">
                         <Grid Margin="14,12,14,14">
                             <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />   <!-- 0: hero card -->
+                                <RowDefinition Height="Auto" />   <!-- 1: 4-metric summary -->
+                                <RowDefinition Height="Auto" />   <!-- 2: live command stream -->
+                                <RowDefinition Height="Auto" />   <!-- 3: section content + sub-agent footer -->
                             </Grid.RowDefinitions>
 
-                            <Border Style="{StaticResource ShellHeroCardStyle}">
+                            <Border x:Name="HeroCardHost" Style="{StaticResource ShellHeroCardStyle}">
                                 <Grid ColumnSpacing="24">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="1.55*" />
@@ -274,7 +284,43 @@
                                 <Border Grid.Column="3" Style="{StaticResource ShellMetricTileStyle}"><StackPanel Spacing="6"><TextBlock Text="PROVIDERS" Style="{StaticResource ShellLabelTextStyle}" /><TextBlock x:Name="ProviderCountText" Style="{StaticResource ShellValueTextStyle}" Text="0" /></StackPanel></Border>
                             </Grid>
 
-                            <Border Grid.Row="2" Margin="0,18,0,0" Style="{StaticResource ShellCardStyle}">
+                            <!-- LIVE COMMAND/REQUEST STREAM
+                                 Always-visible scrolling log of every admin API request,
+                                 provider execution, governance decision, and auto-connect
+                                 event flowing through the service host. Populated by
+                                 RefreshActivityStreamAsync polling /api/activity?since={id}
+                                 on a one-second cadence. -->
+                            <Border Grid.Row="2" Margin="0,14,0,0" Style="{StaticResource ShellCardStyle}" BorderBrush="{StaticResource ShellAccentBrush}">
+                                <Grid RowSpacing="10">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+                                    <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="14">
+                                        <TextBlock Text="LIVE COMMAND STREAM" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                        <Border Background="{StaticResource ShellAccentSoftBrush}" BorderBrush="{StaticResource ShellAccentBrush}" BorderThickness="1" CornerRadius="999" Padding="8,2">
+                                            <TextBlock x:Name="ActivityStreamCounterText" Text="0 events" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
+                                        </Border>
+                                        <TextBlock x:Name="ActivityStreamStatusText" Text="Polling /api/activity..." Style="{StaticResource ShellDataTextStyle}" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <ListView x:Name="ActivityStreamListView"
+                                              Grid.Row="1"
+                                              Background="Transparent"
+                                              BorderThickness="0"
+                                              SelectionMode="None"
+                                              MaxHeight="220"
+                                              IsItemClickEnabled="False">
+                                        <ListView.ItemContainerStyle>
+                                            <Style TargetType="ListViewItem">
+                                                <Setter Property="Padding" Value="4,3" />
+                                                <Setter Property="MinHeight" Value="22" />
+                                            </Style>
+                                        </ListView.ItemContainerStyle>
+                                    </ListView>
+                                </Grid>
+                            </Border>
+
+                            <Border Grid.Row="3" Margin="0,18,0,0" Style="{StaticResource ShellCardStyle}">
                                 <Grid RowSpacing="14">
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="*" />

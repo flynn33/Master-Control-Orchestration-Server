@@ -8003,6 +8003,93 @@ struct HttpResponse final {
     std::string body;
 };
 
+// ---------------------------------------------------------------------------
+// ActivityEventRing — fixed-capacity, thread-safe, monotonically-indexed in-
+// memory ring buffer of ActivityEvent records. Every inbound admin API
+// request, outbound provider execution, governance decision, auto-connect
+// call, and service lifecycle transition appends here so the shell and
+// browser dashboard can render a live stream of "commands and requests".
+// Readers query with a cursor id and get back events strictly newer than
+// that cursor plus the current high-water-mark id.
+// ---------------------------------------------------------------------------
+class ActivityEventRing final {
+public:
+    static constexpr size_t kCapacity = 512;
+
+    void append(const ActivityEvent& input) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ActivityEvent event = input;
+        ++nextSequence_;
+        event.id = std::to_string(nextSequence_);
+        if (event.timestampUtc.empty()) {
+            event.timestampUtc = currentUtcTimestamp();
+        }
+        ring_.push_back(std::move(event));
+        if (ring_.size() > kCapacity) {
+            ring_.pop_front();
+        }
+    }
+
+    // Returns events with id > sinceId (sinceId may be empty = return all).
+    // Also returns the current high-water-mark id so the caller can poll
+    // incrementally.
+    struct Snapshot {
+        std::vector<ActivityEvent> events;
+        std::string highWaterMarkId;
+    };
+    Snapshot read(const std::string& sinceId, size_t maxCount = kCapacity) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        Snapshot out;
+        out.highWaterMarkId = std::to_string(nextSequence_);
+
+        uint64_t sinceSeq = 0;
+        if (!sinceId.empty()) {
+            try { sinceSeq = std::stoull(sinceId); } catch (...) { sinceSeq = 0; }
+        }
+
+        size_t collected = 0;
+        for (const auto& event : ring_) {
+            if (collected >= maxCount) break;
+            uint64_t eventSeq = 0;
+            try { eventSeq = std::stoull(event.id); } catch (...) { continue; }
+            if (eventSeq > sinceSeq) {
+                out.events.push_back(event);
+                ++collected;
+            }
+        }
+        return out;
+    }
+
+private:
+    static std::string currentUtcTimestamp() {
+        const auto now = std::chrono::system_clock::now();
+        const auto nowTime = std::chrono::system_clock::to_time_t(now);
+        const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               now.time_since_epoch()).count() % 1000;
+        tm utc{};
+        gmtime_s(&utc, &nowTime);
+        char buffer[40]{};
+        std::snprintf(
+            buffer, sizeof(buffer),
+            "%04d-%02d-%02dT%02d:%02d:%02d.%03lldZ",
+            utc.tm_year + 1900, utc.tm_mon + 1, utc.tm_mday,
+            utc.tm_hour, utc.tm_min, utc.tm_sec,
+            static_cast<long long>(nowMs));
+        return buffer;
+    }
+
+    mutable std::mutex mutex_;
+    std::deque<ActivityEvent> ring_;
+    uint64_t nextSequence_ = 0;
+};
+
+// Process-global activity ring. Using a static inside a function avoids the
+// static-initialization-order trap across translation units.
+ActivityEventRing& globalActivityRing() {
+    static ActivityEventRing instance;
+    return instance;
+}
+
 class SimpleHttpServer final {
 public:
     using RequestHandler = std::function<HttpResponse(const HttpRequest&)>;
@@ -8683,6 +8770,41 @@ OperationResult MasterControlApplication::Impl::manageForsettiModule(const std::
 }
 
 HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest& request) {
+    // Dedicated /api/activity read route — served before the main handler
+    // body so incremental polling stays cheap and never touches the heavier
+    // snapshot path. Clients pass `?since={id}` to get only new events.
+    if (request.method == "GET" && request.path.rfind("/api/activity", 0) == 0) {
+        std::string sinceId;
+        const auto queryStart = request.path.find('?');
+        if (queryStart != std::string::npos) {
+            const auto query = request.path.substr(queryStart + 1);
+            const auto sincePos = query.find("since=");
+            if (sincePos != std::string::npos) {
+                sinceId = query.substr(sincePos + 6);
+                const auto amp = sinceId.find('&');
+                if (amp != std::string::npos) sinceId = sinceId.substr(0, amp);
+            }
+        }
+        const auto snap = globalActivityRing().read(sinceId);
+        nlohmann::json body;
+        body["highWaterMarkId"] = snap.highWaterMarkId;
+        body["events"] = nlohmann::json::array();
+        for (const auto& e : snap.events) {
+            body["events"].push_back(e);
+        }
+        return HttpResponse{ 200, "application/json", body.dump() };
+    }
+
+    // Capture every inbound admin API request into the live activity ring.
+    // Shell's own poll targets (/api/dashboard, /api/config) are skipped so
+    // the poll loop doesn't thrash the ring.
+    const auto requestStart = std::chrono::steady_clock::now();
+    const bool skipActivity =
+        request.path == "/api/dashboard" ||
+        request.path == "/api/config" ||
+        request.path == "/api/health";
+
+    const auto response = ([&]() -> HttpResponse {
     try {
         const auto gateways = platformServiceCatalogService_
             ? platformServiceCatalogService_->listGateways()
@@ -9030,6 +9152,27 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
     } catch (const std::exception& exception) {
         return jsonResponse(nlohmann::json{ { "succeeded", false }, { "message", exception.what() } }, 500);
     }
+    })();  // end of request-handler lambda
+
+    // Emit activity event for every non-polling route.
+    if (!skipActivity) {
+        const auto latency = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - requestStart).count());
+        ActivityEvent event;
+        event.kind = "admin_api_request";
+        event.actor = "admin-api";
+        event.method = request.method;
+        event.target = request.path;
+        event.statusCode = response.statusCode;
+        event.latencyMs = latency;
+        event.message = request.method + " " + request.path
+            + " -> " + std::to_string(response.statusCode)
+            + " (" + std::to_string(latency) + "ms)";
+        globalActivityRing().append(event);
+    }
+
+    return response;
 }
 
 HttpResponse MasterControlApplication::Impl::staticFileResponse(std::string path) const {

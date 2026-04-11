@@ -86,8 +86,13 @@ private:
     ::MasterControlShell::ShellSnapshot currentSnapshot_{};
     std::wstring currentDestination_ = L"overview";
     std::map<std::wstring, Microsoft::UI::Xaml::FrameworkElement> cachedViews_;
+    winrt::Windows::Foundation::IAsyncAction PollActivityStreamAsync();
+
     Microsoft::UI::Dispatching::DispatcherQueueTimer refreshTimer_{ nullptr };
     Microsoft::UI::Dispatching::DispatcherQueueTimer clockTimer_{ nullptr };
+    Microsoft::UI::Dispatching::DispatcherQueueTimer activityStreamTimer_{ nullptr };
+    std::wstring activityStreamCursor_;
+    size_t activityStreamCount_ = 0;
     std::atomic_bool refreshInFlight_{ false };
 };
 

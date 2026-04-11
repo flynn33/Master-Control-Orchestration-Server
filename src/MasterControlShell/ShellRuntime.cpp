@@ -2517,6 +2517,56 @@ ShellOperationResult ShellRuntime::ManageForsettiModule(const std::wstring& modu
         L"Unable to update the Forsetti module state through the local admin API.");
 }
 
+ShellActivityStreamResult ShellRuntime::FetchActivityEvents(const std::wstring& sinceId) const {
+    ShellActivityStreamResult result;
+    std::wstring errorMessage;
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    std::wstring path = L"/api/activity";
+    if (!sinceId.empty()) {
+        path += L"?since=";
+        path += sinceId;
+    }
+    const auto response = httpGet(host, port, path, errorMessage);
+    if (!response.has_value()) {
+        result.errorMessage = errorMessage.empty()
+            ? std::wstring(L"Unable to reach the local admin API activity stream.")
+            : errorMessage;
+        return result;
+    }
+    if (response->statusCode != 200) {
+        result.errorMessage = L"Local admin API rejected the activity request.";
+        return result;
+    }
+    const auto body = parseJsonObject(response->body);
+    if (!body.has_value()) {
+        result.errorMessage = L"Local admin API returned invalid activity JSON.";
+        return result;
+    }
+
+    result.highWaterMarkId = body->GetNamedString(L"highWaterMarkId", L"");
+    if (body->HasKey(L"events")) {
+        const auto eventsArray = body->GetNamedArray(L"events", JsonArray());
+        for (const auto& entry : eventsArray) {
+            if (entry.ValueType() != JsonValueType::Object) continue;
+            const auto obj = entry.GetObject();
+            ShellActivityEvent event;
+            event.id = obj.GetNamedString(L"id", L"");
+            event.kind = obj.GetNamedString(L"kind", L"");
+            event.timestampUtc = obj.GetNamedString(L"timestampUtc", L"");
+            event.actor = obj.GetNamedString(L"actor", L"");
+            event.method = obj.GetNamedString(L"method", L"");
+            event.target = obj.GetNamedString(L"target", L"");
+            event.statusCode = static_cast<int>(obj.GetNamedNumber(L"statusCode", 0));
+            event.latencyMs = static_cast<int>(obj.GetNamedNumber(L"latencyMs", 0));
+            event.message = obj.GetNamedString(L"message", L"");
+            event.detail = obj.GetNamedString(L"detail", L"");
+            result.events.push_back(std::move(event));
+        }
+    }
+    result.succeeded = true;
+    return result;
+}
+
 ShellAutoConnectProviderResult ShellRuntime::AutoConnectProvider(
     const ShellAutoConnectProviderRequest& request) const {
     ShellAutoConnectProviderResult result;

@@ -107,6 +107,30 @@ struct ShellProviderAssignment final {
     std::wstring updatedAtUtc;
 };
 
+// Live activity stream — every incoming admin API request, outbound provider
+// execution, and governance decision flows through ActivityEventRing in the
+// service host. The shell polls /api/activity?since={id} to fetch the latest
+// events and render them in a scrolling command log.
+struct ShellActivityEvent final {
+    std::wstring id;
+    std::wstring kind;
+    std::wstring timestampUtc;
+    std::wstring actor;
+    std::wstring method;
+    std::wstring target;
+    int statusCode = 0;
+    int latencyMs = 0;
+    std::wstring message;
+    std::wstring detail;
+};
+
+struct ShellActivityStreamResult final {
+    std::wstring highWaterMarkId;
+    std::vector<ShellActivityEvent> events;
+    bool succeeded = false;
+    std::wstring errorMessage;
+};
+
 // Auto-Connect AI Model — the shell hands the runtime just the credentials
 // and optional role targets. Everything else (route id, display name, base
 // url, model discovery, dpapi encryption, assignment fan-out) is automated.
@@ -488,6 +512,12 @@ public:
     [[nodiscard]] ShellOperationResult UpsertProviderAssignment(const ShellProviderAssignment& assignment) const;
     // One-shot automation: pick a kind, hand over credentials, pick roles, done.
     [[nodiscard]] ShellAutoConnectProviderResult AutoConnectProvider(const ShellAutoConnectProviderRequest& request) const;
+
+    // Live activity stream: poll the service's ActivityEventRing for events
+    // strictly newer than `sinceId`. Pass an empty string on first call to
+    // receive the most recent buffer window. Subsequent calls should use
+    // the `highWaterMarkId` returned by the previous call.
+    [[nodiscard]] ShellActivityStreamResult FetchActivityEvents(const std::wstring& sinceId) const;
     [[nodiscard]] ShellForsettiModuleCatalogResult FetchForsettiModules() const;
     [[nodiscard]] ShellOperationResult ManageForsettiModule(const std::wstring& moduleId,
                                                            const std::wstring& action) const;
