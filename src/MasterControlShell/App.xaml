@@ -56,7 +56,7 @@
                 <Setter Property="Background" Value="{StaticResource ShellPanelFillBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource ShellCardEdgeBrush}" />
                 <Setter Property="BorderThickness" Value="2" />
-                <Setter Property="CornerRadius" Value="1" />
+                <Setter Property="CornerRadius" Value="0" />
                 <Setter Property="Padding" Value="14" />
             </Style>
 
@@ -64,7 +64,7 @@
                 <Setter Property="Background" Value="{StaticResource ShellHeroBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource ShellAccentBrush}" />
                 <Setter Property="BorderThickness" Value="2" />
-                <Setter Property="CornerRadius" Value="1" />
+                <Setter Property="CornerRadius" Value="0" />
                 <Setter Property="Padding" Value="16" />
             </Style>
 
@@ -72,7 +72,7 @@
                 <Setter Property="Background" Value="{StaticResource ShellPanelDeepBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource ShellTileEdgeBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="2" />
+                <Setter Property="CornerRadius" Value="0" />
                 <Setter Property="Padding" Value="12" />
             </Style>
 
@@ -80,7 +80,7 @@
                  tighter padding, thinner inner spacing for dense metric grids. -->
             <Style x:Key="ShellCompactTileStyle" TargetType="Border" BasedOn="{StaticResource ShellMetricTileStyle}">
                 <Setter Property="Padding" Value="8,6" />
-                <Setter Property="CornerRadius" Value="1" />
+                <Setter Property="CornerRadius" Value="0" />
             </Style>
 
             <!-- Sub-agent footer badge: rounded pill with accent border, used for the
@@ -89,7 +89,7 @@
                 <Setter Property="Background" Value="#14000F16" />
                 <Setter Property="BorderBrush" Value="{StaticResource ShellTileEdgeBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="3" />
+                <Setter Property="CornerRadius" Value="0" />
                 <Setter Property="Padding" Value="10,7" />
                 <Setter Property="MinWidth" Value="108" />
             </Style>
@@ -185,7 +185,7 @@
                 <Setter Property="Background" Value="#F0071018" />
                 <Setter Property="BorderBrush" Value="#9900E8FF" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="2" />
+                <Setter Property="CornerRadius" Value="0" />
                 <Setter Property="Padding" Value="14,12" />
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontWeight" Value="SemiBold" />
@@ -214,7 +214,7 @@
                 <Setter Property="Background" Value="{StaticResource ShellAccentSoftBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource ShellAccentBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="999" />
+                <Setter Property="CornerRadius" Value="0" />
                 <Setter Property="Padding" Value="10,4" />
                 <Setter Property="HorizontalAlignment" Value="Left" />
                 <Setter Property="VerticalAlignment" Value="Center" />
@@ -258,7 +258,7 @@
 
             <Style x:Key="ShellSkeletonBlockStyle" TargetType="Border">
                 <Setter Property="Background" Value="{StaticResource ShellSkeletonBrush}" />
-                <Setter Property="CornerRadius" Value="2" />
+                <Setter Property="CornerRadius" Value="0" />
                 <Setter Property="Height" Value="14" />
                 <Setter Property="HorizontalAlignment" Value="Stretch" />
             </Style>
@@ -280,34 +280,112 @@
                 <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
             </Style>
 
+            <!-- ================================================================
+                 CRITICAL: Override WinUI 3 Fluent theme brushes so every
+                 unstyled control inherits the Tron palette. Without these,
+                 NavigationView items / Button / CheckBox / ComboBoxItem /
+                 ToggleSwitch all render with the Fluent default (light text
+                 on white, near-invisible dark text on dark). The operator
+                 reported "labeling text is so dark it cannot be seen" —
+                 that was the root cause.
+                 ================================================================ -->
+            <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#C8E8F0" />
+            <SolidColorBrush x:Key="TextFillColorTertiaryBrush" Color="#9ECCDA" />
+            <SolidColorBrush x:Key="TextFillColorDisabledBrush" Color="#5A8590" />
+            <SolidColorBrush x:Key="ControlFillColorDefaultBrush" Color="#F0020A14" />
+            <SolidColorBrush x:Key="ControlFillColorSecondaryBrush" Color="#F0040E18" />
+            <SolidColorBrush x:Key="ControlFillColorTertiaryBrush" Color="#F0051220" />
+            <SolidColorBrush x:Key="ControlStrokeColorDefaultBrush" Color="#7700FFFF" />
+            <SolidColorBrush x:Key="ControlStrokeColorSecondaryBrush" Color="#5500FFFF" />
+            <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#00FFFF" />
+            <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#00E8E8" />
+            <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#00FFFF" />
+
+            <!-- Implicit default for ALL TextBlocks — without this, any
+                 TextBlock that doesn't pass an explicit Style renders with
+                 the Fluent default foreground which is invisible on our
+                 near-black background. -->
+            <Style TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
+
+            <!-- Implicit default for ALL Buttons — same reason. Without this,
+                 a plain <Button> renders in Fluent light-blue on light-gray,
+                 completely off-theme. -->
+            <Style TargetType="Button">
+                <Setter Property="Background" Value="#F0040E18" />
+                <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource ShellAccentBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="0" />
+                <Setter Property="Padding" Value="14,10" />
+                <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="CharacterSpacing" Value="40" />
+                <Setter Property="HorizontalContentAlignment" Value="Center" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="MinHeight" Value="44" />
+            </Style>
+
+            <Style TargetType="ToggleSwitch">
+                <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
+                <Setter Property="OnContent" Value="ON" />
+                <Setter Property="OffContent" Value="OFF" />
+            </Style>
+
+            <Style TargetType="CheckBox">
+                <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
+                <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
+            </Style>
+
+            <Style TargetType="RadioButton">
+                <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
+                <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
+            </Style>
+
+            <Style TargetType="ComboBoxItem">
+                <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
+                <Setter Property="Background" Value="Transparent" />
+            </Style>
+
+            <Style TargetType="ListViewItem">
+                <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="Padding" Value="8,6" />
+            </Style>
+
             <Style TargetType="TextBox">
-                <Setter Property="Background" Value="#E0070E14" />
+                <Setter Property="Background" Value="#F0020A14" />
                 <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource ShellTileEdgeBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontSize" Value="13" />
-                <Setter Property="MinHeight" Value="40" />
+                <Setter Property="MinHeight" Value="44" />
             </Style>
 
             <Style TargetType="PasswordBox">
-                <Setter Property="Background" Value="#E0070E14" />
+                <Setter Property="Background" Value="#F0020A14" />
                 <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource ShellTileEdgeBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontSize" Value="13" />
-                <Setter Property="MinHeight" Value="40" />
+                <Setter Property="MinHeight" Value="44" />
             </Style>
 
             <Style TargetType="ComboBox">
-                <Setter Property="Background" Value="#E0070E14" />
+                <Setter Property="Background" Value="#F0020A14" />
                 <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource ShellTileEdgeBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontSize" Value="13" />
-                <Setter Property="MinHeight" Value="40" />
+                <Setter Property="MinHeight" Value="44" />
             </Style>
 
             <DataTemplate x:Key="ShellListItemTemplate">
@@ -317,7 +395,7 @@
                     Background="{StaticResource ShellPanelDeepBrush}"
                     BorderBrush="{StaticResource ShellTileEdgeBrush}"
                     BorderThickness="1"
-                    CornerRadius="3">
+                    CornerRadius="0">
                     <TextBlock
                         Style="{StaticResource ShellDataTextStyle}"
                         Text="{Binding}"

@@ -132,7 +132,7 @@
                     <StackPanel Spacing="14">
                         <TextBlock Text="Command Logic Narrative" Style="{StaticResource ShellSectionTitleTextStyle}" />
                         <TextBlock x:Name="CluNarrativeText" Style="{StaticResource ShellBodyTextStyle}" Text="CLU narrative will appear here." />
-                        <Border Background="{StaticResource ShellPanelDeepBrush}" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="16" Padding="16">
+                        <Border Background="{StaticResource ShellPanelDeepBrush}" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0" Padding="16">
                             <TextBlock x:Name="CluDoctrineText" Style="{StaticResource ShellDataTextStyle}" Text="CLU doctrine will appear here." />
                         </Border>
                     </StackPanel>

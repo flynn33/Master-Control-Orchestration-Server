@@ -8,7 +8,7 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
     Title="Master Control Orchestration Server">
-    <Grid x:Name="RootGrid" Background="{StaticResource ShellBackgroundBrush}" Loaded="RootGrid_Loaded">
+    <Grid x:Name="RootGrid" Background="{StaticResource ShellBackgroundBrush}" RequestedTheme="Dark" Loaded="RootGrid_Loaded">
         <Grid>
             <Rectangle Fill="{StaticResource ShellBackgroundBrush}" />
 
@@ -26,7 +26,7 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <Border x:Name="TitleBarHost" Padding="16,12" Background="#1400DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="6">
+                <Border x:Name="TitleBarHost" Padding="16,12" Background="#1400DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
                     <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition x:Name="TitleBarLeftInsetColumn" Width="0" />
@@ -36,7 +36,7 @@
                         </Grid.ColumnDefinitions>
 
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16">
-                            <Border Width="44" Height="44" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="4">
+                            <Border Width="44" Height="44" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
                                 <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="28" Foreground="{StaticResource ShellAccentBrush}" Glyph="&#xE7F4;" />
                             </Border>
 
@@ -47,23 +47,23 @@
                         </StackPanel>
 
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                            <Border Padding="10,4" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="3">
+                            <Border Padding="10,4" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <TextBlock Text="LIVE" Style="{StaticResource ShellEyebrowTextStyle}" />
                                     <TextBlock x:Name="LiveClockText" Text="--:--:--" Style="{StaticResource ShellLiveClockTextStyle}" />
                                 </StackPanel>
                             </Border>
-                            <Border x:Name="ApiBadgeBorder" Padding="10,4" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="3">
+                            <Border x:Name="ApiBadgeBorder" Padding="10,4" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
                                 <TextBlock x:Name="ApiBadgeText" Text="API UNKNOWN" Style="{StaticResource ShellEyebrowTextStyle}" />
                             </Border>
-                            <Border x:Name="ServiceBadgeBorder" Padding="10,4" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="3">
+                            <Border x:Name="ServiceBadgeBorder" Padding="10,4" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
                                 <TextBlock x:Name="ServiceBadgeText" Text="SERVICE UNKNOWN" Style="{StaticResource ShellEyebrowTextStyle}" />
                             </Border>
                         </StackPanel>
                     </Grid>
                 </Border>
 
-                <Border x:Name="StatusBannerBorder" Grid.Row="1" Margin="0,12,0,0" Padding="14,10" Background="#120B1620" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="4">
+                <Border x:Name="StatusBannerBorder" Grid.Row="1" Margin="0,12,0,0" Padding="14,10" Background="#120B1620" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0">
                     <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -75,7 +75,7 @@
                     </Grid>
                 </Border>
 
-                <Border Grid.Row="2" Margin="0,14,0,0" Background="#AA04090E" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="6">
+                <Border Grid.Row="2" Margin="0,14,0,0" Background="#AA04090E" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
                     <!-- NavigationView kept as a chromeless content host so existing
                          .cpp references (ShellNavigation, ShellNavigation_SelectionChanged,
                          MenuItems, SelectedItem) still compile. The entire pane is
@@ -105,11 +105,15 @@
                             </Grid.RowDefinitions>
 
                             <Border x:Name="HeroCardHost" Style="{StaticResource ShellHeroCardStyle}">
-                                <Grid ColumnSpacing="24">
+                                <Grid ColumnSpacing="20">
+                                    <!-- Symmetric 3-column layout: equal widths for
+                                         Telemetry / Controls / Live Operations so the
+                                         hero card reads as a tidy tri-panel command
+                                         deck rather than a lopsided 1.55/1.05/0.9. -->
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="1.55*" />
-                                        <ColumnDefinition Width="1.05*" />
-                                        <ColumnDefinition Width="0.9*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel Spacing="14">
@@ -117,7 +121,7 @@
                                         <TextBlock x:Name="CurrentViewTitleText" Text="Command Deck" Style="{StaticResource ShellHeroTitleTextStyle}" />
                                         <TextBlock x:Name="CurrentViewDescriptionText" MaxWidth="560" Style="{StaticResource ShellBodyTextStyle}" Text="Navigate operational surfaces for telemetry, runtime orchestration, provider routing, and secure configuration." />
 
-                                        <Border Background="#1000DFFF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="4" Padding="10,8">
+                                        <Border Background="#1000DFFF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0" Padding="10,8">
                                             <StackPanel Spacing="12">
                                                 <TextBlock Text="ALWAYS-ON COMMAND TELEMETRY" Style="{StaticResource ShellEyebrowTextStyle}" />
                                                 <Grid ColumnSpacing="12" RowSpacing="12">
@@ -228,7 +232,7 @@
                                                 <Button x:Name="GuidedSecurityWizardButton" Grid.Row="5" Click="GuidedSecurityWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Security Hardening" />
                                                 <Button x:Name="GuidedSettingsWizardButton" Grid.Row="5" Grid.Column="1" Click="GuidedSettingsWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Host Settings" />
 
-                                                <Border Grid.Row="6" Grid.ColumnSpan="2" Padding="10,8" Background="#1000DFFF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="3">
+                                                <Border Grid.Row="6" Grid.ColumnSpan="2" Padding="10,8" Background="#1000DFFF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0">
                                                     <TextBlock
                                                         x:Name="GuidedWorkflowStatusText"
                                                         Style="{StaticResource ShellLabelTextStyle}"
@@ -239,7 +243,7 @@
                                         </StackPanel>
                                     </StackPanel>
 
-                                    <Border Grid.Column="2" Style="{StaticResource ShellCardStyle}" MinWidth="320">
+                                    <Border Grid.Column="2" Style="{StaticResource ShellCardStyle}">
                                         <StackPanel Spacing="12">
                                             <TextBlock Text="LIVE OPERATIONS" Style="{StaticResource ShellEyebrowTextStyle}" />
                                             <TextBlock x:Name="HeroOperationsHeadlineText" Style="{StaticResource ShellStatusTextStyle}" Text="STANDBY" />
@@ -298,7 +302,7 @@
                                     </Grid.RowDefinitions>
                                     <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="14">
                                         <TextBlock Text="LIVE COMMAND STREAM" Style="{StaticResource ShellEyebrowTextStyle}" />
-                                        <Border Background="{StaticResource ShellAccentSoftBrush}" BorderBrush="{StaticResource ShellAccentBrush}" BorderThickness="1" CornerRadius="999" Padding="8,2">
+                                        <Border Background="{StaticResource ShellAccentSoftBrush}" BorderBrush="{StaticResource ShellAccentBrush}" BorderThickness="1" CornerRadius="0" Padding="8,2">
                                             <TextBlock x:Name="ActivityStreamCounterText" Text="0 events" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
                                         </Border>
                                         <TextBlock x:Name="ActivityStreamStatusText" Text="Polling /api/activity..." Style="{StaticResource ShellDataTextStyle}" VerticalAlignment="Center" />

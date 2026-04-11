@@ -901,23 +901,21 @@ void MainWindow::SetCurrentDestination(const std::wstring& destinationId) {
     SectionContentHost().Content(ResolvePrimaryViewForDestination(currentDestination_, currentSnapshot_));
     ApplySectionMetadata(currentSnapshot_);
 
-    // Collapse the 3-column hero card (telemetry + wizards + live ops) when
-    // the operator navigates away from Overview. Otherwise the hero fills the
-    // viewport and pushes the section content off-screen, which is exactly
-    // the "clicking Connect AI Model does nothing" complaint — the
-    // ProvidersSectionControl rendered inside SectionContentHost but the
-    // user could not see it above the fold. On Overview, keep the hero
-    // visible as the command deck.
-    try {
-        const auto heroHost = HeroCardHost();
-        if (heroHost != nullptr) {
-            heroHost.Visibility(currentDestination_ == kOverviewDestination
-                                    ? Visibility::Visible
-                                    : Visibility::Collapsed);
+    // Bring the section content into view so clicking Connect AI Model /
+    // Assign Responsibility / etc. actually reveals the Providers section
+    // instead of silently updating a ContentPresenter that's below the
+    // fold. On Overview, skip the scroll so the hero stays pinned at the
+    // top as the command deck.
+    if (currentDestination_ != kOverviewDestination) {
+        try {
+            const auto host = SectionContentHost();
+            if (host != nullptr) {
+                host.StartBringIntoView();
+            }
+        } catch (const winrt::hresult_error&) {
+            // ContentHost may not be realized during early bootstrap;
+            // subsequent SetCurrentDestination calls will retry.
         }
-    } catch (const winrt::hresult_error&) {
-        // HeroCardHost may not yet be realized during early bootstrap;
-        // ignore and rely on subsequent SetCurrentDestination calls.
     }
 }
 
@@ -4934,6 +4932,11 @@ IAsyncAction MainWindow::ShowRuntimeMaintenanceWizardAsync() {
 }
 
 IAsyncAction MainWindow::OpenOverlayRouteAsync(std::wstring routeId) {
+    // Operator feedback: dialog-based overlays with an "Open In Workspace"
+    // button were confusing — users wanted to edit settings / imports /
+    // exports in place, not through a modal route-then-navigate dance.
+    // This handler now navigates directly to the destination and renders
+    // its section control inside SectionContentHost, same as a toolbar click.
     const auto iterator = std::find_if(
         currentSnapshot_.overlayRoutes.begin(),
         currentSnapshot_.overlayRoutes.end(),
@@ -4944,42 +4947,27 @@ IAsyncAction MainWindow::OpenOverlayRouteAsync(std::wstring routeId) {
         co_return;
     }
 
-    std::wstring workspaceDestination;
-    FrameworkElement content{ nullptr };
+    std::wstring destinationId;
     if (iterator->targetsModuleView && !iterator->viewId.empty()) {
-        content = CreateViewForViewId(iterator->viewId, false);
-        workspaceDestination = destinationForViewId(iterator->viewId);
+        destinationId = destinationForViewId(iterator->viewId);
     } else if (!iterator->destinationId.empty()) {
-        workspaceDestination = iterator->destinationId;
-        content = ResolvePrimaryViewForDestination(workspaceDestination, currentSnapshot_);
+        destinationId = iterator->destinationId;
     }
 
-    if (content == nullptr) {
-        content = CreateUnavailableView(
-            L"Forsetti Overlay Unavailable",
-            L"The selected route did not publish a hostable overlay destination.");
+    if (destinationId.empty()) {
+        UpdateStatusBar(
+            L"The selected route did not publish an in-place destination.",
+            InfoBarSeverity::Warning);
+        co_return;
     }
 
-    ContentDialog dialog;
-    dialog.Title(box_value(hstring(iterator->label.empty() ? routeId : iterator->label)));
-    dialog.CloseButtonText(L"Close");
-    if (!workspaceDestination.empty()) {
-        dialog.PrimaryButtonText(L"Open In Workspace");
-    }
-    if (iterator->presentation == ::MasterControlShell::ShellOverlayPresentation::FullScreen) {
-        dialog.FullSizeDesired(true);
-    }
-
-    ScrollViewer scrollViewer;
-    scrollViewer.HorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
-    scrollViewer.VerticalScrollBarVisibility(ScrollBarVisibility::Auto);
-    scrollViewer.Content(content);
-    dialog.Content(scrollViewer);
-    dialog.XamlRoot(RootGrid().XamlRoot());
-
-    if (co_await dialog.ShowAsync() == ContentDialogResult::Primary && !workspaceDestination.empty()) {
-        SetCurrentDestination(workspaceDestination);
-    }
+    SetCurrentDestination(destinationId);
+    UpdateStatusBar(
+        winrt::hstring(std::wstring(L"Navigated to ")
+            + (iterator->label.empty() ? routeId : iterator->label)
+            + L"."),
+        InfoBarSeverity::Informational);
+    co_return;
 }
 
 IAsyncAction MainWindow::CompleteGuidedWorkflowAsync(winrt::hstring const& message, std::wstring const& destinationId) {

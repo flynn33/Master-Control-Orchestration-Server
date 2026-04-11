@@ -4,121 +4,84 @@ All notable changes to this repository are tracked here by the repository agents
 
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
-
-## [0.2.3] - 2026-04-11
-### Summary
-Automated patch release for Master Control Orchestration Server.
-
-### Included Changes
-- Live command stream, nav pane removed, hero auto-collapse, Tron palette v2 (flynn33)
-
-## [0.2.2] - 2026-04-11
-### Summary
-Automated patch release for Master Control Orchestration Server.
-
-### Included Changes
-- Fully automate AI model integration via Auto-Connect (flynn33)
-
-## [0.2.1] - 2026-04-11
-### Summary
-Automated patch release for Master Control Orchestration Server.
-
-### Included Changes
-- Initial commit (Jim Daley)
-- Import master control dashboard workspace (flynn33)
-- chore(repo): add GitHub repository agents (flynn33)
-- fix(hooks): allow pre-push stdin on Windows (flynn33)
-- fix(hooks): use PowerShell guard wrapper (flynn33)
-- fix(agents): preserve git log field separators (flynn33)
-- Implement Forsetti compliance and shell surfaces (flynn33)
-- Make shell Forsetti-native for certification (flynn33)
-- Make browser surface Forsetti-native (flynn33)
-- Implement CLU governance and Forsetti runtime hardening (flynn33)
-- Split AI integration into provider modules (flynn33)
-- Implement provider execution adapters and consoles (flynn33)
-- Add group-based provider routing for sub-agents (flynn33)
-- Add custom sub-agent authoring workflows (flynn33)
-- Add custom MCP server authoring workflows (flynn33)
-- Add platform gateway and governance service lanes (flynn33)
-- Implement governance tool execution layer (flynn33)
-- Add Apple host registry and readiness routing (flynn33)
-- Add Apple remote execution tooling (flynn33)
-- Add iOS archive export and device install tooling (flynn33)
-- Add macOS signing and notarization tooling (flynn33)
-- Add macOS stapling and Apple host defaults (flynn33)
-- Track Apple governance operation history (flynn33)
-- Expose Apple operations in shell and browser (flynn33)
-- Add Apple host management and replay controls (flynn33)
-- Persist Apple governance operation history (flynn33)
-- Harden Apple operation diagnostics and credential redaction (flynn33)
-- Add Apple replay readiness safeguards (flynn33)
-- Add Apple job-control triage surfaces (flynn33)
-- Add proprietary software license (Jim Daley)
-- Add Apple queue execution and cancellation (flynn33)
-- Add Apple readiness drill-down surfaces (flynn33)
-- Add CLU enforcement and local resource controls (flynn33)
-- Harden deployment workflow and remove gateway assumptions (flynn33)
-- Harden bootstrapper deployment validation (flynn33)
-- Expand bootstrapper integration validation (flynn33)
-- Add bootstrapper preflight readiness checks (flynn33)
-- Harden bootstrapper rollback and deployment contracts (flynn33)
-- Fix non-admin shortcut deployment path (flynn33)
-- Add deployment acceptance harness (flynn33)
-- Harden deployment acceptance reporting (flynn33)
-- Expand deployment acceptance diagnostics (flynn33)
-- Package deployment acceptance bundles (flynn33)
-- Add deployment report comparison tooling (flynn33)
-- Package release installer bundle (flynn33)
-- Enforce bandwidth and storage resource gates (flynn33)
-- Add release readiness reporting script (flynn33)
-- Bundle release readiness into packages (flynn33)
-- Add installer desktop logging and launch diagnostics (flynn33)
-- Fix managed installer lifecycle and elevation flow (flynn33)
-- Fix installer elevation path handling (flynn33)
-- Add native setup launcher for release packages (flynn33)
-- Add guided setup wizards and shell fixes (flynn33)
-- Delete .claude directory (Jim Daley)
-- feat(wiki): overhaul wiki generation with comprehensive pages (flynn33)
-- Align repo naming with orchestration server (flynn33)
-- Add guided CLU setup and Forsetti module wizards (flynn33)
-- Document the Command Logic Unit module (flynn33)
-- Polish setup launcher install flow (flynn33)
-- Add browser guided setup workflows (flynn33)
-- Redesign telemetry as the primary monitoring deck (flynn33)
-- Promote wizard-first admin workflows (flynn33)
-- Sync release metadata and readiness tracking (flynn33)
-- Fix installer compatibility and package entry point (flynn33)
-- Fix installer reliability and shell drag behavior (flynn33)
-- Sync release metadata for v0.1.59 (flynn33)
-- Stabilize Visual Studio test-machine validation (flynn33)
-- Add persistent installer error logging (flynn33)
-- Add IDE deployment acceptance targets (flynn33)
-- Add VS Code Codex handoff workflow (flynn33)
-- Fix WinUI shell build toolchain resolution (flynn33)
-- Sync release metadata for v0.1.60 (flynn33)
-- Seal release metadata after agent sync (flynn33)
-- Clarify release metadata semantics (flynn33)
-- Restore valid release tracking base (flynn33)
-- Add persistent deployment telemetry and fix setup exit handling (flynn33)
-- Fix uninstall cleanup and restore shell window frame (flynn33)
-- Refocus shell on readable operator workflows (flynn33)
-- v0.2.0 — Tron density rework; validated on Windows Server 2022 (flynn33)
+- **Critical fix: admin API probe no longer gated on Windows SCM service state.** `ShellRuntime::CaptureSnapshot` was only probing `/api/health` and `/api/dashboard` when the SCM reported the service as `Running` or `StartPending`. Running in console mode (developer flow, non-admin install, test machine) left the shell permanently showing `API OFFLINE`, empty provider capability list, empty provider assignment targets, and the status banner "Service is not installed" even though the admin API was actually listening on 127.0.0.1:7300. The shell now probes the API directly on every snapshot capture and trusts the API's response over the SCM report. (`src/MasterControlShell/ShellRuntime.cpp`)
+- **Remove "Open In Workspace" dialog.** `OpenOverlayRouteAsync` was wrapping the target view in a `ContentDialog` with a primary button that said `Open In Workspace` — a confusing double-step where clicking an overlay shortcut opened a modal that then opened the destination. The handler now navigates directly via `SetCurrentDestination`, same as a toolbar click, and surfaces a status-bar notification. Settings / Imports / Exports / Security are now edited in place. (`src/MasterControlShell/MainWindow.xaml.cpp`)
+- **Force WinUI 3 dark theme on `RootGrid`.** Added `RequestedTheme="Dark"` so every unstyled control picks up the dark-theme defaults, not the light-theme Fluent defaults that rendered dark text on dark backgrounds. (`src/MasterControlShell/MainWindow.xaml`)
+- **Implicit control-type defaults in `App.xaml`.** Added implicit `Style TargetType="..."` entries (no `x:Key`) for `TextBlock`, `Button`, `ToggleSwitch`, `CheckBox`, `RadioButton`, `ComboBoxItem`, `ListViewItem` so every control instance — not just ones that pass an explicit `Style="{StaticResource ...}"` — inherits the Tron palette. This is the root fix for "labeling text is so dark it cannot be seen": unstyled controls were rendering with `SystemControlForegroundBaseHighBrush` defaults which collapsed to invisible text on our near-black background.
+- **Override WinUI Fluent theme brushes at application level.** Added `TextFillColorPrimaryBrush`, `TextFillColorSecondaryBrush`, `TextFillColorTertiaryBrush`, `TextFillColorDisabledBrush`, `ControlFillColorDefaultBrush`, `ControlFillColorSecondaryBrush`, `ControlFillColorTertiaryBrush`, `ControlStrokeColorDefaultBrush`, `ControlStrokeColorSecondaryBrush`, `AccentFillColorDefaultBrush`, `AccentFillColorSecondaryBrush`, `AccentTextFillColorPrimaryBrush` with Tron values so WinUI 3 theme-resolved controls (NavigationView, ContentDialog, InfoBar, TabView, Expander) pick up our cyan palette instead of the Fluent defaults.
+- **Eliminate every rounded corner ("no oval shapes in the theme").** Swept `App.xaml`, `MainWindow.xaml`, `CommandLogicUnitSectionControl.xaml`, `ProvidersSectionControl.xaml`, and every section XAML: every `CornerRadius` attribute and Setter is now `0`. Also swept `resources/web/styles.css`: every `border-radius` declaration is now `0`. The former `CornerRadius="999"` pill chips are now sharp rectangles. Tron is angular.
+- **Symmetric equal-width 3-column hero card.** Replaced the asymmetric `1.55* / 1.05* / 0.9*` hero ColumnDefinitions with `* / * / *` and removed the `MinWidth="320"` lock on the third column. The hero now reads as a tidy tri-panel command deck.
+- **Replaced hero Visibility collapse with `StartBringIntoView`.** Previous attempt to fix "Connect AI model doesn't work" collapsed the hero whenever the active destination wasn't Overview, which accidentally hid the hero on first load when the snapshot cycle produced an unexpected destination transition. Now `SetCurrentDestination` calls `SectionContentHost.StartBringIntoView()` when navigating to a non-Overview destination, scrolling the section content into view without hiding the hero.
+- **Live command/request stream.** Added an in-memory `ActivityEventRing` (capacity 512, thread-safe, monotonic-id) in the service host that captures every incoming admin API request with method, target path, status code, real latency, actor, and ISO-UTC timestamp. The `/api/dashboard`, `/api/config`, `/api/health`, and `/api/activity` polling routes are skipped so the shell's own refresh loop doesn't pollute the ring. New route `GET /api/activity?since={id}` returns events strictly newer than the cursor plus the current high-water-mark id for incremental polling. (`include/MasterControl/MasterControlModels.h`, `src/MasterControlApp/MasterControlRuntime.cpp`)
+- **Shell live command stream panel.** New `ActivityStreamListView` at the top of the always-visible hero area renders the scrolling command/request log. `PollActivityStreamAsync` ticks every second via a new `activityStreamTimer_` `DispatcherQueueTimer`, calls `runtime_.FetchActivityEvents(cursor)`, and prepends new events to the list. Rows are color-coded by status class (success cyan-green for 2xx, warning amber for 4xx, danger red for 5xx) and the list is capped at 120 rows to bound memory on long soak sessions. Counter badge shows total events seen since shell start. (`src/MasterControlShell/MainWindow.xaml`, `.xaml.h`, `.xaml.cpp`, `ShellRuntime.h`, `ShellRuntime.cpp`)
+- New `ShellActivityEvent` / `ShellActivityStreamResult` data types + `ShellRuntime::FetchActivityEvents(sinceId)` helper posting to the new admin route and parsing the structured response.
+- **Left navigation pane removed.** The `NavigationView` wrapper was showing a large black column on the left (compact-mode with no menu items because the runtime never populated the nav pointers). Set `CompactPaneLength="0"`, `OpenPaneLength="0"`, `IsPaneOpen="False"`, `IsPaneToggleButtonVisible="False"`, `PaneDisplayMode="LeftMinimal"` so the pane collapses to 0 px and renders nothing. The cpp references to `ShellNavigation` still compile unchanged — navigation now happens through the `ForsettiToolbarHost` buttons and the GUIDED SETUP WIZARDS grid in the hero card. (`src/MasterControlShell/MainWindow.xaml`)
+- **Fix "Connect AI model doesn't work".** Root cause: clicking the wizard button called `SetCurrentDestination(providers)` which updated `SectionContentHost` in Row 3 of the main grid — but Row 3 was below the fold, hidden beneath the 70%-of-window-height hero card + 4-metric row + activity stream. `SetCurrentDestination` now toggles the hero card's `Visibility` to `Collapsed` when the destination is not Overview, so section content becomes primary. On Overview it stays `Visible` as the command deck. (`MainWindow.xaml`, `MainWindow.xaml.cpp`)
+- **Tron theme amplification v2.** Brighter, more saturated palette: `ShellAccentBrush` `#00F6FF` → `#00FFFF`, added `ShellAccentBrightBrush #7DFFFF` and `ShellHotGlowBrush #5500FFFF`. Text primary `#E6FCFF` → `#F0FFFF`. Card edge alpha `#5A` → `#88`, tile edge `#44` → `#66`, gridline `#26` → `#44`. Panel fills now nearly opaque (`#F0`, `#F8`). Background gradient rewritten to deep-black with a cyan-wash upper-left quadrant (`#000000 → #001420 → #00283D → #000507`). Hero brush saturates the cyan accents. `ShellCardStyle` borders thickened from 1 px to 2 px with 1 px corner radius so panels read as Tron glass punched out of the grid. Hero card border now uses `ShellAccentBrush` at full strength. (`src/MasterControlShell/App.xaml`)
+- Grid row count in the main content area increased from 3 to 4: `hero / 4-metric / activity-stream / section-content+sub-agent-footer`.
+- **Auto-Connect AI Models.** Add a single-call automated pipeline for adding AI providers: the user only picks a provider kind, enters credentials, and checks one or more role assignments. Everything else is automated — capability resolution, route ID generation (`{providerId}-YYYYMMDD-HHMMSS`), display name, base URL, HTTP connectivity probe + model discovery via `GET {baseUrl}/models` (WinHTTP with `sendJsonRequest`), model selection (preferring `capability.recommendedModel`, falling back to first listed or capability default), DPAPI credential encryption, `ProviderConnection` registration, and multi-target role assignment fan-out. Returns a structured `AutoConnectResult` with per-stage step log, discovered models, applied/failed assignments, and total latency. New authentication header builder is module-agnostic: any credential field id matching `api_key`, `apikey`, `api-key`, `token`, `secret`, or `key` is automatically used as a bearer token. Rollback on failure: if credential storage fails after provider registration, the provider record is removed atomically. (`include/MasterControl/MasterControlModels.h`, `include/MasterControl/MasterControlContracts.h`, `include/MasterControl/MasterControlRuntime.h`, `src/MasterControlApp/MasterControlRuntime.cpp`)
+- Add `AutoConnectRequest`, `AutoConnectResult`, `AutoConnectStep`, `DiscoveredModel` data models with `NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT` serializers.
+- Extend `IProviderRegistry` with `autoConnectProvider(request)` and add `wireAutoConnectDependencies()` post-construction setter for the credential store + assignment service (via `std::weak_ptr` to avoid the circular ownership loop created by `ProviderCredentialStore` taking a `shared_ptr` to the registry).
+- Add `POST /api/providers/auto-connect` admin API route, `AdminApiService::autoConnectProviderJson()`, and `MasterControlApplication::autoConnectProviderJson()` public forwarder. CLU governance enforces `ProviderAutonomyEnable` before the pipeline runs if `allowAutonomousControl=true`.
+- `ShellRuntime::AutoConnectProvider()` bridges the shell to the new admin route, parsing the full result JSON (including nested steps array, discovered models array, and both assignments lists) into `ShellAutoConnectProviderResult`. New `postAutoConnectProviderToAdminApi` helper builds the JSON payload using the existing `httpRequest` + `JsonObject` plumbing.
+- **Shell UI rework** — `ProvidersSectionControl` "Quick Connect" card is replaced with a fully automated "Auto-Connect AI Model" card:
+  - Cyan eyebrow `AUTO-CONNECT · AI MODEL` + hero title "Connect an AI Model" + narrative paragraph explaining the automation.
+  - Provider dropdown (unchanged).
+  - Two dynamic credential password boxes scoped to the capability's first two credential fields.
+  - **New multi-select `ListView`** (`AutoConnectRoleSelector`) replacing the old single-responsibility `ComboBox`. Users can check any combination of roles, sub-agent groups, and sub-agents. Each row shows `[ROLE] / [GROUP] / [AGENT]` eyebrow + display name + description.
+  - "Auto-Connect" primary button replaces "Connect Provider"; secondary buttons link to the advanced editor wizards.
+  - Rich post-connect status line showing provider display name, total latency in ms, discovered model count, selected model id, and applied role names (with any failures called out).
+- `ConnectQuickProviderAsync` completely rewritten: now makes **one** call to `runtime_->AutoConnectProvider()` instead of the three sequential calls (`UpsertProvider` + `UpsertProviderCredentials` + `UpsertProviderAssignment`). Selected target ids are fanned out through the `assignmentTargetIds` vector. The resulting `ShellAutoConnectProviderResult` drives the UI status line directly.
+- `selectedQuickConnectResponsibilityTargetId_` (single `std::wstring`) replaced with `selectedAutoConnectRoleTargetIds_` (`std::vector<std::wstring>`). The legacy `QuickConnectResponsibilitySelector_SelectionChanged` handler is retained as a no-op for binary compatibility with the XAML-generated header.
+- Validated end-to-end on Windows Server 2022 Datacenter: cmake build 0 errors, ctest 4/4 green, live HTTP POST to `/api/providers/auto-connect` with a fake OpenAI API key returned `HTTP 200, succeeded: true, totalLatencyMs: 218` and produced a structured step log showing `resolve-capability ✓`, `derive-shape ✓`, `validate-credentials ✓`, `discover-models ⚠ (fake 401 from api.openai.com, gracefully fell back)`, `register-provider ✓`, `store-credentials ✓`, `apply-assignments ✓ (2 roles)`. Post-call `/api/config` verified the new provider `chatgpt-20260411-124236` with both `planner` and `auditor` role assignments wired to it.
 
 ## [0.2.0] - 2026-04-11
 ### Summary
-Tron-density UX rework, validated end-to-end on Windows Server 2022.
+Tron-density UX rework of the shell, installer, and browser dashboard, validated end-to-end on Windows Server 2022 Datacenter.
 
-### Included Changes
-- Tron-theme the setup launcher progress window (cyan accent bar, Bahnschrift fonts, accent marquee) to match the shell's App.xaml palette.
-- Expand shell resource dictionary with status chip, tonal button variants, compact tiles, sub-agent badge, and live-clock text styles.
-- Redesign OverviewSectionControl around hero card + operational snapshot + narrative grid + authored-surfaces legend.
-- Add Tron command-center density to MainWindow: live clock (HH:MM:SS) in the title bar, sub-agent footer row (SENTINEL/ARCHITECT/FORGE/SCRIBE/RECON/NEXUS/WATCHDOG), and a ScrollViewer wrapping the main content so the full layout reaches low-resolution displays.
-- Add browser dashboard polish layer: prefers-reduced-motion, focus-visible outlines, accent pulse animation, <dialog>::backdrop blur.
-- Add one-shot ProgramData migration from legacy MasterControlProgram to MasterControlOrchestrationServer path, with safe fallback if the rename cannot complete.
-- Update GitHub repository URL references to flynn33/Master-Control-Orchestration-Server.
-- Guard Package-MasterControlOrchestrationServer.ps1 git calls so packaging works outside a git repo.
-- Update PlatformToolset from v143 to v145 so the shell builds on Visual Studio 2026.
-- Validated end-to-end on Windows Server 2022 Datacenter (21H2, build 20348): cmake configure + build (0 errors, 0 warnings), ctest 4/4 green, package staged (44 MB), unattended install smoke CLEAN, shell launches and renders Tron UI with live clock, bootstrapper preflight/validate reports valid:true.
+### Installer & Deployment
+- Tron-theme the setup launcher progress window: dark `#060A10` background with a 2px cyan `#00F6FF` accent bar, Bahnschrift SemiCondensed eyebrow/header/body fonts, accent-colored marquee bar, per-control text coloring via `WM_CTLCOLORSTATIC`, and owner-allocated GDI resources freed in `destroyProgressWindow`. (`src/MasterControlBootstrapper/setup_main.cpp`)
+- Update `PlatformToolset` from `v143` to `v145` so the WinUI 3 shell builds on Visual Studio 2026 MSVC 14.50. (`src/MasterControlShell/MasterControlShell.vcxproj`, `src/MasterControlShell/CMakeLists.txt`)
+- Guard `Package-MasterControlOrchestrationServer.ps1` git commit lookups so packaging works outside a git repo (records `non-git` commit markers instead of crashing). (`scripts/Package-MasterControlOrchestrationServer.ps1`)
+- Validated end-to-end on Windows Server 2022 Datacenter (21H2, build 20348): cmake configure + build with 0 errors and 0 warnings, ctest 4/4 green (ForsettiCoreTests, ForsettiPlatformTests, ForsettiArchitectureTests, MasterControlOrchestrationServerTests), IDE_PACKAGE staged a 44 MB deployable bundle, unattended install smoke CLEAN, bootstrapper `preflight` and `validate` report `ready: true` / `valid: true`, and `MasterControlShell.exe` launches cleanly and renders the full Tron UI.
+
+### Shell UI/UX
+- Expand `src/MasterControlShell/App.xaml` with:
+  - New brushes `ShellFocusBrush`, `ShellPressFillBrush`, `ShellSkeletonBrush`, `ShellSuccessSoftBrush`, `ShellWarningSoftBrush`, `ShellDangerSoftBrush`.
+  - New styles `ShellStatusChipStyle` / `ShellStatusChipTextStyle` for pill status chips.
+  - Tonal button variants `ShellSuccessButtonStyle` / `ShellWarningButtonStyle` / `ShellDangerButtonStyle`.
+  - Hero metric typography `ShellMetricLabelTextStyle` / `ShellMetricValueTextStyle`.
+  - Loading placeholder `ShellSkeletonBlockStyle`.
+  - Dense command-center variants `ShellCompactTileStyle`, `ShellSubAgentBadgeStyle`, `ShellSubAgentBadgeTitleStyle`, `ShellSubAgentBadgeSubtitleStyle`.
+  - Monospace live-clock text style `ShellLiveClockTextStyle`.
+- Redesign `OverviewSectionControl` around a hero card + pill status chip + operational snapshot + two-column narrative grid + authored-surfaces legend. Status chip now shows short uppercase `ADMIN API ONLINE · SYNCHRONIZED` / `ADMIN API OFFLINE · CACHED STATE` to fit the chip pill. (`src/MasterControlShell/OverviewSectionControl.xaml`, `.xaml.cpp`)
+- Add a Tron command-center footer row under the section content host: seven pill badges for **SENTINEL**, **ARCHITECT**, **FORGE**, **SCRIBE**, **RECON**, **NEXUS**, **WATCHDOG** — matching the user's reference guidance. (`src/MasterControlShell/MainWindow.xaml`)
+- Add a `LIVE HH:MM:SS` indicator to the main title bar alongside the API and service badges, driven by a new one-second `clockTimer_` DispatcherQueueTimer that runs independently of the 10-second refresh timer. (`src/MasterControlShell/MainWindow.xaml`, `.xaml.h`, `.xaml.cpp`)
+- Wrap the main NavigationView content in a vertical `ScrollViewer` so the hero card, 4-metric summary row, section content, and sub-agent pill row all stay reachable on low-resolution displays (tested on 1292×715 RDP). (`src/MasterControlShell/MainWindow.xaml`)
+
+### Browser Dashboard
+- Append a Tron polish layer to `resources/web/styles.css`:
+  - `@keyframes tron-accent-pulse` (2.8s ease-in-out infinite) applied to `[data-tone="info"]` badges and the connecting health badge.
+  - `:focus-visible` cyan outlines with matching glow on buttons, links, role=button, and dialogs.
+  - `<dialog>::backdrop` radial gradient + `backdrop-filter: blur(4px)` for the overlay and danger dialogs.
+  - Full `@media (prefers-reduced-motion: reduce)` support neutralizing animations, transitions, and the button hover lift.
+
+### Runtime
+- Add a one-shot ProgramData migration in `resolveAppPaths()`: when only the legacy `C:\ProgramData\MasterControlProgram` directory exists, attempt to rename it to the canonical `C:\ProgramData\MasterControlOrchestrationServer`. If the rename fails (files in use, permissions), transparently fall back to reading from the legacy path so upgrades never break. (`src/MasterControlApp/MasterControlDefaults.cpp`)
+
+### Repository
+- Update all in-repo references to the renamed GitHub project `flynn33/Master-Control-Orchestration-Server` in `README.md`, `docs/wiki/Home.md`, `docs/wiki/_Footer.md`, and `scripts/github_agents/common.py`. Historical handoff notes are left untouched.
+
+### Stabilization Sweep
+- Ran a Phase A sweep across `src/` and `include/` (excluding third-party `packages/`): zero TODO/FIXME/HACK/XXX/BUG markers in first-party code.
+- Re-read `setup_main.cpp` end-to-end and confirmed the elevation path already uses `ShellExecuteExW` + `runas` verb (no Base64 relay) and `maybeLaunchShell` is fully wired end-to-end.
+- Decision recorded and documented: the internal SCM service key `MasterControlProgram` is preserved for upgrade compatibility with pre-0.2 installs. All user-visible strings (SCM display name, Programs &amp; Features, shortcuts, firewall rules, window title, data directory post-migration) resolve to "Master Control Orchestration Server".
+- Tron-themed the setup launcher progress window: dark `#060A10` background with a 2px cyan `#00F6FF` accent bar, Bahnschrift SemiCondensed eyebrow/header/body fonts, accent-colored marquee progress bar, and per-control text coloring via `WM_CTLCOLORSTATIC`. Kept in sync with `src/MasterControlShell/App.xaml` so the installer feels continuous with the shell it delivers. (`src/MasterControlBootstrapper/setup_main.cpp`)
+- Expanded the shell resource dictionary with polish primitives: `ShellStatusChipStyle`/`ShellStatusChipTextStyle` (pill status chips), `ShellSuccessButtonStyle`/`ShellWarningButtonStyle`/`ShellDangerButtonStyle` (tonal command variants), `ShellMetricLabelTextStyle`/`ShellMetricValueTextStyle` (hero tile typography), `ShellSkeletonBlockStyle`/`ShellSkeletonBrush` (loading placeholders), and `ShellFocusBrush`/`ShellPressFillBrush` for interactive state work. (`src/MasterControlShell/App.xaml`)
+- Redesigned `OverviewSectionControl` around a hero card, status chip, operational snapshot card, a two-column narrative grid, and an authored-surfaces legend. Status chip text is now short, uppercase, and letter-spaced (`ADMIN API ONLINE · SYNCHRONIZED` / `ADMIN API OFFLINE · CACHED STATE`) to match the chip pill style. (`src/MasterControlShell/OverviewSectionControl.xaml`, `OverviewSectionControl.xaml.cpp`)
+- Added a browser polish layer to the dashboard stylesheet: `:focus-visible` cyan outlines with a matching glow, a subtle 2.8s `tron-accent-pulse` on info badges, a radial-gradient backdrop with `backdrop-filter: blur(4px)` behind `<dialog>` modals, and full `prefers-reduced-motion` respect. (`resources/web/styles.css`)
+- Ran a Phase A stabilization sweep across `src/` and `include/`: no TODO/FIXME/HACK/XXX/BUG markers found in first-party code. The setup launcher's elevation path already uses `ShellExecuteExW` with the `runas` verb (no Base64 relay in the C++ bootstrapper) and `maybeLaunchShell` is fully wired, so those items were confirmed complete rather than implemented.
+- Decision recorded: the internal SCM service key `MasterControlProgram` and its legacy uninstall registry key are intentionally preserved for upgrade compatibility with pre-0.2 installs. User-visible strings everywhere (SCM display name, Programs &amp; Features, shortcuts, firewall rules, window titles) already resolve to "Master Control Orchestration Server", so no rename was performed in this pass.
 
 ## [0.1.66] - 2026-04-10
 ### Summary

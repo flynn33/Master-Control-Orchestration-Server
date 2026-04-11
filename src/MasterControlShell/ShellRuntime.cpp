@@ -1840,7 +1840,16 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     std::vector<std::wstring> governanceServerRows;
     std::vector<std::wstring> governanceExecutionRows;
 
-    if (service.state == ServiceState::Running || service.state == ServiceState::StartPending) {
+    // Probe the admin API directly regardless of the Windows SCM service
+    // state. The old code only tried to talk to the API when the service
+    // was "Running" or "StartPending", which meant running in console
+    // mode (e.g. developer workflow, non-admin install, uninstalled test
+    // machine) left the shell permanently showing "API OFFLINE" and an
+    // empty provider capability list even though the service host was
+    // listening on 127.0.0.1:7300. If the direct probe succeeds we trust
+    // it over the SCM report — the API's response is authoritative for
+    // whether the shell can actually work.
+    {
         std::wstring errorMessage;
         const auto health = httpGet(dashboardHostFromBindAddress(bindAddress), browserPort, L"/api/health", errorMessage);
         snapshot.apiHealthy = health.has_value() && health->statusCode == 200;
@@ -2040,13 +2049,13 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
             }
         } else if (!errorMessage.empty()) {
             snapshot.statusMessage = std::move(errorMessage);
+        } else if (service.state == ServiceState::Missing) {
+            snapshot.statusMessage = L"Admin API unreachable and service not installed. Start the service host or install the bootstrapper.";
+        } else if (service.state == ServiceState::Running) {
+            snapshot.statusMessage = L"Service is running but the admin API is not responding yet.";
         } else {
             snapshot.statusMessage = L"Local admin API is not responding.";
         }
-    } else if (service.state == ServiceState::Missing) {
-        snapshot.statusMessage = L"Service is not installed. Use the bootstrapper to install the host.";
-    } else {
-        snapshot.statusMessage = L"Service is not running. Start it to refresh live status.";
     }
 
     if (providerRows.empty() && !providers.empty()) {
