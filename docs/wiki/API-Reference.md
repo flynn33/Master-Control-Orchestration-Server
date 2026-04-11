@@ -1,73 +1,177 @@
-# Master Control Orchestration Server API Reference
+# Master Control Orchestration Server — API Reference
 
-This page documents the current HTTP and MCP-style routes exposed by the shared runtime in `src/MasterControlApp/MasterControlRuntime.cpp`.
+![base](https://img.shields.io/badge/base-http://127.0.0.1:7300-00f6ff?style=flat-square) ![auth](https://img.shields.io/badge/auth-loopback%20only-0a1018?style=flat-square) ![format](https://img.shields.io/badge/format-JSON-00aacc?style=flat-square)
 
-## Core Read Endpoints
+Every route is served by
+[`MasterControlRuntime.cpp`](../../src/MasterControlApp/MasterControlRuntime.cpp)
+and bound to the loopback interface. The shell, browser admin UI, and the
+feature-test harness all consume the same routes — there is no second API.
 
-| Route | Method | Purpose |
+---
+
+## Read endpoints
+
+| Method | Route | Returns |
 | --- | --- | --- |
-| `/api/health` | `GET` | Service health and readiness snapshot |
-| `/api/dashboard` | `GET` | Browser dashboard payload |
-| `/api/config` | `GET` | Current persisted configuration |
-| `/api/providers` | `GET` | Provider catalog, credentials posture, and assignments |
-| `/api/exports` | `GET` | Export inventory and generated handoff artifacts |
-| `/api/forsetti/surface` | `GET` | Current Forsetti surface model for shell/browser rendering |
-| `/api/install/history` | `GET` | Install and import execution history |
-| `/api/beacon` | `GET` | Beacon state and LAN-facing discovery posture |
+| `GET` | `/api/health` | Service health and readiness snapshot |
+| `GET` | `/api/dashboard` | Composite payload powering the desktop shell + browser dashboard |
+| `GET` | `/api/config` | Current persisted configuration |
+| `GET` | `/api/providers` | Provider catalog, credential posture, and assignments |
+| `GET` | `/api/exports` | Export inventory + handoff artifacts |
+| `GET` | `/api/forsetti/surface` | Forsetti surface model used by both UIs |
+| `GET` | `/api/forsetti/modules` | Module catalog metadata |
+| `GET` | `/api/install/history` | Install + import execution history |
+| `GET` | `/api/beacon` | LAN beacon advertisement payload |
+| `GET` | `/api/activity?since={id}` | Activity ring events newer than `id` |
 
-## CLU And Governance
+### Activity event shape
 
-| Route | Method | Purpose |
+```json
+{
+  "highWaterMarkId": 174,
+  "events": [
+    {
+      "id": 174,
+      "kind": "api",
+      "timestampUtc": "2026-04-11T17:42:13.812Z",
+      "method": "POST",
+      "target": "/api/providers/auto-connect",
+      "statusCode": 200,
+      "latencyMs": 184,
+      "summary": "auto-connect openai succeeded"
+    }
+  ]
+}
+```
+
+The ring buffer holds the last **512** events with monotonically
+increasing IDs. The shell polls every two seconds while focused.
+
+---
+
+## Auto-Connect AI
+
+| Method | Route | Purpose |
 | --- | --- | --- |
-| `/api/clu` | `GET` | CLU posture, findings, and current governance state |
-| `/api/clu/tools` | `GET` | Published governance tool descriptors |
-| `/api/clu/apple-operations` | `GET` | Apple job queue/history snapshot |
-| `/api/clu/execute` | `POST` | Execute a CLU governance operation |
-| `/api/clu/apple-operations/cancel` | `POST` | Cancel a queued Apple operation |
+| `POST` | `/api/providers/auto-connect` | Add an AI provider end-to-end (capability resolution → discovery → DPAPI → assignment) |
 
-The CLU endpoints are backed by the `CommandLogicUnitModule` Forsetti service module (`com.mastercontrol.command-logic-unit`), which owns governance posture and responsibility routing inside the runtime.
+**Request body:**
 
-## Platform Services
+```json
+{
+  "kind": "openai",
+  "credentials": { "api_key": "sk-..." },
+  "assignmentTargetIds": ["planner", "coder"],
+  "discoverModels": true
+}
+```
 
-| Route | Method | Purpose |
+**Response body** (`AutoConnectResult`):
+
+```json
+{
+  "succeeded": true,
+  "providerId": "openai-7f3a",
+  "summary": "Auto-Connect completed in 184 ms",
+  "totalLatencyMs": 184,
+  "steps": [
+    { "name": "Resolve capability", "ok": true, "latencyMs": 1 },
+    { "name": "Generate provider id", "ok": true, "latencyMs": 0 },
+    { "name": "Probe remote endpoint", "ok": true, "latencyMs": 142 },
+    { "name": "Discover models", "ok": true, "latencyMs": 36 },
+    { "name": "Persist credentials (DPAPI)", "ok": true, "latencyMs": 2 },
+    { "name": "Register provider", "ok": true, "latencyMs": 1 },
+    { "name": "Apply role assignments", "ok": true, "latencyMs": 2 }
+  ],
+  "discoveredModels": [
+    { "id": "gpt-4o", "displayName": "GPT-4o", "selected": true }
+  ]
+}
+```
+
+See [Auto-Connect AI](Auto-Connect-AI) for the full pipeline walkthrough.
+
+---
+
+## CLU & governance
+
+| Method | Route | Purpose |
 | --- | --- | --- |
-| `/api/platform-services` | `GET` | Combined gateway, governance, and host inventory |
-| `/api/platform-services/gateways` | `GET` | Platform gateway summary |
-| `/api/platform-services/governance` | `GET` | Platform governance lane summary |
-| `/api/platform-services/apple-hosts` | `GET` | Registered Apple remote hosts and readiness data |
-| `/api/platform-services/apple-hosts` | `POST` | Add or update an Apple host definition |
-| `/api/platform-services/apple-hosts/remove` | `POST` | Remove an Apple host definition |
-| `/api/platform-services/config/{platform}` | `GET` | Platform-specific client configuration payload |
-| `/mcp/gateway/{platform}` | `GET` | Gateway document for `windows`, `macos`, or `ios` |
-| `/mcp/governance/{platform}` | `GET` | Governance document for `windows`, `macos`, or `ios` |
-| `/mcp/governance/{platform}` | `POST` | Execute a platform governance tool call |
+| `GET` | `/api/clu` | CLU posture, findings, and current governance state |
+| `GET` | `/api/clu/tools` | Published governance tool descriptors |
+| `GET` | `/api/clu/apple-operations` | Apple job queue + history |
+| `POST` | `/api/clu/execute` | Execute a CLU governance operation |
+| `POST` | `/api/clu/apple-operations/cancel` | Cancel a queued Apple operation |
 
-## Runtime Inventory Mutation
+All endpoints are backed by the `CommandLogicUnitModule` Forsetti service module 
+(`com.mastercontrol.command-logic-unit`).
 
-| Route | Method | Purpose |
+---
+
+## Platform services
+
+| Method | Route | Purpose |
 | --- | --- | --- |
-| `/api/runtime/mcp-servers` | `POST` | Create or update a custom MCP server definition |
-| `/api/runtime/mcp-servers/remove` | `POST` | Remove a custom MCP server definition |
-| `/api/runtime/subagents` | `POST` | Create or update a sub-agent definition |
-| `/api/runtime/subagents/remove` | `POST` | Remove a sub-agent definition |
-| `/api/providers/groups` | `POST` | Create or update a provider group |
-| `/api/providers/groups/remove` | `POST` | Remove a provider group |
-| `/api/providers/assignments` | `POST` | Apply provider routing assignments |
-| `/api/providers/credentials` | `POST` | Save provider credential material |
-| `/api/providers/execute` | `POST` | Execute a provider-backed request through the runtime |
+| `GET` | `/api/platform-services` | Combined gateway + governance + host inventory |
+| `GET` | `/api/platform-services/gateways` | Platform gateway summary |
+| `GET` | `/api/platform-services/governance` | Platform governance lane summary |
+| `GET` | `/api/platform-services/apple-hosts` | Registered Apple remote hosts + readiness |
+| `POST` | `/api/platform-services/apple-hosts` | Add or update an Apple host |
+| `POST` | `/api/platform-services/apple-hosts/remove` | Remove an Apple host |
+| `GET` | `/api/platform-services/config/{platform}` | Platform-specific client configuration |
+| `GET` | `/mcp/gateway/{platform}` | Gateway document for `windows` / `macos` / `ios` |
+| `GET` | `/mcp/governance/{platform}` | Governance document for the same set |
+| `POST` | `/mcp/governance/{platform}` | Execute a platform governance tool call |
 
-## Install And Import Routes
+---
 
-| Route | Method | Purpose |
+## Runtime inventory mutation
+
+All mutating routes refresh inventory **asynchronously** via
+`IRuntimeInventoryService::refreshAsync()` so admin calls return immediately
+instead of blocking on the 35+ endpoint TCP probe loop.
+
+| Method | Route | Purpose |
 | --- | --- | --- |
-| `/api/install/package` | `POST` | Import or deploy a package artifact |
-| `/api/install/repo` | `POST` | Import from a Git/bootstrap repository |
-| `/api/install/zip` | `POST` | Import from a zip bundle |
+| `POST` | `/api/runtime/mcp-servers` | Create or update a custom MCP server |
+| `POST` | `/api/runtime/mcp-servers/remove` | Remove a custom MCP server |
+| `POST` | `/api/runtime/subagents` | Create or update a sub-agent |
+| `POST` | `/api/runtime/subagents/remove` | Remove a sub-agent |
+| `POST` | `/api/providers/groups` | Create or update a provider group |
+| `POST` | `/api/providers/groups/remove` | Remove a provider group |
+| `POST` | `/api/providers/assignments` | Apply provider routing assignments |
+| `POST` | `/api/providers/credentials` | Save provider credential material (DPAPI) |
+| `POST` | `/api/providers/execute` | Execute a provider-backed request |
 
-## Notes
+---
 
-- The browser UI and WinUI shell both consume runtime-backed state rather than embedding separate business logic.
-- Platform route keys are currently `windows`, `macos`, and `ios`.
-- Legacy compatibility identifiers still exist internally for upgrades, but public-facing routes and docs use the Orchestration Server naming.
+## Install & import
 
-See also: [Architecture](Architecture) | [Operations](Operations) | [Remote Client](Remote-Client)
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/install/package` | Import or deploy a package artifact |
+| `POST` | `/api/install/repo` | Import from a Git or bootstrap repository |
+| `POST` | `/api/install/zip` | Import from a zip bundle |
+
+---
+
+## Operation result envelope
+
+Every mutating route returns a uniform `OperationResult`:
+
+```json
+{
+  "succeeded": true,
+  "summary": "MCP server feature-test-mcp upserted",
+  "errorMessage": "",
+  "warnings": []
+}
+```
+
+On failure, `succeeded` is `false`, `errorMessage` is populated, and the HTTP 
+status reflects the failure category (400 / 404 / 409 / 500).
+
+---
+
+See also: [Architecture](Architecture) · [Auto-Connect AI](Auto-Connect-AI) · 
+[Telemetry & Activity](Telemetry-and-Activity)

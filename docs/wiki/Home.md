@@ -1,48 +1,88 @@
-# Master Control Orchestration Server Wiki
+# Master Control Orchestration Server
 
-Master Control Orchestration Server is a Forsetti-compliant Windows orchestration server for guided setup, provider routing, CLU governance, platform gateways, platform governance lanes, telemetry, imports, exports, and browser-based operations.
+![version](https://img.shields.io/badge/version-v0.2.0-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--11-031018?style=flat-square) ![modules](https://img.shields.io/badge/modules-19-00aacc?style=flat-square) ![platform](https://img.shields.io/badge/platform-Win11%20·%20Server%202022-0a1018?style=flat-square) ![theme](https://img.shields.io/badge/theme-Tron-00f6ff?style=flat-square)
 
-## Current Release
+> A single-binary, Forsetti-compliant Windows control plane for AI orchestration, 
+> MCP hosting, sub-agents, platform governance, and telemetry — wrapped in a Tron aesthetic.
+
+---
+
+## At a glance
+
+```mermaid
+flowchart LR
+    classDef accent fill:#031018,stroke:#00F6FF,color:#E6FCFF;
+    classDef faint fill:#0a1018,stroke:#5A00E8FF,color:#8CB7C4;
+
+    Operator((Operator))
+    Shell[WinUI 3 Shell]:::accent
+    Browser[Browser Admin UI]:::accent
+    Service[[Service Host<br/>127.0.0.1:7300]]:::accent
+    Runtime[(Shared Runtime)]:::accent
+    Providers[[AI Providers]]:::faint
+    SubAgents[[Sub-Agents]]:::faint
+    MCP[[MCP Servers]]:::faint
+    Apple[[Apple Hosts]]:::faint
+    CLU{{CLU Governance}}:::accent
+
+    Operator --> Shell & Browser
+    Shell --> Service
+    Browser --> Service
+    Service --> Runtime
+    Runtime --> Providers & SubAgents & MCP & Apple
+    Runtime --> CLU
+    CLU -. enforces .-> Providers & MCP & Apple
+```
+
+---
+
+## Current release
 
 | Field | Value |
 | --- | --- |
-| Version | `v0.2.6` |
-| Released | `2026-04-11` |
-| Summary | Automated patch release for Master Control Orchestration Server. |
+| **Version** | `v0.2.0` |
+| **Released** | `2026-04-11` |
+| **Summary** | Tron-density UX rework, validated end-to-end on Windows Server 2022. |
+| **Forsetti modules** | 19 |
+| **Repository** | [master-control-dashboard](https://github.com/flynn33/Master-Control-Orchestration-Server) |
 
-## Platform at a Glance
+---
 
-| Component | Count | Details |
-| --- | --- | --- |
-| Operator surfaces | 2 | WinUI 3 desktop shell and browser admin UI backed by the same runtime |
-| Platform lanes | 6 | Windows, macOS, and iOS gateway plus governance lanes |
-| AI providers | 3 | Codex, Claude Code, and xAI routing in the current build |
-| Install flow | 2 | Native setup launcher plus diagnostic PowerShell fallback |
-| Governance | 1 core module | Command Logic Unit (CLU) plus platform governance execution and resource enforcement |
+## Navigation
 
-## Command Logic Unit
-
-- CLU is a Forsetti service module with manifest ID `com.mastercontrol.command-logic-unit`.
-- It coordinates governance posture, rule evaluation, model-to-responsibility routing, Apple operations, and platform governance execution.
-- The shell and browser surfaces read CLU state from the runtime instead of duplicating governance logic locally.
-
-## Wiki Pages
-
-| Page | Description |
+### Architecture & internals
+| Page | Topic |
 | --- | --- |
-| [Architecture](Architecture) | Product composition, runtime structure, and platform governance model |
-| [Infrastructure](Infrastructure) | Deployment shape, packaging model, and target-host validation focus |
-| [Sub-Agents](Sub-Agents) | Current seven-agent roster, responsibilities, and shared client details |
-| [API Reference](API-Reference) | Current browser, CLU, platform-service, and governance routes from the runtime |
-| [Operations](Operations) | Build, validate, package, install, and deployment-acceptance workflows |
-| [Remote Client](Remote-Client) | Current onboarding direction for Codex, Claude Code, and platform gateway discovery |
-| [Automation](Automation) | GitHub agents, CI/CD pipeline, commit conventions, and workflow triggers |
-| [Versions](Versions) | Release history, versioning scheme, and release documents |
+| [Architecture](Architecture) | Runtime composition, modules, request flow |
+| [API Reference](API-Reference) | Every HTTP route exposed by the runtime |
+| [CLU Governance](CLU-Governance) | Command Logic Unit, rules, role routing |
+| [Auto-Connect AI](Auto-Connect-AI) | Provider automation pipeline |
+| [Telemetry & Activity](Telemetry-and-Activity) | Live telemetry + activity ring |
+| [Sub-Agents](Sub-Agents) | The 7-agent roster |
 
-## Quick Links
+### UI & user experience
+| Page | Topic |
+| --- | --- |
+| [Tron UI Theme](Tron-UI-Theme) | Palette, typography, motion |
 
-- [README](../README.md)
-- [Project Overview](../plans/dashboard/project-overview.md)
-- [Technical Details](../plans/dashboard/technical-details.md)
-- [Version Index](../docs/versions/index.md)
-- Repository: https://github.com/flynn33/Master-Control-Orchestration-Server
+### Operations & deployment
+| Page | Topic |
+| --- | --- |
+| [Operations](Operations) | Build, package, install, upgrade, uninstall |
+| [Infrastructure](Infrastructure) | Deployment shape and target hosts |
+| [Remote Client](Remote-Client) | Codex / Claude Code onboarding |
+| [Troubleshooting](Troubleshooting) | Common failures and diagnosis |
+
+### Project & release
+| Page | Topic |
+| --- | --- |
+| [Automation](Automation) | GitHub agents that maintain this repo |
+| [Versions](Versions) | Release history |
+
+---
+
+## Three-line product pitch
+
+1. **Install once.** A single Windows installer drops the service host, the WinUI shell, and the browser admin UI in one place.
+2. **Connect everything.** Auto-Connect handles AI providers; custom MCP servers and sub-agents register with one POST.
+3. **Run from one console.** Every command is governed by CLU, captured in the activity ring, and visible in the live operator stream.

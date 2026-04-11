@@ -1,128 +1,174 @@
-# Master Control Orchestration Server Architecture
+# Master Control Orchestration Server — Architecture
 
-This page reflects the current repository-backed architecture rather than the retired external aggregator design.
+![layer](https://img.shields.io/badge/layer-C++20%20·%20WinUI%203%20·%20vanilla%20JS-00f6ff?style=flat-square)
 
-### What It Is
-Forsetti-compliant Windows orchestration server for MCP services, AI coding agents, provider routing, CLU governance, imports, exports, and operator control.
-The product ships as a Windows service, a WinUI 3 desktop shell, and a browser-based admin surface backed by the same local runtime.
+This page is the canonical map of how the runtime, the operator surfaces, 
+and the Forsetti modules fit together. It mirrors the actual repository, 
+so when in doubt the source files referenced below are the ground truth.
 
-### Core Objective
-- make setup fast through guided workflows instead of low-level manual editing
-- host and govern MCP servers, providers, sub-agents, and platform governance lanes from one control plane
-- provide a desktop-first and browser-accessible operations surface for telemetry, runtime control, and deployment visibility
-- package the product so it can be installed, validated, upgraded, repaired, and uninstalled with repo-owned tooling
+---
 
-### Major Product Surfaces
-1. Windows service host for orchestration, telemetry, configuration, imports, governance, and browser APIs
-2. WinUI 3 shell for guided setup, CLU control, runtime operations, provider configuration, and security posture
-3. Browser admin UI backed by the same service APIs and Forsetti surface model
-4. Bootstrapper and setup launcher for install, validate, repair, upgrade, and uninstall flows
+## Runtime topology
 
-### Major Functional Areas
-- Forsetti module architecture with manifest-driven composition
-- CLU governance and policy enforcement
-- provider routing for Codex, Claude Code, and xAI
-- custom MCP server authoring and custom sub-agent authoring
-- Windows, macOS, and iOS gateway/governance lanes
-- Apple remote-host readiness, execution, signing, notarization, export, install, and history flows
-- resource governance and controlled local process execution
-- deployment acceptance, release packaging, and readiness reporting
+```mermaid
+flowchart TB
+    classDef accent fill:#031018,stroke:#00F6FF,color:#E6FCFF;
+    classDef sub fill:#0a1018,stroke:#5A00E8FF,color:#8CB7C4;
 
-### Command Logic Unit Module
-- the Command Logic Unit, or CLU, is a first-class Forsetti service module rather than a UI-only concept
-- module manifest: `src/MasterControlModules/Resources/ForsettiManifests/CommandLogicUnitModule.json`
-- module ID: `com.mastercontrol.command-logic-unit`
-- CLU is responsible for governance posture, rule evaluation, provider responsibility routing, and platform-specific governance execution
-- CLU is also the operator-facing coordination lane for guided setup, Apple governance operations, and model-to-role assignment
-- the WinUI shell and browser surface both read CLU state from the runtime instead of reimplementing governance logic on their own
+    subgraph Surfaces[Operator Surfaces]
+        Shell[WinUI 3 Shell<br/>MasterControlShell.exe]:::accent
+        Browser[Browser Admin UI<br/>resources/web]:::accent
+    end
 
-### Current Build State
-- feature-complete for the current build
-- locally validated for Forsetti compliance, build health, and repo-native tests
-- installer and setup flows validated on Windows 11
-- Windows Server 2022 acceptance remains the main external validation gap
+    subgraph Host[Host Process]
+        Service[Service Host<br/>MasterControlServiceHost.exe]:::accent
+        Runtime[(MasterControlRuntime<br/>shared in-process core)]:::accent
+    end
 
-### Current Focus
-- remove naming and packaging drift so product identity, docs, and release artifacts align
-- keep guided setup as the primary operator path
-- preserve deployment stability while polishing the end-user install and operations experience
+    subgraph Forsetti[Forsetti Module Catalog]
+        CLU{{Command Logic Unit}}:::accent
+        ProviderInt[Provider Integration]:::sub
+        Inventory[Runtime Inventory]:::sub
+        Telemetry[Host Telemetry]:::sub
+        Beacon[Beacon Gateway]:::sub
+        Win[Windows Gateway/Gov]:::sub
+        Mac[macOS Gateway/Gov]:::sub
+        IOS[iOS Gateway/Gov]:::sub
+        Codex[Codex Provider]:::sub
+        Claude[Claude Code Provider]:::sub
+        XAI[xAI Provider]:::sub
+    end
 
-### Runtime Composition
-- `src/MasterControlApp` hosts the shared application runtime, configuration, governance, Apple execution, and browser APIs
-- `src/MasterControlModules` provides Forsetti modules and manifests
-- `src/MasterControlServiceHost` runs the orchestration runtime as a Windows service or console host
-- `src/MasterControlShell` provides the WinUI 3 operator shell
-- `src/MasterControlBootstrapper` owns install, preflight, validate, repair, upgrade, and uninstall flows
+    Shell --> Service
+    Browser --> Service
+    Service --> Runtime
+    Runtime --> Forsetti
+    Forsetti --> CLU
+```
 
-### Forsetti Governance Modules
-- `DashboardUIModule` remains the single UI host under Forsetti rules
-- `CommandLogicUnitModule` is the orchestration and governance coordinator for the product
-- the CLU manifest lives at `src/MasterControlModules/Resources/ForsettiManifests/CommandLogicUnitModule.json`
-- CLU publishes governance posture, findings, rules, role routing, Apple operation controls, and platform-governance execution state into the shared runtime
-- CLU is intentionally a service module, not a second UI shell
+---
 
-### Deployment Layout
-- install root contains the service host, shell, bootstrapper, setup launcher, and shared payload assets
-- staged Forsetti manifests are installed under `share/MasterControlOrchestrationServer/ForsettiManifests`
-- staged browser assets are installed under `share/MasterControlOrchestrationServer/web`
-- CLU governance resources are installed under `share/MasterControlOrchestrationServer/clu`
+## Process / binary inventory
 
-### Runtime Data
-- persistent state lives under ProgramData unless overridden by environment configuration
-- configuration, install history, entitlements, provider credentials, and Apple operation history are repo-defined runtime artifacts
-- runtime exports and work directories are created under the resolved data root
+| Binary | Source | Role |
+| --- | --- | --- |
+| `MasterControlServiceHost.exe` | `src/MasterControlServiceHost/` | Windows service host (also runs as console for development) |
+| `MasterControlShell.exe` | `src/MasterControlShell/` | WinUI 3 operator shell, hosts the same runtime in-process |
+| `MasterControlBootstrapper.exe` | `src/MasterControlBootstrapper/` | Lifecycle engine (preflight, install, validate, upgrade, repair, uninstall) |
+| `MasterControlOrchestrationServerSetup.exe` | `src/MasterControlBootstrapper/setup_main.cpp` | Tron-themed setup launcher with progress UI |
 
-### Control Surfaces
-- WinUI 3 shell hosts guided setup, CLU, telemetry, runtime, provider, import, export, security, and settings views
-- browser UI mirrors the same runtime-backed control plane concepts through the service API
-- modules publish capabilities through Forsetti services instead of directly owning UI shells
+---
 
-### Governance And Platform Lanes
-- CLU routes governance through platform-specific lanes
-- Windows governance executes local Forsetti and architecture validation
-- macOS and iOS governance route through Apple remote hosts using SSH or companion-service transport
-- Apple operations support readiness, build, test, archive, export, install, sign, notarize, staple, replay, and persisted history
-- provider responsibility routing also flows through CLU, so planning, coding, review, and specialist lanes can be assigned to different AI models
+## Shared runtime
 
-### Installer And Packaging
-- `Package-MasterControlOrchestrationServer.ps1` builds staged release packages, bundles CRT dependencies, writes metadata, and emits install instructions
-- `MasterControlOrchestrationServerSetup.exe` is the standard interactive entry point
-- `Install-MasterControlOrchestrationServer.ps1` is the diagnostic fallback entry point with desktop logging
-- deployment harness scripts validate mixed and managed install lifecycles and write acceptance bundles
+The single most important file in the project is
+[`src/MasterControlApp/MasterControlRuntime.cpp`](../../src/MasterControlApp/MasterControlRuntime.cpp).
+Everything that exposes state through the admin API or accepts a command lives there:
 
-### Validation Baseline
-- Forsetti compliance is enforced by `scripts/check-mastercontrol-forsetti.ps1`
-- repo-native validation uses local Debug builds plus `ctest`
-- packaged deployment acceptance exists for install, validate, upgrade, repair, and uninstall
-- current external validation gap is Windows Server 2022 acceptance
+- HTTP request dispatch + activity ring buffer wrapping
+- Forsetti surface model and module loading
+- Provider registry, credential store, assignment fabric, execution log
+- MCP server / sub-agent inventory + async refresh fabric
+- Apple host catalog, command request execution, history
+- Configuration persistence and migration
+- CLU governance posture, tools, rules, role routing
+- Telemetry capture and beacon advertisement
 
-### Purpose
-Master Control Orchestration Server hosts platform-aware gateway and governance lanes inside the Forsetti framework so agents and operators can work through one orchestration surface while still targeting Windows, macOS, and iOS workflows correctly.
+Contracts are declared in
+[`include/MasterControl/MasterControlContracts.h`](../../include/MasterControl/MasterControlContracts.h),
+models in
+[`include/MasterControl/MasterControlModels.h`](../../include/MasterControl/MasterControlModels.h).
 
-### Gateway Model
-- gateway modules are Forsetti modules inside the product, not external sidecars
-- clients discover the product through platform-specific gateway surfaces
-- the current architecture keeps the gateway logic inside the local runtime and service APIs rather than a separate legacy aggregator deployment
+---
 
-### Governance Model
-- CLU is the governance coordinator
-- platform governance flows are routed by target platform instead of host OS alone
-- governance tools execute through framework contracts instead of direct module-to-module shortcuts
-- the UI reads governance state through the framework and does not become a second governance engine
+## Forsetti module catalog
 
-### Current Platform Lanes
-- Windows gateway and Windows governance lane
-- macOS gateway and macOS governance lane
-- iOS gateway and iOS governance lane
+Every module is a JSON manifest under
+`src/MasterControlModules/Resources/ForsettiManifests/` and is
+registered into the runtime at startup. The current catalog:
 
-### Apple Execution Fabric
-- Apple hosts can be selected per host using SSH or companion-service transport
-- readiness includes Xcode, SDK, simulator, device control, signing, and notarization state
-- operations include build, test, archive, export, install, sign, notarize, staple, replay, and history
+| Module ID | Display name | Type | Version | Platforms |
+| --- | --- | --- | --- | --- |
+| `com.mastercontrol.beacon-gateway` | Beacon Gateway | service | `0.1.0` | Windows |
+| `com.mastercontrol.provider-claude-code` | Claude Code Provider | service | `0.1.0` | Windows |
+| `com.mastercontrol.provider-codex` | Codex Provider | service | `0.1.0` | Windows |
+| `com.mastercontrol.command-logic-unit` | Command Logic Unit | service | `0.1.0` | Windows |
+| `com.mastercontrol.configuration` | Configuration | service | `0.1.0` | Windows |
+| `com.mastercontrol.dashboard-ui` | Dashboard UI | ui | `0.1.0` | Windows |
+| `com.mastercontrol.environment-discovery` | Environment Discovery | service | `0.1.0` | Windows |
+| `com.mastercontrol.export` | Export | service | `0.1.0` | Windows |
+| `com.mastercontrol.host-telemetry` | Host Telemetry | service | `0.1.0` | Windows |
+| `com.mastercontrol.installer-import` | Installer Import | service | `0.1.0` | Windows |
+| `com.mastercontrol.gateway-ios` | iOS Gateway | service | `0.1.0` | Windows |
+| `com.mastercontrol.governance-ios` | iOS Governance MCP Server | service | `0.1.0` | Windows |
+| `com.mastercontrol.gateway-macos` | Mac Gateway | service | `0.1.0` | Windows |
+| `com.mastercontrol.governance-macos` | Mac Governance MCP Server | service | `0.1.0` | Windows |
+| `com.mastercontrol.provider-integration` | Provider Integration | service | `0.1.0` | Windows |
+| `com.mastercontrol.runtime-inventory` | Runtime Inventory | service | `0.1.0` | Windows |
+| `com.mastercontrol.gateway-windows` | Windows Gateway | service | `0.1.0` | Windows |
+| `com.mastercontrol.governance-windows` | Windows Governance MCP Server | service | `0.1.0` | Windows |
+| `com.mastercontrol.provider-xai` | xAI Provider | service | `0.1.0` | Windows |
 
-### Deployment Direction
-- Windows remains the primary hosted runtime for the orchestration server
-- platform lanes remain module-driven and Forsetti-compliant
-- deployment work is currently focused on installer polish, identity alignment, and target-host validation rather than new gateway topology changes
+---
 
-See also: [Infrastructure](Infrastructure) | [API Reference](API-Reference) | [Operations](Operations)
+## Request flow — admin API call
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as Operator
+    participant S as Shell / Browser
+    participant H as HTTP Listener
+    participant R as Runtime Service
+    participant A as Activity Ring
+    participant F as Forsetti Module
+
+    U->>S: Click action
+    S->>H: HTTP request (127.0.0.1:7300)
+    H->>R: dispatch(method, path, body)
+    R->>F: invoke service implementation
+    F-->>R: result
+    R-->>H: response body + status
+    H->>A: append ActivityEvent(id, ts, method, target, status, latency)
+    H-->>S: response
+    S-->>U: UI update
+```
+
+Every response — success or failure — is captured by the activity ring before 
+being returned. The shell polls `/api/activity?since={id}` to render the live 
+command stream the operator sees in the title bar.
+
+---
+
+## Platform governance lanes
+
+CLU routes governance through one lane per target platform, not per host OS:
+
+| Lane | Backed by | Notes |
+| --- | --- | --- |
+| **Windows** | Local Forsetti + architecture validation | Runs in-process on the host |
+| **macOS** | Apple host (SSH or companion service) | Routes Xcode/SDK/notarization through the Apple Execution Fabric |
+| **iOS** | Apple host (SSH or companion service) | Same fabric as macOS, plus device control / simulator readiness |
+
+Apple operations supported by the fabric:
+`build`, `test`, `archive`, `export`, `install`, `sign`, `notarize`, `staple`, `replay`, plus persisted history.
+
+---
+
+## Data on disk
+
+| Path | Contents |
+| --- | --- |
+| `%ProgramData%\Master Control Orchestration Server\` | Configuration, install history, provider credentials (DPAPI), Apple history, exports |
+| `share/MasterControlOrchestrationServer/ForsettiManifests/` | Staged module manifests |
+| `share/MasterControlOrchestrationServer/web/` | Browser admin UI assets |
+| `share/MasterControlOrchestrationServer/clu/` | CLU governance profile |
+
+A one-shot migration moves the legacy `MasterControlProgram` ProgramData 
+directory to the canonical name on first run; the legacy service name is 
+preserved for upgrade compatibility.
+
+---
+
+See also: [API Reference](API-Reference) · [CLU Governance](CLU-Governance) · 
+[Auto-Connect AI](Auto-Connect-AI) · [Operations](Operations)

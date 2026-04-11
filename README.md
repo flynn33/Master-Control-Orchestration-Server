@@ -1,87 +1,124 @@
 # Master Control Orchestration Server
 
-Master Control Orchestration Server is a Forsetti-compliant Windows orchestration control plane for guided setup, governance, MCP services, sub-agents, AI provider routing, telemetry, and browser-based operations.
+![version](https://img.shields.io/badge/version-v0.2.0-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--11-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
 
-- Repository slug: `master-control-dashboard`
-- Repository URL: https://github.com/flynn33/Master-Control-Orchestration-Server
+> Forsetti-compliant Windows orchestration control plane for MCP services, AI provider routing, 
+> CLU governance, sub-agents, platform gateways, telemetry, and browser-based operations — 
+> all delivered as a single Tron-themed product.
 
-## Current Release
+- **Repository:** [`master-control-dashboard`](https://github.com/flynn33/Master-Control-Orchestration-Server)
+- **Current release:** `v0.2.0` (2026-04-11)
+- **Forsetti modules:** 19
 
-- Version: `v0.2.6`
-- Release date: `2026-04-11`
-- Summary: Automated patch release for Master Control Orchestration Server.
+---
 
-## Highlights
+## Why this project exists
 
-- Windows Service host, WinUI 3 operator shell, and browser admin surface backed by the same local runtime.
-- Guided setup workflows for providers, MCP servers, sub-agents, Apple hosts, imports, and assignment flows.
-- Command Logic Unit (CLU) Forsetti module for governance, responsibility routing, and platform-governance execution.
-- CLU governance, platform gateway lanes, platform governance lanes, and Apple remote-host execution support.
-- Release packaging, setup launcher, bootstrapper validation, and deployment acceptance tooling in-repo.
+Modern AI orchestration usually means stitching together a half-dozen CLI tools, 
+duct-taping JSON config across them, and praying nothing rotates. This project 
+collapses that into one Windows-native control plane: install once, point your 
+providers and sub-agents at it, and run everything from a single Tron-styled shell 
+or browser dashboard.
 
-## Repository Layout
+### Highlights
 
-- `src/` - application hosts and shared runtime implementation.
-- `include/` - shared contracts, models, and defaults.
-- `resources/` - web assets and Forsetti manifests.
-- `plans/` - current architecture and infrastructure notes.
-- `docs/wiki/` - wiki source pages maintained by repository automation.
-- `docs/versions/` - generated release documentation.
+| | |
+| --- | --- |
+| **Single-binary control plane** | Windows service host, WinUI 3 desktop shell, and browser admin UI — all backed by the same in-process runtime |
+| **Auto-Connect AI providers** | Enter credentials, pick roles, runtime handles capability resolution, model discovery, DPAPI encryption, and assignment fan-out |
+| **Live command stream** | Every admin API request is captured by a 512-event ring buffer with millisecond timestamps, methods, targets, status codes, and latency |
+| **CLU governance** | First-class Forsetti service module for posture, rules, role routing, Apple operations, and platform governance execution |
+| **Cross-platform gateways** | Windows, macOS, and iOS gateway + governance lanes — Apple lanes route through SSH/companion-service Apple hosts |
+| **Repo-owned installer** | Native setup launcher with Tron progress UI, plus diagnostic PowerShell fallback, plus bootstrapper for preflight/install/validate/upgrade/repair/uninstall |
+| **Tron aesthetic, end-to-end** | Cyan-on-blue-black palette, Bahnschrift SemiCondensed type, zero corner radii, accent pulse animations, focus-visible outlines, prefers-reduced-motion respected |
 
-## Build And Validate
+---
 
-```powershell
-cmake --build build\debug --config Debug
-ctest --test-dir build\debug -C Debug --output-on-failure
-cmake --install build\debug --config Debug --prefix dist\debug
+## Repository layout
+
+```
+master-control-dashboard/
+├── include/MasterControl/         # public contracts, models, defaults
+├── src/
+│   ├── MasterControlApp/          # shared runtime (~9k LOC core)
+│   ├── MasterControlServiceHost/  # Windows service entry point
+│   ├── MasterControlShell/        # WinUI 3 operator shell
+│   ├── MasterControlModules/      # Forsetti modules + JSON manifests
+│   └── MasterControlBootstrapper/ # installer / setup launcher
+├── resources/
+│   ├── web/                       # browser admin UI assets
+│   └── clu/                       # CLU governance profile
+├── scripts/                       # build, package, deploy, agents
+├── plans/                         # design + infrastructure notes
+├── docs/wiki/                     # wiki source pages (auto-generated)
+└── docs/versions/                 # release docs (auto-generated)
 ```
 
-## GitHub Agents
+---
 
-| Agent | Responsibility | Trigger |
-| --- | --- | --- |
-| Changelog Agent | Updates `CHANGELOG.md` after pushes to `main`. | `push`, `workflow_dispatch` |
-| Wiki + README Agent | Regenerates `README.md`, wiki source pages, and syncs the GitHub wiki. | `push`, `workflow_dispatch` |
-| AI Contributor Guard | Rejects commits that declare AI contributors and can block pushes locally. | `pre-push`, `push`, `pull_request` |
-| Version Agent | Tracks semantic versions and creates the next numbered release. | `push`, `workflow_dispatch` |
-| Version Documentation Agent | Generates release pages in `docs/versions/` and publishes GitHub releases. | `push`, `workflow_dispatch` |
+## Build, validate, and stage
 
-## Key Project Notes
+```powershell
+# Configure and build (Debug)
+cmake --preset debug
+cmake --build build\debug --config Debug
 
-### Product Overview
-- Forsetti-compliant Windows orchestration server for MCP services, AI coding agents, provider routing, CLU governance, imports, exports, and operator control.
-- The product ships as a Windows service, a WinUI 3 desktop shell, and a browser-based admin surface backed by the same local runtime.
-- make setup fast through guided workflows instead of low-level manual editing
-- host and govern MCP servers, providers, sub-agents, and platform governance lanes from one control plane
-- provide a desktop-first and browser-accessible operations surface for telemetry, runtime control, and deployment visibility
-- package the product so it can be installed, validated, upgraded, repaired, and uninstalled with repo-owned tooling
-- Windows service host for orchestration, telemetry, configuration, imports, governance, and browser APIs
-- WinUI 3 shell for guided setup, CLU control, runtime operations, provider configuration, and security posture
+# Run the local test suite
+ctest --test-dir build\debug -C Debug --output-on-failure
 
-### Technical Snapshot
-- `src/MasterControlApp` hosts the shared application runtime, configuration, governance, Apple execution, and browser APIs
-- `src/MasterControlModules` provides Forsetti modules and manifests
-- `src/MasterControlServiceHost` runs the orchestration runtime as a Windows service or console host
-- `src/MasterControlShell` provides the WinUI 3 operator shell
-- `src/MasterControlBootstrapper` owns install, preflight, validate, repair, upgrade, and uninstall flows
-- `DashboardUIModule` remains the single UI host under Forsetti rules
-- `CommandLogicUnitModule` is the orchestration and governance coordinator for the product
-- the CLU manifest lives at `src/MasterControlModules/Resources/ForsettiManifests/CommandLogicUnitModule.json`
+# Forsetti compliance + repo native checks
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-mastercontrol-forsetti.ps1
 
-### Command Logic Unit (CLU)
-- CLU is a first-class Forsetti service module, not just a navigation label in the shell.
-- Manifest: `src/MasterControlModules/Resources/ForsettiManifests/CommandLogicUnitModule.json`
-- Module ID: `com.mastercontrol.command-logic-unit`
-- Responsibilities: governance posture, rule evaluation, provider responsibility routing, Apple operations, and platform governance execution.
+# Stage installable payload
+cmake --install build\debug --config Debug --prefix dist\debug
 
-## Primary Documents
+# Build a signed release package
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release
+```
 
-- [Project Overview](plans/dashboard/project-overview.md)
-- [Technical Details](plans/dashboard/technical-details.md)
-- [Remote Client Onboarding](plans/dashboard/remote-client-onboarding.md)
-- [Deployment Overview](plans/infrastructure/deployment-overview.md)
-- [Platform Gateway And Governance](plans/infrastructure/platform-gateway-and-governance.md)
-- [Version Index](docs/versions/index.md)
-- [Latest Release Notes](docs/versions/latest.md)
+See [Operations](docs/wiki/Operations.md) for the full deployment matrix, and 
+[Architecture](docs/wiki/Architecture.md) for the runtime composition diagram.
 
-Repository URL: https://github.com/flynn33/Master-Control-Orchestration-Server
+---
+
+## Documentation
+
+| Page | What you get |
+| --- | --- |
+| [Home](docs/wiki/Home.md) | Project overview, current release, and navigation |
+| [Architecture](docs/wiki/Architecture.md) | Runtime composition, Forsetti modules, request flow diagrams |
+| [API Reference](docs/wiki/API-Reference.md) | Every admin API route with method, payload, and example responses |
+| [Auto-Connect AI](docs/wiki/Auto-Connect-AI.md) | The end-to-end automation pipeline for adding AI providers |
+| [CLU Governance](docs/wiki/CLU-Governance.md) | Command Logic Unit module, rules, roles, and platform governance lanes |
+| [Telemetry & Activity](docs/wiki/Telemetry-and-Activity.md) | Live telemetry pipeline + the activity ring buffer |
+| [Tron UI Theme](docs/wiki/Tron-UI-Theme.md) | Palette, typography, motion language, and component recipes |
+| [Sub-Agents](docs/wiki/Sub-Agents.md) | The 7-agent roster, ports, and shared platform gateway client |
+| [Operations](docs/wiki/Operations.md) | Build, package, install, upgrade, repair, uninstall flows |
+| [Infrastructure](docs/wiki/Infrastructure.md) | Deployment shape, packaging model, and target hosts |
+| [Remote Client](docs/wiki/Remote-Client.md) | Onboarding direction for Codex, Claude Code, and gateway discovery |
+| [Automation](docs/wiki/Automation.md) | The GitHub agents that maintain the repository |
+| [Versions](docs/wiki/Versions.md) | Release history and the versioning scheme |
+| [Troubleshooting](docs/wiki/Troubleshooting.md) | Common failure modes and how to diagnose them |
+
+---
+
+## Current release
+
+**`v0.2.0` — 2026-04-11**
+
+Tron-density UX rework, validated end-to-end on Windows Server 2022.
+
+- Tron-theme the setup launcher progress window (cyan accent bar, Bahnschrift fonts, accent marquee) to match the shell's App.xaml palette.
+- Expand shell resource dictionary with status chip, tonal button variants, compact tiles, sub-agent badge, and live-clock text styles.
+- Redesign OverviewSectionControl around hero card + operational snapshot + narrative grid + authored-surfaces legend.
+- Add Tron command-center density to MainWindow: live clock (HH:MM:SS) in the title bar, sub-agent footer row (SENTINEL/ARCHITECT/FORGE/SCRIBE/RECON/NEXUS/WATCHDOG), and a ScrollViewer wrapping the main content so the full layout reaches low-resolution displays.
+- Add browser dashboard polish layer: prefers-reduced-motion, focus-visible outlines, accent pulse animation, <dialog>::backdrop blur.
+- Add one-shot ProgramData migration from legacy MasterControlProgram to MasterControlOrchestrationServer path, with safe fallback if the rename cannot complete.
+- Update GitHub repository URL references to flynn33/Master-Control-Orchestration-Server.
+- Guard Package-MasterControlOrchestrationServer.ps1 git calls so packaging works outside a git repo.
+- Update PlatformToolset from v143 to v145 so the shell builds on Visual Studio 2026.
+- Validated end-to-end on Windows Server 2022 Datacenter (21H2, build 20348): cmake configure + build (0 errors, 0 warnings), ctest 4/4 green, package staged (44 MB), unattended install smoke CLEAN, shell launches and renders Tron UI with live clock, bootstrapper preflight/validate reports valid:true.
+
+---
+
+Repository: https://github.com/flynn33/Master-Control-Orchestration-Server
