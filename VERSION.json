@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.2.3",
-  "current_tag": "v0.2.3",
+  "current_version": "0.2.4",
+  "current_tag": "v0.2.4",
   "released_at": "2026-04-11",
-  "last_release_commit": "5eba6c8c7be14acf2577e479d36bc3f829a05347",
+  "last_release_commit": "b5bedaa9824f0ae0c0630937f82e5c3dff3a5065",
   "history": [
+    {
+      "version": "0.2.4",
+      "tag": "v0.2.4",
+      "released_at": "2026-04-11",
+      "commit": "b5bedaa9824f0ae0c0630937f82e5c3dff3a5065",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Theme overhaul + critical API probe fix + workspace dialog removed (flynn33)"
+      ]
+    },
     {
       "version": "0.2.3",
       "tag": "v0.2.3",
