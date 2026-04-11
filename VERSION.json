@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.2.5",
-  "current_tag": "v0.2.5",
+  "current_version": "0.2.6",
+  "current_tag": "v0.2.6",
   "released_at": "2026-04-11",
-  "last_release_commit": "8b9eea59c8e10ad4fdd74d8e9c570c924bd9a474",
+  "last_release_commit": "ab2459b7ad4bf726da7cbaef40252eec4692e0db",
   "history": [
+    {
+      "version": "0.2.6",
+      "tag": "v0.2.6",
+      "released_at": "2026-04-11",
+      "commit": "ab2459b7ad4bf726da7cbaef40252eec4692e0db",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Add autonomous Claude tooling scripts under .claude-work/ (flynn33)"
+      ]
+    },
     {
       "version": "0.2.5",
       "tag": "v0.2.5",
