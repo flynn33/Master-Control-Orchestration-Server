@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.2.4",
-  "current_tag": "v0.2.4",
+  "current_version": "0.2.5",
+  "current_tag": "v0.2.5",
   "released_at": "2026-04-11",
-  "last_release_commit": "b5bedaa9824f0ae0c0630937f82e5c3dff3a5065",
+  "last_release_commit": "8b9eea59c8e10ad4fdd74d8e9c570c924bd9a474",
   "history": [
+    {
+      "version": "0.2.5",
+      "tag": "v0.2.5",
+      "released_at": "2026-04-11",
+      "commit": "8b9eea59c8e10ad4fdd74d8e9c570c924bd9a474",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Fix: admin API mutating handlers blocked 10-14s on inventory probes (flynn33)"
+      ]
+    },
     {
       "version": "0.2.4",
       "tag": "v0.2.4",
