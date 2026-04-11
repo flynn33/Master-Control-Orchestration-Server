@@ -293,6 +293,63 @@ struct ProviderExecutionRecord final {
     std::string errorMessage;
 };
 
+// ---------------------------------------------------------------------------
+// Auto-Connect AI Model
+// ---------------------------------------------------------------------------
+// The user-facing surface for adding an AI model is reduced to:
+//   (1) pick a provider kind, (2) enter credentials, (3) choose role targets.
+// Everything else — route id generation, display name, base URL, recommended
+// model selection, HTTP connectivity probe, remote model discovery, credential
+// encryption, provider registration, and role fan-out — is performed by the
+// runtime via AutoConnectProvider(). The result reports every step so the
+// shell and browser surfaces can render a transparent progress log.
+// ---------------------------------------------------------------------------
+
+struct AutoConnectRequest final {
+    ProviderKind kind = ProviderKind::Generic;
+    std::map<std::string, std::string> credentials;
+    // Optional overrides — leave empty to use capability defaults.
+    std::string displayNameOverride;
+    std::string baseUrlOverride;
+    std::string modelIdOverride;
+    // Role/group/sub-agent targets to assign this provider to on creation.
+    // Each entry must be a valid ProviderAssignmentTarget::targetId.
+    std::vector<std::string> assignmentTargetIds;
+    bool allowAutonomousControl = false;
+    // When true, the runtime will call the provider's models endpoint to
+    // discover available models. When false, capability.recommendedModel is
+    // used directly without a network call.
+    bool discoverModels = true;
+};
+
+struct DiscoveredModel final {
+    std::string id;
+    std::string displayName;
+    std::string description;
+};
+
+struct AutoConnectStep final {
+    std::string stage;       // e.g. "resolve-capability", "probe", "discover-models"
+    bool succeeded = false;
+    std::string message;
+    int latencyMs = 0;
+};
+
+struct AutoConnectResult final {
+    bool succeeded = false;
+    std::string providerId;
+    std::string displayName;
+    std::string baseUrl;
+    std::string selectedModelId;
+    std::vector<DiscoveredModel> discoveredModels;
+    std::vector<AutoConnectStep> steps;
+    std::vector<std::string> assignmentsApplied;
+    std::vector<std::string> assignmentsFailed;
+    int totalLatencyMs = 0;
+    std::string errorMessage;
+    std::string summary; // human-readable one-liner
+};
+
 struct InstallerPackageSpec final {
     InstallerKind kind = InstallerKind::Exe;
     std::string source;
@@ -913,6 +970,45 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     startedAtUtc,
     completedAtUtc,
     errorMessage)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    AutoConnectRequest,
+    kind,
+    credentials,
+    displayNameOverride,
+    baseUrlOverride,
+    modelIdOverride,
+    assignmentTargetIds,
+    allowAutonomousControl,
+    discoverModels)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    DiscoveredModel,
+    id,
+    displayName,
+    description)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    AutoConnectStep,
+    stage,
+    succeeded,
+    message,
+    latencyMs)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    AutoConnectResult,
+    succeeded,
+    providerId,
+    displayName,
+    baseUrl,
+    selectedModelId,
+    discoveredModels,
+    steps,
+    assignmentsApplied,
+    assignmentsFailed,
+    totalLatencyMs,
+    errorMessage,
+    summary)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     InstallerPackageSpec,

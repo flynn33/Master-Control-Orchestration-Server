@@ -107,6 +107,50 @@ struct ShellProviderAssignment final {
     std::wstring updatedAtUtc;
 };
 
+// Auto-Connect AI Model — the shell hands the runtime just the credentials
+// and optional role targets. Everything else (route id, display name, base
+// url, model discovery, dpapi encryption, assignment fan-out) is automated.
+struct ShellAutoConnectProviderRequest final {
+    std::wstring kind;                                    // e.g. "Codex", "ClaudeCode", "XAI"
+    std::vector<std::pair<std::wstring, std::wstring>> credentials;
+    std::vector<std::wstring> assignmentTargetIds;        // roles, groups, or sub-agents
+    bool allowAutonomousControl = false;
+    bool discoverModels = true;
+    // Optional overrides for advanced operators — leave empty for fully
+    // automated defaults driven by the capability descriptor.
+    std::wstring displayNameOverride;
+    std::wstring baseUrlOverride;
+    std::wstring modelIdOverride;
+};
+
+struct ShellAutoConnectProviderStep final {
+    std::wstring stage;
+    bool succeeded = false;
+    std::wstring message;
+    int latencyMs = 0;
+};
+
+struct ShellAutoConnectProviderModel final {
+    std::wstring id;
+    std::wstring displayName;
+    std::wstring description;
+};
+
+struct ShellAutoConnectProviderResult final {
+    bool succeeded = false;
+    std::wstring providerId;
+    std::wstring displayName;
+    std::wstring baseUrl;
+    std::wstring selectedModelId;
+    std::wstring summary;
+    std::wstring errorMessage;
+    int totalLatencyMs = 0;
+    std::vector<ShellAutoConnectProviderModel> discoveredModels;
+    std::vector<ShellAutoConnectProviderStep> steps;
+    std::vector<std::wstring> assignmentsApplied;
+    std::vector<std::wstring> assignmentsFailed;
+};
+
 struct ShellProviderExecutionRegistration final {
     std::wstring moduleId;
     std::wstring providerId;
@@ -442,6 +486,8 @@ public:
     [[nodiscard]] ShellOperationResult UpsertSubAgentGroup(const ShellSubAgentGroupDefinition& group) const;
     [[nodiscard]] ShellOperationResult RemoveSubAgentGroup(const std::wstring& groupId) const;
     [[nodiscard]] ShellOperationResult UpsertProviderAssignment(const ShellProviderAssignment& assignment) const;
+    // One-shot automation: pick a kind, hand over credentials, pick roles, done.
+    [[nodiscard]] ShellAutoConnectProviderResult AutoConnectProvider(const ShellAutoConnectProviderRequest& request) const;
     [[nodiscard]] ShellForsettiModuleCatalogResult FetchForsettiModules() const;
     [[nodiscard]] ShellOperationResult ManageForsettiModule(const std::wstring& moduleId,
                                                            const std::wstring& action) const;

@@ -31,6 +31,7 @@ public:
     OperationResult applyConfigurationJson(const std::string& requestBody,
                                            bool confirmUnsafeChanges);
     OperationResult upsertProviderJson(const std::string& requestBody);
+    AutoConnectResult autoConnectProviderJson(const std::string& requestBody);
     OperationResult upsertProviderCredentialsJson(const std::string& requestBody);
     OperationResult upsertAppleRemoteHostJson(const std::string& requestBody);
     OperationResult removeAppleRemoteHostJson(const std::string& requestBody);

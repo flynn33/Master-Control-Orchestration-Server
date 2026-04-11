@@ -1438,6 +1438,129 @@ ShellOperationResult postJsonObjectToAdminApi(const std::filesystem::path& confi
     return operationResultFromResponse(*response);
 }
 
+ShellAutoConnectProviderResult postAutoConnectProviderToAdminApi(
+    const std::filesystem::path& configurationFile,
+    const ShellAutoConnectProviderRequest& request) {
+    ShellAutoConnectProviderResult result;
+
+    JsonObject payload;
+    payload.SetNamedValue(L"kind", JsonValue::CreateStringValue(request.kind));
+    payload.SetNamedValue(L"allowAutonomousControl",
+                          JsonValue::CreateBooleanValue(request.allowAutonomousControl));
+    payload.SetNamedValue(L"discoverModels", JsonValue::CreateBooleanValue(request.discoverModels));
+    if (!request.displayNameOverride.empty()) {
+        payload.SetNamedValue(L"displayNameOverride",
+                              JsonValue::CreateStringValue(request.displayNameOverride));
+    }
+    if (!request.baseUrlOverride.empty()) {
+        payload.SetNamedValue(L"baseUrlOverride", JsonValue::CreateStringValue(request.baseUrlOverride));
+    }
+    if (!request.modelIdOverride.empty()) {
+        payload.SetNamedValue(L"modelIdOverride", JsonValue::CreateStringValue(request.modelIdOverride));
+    }
+
+    // credentials: object mapping fieldId -> value
+    JsonObject credentialsObject;
+    for (const auto& [fieldId, value] : request.credentials) {
+        credentialsObject.SetNamedValue(fieldId, JsonValue::CreateStringValue(value));
+    }
+    payload.SetNamedValue(L"credentials", credentialsObject);
+
+    // assignmentTargetIds: array of strings
+    JsonArray targetsArray;
+    for (const auto& targetId : request.assignmentTargetIds) {
+        targetsArray.Append(JsonValue::CreateStringValue(targetId));
+    }
+    payload.SetNamedValue(L"assignmentTargetIds", targetsArray);
+
+    std::wstring errorMessage;
+    const auto [host, port] = adminApiEndpoint(configurationFile);
+    const auto response = httpRequest(
+        host,
+        port,
+        L"POST",
+        L"/api/providers/auto-connect",
+        narrowFromWide(payload.Stringify().c_str()),
+        {},
+        errorMessage);
+    if (!response.has_value()) {
+        result.errorMessage = errorMessage.empty()
+            ? std::wstring(L"Unable to auto-connect the provider through the local admin API.")
+            : errorMessage;
+        result.summary = result.errorMessage;
+        return result;
+    }
+
+    const auto json = parseJsonObject(response->body);
+    if (!json.has_value()) {
+        result.errorMessage = response->statusCode == 200
+            ? std::wstring(L"Local admin API returned invalid auto-connect JSON.")
+            : std::wstring(L"Local admin API rejected the auto-connect request.");
+        result.summary = result.errorMessage;
+        return result;
+    }
+
+    const auto& body = *json;
+    result.succeeded = body.HasKey(L"succeeded") && body.GetNamedBoolean(L"succeeded", false);
+    result.providerId = body.GetNamedString(L"providerId", L"");
+    result.displayName = body.GetNamedString(L"displayName", L"");
+    result.baseUrl = body.GetNamedString(L"baseUrl", L"");
+    result.selectedModelId = body.GetNamedString(L"selectedModelId", L"");
+    result.summary = body.GetNamedString(L"summary", L"");
+    result.errorMessage = body.GetNamedString(L"errorMessage", L"");
+    result.totalLatencyMs = static_cast<int>(body.GetNamedNumber(L"totalLatencyMs", 0));
+
+    if (body.HasKey(L"steps")) {
+        const auto stepsArray = body.GetNamedArray(L"steps", JsonArray());
+        for (const auto& entry : stepsArray) {
+            if (entry.ValueType() != JsonValueType::Object) continue;
+            const auto obj = entry.GetObject();
+            ShellAutoConnectProviderStep step;
+            step.stage = obj.GetNamedString(L"stage", L"");
+            step.succeeded = obj.HasKey(L"succeeded") && obj.GetNamedBoolean(L"succeeded", false);
+            step.message = obj.GetNamedString(L"message", L"");
+            step.latencyMs = static_cast<int>(obj.GetNamedNumber(L"latencyMs", 0));
+            result.steps.push_back(std::move(step));
+        }
+    }
+
+    if (body.HasKey(L"discoveredModels")) {
+        const auto modelsArray = body.GetNamedArray(L"discoveredModels", JsonArray());
+        for (const auto& entry : modelsArray) {
+            if (entry.ValueType() != JsonValueType::Object) continue;
+            const auto obj = entry.GetObject();
+            ShellAutoConnectProviderModel model;
+            model.id = obj.GetNamedString(L"id", L"");
+            model.displayName = obj.GetNamedString(L"displayName", L"");
+            model.description = obj.GetNamedString(L"description", L"");
+            result.discoveredModels.push_back(std::move(model));
+        }
+    }
+
+    if (body.HasKey(L"assignmentsApplied")) {
+        const auto array = body.GetNamedArray(L"assignmentsApplied", JsonArray());
+        for (const auto& entry : array) {
+            if (entry.ValueType() == JsonValueType::String) {
+                result.assignmentsApplied.push_back(entry.GetString().c_str());
+            }
+        }
+    }
+    if (body.HasKey(L"assignmentsFailed")) {
+        const auto array = body.GetNamedArray(L"assignmentsFailed", JsonArray());
+        for (const auto& entry : array) {
+            if (entry.ValueType() == JsonValueType::String) {
+                result.assignmentsFailed.push_back(entry.GetString().c_str());
+            }
+        }
+    }
+
+    if (response->statusCode != 200 && result.errorMessage.empty()) {
+        result.errorMessage = L"Local admin API rejected the auto-connect request.";
+        result.summary = result.errorMessage;
+    }
+    return result;
+}
+
 ShellProviderExecutionRecord postProviderExecutionToAdminApi(const std::filesystem::path& configurationFile,
                                                              const ShellProviderExecutionRequest& request) {
     ShellProviderExecutionRecord record;
@@ -2392,6 +2515,24 @@ ShellOperationResult ShellRuntime::ManageForsettiModule(const std::wstring& modu
         L"/api/forsetti/modules/state",
         forsettiModuleActionToJson(moduleId, normalizedAction),
         L"Unable to update the Forsetti module state through the local admin API.");
+}
+
+ShellAutoConnectProviderResult ShellRuntime::AutoConnectProvider(
+    const ShellAutoConnectProviderRequest& request) const {
+    ShellAutoConnectProviderResult result;
+
+    if (request.kind.empty()) {
+        result.errorMessage = L"Select a provider kind before auto-connecting.";
+        result.summary = result.errorMessage;
+        return result;
+    }
+    if (request.credentials.empty()) {
+        result.errorMessage = L"Enter account credentials before auto-connecting.";
+        result.summary = result.errorMessage;
+        return result;
+    }
+
+    return postAutoConnectProviderToAdminApi(ResolveConfigurationFile(), request);
 }
 
 ShellProviderExecutionRecord ShellRuntime::ExecuteProviderTask(const ShellProviderExecutionRequest& request) const {

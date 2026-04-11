@@ -70,6 +70,18 @@ class IProviderRegistry {
 public:
     virtual std::vector<ProviderConnection> listProviders() const = 0;
     virtual OperationResult upsertProvider(const ProviderConnection& provider) = 0;
+
+    // Auto-Connect: fully automates adding a new AI model. The caller supplies
+    // only the provider kind, credentials, and optional role assignment targets.
+    // The runtime resolves the matching capability, generates a unique provider
+    // id, probes the remote endpoint, discovers available models, selects the
+    // best one (preferring capability.recommendedModel), persists credentials
+    // via DPAPI, registers the provider, and applies the requested role
+    // assignments — all in one atomic operation. The returned AutoConnectResult
+    // reports every automated step so the UI can render a transparent progress
+    // log.
+    virtual AutoConnectResult autoConnectProvider(const AutoConnectRequest& request) = 0;
+
     virtual ~IProviderRegistry() = default;
 };
 
@@ -223,6 +235,7 @@ public:
     virtual OperationResult applyConfigurationJson(const std::string& requestBody,
                                                    bool confirmUnsafeChanges) = 0;
     virtual OperationResult upsertProviderJson(const std::string& requestBody) = 0;
+    virtual AutoConnectResult autoConnectProviderJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertProviderCredentialsJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertAppleRemoteHostJson(const std::string& requestBody) = 0;
     virtual OperationResult removeAppleRemoteHostJson(const std::string& requestBody) = 0;

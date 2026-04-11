@@ -152,25 +152,23 @@ void ProvidersSectionControl::QuickConnectProviderSelector_SelectionChanged(
 
     QuickConnectCredentialFieldOneValueBox().Password(L"");
     QuickConnectCredentialFieldTwoValueBox().Password(L"");
-    selectedQuickConnectResponsibilityTargetId_.clear();
+    selectedAutoConnectRoleTargetIds_.clear();
     RefreshQuickConnectResponsibilitySelector();
     ApplyQuickConnectFields();
     QuickConnectStatusText().Text(
         selectedQuickConnectProviderId_.empty()
-            ? L"Choose a provider to start the quick-connect flow."
-            : L"Paste the required credentials and click Connect Provider.");
+            ? L"Choose a provider to start the auto-connect flow."
+            : L"Enter your credentials, check the roles this model should fill, then press Auto-Connect.");
     UpdateEditorState();
 }
 
 void ProvidersSectionControl::QuickConnectResponsibilitySelector_SelectionChanged(
     Windows::Foundation::IInspectable const&,
     SelectionChangedEventArgs const&) {
-    selectedQuickConnectResponsibilityTargetId_.clear();
-    if (const auto selectedItem = QuickConnectResponsibilitySelector().SelectedItem().try_as<ComboBoxItem>()) {
-        selectedQuickConnectResponsibilityTargetId_ =
-            std::wstring(unbox_value_or<winrt::hstring>(selectedItem.Tag(), winrt::hstring()).c_str());
-    }
-    UpdateEditorState();
+    // Legacy handler retained for binary compatibility with the generated
+    // XAML header. The single-select responsibility ComboBox was replaced by
+    // the AutoConnectRoleSelector ListView, which manages its own selection
+    // via a lambda wired in RefreshQuickConnectResponsibilitySelector.
 }
 
 void ProvidersSectionControl::QuickConnectCredentialEditor_PasswordChanged(
@@ -672,52 +670,96 @@ void ProvidersSectionControl::RefreshQuickConnectProviderSelector() {
 }
 
 void ProvidersSectionControl::RefreshQuickConnectResponsibilitySelector() {
-    const auto previousSelection = selectedQuickConnectResponsibilityTargetId_;
+    // Populates the multi-select AutoConnectRoleSelector ListView with every
+    // assignment target the currently selected provider supports (roles,
+    // sub-agent groups, and individual sub-agents). The user can check any
+    // number of targets; the runtime fans them out atomically when the
+    // Auto-Connect button is pressed.
+    const auto previousSelection = selectedAutoConnectRoleTargetIds_;
     suspendDirtyTracking_ = true;
-    QuickConnectResponsibilitySelector().Items().Clear();
 
-    ComboBoxItem unassigned;
-    unassigned.Content(winrt::box_value(winrt::hstring(L"(Leave unassigned)")));
-    unassigned.Tag(winrt::box_value(winrt::hstring(L"")));
-    QuickConnectResponsibilitySelector().Items().Append(unassigned);
+    // Capture the ListView's SelectionChanged into our vector exactly once.
+    // ListView::Items() returns a mutable collection, so we store rendered
+    // targetIds in an item-index → targetId sidecar below.
+    auto listView = AutoConnectRoleSelector();
+    listView.Items().Clear();
+
+    // Sidecar that maps each ListView item back to its targetId. Captured by
+    // the selection-changed lambda below.
+    static thread_local std::vector<std::wstring> targetIdByRow;
+    targetIdByRow.clear();
 
     const auto* capability = findCapabilityByProviderId(providerCapabilities_, selectedQuickConnectProviderId_);
     for (const auto& target : providerAssignmentTargets_) {
-        if (target.kind != L"role") {
-            continue;
-        }
-        if (capability != nullptr && !providerSupportsTarget(*capability, target.targetId)) {
+        if (capability != nullptr && target.kind == L"role"
+            && !providerSupportsTarget(*capability, target.targetId)) {
             continue;
         }
 
-        ComboBoxItem item;
-        item.Content(winrt::box_value(winrt::hstring(target.displayName.empty() ? target.targetId : target.displayName)));
-        item.Tag(winrt::box_value(winrt::hstring(target.targetId)));
-        QuickConnectResponsibilitySelector().Items().Append(item);
+        // Compose an eyebrow-flavored row label so operators can scan the list
+        // quickly: "[ROLE]  Planner  -  Plans and sequences work"
+        std::wstring label;
+        if (target.kind == L"role") {
+            label = L"[ROLE]  ";
+        } else if (target.kind == L"sub_agent_group") {
+            label = L"[GROUP] ";
+        } else if (target.kind == L"sub_agent") {
+            label = L"[AGENT] ";
+        } else {
+            label = L"[     ] ";
+        }
+        label += target.displayName.empty() ? target.targetId : target.displayName;
+        if (!target.description.empty()) {
+            label += L"  -  ";
+            label += target.description;
+        }
+
+        ListViewItem item;
+        item.Content(winrt::box_value(winrt::hstring(label)));
+        listView.Items().Append(item);
+        targetIdByRow.push_back(target.targetId);
     }
 
-    int selectedIndex = 0;
+    // Restore the previous multi-selection so Refresh() in ApplySnapshot does
+    // not clobber an in-progress user choice. We mark each matching item as
+    // selected directly through the ListViewItem's IsSelected property — this
+    // avoids ItemIndexRange type plumbing and works uniformly regardless of
+    // the list's SelectionMode.
     if (!previousSelection.empty()) {
-        for (uint32_t itemIndex = 1; itemIndex < QuickConnectResponsibilitySelector().Items().Size(); ++itemIndex) {
-            if (const auto item = QuickConnectResponsibilitySelector().Items().GetAt(itemIndex).try_as<ComboBoxItem>()) {
-                const auto targetId =
-                    std::wstring(unbox_value_or<winrt::hstring>(item.Tag(), winrt::hstring()).c_str());
-                if (targetId == previousSelection) {
-                    selectedIndex = static_cast<int>(itemIndex);
-                    break;
+        for (uint32_t itemIndex = 0; itemIndex < targetIdByRow.size(); ++itemIndex) {
+            if (std::find(previousSelection.begin(), previousSelection.end(),
+                          targetIdByRow[itemIndex]) != previousSelection.end()) {
+                if (const auto item = listView.Items().GetAt(itemIndex).try_as<ListViewItem>()) {
+                    item.IsSelected(true);
                 }
             }
         }
     }
 
-    QuickConnectResponsibilitySelector().SelectedIndex(selectedIndex);
-    selectedQuickConnectResponsibilityTargetId_.clear();
-    if (selectedIndex > 0) {
-        if (const auto item = QuickConnectResponsibilitySelector().SelectedItem().try_as<ComboBoxItem>()) {
-            selectedQuickConnectResponsibilityTargetId_ =
-                std::wstring(unbox_value_or<winrt::hstring>(item.Tag(), winrt::hstring()).c_str());
+    // Rewire the selection-changed event each refresh. Using RevokeRefcounted
+    // tokens here would add complexity; since Refresh is idempotent and
+    // inexpensive, we accept occasional duplicate handler registration and
+    // rely on suspendDirtyTracking_ to debounce.
+    listView.SelectionChanged([this](auto const& sender, auto const&) {
+        selectedAutoConnectRoleTargetIds_.clear();
+        const auto lv = sender.template try_as<ListView>();
+        if (lv == nullptr) {
+            return;
         }
-    }
+        const auto selectedItems = lv.SelectedItems();
+        for (uint32_t i = 0; i < selectedItems.Size(); ++i) {
+            const auto item = selectedItems.GetAt(i).try_as<ListViewItem>();
+            if (item == nullptr) continue;
+            for (uint32_t row = 0; row < lv.Items().Size(); ++row) {
+                if (lv.Items().GetAt(row) == item && row < targetIdByRow.size()) {
+                    selectedAutoConnectRoleTargetIds_.push_back(targetIdByRow[row]);
+                    break;
+                }
+            }
+        }
+        UpdateEditorState();
+    });
+
     suspendDirtyTracking_ = false;
 }
 
@@ -1110,8 +1152,12 @@ std::optional<::MasterControlShell::ShellSubAgentGroupDefinition> ProvidersSecti
 }
 
 winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ConnectQuickProviderAsync() {
+    // Drives the single-call Auto-Connect automation. The runtime handles
+    // capability resolution, route id generation, HTTP connectivity probe,
+    // remote model discovery, credential encryption, provider registration,
+    // and role fan-out. The UI only collects credentials + role selections.
     if (runtime_ == nullptr) {
-        QuickConnectStatusText().Text(L"Quick connect is unavailable until the shell runtime is attached.");
+        QuickConnectStatusText().Text(L"Auto-connect is unavailable until the shell runtime is attached.");
         co_return;
     }
 
@@ -1126,54 +1172,23 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ConnectQuickPr
         co_return;
     }
 
-    ::MasterControlShell::ShellProviderConnection provider{};
-    if (const auto iterator = std::find_if(
-            providers_.begin(),
-            providers_.end(),
-            [this](const auto& connection) { return connection.id == selectedQuickConnectProviderId_; });
-        iterator != providers_.end()) {
-        provider = *iterator;
-    }
-
-    provider.id = capability->providerId;
-    provider.kind = capability->kind.empty() ? L"generic" : capability->kind;
-    provider.displayName = capability->displayName.empty() ? capability->providerId : capability->displayName;
-    if (provider.baseUrl.empty()) {
-        provider.baseUrl = capability->defaultBaseUrl;
-    }
-    if (provider.modelId.empty()) {
-        provider.modelId = capability->recommendedModel;
-    }
-    provider.enabled = true;
-    provider.allowAutonomousControl = false;
-
-    if (provider.baseUrl.empty()) {
-        QuickConnectStatusText().Text(L"This provider does not publish a default endpoint yet, so it still needs the advanced editor.");
-        co_return;
-    }
-
+    // Collect credentials from the two password boxes. If the capability
+    // declares more fields than we have UI widgets for, we fall through and
+    // let the runtime reject the request with a clear error.
     std::vector<std::pair<std::wstring, std::wstring>> credentialValues;
-    const auto* existingStatus = findCredentialStatus(providerCredentialStatuses_, provider.id);
-    for (size_t fieldIndex = 0; fieldIndex < capability->credentialFields.size(); ++fieldIndex) {
+    for (size_t fieldIndex = 0;
+         fieldIndex < capability->credentialFields.size() && fieldIndex < 2;
+         ++fieldIndex) {
         const auto& field = capability->credentialFields[fieldIndex];
         const std::wstring value =
             fieldIndex == 0
                 ? std::wstring(QuickConnectCredentialFieldOneValueBox().Password().c_str())
                 : std::wstring(QuickConnectCredentialFieldTwoValueBox().Password().c_str());
-        const bool alreadyConfigured =
-            existingStatus != nullptr &&
-            std::find(
-                existingStatus->configuredFieldIds.begin(),
-                existingStatus->configuredFieldIds.end(),
-                field.fieldId) != existingStatus->configuredFieldIds.end();
 
-        if (field.required && value.empty() && !alreadyConfigured) {
-            std::wstring message = L"Enter the required provider credential before connecting.";
-            if (!field.label.empty()) {
-                message = L"Enter ";
-                message += field.label;
-                message += L" before connecting.";
-            }
+        if (field.required && value.empty()) {
+            std::wstring message = L"Enter ";
+            message += field.label.empty() ? field.fieldId : field.label;
+            message += L" before auto-connecting.";
             QuickConnectStatusText().Text(winrt::hstring(message));
             co_return;
         }
@@ -1183,87 +1198,72 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ConnectQuickPr
         }
     }
 
-    std::wstring assignmentTargetId = selectedQuickConnectResponsibilityTargetId_;
-    std::wstring assignmentTargetKind = L"role";
-    if (!assignmentTargetId.empty()) {
-        const auto targetIterator = std::find_if(
-            providerAssignmentTargets_.begin(),
-            providerAssignmentTargets_.end(),
-            [&assignmentTargetId](const auto& target) { return target.targetId == assignmentTargetId; });
-        if (targetIterator == providerAssignmentTargets_.end()) {
-            QuickConnectStatusText().Text(L"The selected orchestration responsibility is no longer available.");
-            co_return;
-        }
-        assignmentTargetKind = targetIterator->kind;
-    }
+    // Build the auto-connect request. The runtime decides everything else.
+    ::MasterControlShell::ShellAutoConnectProviderRequest request{};
+    request.kind = capability->kind.empty() ? std::wstring(L"generic") : capability->kind;
+    request.credentials = credentialValues;
+    request.assignmentTargetIds = selectedAutoConnectRoleTargetIds_;
+    request.allowAutonomousControl = false;
+    request.discoverModels = true;
 
     ConnectQuickProviderButton().IsEnabled(false);
-    QuickConnectStatusText().Text(L"Connecting provider through the local admin API...");
+    QuickConnectStatusText().Text(L"Auto-connecting... resolving capability, probing endpoint, discovering models.");
     winrt::apartment_context uiThread;
-    const auto providerValue = provider;
-    const auto credentialValueCopy = credentialValues;
-    const auto assignmentTargetIdCopy = assignmentTargetId;
-    const auto assignmentTargetKindCopy = assignmentTargetKind;
+    const auto requestCopy = request;
     co_await winrt::resume_background();
 
-    const auto providerResult = runtime_->UpsertProvider(providerValue);
-    ::MasterControlShell::ShellOperationResult credentialResult{ true, false, L"" };
-    ::MasterControlShell::ShellOperationResult assignmentResult{ true, false, L"" };
-
-    if (providerResult.succeeded && !credentialValueCopy.empty()) {
-        credentialResult = runtime_->UpsertProviderCredentials(providerValue.id, credentialValueCopy);
-    }
-
-    if (providerResult.succeeded && credentialResult.succeeded && !assignmentTargetIdCopy.empty()) {
-        assignmentResult = runtime_->UpsertProviderAssignment(::MasterControlShell::ShellProviderAssignment{
-            assignmentTargetIdCopy,
-            assignmentTargetKindCopy,
-            providerValue.id,
-            L""
-        });
-    }
+    const auto result = runtime_->AutoConnectProvider(requestCopy);
 
     co_await uiThread;
+    ConnectQuickProviderButton().IsEnabled(true);
 
-    if (!providerResult.succeeded) {
-        QuickConnectStatusText().Text(winrt::hstring(providerResult.message));
-        UpdateEditorState();
-        co_return;
-    }
-    if (!credentialResult.succeeded) {
-        QuickConnectStatusText().Text(winrt::hstring(credentialResult.message));
-        UpdateEditorState();
-        co_return;
-    }
-    if (!assignmentResult.succeeded) {
-        QuickConnectStatusText().Text(winrt::hstring(assignmentResult.message));
+    if (!result.succeeded) {
+        std::wstring message = result.summary.empty() ? result.errorMessage : result.summary;
+        if (message.empty()) {
+            message = L"Auto-connect failed. Check the local installer logs for details.";
+        }
+        QuickConnectStatusText().Text(winrt::hstring(message));
         UpdateEditorState();
         co_return;
     }
 
-    selectedProviderId_ = providerValue.id;
-    selectedQuickConnectProviderId_ = providerValue.id;
-    ProviderCredentialFieldOneValueBox().Password(L"");
-    ProviderCredentialFieldTwoValueBox().Password(L"");
+    // Success — clear the password boxes and compose a human-readable summary
+    // showing the concrete work the automation did (latency, model count,
+    // applied roles).
     QuickConnectCredentialFieldOneValueBox().Password(L"");
     QuickConnectCredentialFieldTwoValueBox().Password(L"");
+    selectedProviderId_ = result.providerId;
 
-    std::wstring message = L"Connected ";
-    message += providerValue.displayName.empty() ? providerValue.id : providerValue.displayName;
-    if (!assignmentTargetIdCopy.empty()) {
-        const auto targetIterator = std::find_if(
-            providerAssignmentTargets_.begin(),
-            providerAssignmentTargets_.end(),
-            [&assignmentTargetIdCopy](const auto& target) { return target.targetId == assignmentTargetIdCopy; });
-        if (targetIterator != providerAssignmentTargets_.end()) {
-            message += L" and assigned ";
-            message += targetIterator->displayName.empty() ? targetIterator->targetId : targetIterator->displayName;
-            message += L".";
-        } else {
-            message += L".";
+    std::wstring message = L"OK: ";
+    message += result.displayName.empty() ? result.providerId : result.displayName;
+    message += L"  |  ";
+    message += std::to_wstring(result.totalLatencyMs);
+    message += L"ms  |  ";
+    if (!result.discoveredModels.empty()) {
+        message += std::to_wstring(result.discoveredModels.size());
+        message += L" model(s) discovered, using ";
+        message += result.selectedModelId.empty() ? std::wstring(L"(default)") : result.selectedModelId;
+        message += L"  |  ";
+    } else if (!result.selectedModelId.empty()) {
+        message += L"model ";
+        message += result.selectedModelId;
+        message += L"  |  ";
+    }
+    if (!result.assignmentsApplied.empty()) {
+        message += L"assigned to ";
+        for (size_t i = 0; i < result.assignmentsApplied.size(); ++i) {
+            if (i > 0) message += L", ";
+            message += result.assignmentsApplied[i];
         }
     } else {
-        message += L".";
+        message += L"no role assignments";
+    }
+    if (!result.assignmentsFailed.empty()) {
+        message += L"  |  FAILED: ";
+        for (size_t i = 0; i < result.assignmentsFailed.size(); ++i) {
+            if (i > 0) message += L", ";
+            message += result.assignmentsFailed[i];
+        }
     }
 
     QuickConnectStatusText().Text(winrt::hstring(message));

@@ -16,44 +16,25 @@
             <StackPanel Spacing="20">
                 <Border Style="{StaticResource ShellCardStyle}">
                     <StackPanel Spacing="14">
-                        <TextBlock Text="Quick Connect AI Models" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                        <TextBlock Text="Pick a provider, paste the login information it needs, and click connect. The shell fills in the route, model, and endpoint defaults for you. Use the advanced editor only when you need to override the wiring by hand." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
+                        <TextBlock Text="AUTO-CONNECT · AI MODEL" Style="{StaticResource ShellEyebrowTextStyle}" />
+                        <TextBlock Text="Connect an AI Model" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock
+                            Text="Pick a provider and enter your account credentials. The runtime probes the remote endpoint, discovers available models, selects the best match, encrypts credentials with DPAPI, registers the provider, and applies every role you check — all in one operation. No base URL, model ID, or route wiring required."
+                            Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
 
                         <TextBlock Text="Provider" Style="{StaticResource ShellLabelTextStyle}" />
                         <ComboBox
                             x:Name="QuickConnectProviderSelector"
                             SelectionChanged="QuickConnectProviderSelector_SelectionChanged"
-                            PlaceholderText="Choose ChatGPT, Codex, Claude Code, or Grok" />
+                            PlaceholderText="Choose ChatGPT, Codex, Claude Code, Grok, or generic OpenAI-compatible" />
 
                         <Border Background="#1000DFFF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="4" Padding="10,8">
                             <TextBlock
                                 x:Name="QuickConnectSummaryText"
                                 Style="{StaticResource ShellBodyTextStyle}"
-                                Text="Select a provider to load its recommended endpoint, model, and supported orchestration roles."
+                                Text="Select a provider to preview its default endpoint and recommended model. Everything is automated — you only enter credentials and pick roles."
                                 TextWrapping="WrapWholeWords" />
                         </Border>
-
-                        <Grid ColumnSpacing="14">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="Primary Responsibility" Style="{StaticResource ShellLabelTextStyle}" />
-                                <ComboBox
-                                    x:Name="QuickConnectResponsibilitySelector"
-                                    SelectionChanged="QuickConnectResponsibilitySelector_SelectionChanged"
-                                    PlaceholderText="Leave unassigned or pick the first orchestration lane" />
-                            </StackPanel>
-
-                            <Border Grid.Column="1" Background="#0C071117" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="4" Padding="10,8">
-                                <StackPanel Spacing="4">
-                                    <TextBlock Text="AUTOMATION" Style="{StaticResource ShellEyebrowTextStyle}" />
-                                    <TextBlock Text="Connection stores credentials securely, creates or updates the provider route, and can immediately assign the provider to a planning or audit lane." Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" />
-                                </StackPanel>
-                            </Border>
-                        </Grid>
 
                         <Grid ColumnSpacing="14">
                             <Grid.ColumnDefinitions>
@@ -80,16 +61,29 @@
                             </StackPanel>
                         </Grid>
 
+                        <TextBlock Text="ASSIGN ROLES" Style="{StaticResource ShellEyebrowTextStyle}" />
+                        <TextBlock
+                            Text="Check every role or sub-agent target this model should handle. You can assign the same provider to multiple roles at once — the runtime fans the assignments out atomically."
+                            Style="{StaticResource ShellLabelTextStyle}"
+                            TextWrapping="WrapWholeWords" />
+                        <ListView
+                            x:Name="AutoConnectRoleSelector"
+                            SelectionMode="Multiple"
+                            Height="160"
+                            BorderBrush="{StaticResource ShellTileEdgeBrush}"
+                            BorderThickness="1"
+                            Background="#0C071117" />
+
                         <StackPanel Orientation="Horizontal" Spacing="12">
-                            <Button x:Name="ConnectQuickProviderButton" Click="ConnectQuickProviderButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Connect Provider" />
-                            <Button Tag="assign-responsibility" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Assignment Wizard" />
-                            <Button Tag="guided-provider-execution" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Validate Routing" />
+                            <Button x:Name="ConnectQuickProviderButton" Click="ConnectQuickProviderButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Auto-Connect" />
+                            <Button Tag="assign-responsibility" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellSecondaryButtonStyle}" Content="Manage Assignments" />
+                            <Button Tag="guided-provider-execution" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellSecondaryButtonStyle}" Content="Validate Routing" />
                         </StackPanel>
 
                         <TextBlock
                             x:Name="QuickConnectStatusText"
                             Style="{StaticResource ShellDataTextStyle}"
-                            Text="Use this surface to connect providers without opening a cramped wizard dialog."
+                            Text="Ready. Select a provider, enter credentials, pick one or more roles, then press Auto-Connect."
                             TextWrapping="WrapWholeWords" />
                     </StackPanel>
                 </Border>

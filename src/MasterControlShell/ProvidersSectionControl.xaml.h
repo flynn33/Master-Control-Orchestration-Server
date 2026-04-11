@@ -127,7 +127,9 @@ private:
     int selectedProviderIndex_ = -1;
     std::wstring selectedProviderId_;
     std::wstring selectedQuickConnectProviderId_;
-    std::wstring selectedQuickConnectResponsibilityTargetId_;
+    // Multi-select target ids chosen in the AutoConnectRoleSelector ListView.
+    // Replaces the former single-responsibility ComboBox selection.
+    std::vector<std::wstring> selectedAutoConnectRoleTargetIds_;
     int selectedSubAgentGroupIndex_ = -1;
     std::wstring selectedSubAgentGroupId_;
     int selectedAssignmentTargetIndex_ = -1;

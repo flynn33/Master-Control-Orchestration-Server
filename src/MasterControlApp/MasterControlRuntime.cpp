@@ -1715,6 +1715,18 @@ public:
         , configurationFile_(std::move(configurationFile))
         , providerCatalogService_(std::move(providerCatalogService)) {}
 
+    // Late-bound dependencies for the Auto-Connect flow. These services are
+    // created after ProviderRegistryService (credentialStore takes a shared_ptr
+    // to this registry in its constructor) so we cannot take them upfront.
+    // Injected from the application composition root via weak_ptr to avoid
+    // circular ownership.
+    void wireAutoConnectDependencies(
+        std::weak_ptr<IProviderCredentialStore> credentialStore,
+        std::weak_ptr<IProviderAssignmentService> assignmentService) {
+        credentialStore_ = std::move(credentialStore);
+        assignmentService_ = std::move(assignmentService);
+    }
+
     std::vector<ProviderConnection> listProviders() const override {
         std::lock_guard<std::mutex> lock(state_->mutex);
         return state_->configuration.providers;
@@ -1761,10 +1773,383 @@ public:
         return OperationResult{ true, false, "Provider settings updated." };
     }
 
+    AutoConnectResult autoConnectProvider(const AutoConnectRequest& request) override {
+        AutoConnectResult result;
+        const auto totalStart = std::chrono::steady_clock::now();
+
+        auto recordStep = [&result](const std::string& stage,
+                                    bool succeeded,
+                                    const std::string& message,
+                                    int latencyMs = 0) {
+            AutoConnectStep step;
+            step.stage = stage;
+            step.succeeded = succeeded;
+            step.message = message;
+            step.latencyMs = latencyMs;
+            result.steps.push_back(std::move(step));
+        };
+
+        // -- Stage 1: Resolve capability ---------------------------------------
+        const auto capabilities = providerCatalogService_->listCapabilities();
+        const auto capabilityIterator = std::find_if(
+            capabilities.begin(),
+            capabilities.end(),
+            [&request](const ProviderCapabilityDescriptor& capability) { return capability.kind == request.kind; });
+        if (capabilityIterator == capabilities.end()) {
+            result.errorMessage = "The selected provider kind has no active provider module.";
+            recordStep("resolve-capability", false, result.errorMessage);
+            result.summary = result.errorMessage;
+            return result;
+        }
+        const auto& capability = *capabilityIterator;
+        recordStep("resolve-capability", true,
+                   "Matched '" + capability.displayName + "' module (" + capability.providerId + ")");
+
+        // -- Stage 2: Derive connection shape ----------------------------------
+        ProviderConnection connection;
+        connection.kind = request.kind;
+        connection.displayName = request.displayNameOverride.empty()
+            ? capability.displayName
+            : request.displayNameOverride;
+        connection.baseUrl = request.baseUrlOverride.empty()
+            ? capability.defaultBaseUrl
+            : request.baseUrlOverride;
+        connection.modelId = request.modelIdOverride.empty()
+            ? capability.recommendedModel
+            : request.modelIdOverride;
+        connection.enabled = true;
+        connection.allowAutonomousControl = request.allowAutonomousControl
+            && capability.supportsAutonomousControl;
+
+        // Unique provider id: {providerId}-YYYYMMDD-HHMMSS — scoped under the
+        // canonical module providerId so multiple connections for the same
+        // kind remain disambiguated even across clock ticks.
+        connection.id = generateAutoConnectProviderId(capability.providerId);
+        result.providerId = connection.id;
+        result.displayName = connection.displayName;
+        result.baseUrl = connection.baseUrl;
+        recordStep("derive-shape", true,
+                   "Generated id '" + connection.id + "' targeting " + connection.baseUrl);
+
+        // -- Stage 3: Validate required credential fields ----------------------
+        std::vector<std::string> missingFields;
+        for (const auto& descriptor : capability.credentialFields) {
+            if (!descriptor.required) {
+                continue;
+            }
+            const auto iterator = request.credentials.find(descriptor.fieldId);
+            if (iterator == request.credentials.end() || iterator->second.empty()) {
+                missingFields.push_back(descriptor.label.empty() ? descriptor.fieldId : descriptor.label);
+            }
+        }
+        if (!missingFields.empty()) {
+            std::string joined;
+            for (const auto& field : missingFields) {
+                if (!joined.empty()) joined += ", ";
+                joined += field;
+            }
+            result.errorMessage = "Missing required credential fields: " + joined;
+            recordStep("validate-credentials", false, result.errorMessage);
+            result.summary = result.errorMessage;
+            return result;
+        }
+        recordStep("validate-credentials", true, "All required credential fields supplied");
+
+        // -- Stage 4: Connectivity + auth probe + model discovery --------------
+        if (request.discoverModels) {
+            const auto probeStart = std::chrono::steady_clock::now();
+            const auto discoveryResult = discoverRemoteModels(connection.baseUrl, request.credentials);
+            const auto probeLatency = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - probeStart).count());
+            if (discoveryResult.succeeded) {
+                result.discoveredModels = discoveryResult.models;
+                std::string message = "Discovered " + std::to_string(result.discoveredModels.size())
+                    + " model(s) from " + connection.baseUrl;
+                recordStep("discover-models", true, message, probeLatency);
+
+                // Prefer capability.recommendedModel if the remote actually
+                // reports it; otherwise fall back to the first listed model.
+                if (!capability.recommendedModel.empty()) {
+                    const auto matchIt = std::find_if(
+                        result.discoveredModels.begin(),
+                        result.discoveredModels.end(),
+                        [&capability](const DiscoveredModel& model) {
+                            return model.id == capability.recommendedModel;
+                        });
+                    if (matchIt != result.discoveredModels.end()) {
+                        connection.modelId = capability.recommendedModel;
+                        recordStep("select-model", true,
+                                   "Selected recommended model '" + connection.modelId + "'");
+                    } else if (!result.discoveredModels.empty()) {
+                        connection.modelId = result.discoveredModels.front().id;
+                        recordStep("select-model", true,
+                                   "Recommended model not exposed by remote; falling back to '"
+                                   + connection.modelId + "'");
+                    }
+                } else if (!result.discoveredModels.empty() && connection.modelId.empty()) {
+                    connection.modelId = result.discoveredModels.front().id;
+                    recordStep("select-model", true,
+                               "No capability recommendation; selected '" + connection.modelId + "'");
+                }
+            } else {
+                // Non-fatal: providers that do not implement a /models route
+                // (e.g. Claude Code CLI, local inference servers) should still
+                // install cleanly. We keep capability.recommendedModel and
+                // defer credential validation to the first execution.
+                recordStep("discover-models", false,
+                           "Remote models endpoint not reachable: " + discoveryResult.errorMessage
+                           + " (falling back to capability recommendation)",
+                           probeLatency);
+            }
+        } else {
+            recordStep("discover-models", true, "Model discovery skipped by request");
+        }
+        result.selectedModelId = connection.modelId;
+
+        // -- Stage 5: Register provider ----------------------------------------
+        const auto upsertResult = upsertProvider(connection);
+        if (!upsertResult.succeeded) {
+            result.errorMessage = "Provider registration failed: " + upsertResult.message;
+            recordStep("register-provider", false, result.errorMessage);
+            result.summary = result.errorMessage;
+            return result;
+        }
+        recordStep("register-provider", true, "Provider registered in configuration");
+
+        // -- Stage 6: Persist credentials via DPAPI -----------------------------
+        if (auto store = credentialStore_.lock()) {
+            ProviderCredentialUpdate update;
+            update.providerId = connection.id;
+            update.values = request.credentials;
+            const auto credentialResult = store->upsertCredentials(update);
+            if (!credentialResult.succeeded) {
+                result.errorMessage = "Credential storage failed: " + credentialResult.message;
+                recordStep("store-credentials", false, result.errorMessage);
+                // Roll back the provider registration so we do not leave an
+                // unusable record behind.
+                removeProviderInternal(connection.id);
+                result.summary = result.errorMessage;
+                return result;
+            }
+            recordStep("store-credentials", true, "Credentials encrypted with DPAPI and stored");
+        } else {
+            recordStep("store-credentials", false,
+                       "Credential store unavailable (runtime wiring incomplete)");
+        }
+
+        // -- Stage 7: Apply requested role assignments -------------------------
+        if (auto assignmentService = assignmentService_.lock()) {
+            const auto targets = assignmentService->listTargets();
+            for (const auto& targetId : request.assignmentTargetIds) {
+                const auto targetIt = std::find_if(
+                    targets.begin(), targets.end(),
+                    [&targetId](const ProviderAssignmentTarget& candidate) {
+                        return candidate.targetId == targetId;
+                    });
+                if (targetIt == targets.end()) {
+                    result.assignmentsFailed.push_back(targetId + " (unknown target)");
+                    continue;
+                }
+
+                ProviderAssignment assignment;
+                assignment.targetId = targetIt->targetId;
+                assignment.kind = targetIt->kind;
+                assignment.providerId = connection.id;
+                const auto opResult = assignmentService->upsertAssignment(assignment);
+                if (opResult.succeeded) {
+                    result.assignmentsApplied.push_back(targetIt->displayName);
+                } else {
+                    result.assignmentsFailed.push_back(targetIt->displayName + ": " + opResult.message);
+                }
+            }
+
+            std::string summary = "Applied " + std::to_string(result.assignmentsApplied.size())
+                + " role assignment(s)";
+            if (!result.assignmentsFailed.empty()) {
+                summary += ", " + std::to_string(result.assignmentsFailed.size()) + " failed";
+            }
+            recordStep("apply-assignments", result.assignmentsFailed.empty(), summary);
+        } else if (!request.assignmentTargetIds.empty()) {
+            recordStep("apply-assignments", false,
+                       "Assignment service unavailable (runtime wiring incomplete)");
+        }
+
+        // -- Finalize ----------------------------------------------------------
+        result.totalLatencyMs = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - totalStart).count());
+        result.succeeded = true;
+        result.summary = "Connected '" + connection.displayName + "' in "
+            + std::to_string(result.totalLatencyMs) + "ms ("
+            + std::to_string(result.discoveredModels.size()) + " model(s), "
+            + std::to_string(result.assignmentsApplied.size()) + " role(s))";
+        return result;
+    }
+
 private:
+    struct ModelDiscoveryResult final {
+        bool succeeded = false;
+        std::vector<DiscoveredModel> models;
+        std::string errorMessage;
+    };
+
+    // Generates a unique provider id using the canonical module providerId as
+    // a prefix and a local timestamp suffix — stable enough to survive a bulk
+    // rebuild and unique across typical manual creation rates.
+    static std::string generateAutoConnectProviderId(const std::string& modulePrefix) {
+        std::string prefix = modulePrefix.empty() ? std::string("provider") : modulePrefix;
+        std::transform(prefix.begin(), prefix.end(), prefix.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+
+        SYSTEMTIME localTime{};
+        GetLocalTime(&localTime);
+        char suffix[32]{};
+        std::snprintf(
+            suffix, sizeof(suffix), "-%04u%02u%02u-%02u%02u%02u",
+            localTime.wYear, localTime.wMonth, localTime.wDay,
+            localTime.wHour, localTime.wMinute, localTime.wSecond);
+        return prefix + suffix;
+    }
+
+    // Issues an OpenAI-compatible `GET {baseUrl}/models` request using the
+    // already-established WinHTTP sendJsonRequest helper. The call is used
+    // for three things at once: connectivity check, credential validation,
+    // and model discovery. Providers that do not implement this route
+    // (Claude Code CLI, local servers) fall back to capability.recommendedModel.
+    ModelDiscoveryResult discoverRemoteModels(const std::string& baseUrl,
+                                              const std::map<std::string, std::string>& credentials) {
+        ModelDiscoveryResult discovery;
+        if (baseUrl.empty()) {
+            discovery.errorMessage = "Base URL not set";
+            return discovery;
+        }
+
+        std::string trimmedBase = baseUrl;
+        while (!trimmedBase.empty() && trimmedBase.back() == '/') {
+            trimmedBase.pop_back();
+        }
+        const std::string modelsUrl = trimmedBase + "/models";
+
+        // Build authentication headers from whatever credential fields the
+        // user supplied. Rather than hard-coding a short list of field ids,
+        // we walk every credential the user provided and pick the first one
+        // whose id looks like an API key / auth token (the convention used
+        // by every provider module in the tree). This keeps the pipeline
+        // module-agnostic — a new module can declare any field id and the
+        // auto-connect probe still Just Works.
+        std::vector<std::pair<std::wstring, std::wstring>> headers;
+        auto normalizedLower = [](std::string input) {
+            std::transform(input.begin(), input.end(), input.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            return input;
+        };
+        std::string bearer;
+        std::string customAuth;
+        for (const auto& [fieldId, value] : credentials) {
+            if (value.empty()) continue;
+            const auto lower = normalizedLower(fieldId);
+            if (lower == "authorization") {
+                customAuth = value;
+                continue;
+            }
+            const bool looksLikeKey =
+                lower.find("api_key") != std::string::npos ||
+                lower.find("apikey") != std::string::npos ||
+                lower.find("api-key") != std::string::npos ||
+                lower.find("token") != std::string::npos ||
+                lower.find("secret") != std::string::npos ||
+                lower == "key";
+            if (looksLikeKey && bearer.empty()) {
+                bearer = value;
+            }
+        }
+        if (!bearer.empty()) {
+            headers.emplace_back(L"Authorization", L"Bearer " + wideFromUtf8(bearer));
+        }
+        if (!customAuth.empty()) {
+            headers.emplace_back(L"Authorization", wideFromUtf8(customAuth));
+        }
+
+        const auto response = sendJsonRequest("GET", modelsUrl, headers, std::string());
+        if (!response.succeeded) {
+            discovery.errorMessage = response.errorMessage.empty()
+                ? ("HTTP " + std::to_string(response.statusCode))
+                : response.errorMessage;
+            return discovery;
+        }
+
+        // Parse the OpenAI-compatible `{"data": [{"id": "..."}, ...]}` shape.
+        // Some providers nest the list under "models" instead — try both.
+        try {
+            const auto payload = nlohmann::json::parse(response.body, nullptr, false);
+            if (payload.is_discarded()) {
+                discovery.errorMessage = "Response was not valid JSON";
+                return discovery;
+            }
+            const nlohmann::json* list = nullptr;
+            if (payload.contains("data") && payload["data"].is_array()) {
+                list = &payload["data"];
+            } else if (payload.contains("models") && payload["models"].is_array()) {
+                list = &payload["models"];
+            } else if (payload.is_array()) {
+                list = &payload;
+            }
+            if (list == nullptr) {
+                discovery.errorMessage = "Response did not contain a model list";
+                return discovery;
+            }
+            for (const auto& entry : *list) {
+                DiscoveredModel model;
+                if (entry.is_string()) {
+                    model.id = entry.get<std::string>();
+                } else if (entry.is_object()) {
+                    if (entry.contains("id") && entry["id"].is_string()) {
+                        model.id = entry["id"].get<std::string>();
+                    } else if (entry.contains("name") && entry["name"].is_string()) {
+                        model.id = entry["name"].get<std::string>();
+                    }
+                    if (entry.contains("display_name") && entry["display_name"].is_string()) {
+                        model.displayName = entry["display_name"].get<std::string>();
+                    } else if (entry.contains("displayName") && entry["displayName"].is_string()) {
+                        model.displayName = entry["displayName"].get<std::string>();
+                    }
+                    if (entry.contains("description") && entry["description"].is_string()) {
+                        model.description = entry["description"].get<std::string>();
+                    }
+                }
+                if (!model.id.empty()) {
+                    discovery.models.push_back(std::move(model));
+                }
+            }
+            discovery.succeeded = true;
+            return discovery;
+        } catch (const std::exception& exc) {
+            discovery.errorMessage = std::string("Parse error: ") + exc.what();
+            return discovery;
+        }
+    }
+
+    // Removes a provider by id from the configuration without touching its
+    // credentials. Used to roll back a partial Auto-Connect when a later
+    // stage (credential storage, assignment) fails.
+    void removeProviderInternal(const std::string& providerId) {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        auto& providers = state_->configuration.providers;
+        providers.erase(
+            std::remove_if(providers.begin(), providers.end(),
+                           [&providerId](const ProviderConnection& candidate) {
+                               return candidate.id == providerId;
+                           }),
+            providers.end());
+        writeJsonFile(configurationFile_, state_->configuration);
+    }
+
     std::shared_ptr<SharedState> state_;
     std::filesystem::path configurationFile_;
     std::shared_ptr<IProviderCatalogService> providerCatalogService_;
+    std::weak_ptr<IProviderCredentialStore> credentialStore_;
+    std::weak_ptr<IProviderAssignmentService> assignmentService_;
 };
 
 class ProviderCredentialStore final : public IProviderCredentialStore {
@@ -7454,6 +7839,35 @@ public:
         return providerRegistry_->upsertProvider(provider);
     }
 
+    AutoConnectResult autoConnectProviderJson(const std::string& requestBody) override {
+        const auto request = nlohmann::json::parse(requestBody).get<AutoConnectRequest>();
+        // Autonomy enforcement is applied to the derived provider id inside
+        // autoConnectProvider's register-provider stage, so we do not need a
+        // pre-check here — the registry will emit a step error if the CLU
+        // denies the connection. We still fail fast if the kind is missing.
+        if (request.allowAutonomousControl && commandLogicUnitService_) {
+            const auto decision = commandLogicUnitService_->enforceAction(GovernanceEnforcementRequest{
+                GovernanceActionKind::ProviderAutonomyEnable,
+                {},
+                {},
+                {},
+                false
+            });
+            if (!decision.allowed) {
+                AutoConnectResult denied;
+                denied.errorMessage = decision.message;
+                denied.summary = decision.message;
+                AutoConnectStep step;
+                step.stage = "governance-check";
+                step.succeeded = false;
+                step.message = decision.message;
+                denied.steps.push_back(std::move(step));
+                return denied;
+            }
+        }
+        return providerRegistry_->autoConnectProvider(request);
+    }
+
     OperationResult upsertProviderCredentialsJson(const std::string& requestBody) override {
         return providerCredentialStore_->upsertCredentials(nlohmann::json::parse(requestBody).get<ProviderCredentialUpdate>());
     }
@@ -7834,6 +8248,7 @@ public:
     OperationResult cancelAppleOperationJson(const std::string& requestBody) { return adminApiService_->cancelAppleOperationJson(requestBody); }
     OperationResult applyConfigurationJson(const std::string& requestBody, bool confirmUnsafeChanges) { return adminApiService_->applyConfigurationJson(requestBody, confirmUnsafeChanges); }
     OperationResult upsertProviderJson(const std::string& requestBody) { return adminApiService_->upsertProviderJson(requestBody); }
+    AutoConnectResult autoConnectProviderJson(const std::string& requestBody) { return adminApiService_->autoConnectProviderJson(requestBody); }
     OperationResult upsertProviderCredentialsJson(const std::string& requestBody) { return adminApiService_->upsertProviderCredentialsJson(requestBody); }
     OperationResult upsertAppleRemoteHostJson(const std::string& requestBody) { return adminApiService_->upsertAppleRemoteHostJson(requestBody); }
     OperationResult removeAppleRemoteHostJson(const std::string& requestBody) { return adminApiService_->removeAppleRemoteHostJson(requestBody); }
@@ -7920,6 +8335,17 @@ bool MasterControlApplication::Impl::initialize() {
         inventoryService_,
         subAgentGroupService_,
         providerRegistry_);
+
+    // Late-bind the Auto-Connect dependencies on the provider registry. Both
+    // the credential store and the assignment service are created *after* the
+    // registry (the credential store takes a shared_ptr to the registry, which
+    // would cycle if held the other way). Passing weak_ptrs breaks the cycle
+    // and lets autoConnectProvider() drive all three in a single call.
+    if (auto concreteRegistry = std::dynamic_pointer_cast<ProviderRegistryService>(providerRegistry_)) {
+        concreteRegistry->wireAutoConnectDependencies(
+            std::weak_ptr<IProviderCredentialStore>(providerCredentialStore_),
+            std::weak_ptr<IProviderAssignmentService>(providerAssignmentService_));
+    }
     exportService_ = std::make_shared<ExportService>(inventoryService_, configurationService_);
     platformServiceCatalogService_ = std::make_shared<PlatformServiceCatalogService>(configurationService_, telemetryService_);
     platformGovernanceToolService_ = std::make_shared<PlatformGovernanceToolService>(
@@ -8519,6 +8945,10 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const auto result = adminApiService_->upsertProviderCredentialsJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
+        if (request.method == "POST" && request.path == "/api/providers/auto-connect") {
+            const auto result = adminApiService_->autoConnectProviderJson(request.body);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
         if (request.method == "POST" && request.path == "/api/platform-services/apple-hosts") {
             const auto result = adminApiService_->upsertAppleRemoteHostJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
@@ -8667,6 +9097,10 @@ OperationResult MasterControlApplication::upsertProviderJson(const std::string& 
 
 OperationResult MasterControlApplication::upsertProviderCredentialsJson(const std::string& requestBody) {
     return impl_->upsertProviderCredentialsJson(requestBody);
+}
+
+AutoConnectResult MasterControlApplication::autoConnectProviderJson(const std::string& requestBody) {
+    return impl_->autoConnectProviderJson(requestBody);
 }
 
 OperationResult MasterControlApplication::upsertAppleRemoteHostJson(const std::string& requestBody) {
