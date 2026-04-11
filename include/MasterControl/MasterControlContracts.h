@@ -22,6 +22,11 @@ class IRuntimeInventoryService {
 public:
     virtual std::vector<RuntimeEndpoint> listEndpoints() = 0;
     virtual void refresh() = 0;
+    // Non-blocking variant: fires the endpoint probe loop on a detached
+    // background thread. Used by mutating handlers (upsertMcpServer,
+    // upsertSubAgent, upsertProvider, remove*) so the admin API doesn't
+    // block for 10+ seconds while N endpoints are TCP-probed sequentially.
+    virtual void refreshAsync() = 0;
     virtual ~IRuntimeInventoryService() = default;
 };
 

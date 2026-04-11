@@ -1523,6 +1523,27 @@ public:
 
     void refresh() override;
 
+    // Kicks refresh() off on a detached background thread so the calling
+    // admin API handler returns immediately. The service instance lives
+    // for the entire process lifetime (owned by MasterControlApplication::Impl)
+    // so the detached thread's `this` pointer is stable until shutdown.
+    // Under load, a pending flag prevents stacking redundant refresh
+    // threads — the second caller just coalesces onto the in-flight one.
+    void refreshAsync() override {
+        bool expected = false;
+        if (!refreshPending_.compare_exchange_strong(expected, true)) {
+            return; // a refresh is already in flight
+        }
+        std::thread([this]() {
+            try {
+                refresh();
+            } catch (...) {
+                // swallow — detached background work must never terminate()
+            }
+            refreshPending_.store(false);
+        }).detach();
+    }
+
 private:
     static EndpointStatus probeEndpoint(const std::string& host, uint16_t port);
     static bool sameEndpointConfiguration(const std::vector<RuntimeEndpoint>& left,
@@ -1533,6 +1554,7 @@ private:
     std::vector<RuntimeEndpoint> endpoints_;
     std::chrono::steady_clock::time_point lastRefreshAt_{};
     std::chrono::seconds refreshInterval_{ 15 };
+    std::atomic_bool refreshPending_{ false };
 };
 
 void RuntimeInventoryService::refresh() {
@@ -2400,7 +2422,7 @@ public:
 
             writeJsonFile(configurationFile_, state_->configuration);
         }
-        inventoryService_->refresh();
+        inventoryService_->refreshAsync();
         return OperationResult{ true, false, "Custom sub-agent settings updated." };
     }
 
@@ -2469,7 +2491,7 @@ public:
 
             writeJsonFile(configurationFile_, state_->configuration);
         }
-        inventoryService_->refresh();
+        inventoryService_->refreshAsync();
         return OperationResult{ true, false, "Custom sub-agent removed." };
     }
 
@@ -2558,7 +2580,7 @@ public:
 
             writeJsonFile(configurationFile_, state_->configuration);
         }
-        inventoryService_->refresh();
+        inventoryService_->refreshAsync();
         return OperationResult{ true, false, "Custom MCP server settings updated." };
     }
 
@@ -2586,7 +2608,7 @@ public:
             endpoints.erase(iterator);
             writeJsonFile(configurationFile_, state_->configuration);
         }
-        inventoryService_->refresh();
+        inventoryService_->refreshAsync();
         return OperationResult{ true, false, "Custom MCP server removed." };
     }
 
@@ -2618,11 +2640,19 @@ public:
             return OperationResult{ false, false, "Sub-agent group display name is required." };
         }
 
-        const auto endpoints = inventoryService_->listEndpoints();
+        // Read sub-agent IDs from the configuration state directly rather
+        // than the inventoryService cache. The inventory refreshes the cache
+        // asynchronously now (to avoid blocking upsert handlers on slow
+        // TCP probes), which means a sub-agent upserted milliseconds ago
+        // may not yet be visible in listEndpoints(). The configuration
+        // state is the source of truth and is updated synchronously.
         std::set<std::string> subAgentIds;
-        for (const auto& endpoint : endpoints) {
-            if (endpoint.kind == EndpointKind::SubAgent && !endpoint.id.empty()) {
-                subAgentIds.insert(endpoint.id);
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            for (const auto& endpoint : state_->configuration.activeProfile.seededEndpoints) {
+                if (endpoint.kind == EndpointKind::SubAgent && !endpoint.id.empty()) {
+                    subAgentIds.insert(endpoint.id);
+                }
             }
         }
 
@@ -7725,7 +7755,7 @@ public:
         , surfaceService_(std::move(surfaceService)) {}
 
     DashboardSnapshot snapshot() override {
-        inventoryService_->refresh();
+        inventoryService_->refreshAsync();
 
         DashboardSnapshot snapshot;
         snapshot.telemetry = telemetryService_->captureSnapshot();
