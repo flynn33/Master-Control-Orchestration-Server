@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.2.1",
-  "current_tag": "v0.2.1",
+  "current_version": "0.2.2",
+  "current_tag": "v0.2.2",
   "released_at": "2026-04-11",
-  "last_release_commit": "f65bebca14de24174b8931750cb4e948d36aa1e1",
+  "last_release_commit": "f2af6b93c4c61fd26d5c1b0a8277c542d270e9c0",
   "history": [
+    {
+      "version": "0.2.2",
+      "tag": "v0.2.2",
+      "released_at": "2026-04-11",
+      "commit": "f2af6b93c4c61fd26d5c1b0a8277c542d270e9c0",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "Fully automate AI model integration via Auto-Connect (flynn33)"
+      ]
+    },
     {
       "version": "0.2.1",
       "tag": "v0.2.1",

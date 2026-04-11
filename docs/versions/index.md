@@ -1,9 +1,10 @@
 # Version Index
 
-Current tracked release: `v0.2.1`
+Current tracked release: `v0.2.2`
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| [v0.2.2](v0.2.2.md) | 2026-04-11 | Automated patch release for Master Control Orchestration Server. |
 | [v0.2.1](v0.2.1.md) | 2026-04-11 | Automated patch release for Master Control Orchestration Server. |
 | [v0.2.0](v0.2.0.md) | 2026-04-11 | Tron-density UX rework, validated end-to-end on Windows Server 2022. |
 | [v0.1.66](v0.1.66.md) | 2026-04-10 | Automated patch release for Master Control Orchestration Server. |
