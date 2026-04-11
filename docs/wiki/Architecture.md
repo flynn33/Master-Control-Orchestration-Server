@@ -98,9 +98,9 @@ registered into the runtime at startup. The current catalog:
 | `com.mastercontrol.environment-discovery` | Environment Discovery | service | `0.1.0` | Windows |
 | `com.mastercontrol.export` | Export | service | `0.1.0` | Windows |
 | `com.mastercontrol.host-telemetry` | Host Telemetry | service | `0.1.0` | Windows |
-| `com.mastercontrol.installer-import` | Installer Import | service | `0.1.0` | Windows |
 | `com.mastercontrol.gateway-ios` | iOS Gateway | service | `0.1.0` | Windows |
 | `com.mastercontrol.governance-ios` | iOS Governance MCP Server | service | `0.1.0` | Windows |
+| `com.mastercontrol.installer-import` | Installer Import | service | `0.1.0` | Windows |
 | `com.mastercontrol.gateway-macos` | Mac Gateway | service | `0.1.0` | Windows |
 | `com.mastercontrol.governance-macos` | Mac Governance MCP Server | service | `0.1.0` | Windows |
 | `com.mastercontrol.provider-integration` | Provider Integration | service | `0.1.0` | Windows |

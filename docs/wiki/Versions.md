@@ -11,22 +11,13 @@ analyzes commit history to decide between patch / minor / major.
 
 | Field | Value |
 | --- | --- |
-| **Version** | `v0.2.0` |
+| **Version** | `v0.2.7` |
 | **Released** | `2026-04-11` |
-| **Summary** | Tron-density UX rework, validated end-to-end on Windows Server 2022. |
+| **Summary** | Automated patch release for Master Control Orchestration Server. |
 
 ### Highlights
 
-- Tron-theme the setup launcher progress window (cyan accent bar, Bahnschrift fonts, accent marquee) to match the shell's App.xaml palette.
-- Expand shell resource dictionary with status chip, tonal button variants, compact tiles, sub-agent badge, and live-clock text styles.
-- Redesign OverviewSectionControl around hero card + operational snapshot + narrative grid + authored-surfaces legend.
-- Add Tron command-center density to MainWindow: live clock (HH:MM:SS) in the title bar, sub-agent footer row (SENTINEL/ARCHITECT/FORGE/SCRIBE/RECON/NEXUS/WATCHDOG), and a ScrollViewer wrapping the main content so the full layout reaches low-resolution displays.
-- Add browser dashboard polish layer: prefers-reduced-motion, focus-visible outlines, accent pulse animation, <dialog>::backdrop blur.
-- Add one-shot ProgramData migration from legacy MasterControlProgram to MasterControlOrchestrationServer path, with safe fallback if the rename cannot complete.
-- Update GitHub repository URL references to flynn33/Master-Control-Orchestration-Server.
-- Guard Package-MasterControlOrchestrationServer.ps1 git calls so packaging works outside a git repo.
-- Update PlatformToolset from v143 to v145 so the shell builds on Visual Studio 2026.
-- Validated end-to-end on Windows Server 2022 Datacenter (21H2, build 20348): cmake configure + build (0 errors, 0 warnings), ctest 4/4 green, package staged (44 MB), unattended install smoke CLEAN, shell launches and renders Tron UI with live clock, bootstrapper preflight/validate reports valid:true.
+- docs(wiki): overhaul wiki agent and source pages (flynn33)
 
 ---
 
@@ -53,6 +44,13 @@ Versions are tracked in `VERSION.json` and tagged as GitHub Releases.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| `v0.2.7` | `2026-04-11` | Automated patch release for Master Control Orchestration Server. |
+| `v0.2.6` | `2026-04-11` | Automated patch release for Master Control Orchestration Server. |
+| `v0.2.5` | `2026-04-11` | Automated patch release for Master Control Orchestration Server. |
+| `v0.2.4` | `2026-04-11` | Automated patch release for Master Control Orchestration Server. |
+| `v0.2.3` | `2026-04-11` | Automated patch release for Master Control Orchestration Server. |
+| `v0.2.2` | `2026-04-11` | Automated patch release for Master Control Orchestration Server. |
+| `v0.2.1` | `2026-04-11` | Automated patch release for Master Control Orchestration Server. |
 | `v0.2.0` | `2026-04-11` | Tron-density UX rework, validated end-to-end on Windows Server 2022. |
 | `v0.1.66` | `2026-04-10` | Automated patch release for Master Control Orchestration Server. |
 | `v0.1.65` | `2026-04-10` | Automated patch release for Master Control Orchestration Server. |
@@ -66,12 +64,5 @@ Versions are tracked in `VERSION.json` and tagged as GitHub Releases.
 | `v0.1.57` | `2026-04-03` | Automated patch release for Master Control Orchestration Server. |
 | `v0.1.56` | `2026-04-03` | Automated patch release for Master Control Orchestration Server. |
 | `v0.1.55` | `2026-04-03` | Automated patch release for Master Control Orchestration Server. |
-| `v0.1.54` | `2026-04-03` | Automated patch release for Master Control Orchestration Server. |
-| `v0.1.53` | `2026-04-02` | Automated patch release for Master Control Orchestration Server. |
-| `v0.1.52` | `2026-04-02` | Automated patch release for Master Control Orchestration Server. |
-| `v0.1.51` | `2026-04-02` | Automated patch release for Master Control Orchestration Server. |
-| `v0.1.50` | `2026-04-02` | Automated patch release for Master Control Orchestration Server. |
-| `v0.1.49` | `2026-03-29` | Automated patch release for Master Control Orchestration Server. |
-| `v0.1.48` | `2026-03-29` | Automated patch release for Master Control Orchestration Server. |
 
 See also: [Automation](Automation) · [Operations](Operations)

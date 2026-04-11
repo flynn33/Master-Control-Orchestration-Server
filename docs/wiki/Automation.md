@@ -62,7 +62,7 @@ Authentication uses `GITHUB_TOKEN` injected by GitHub Actions.
 
 | Property | Value |
 | --- | --- |
-| Current tracked release | `v0.2.0` |
+| Current tracked release | `v0.2.7` |
 | Agent commit prefix | `chore(agents):` |
 | Wiki source directory | `docs/wiki/` |
 | Wiki sync target | `github.com/{repo}.wiki.git` |

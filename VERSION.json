@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.2.6",
-  "current_tag": "v0.2.6",
+  "current_version": "0.2.7",
+  "current_tag": "v0.2.7",
   "released_at": "2026-04-11",
-  "last_release_commit": "ab2459b7ad4bf726da7cbaef40252eec4692e0db",
+  "last_release_commit": "712972bf9c6d397dbe5b8dc9ab7d81a9d2cddbb7",
   "history": [
+    {
+      "version": "0.2.7",
+      "tag": "v0.2.7",
+      "released_at": "2026-04-11",
+      "commit": "712972bf9c6d397dbe5b8dc9ab7d81a9d2cddbb7",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "docs(wiki): overhaul wiki agent and source pages (flynn33)"
+      ]
+    },
     {
       "version": "0.2.6",
       "tag": "v0.2.6",

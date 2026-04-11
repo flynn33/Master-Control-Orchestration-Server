@@ -5,6 +5,13 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.2.7] - 2026-04-11
+### Summary
+Automated patch release for Master Control Orchestration Server.
+
+### Included Changes
+- docs(wiki): overhaul wiki agent and source pages (flynn33)
+
 ## [0.2.6] - 2026-04-11
 ### Summary
 Automated patch release for Master Control Orchestration Server.
