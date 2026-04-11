@@ -45,4 +45,4 @@ Master Control Orchestration Server is a Forsetti-compliant Windows orchestratio
 - [Project Overview](../plans/dashboard/project-overview.md)
 - [Technical Details](../plans/dashboard/technical-details.md)
 - [Version Index](../docs/versions/index.md)
-- Repository: https://github.com/flynn33/master-control-dashboard
+- Repository: https://github.com/flynn33/Master-Control-Orchestration-Server

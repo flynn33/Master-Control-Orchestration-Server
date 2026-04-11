@@ -81,8 +81,26 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 
 $normalizedVersion = if ($Version.StartsWith("v")) { $Version.Substring(1) } else { $Version }
 $versionTag = "v$normalizedVersion"
-$gitCommitFull = (git -C $repoRoot rev-parse HEAD).Trim()
-$gitCommit = (git -C $repoRoot rev-parse --short HEAD).Trim()
+# Git metadata is best-effort: packaging can run from a source tree that is not a
+# git repository (e.g. extracted from a zip or worked on without git). A null return
+# from the git call used to crash the script via .Trim() on $null — now degrade
+# gracefully so release packages still build outside a repo.
+$gitCommitFull = ""
+$gitCommit = ""
+try {
+    $gitRawFull = git -C $repoRoot rev-parse HEAD 2>$null
+    $gitRawShort = git -C $repoRoot rev-parse --short HEAD 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        if ($null -ne $gitRawFull) { $gitCommitFull = [string]$gitRawFull.Trim() }
+        if ($null -ne $gitRawShort) { $gitCommit = [string]$gitRawShort.Trim() }
+    }
+} catch {
+    # git not available or not a repo — leave commit fields empty.
+}
+if ([string]::IsNullOrWhiteSpace($gitCommit)) {
+    $gitCommit = "non-git"
+    $gitCommitFull = "non-git"
+}
 
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $repoRoot ("dist\packages\" + $Preset)

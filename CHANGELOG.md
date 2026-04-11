@@ -5,6 +5,54 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.2.0] - 2026-04-11
+### Summary
+Tron-density UX rework of the shell, installer, and browser dashboard, validated end-to-end on Windows Server 2022 Datacenter.
+
+### Installer & Deployment
+- Tron-theme the setup launcher progress window: dark `#060A10` background with a 2px cyan `#00F6FF` accent bar, Bahnschrift SemiCondensed eyebrow/header/body fonts, accent-colored marquee bar, per-control text coloring via `WM_CTLCOLORSTATIC`, and owner-allocated GDI resources freed in `destroyProgressWindow`. (`src/MasterControlBootstrapper/setup_main.cpp`)
+- Update `PlatformToolset` from `v143` to `v145` so the WinUI 3 shell builds on Visual Studio 2026 MSVC 14.50. (`src/MasterControlShell/MasterControlShell.vcxproj`, `src/MasterControlShell/CMakeLists.txt`)
+- Guard `Package-MasterControlOrchestrationServer.ps1` git commit lookups so packaging works outside a git repo (records `non-git` commit markers instead of crashing). (`scripts/Package-MasterControlOrchestrationServer.ps1`)
+- Validated end-to-end on Windows Server 2022 Datacenter (21H2, build 20348): cmake configure + build with 0 errors and 0 warnings, ctest 4/4 green (ForsettiCoreTests, ForsettiPlatformTests, ForsettiArchitectureTests, MasterControlOrchestrationServerTests), IDE_PACKAGE staged a 44 MB deployable bundle, unattended install smoke CLEAN, bootstrapper `preflight` and `validate` report `ready: true` / `valid: true`, and `MasterControlShell.exe` launches cleanly and renders the full Tron UI.
+
+### Shell UI/UX
+- Expand `src/MasterControlShell/App.xaml` with:
+  - New brushes `ShellFocusBrush`, `ShellPressFillBrush`, `ShellSkeletonBrush`, `ShellSuccessSoftBrush`, `ShellWarningSoftBrush`, `ShellDangerSoftBrush`.
+  - New styles `ShellStatusChipStyle` / `ShellStatusChipTextStyle` for pill status chips.
+  - Tonal button variants `ShellSuccessButtonStyle` / `ShellWarningButtonStyle` / `ShellDangerButtonStyle`.
+  - Hero metric typography `ShellMetricLabelTextStyle` / `ShellMetricValueTextStyle`.
+  - Loading placeholder `ShellSkeletonBlockStyle`.
+  - Dense command-center variants `ShellCompactTileStyle`, `ShellSubAgentBadgeStyle`, `ShellSubAgentBadgeTitleStyle`, `ShellSubAgentBadgeSubtitleStyle`.
+  - Monospace live-clock text style `ShellLiveClockTextStyle`.
+- Redesign `OverviewSectionControl` around a hero card + pill status chip + operational snapshot + two-column narrative grid + authored-surfaces legend. Status chip now shows short uppercase `ADMIN API ONLINE · SYNCHRONIZED` / `ADMIN API OFFLINE · CACHED STATE` to fit the chip pill. (`src/MasterControlShell/OverviewSectionControl.xaml`, `.xaml.cpp`)
+- Add a Tron command-center footer row under the section content host: seven pill badges for **SENTINEL**, **ARCHITECT**, **FORGE**, **SCRIBE**, **RECON**, **NEXUS**, **WATCHDOG** — matching the user's reference guidance. (`src/MasterControlShell/MainWindow.xaml`)
+- Add a `LIVE HH:MM:SS` indicator to the main title bar alongside the API and service badges, driven by a new one-second `clockTimer_` DispatcherQueueTimer that runs independently of the 10-second refresh timer. (`src/MasterControlShell/MainWindow.xaml`, `.xaml.h`, `.xaml.cpp`)
+- Wrap the main NavigationView content in a vertical `ScrollViewer` so the hero card, 4-metric summary row, section content, and sub-agent pill row all stay reachable on low-resolution displays (tested on 1292×715 RDP). (`src/MasterControlShell/MainWindow.xaml`)
+
+### Browser Dashboard
+- Append a Tron polish layer to `resources/web/styles.css`:
+  - `@keyframes tron-accent-pulse` (2.8s ease-in-out infinite) applied to `[data-tone="info"]` badges and the connecting health badge.
+  - `:focus-visible` cyan outlines with matching glow on buttons, links, role=button, and dialogs.
+  - `<dialog>::backdrop` radial gradient + `backdrop-filter: blur(4px)` for the overlay and danger dialogs.
+  - Full `@media (prefers-reduced-motion: reduce)` support neutralizing animations, transitions, and the button hover lift.
+
+### Runtime
+- Add a one-shot ProgramData migration in `resolveAppPaths()`: when only the legacy `C:\ProgramData\MasterControlProgram` directory exists, attempt to rename it to the canonical `C:\ProgramData\MasterControlOrchestrationServer`. If the rename fails (files in use, permissions), transparently fall back to reading from the legacy path so upgrades never break. (`src/MasterControlApp/MasterControlDefaults.cpp`)
+
+### Repository
+- Update all in-repo references to the renamed GitHub project `flynn33/Master-Control-Orchestration-Server` in `README.md`, `docs/wiki/Home.md`, `docs/wiki/_Footer.md`, and `scripts/github_agents/common.py`. Historical handoff notes are left untouched.
+
+### Stabilization Sweep
+- Ran a Phase A sweep across `src/` and `include/` (excluding third-party `packages/`): zero TODO/FIXME/HACK/XXX/BUG markers in first-party code.
+- Re-read `setup_main.cpp` end-to-end and confirmed the elevation path already uses `ShellExecuteExW` + `runas` verb (no Base64 relay) and `maybeLaunchShell` is fully wired end-to-end.
+- Decision recorded and documented: the internal SCM service key `MasterControlProgram` is preserved for upgrade compatibility with pre-0.2 installs. All user-visible strings (SCM display name, Programs &amp; Features, shortcuts, firewall rules, window title, data directory post-migration) resolve to "Master Control Orchestration Server".
+- Tron-themed the setup launcher progress window: dark `#060A10` background with a 2px cyan `#00F6FF` accent bar, Bahnschrift SemiCondensed eyebrow/header/body fonts, accent-colored marquee progress bar, and per-control text coloring via `WM_CTLCOLORSTATIC`. Kept in sync with `src/MasterControlShell/App.xaml` so the installer feels continuous with the shell it delivers. (`src/MasterControlBootstrapper/setup_main.cpp`)
+- Expanded the shell resource dictionary with polish primitives: `ShellStatusChipStyle`/`ShellStatusChipTextStyle` (pill status chips), `ShellSuccessButtonStyle`/`ShellWarningButtonStyle`/`ShellDangerButtonStyle` (tonal command variants), `ShellMetricLabelTextStyle`/`ShellMetricValueTextStyle` (hero tile typography), `ShellSkeletonBlockStyle`/`ShellSkeletonBrush` (loading placeholders), and `ShellFocusBrush`/`ShellPressFillBrush` for interactive state work. (`src/MasterControlShell/App.xaml`)
+- Redesigned `OverviewSectionControl` around a hero card, status chip, operational snapshot card, a two-column narrative grid, and an authored-surfaces legend. Status chip text is now short, uppercase, and letter-spaced (`ADMIN API ONLINE · SYNCHRONIZED` / `ADMIN API OFFLINE · CACHED STATE`) to match the chip pill style. (`src/MasterControlShell/OverviewSectionControl.xaml`, `OverviewSectionControl.xaml.cpp`)
+- Added a browser polish layer to the dashboard stylesheet: `:focus-visible` cyan outlines with a matching glow, a subtle 2.8s `tron-accent-pulse` on info badges, a radial-gradient backdrop with `backdrop-filter: blur(4px)` behind `<dialog>` modals, and full `prefers-reduced-motion` respect. (`resources/web/styles.css`)
+- Ran a Phase A stabilization sweep across `src/` and `include/`: no TODO/FIXME/HACK/XXX/BUG markers found in first-party code. The setup launcher's elevation path already uses `ShellExecuteExW` with the `runas` verb (no Base64 relay in the C++ bootstrapper) and `maybeLaunchShell` is fully wired, so those items were confirmed complete rather than implemented.
+- Decision recorded: the internal SCM service key `MasterControlProgram` and its legacy uninstall registry key are intentionally preserved for upgrade compatibility with pre-0.2 installs. User-visible strings everywhere (SCM display name, Programs &amp; Features, shortcuts, firewall rules, window titles) already resolve to "Master Control Orchestration Server", so no rename was performed in this pass.
+
 ## [0.1.66] - 2026-04-10
 ### Summary
 Automated patch release for Master Control Orchestration Server.

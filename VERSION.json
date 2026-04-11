@@ -1,11 +1,30 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.1.66",
-  "current_tag": "v0.1.66",
-  "released_at": "2026-04-10",
-  "last_release_commit": "a3a57912078a611c69d515f98bfb01cd23ff8198",
+  "current_version": "0.2.0",
+  "current_tag": "v0.2.0",
+  "released_at": "2026-04-11",
+  "last_release_commit": "",
   "history": [
+    {
+      "version": "0.2.0",
+      "tag": "v0.2.0",
+      "released_at": "2026-04-11",
+      "commit": "",
+      "summary": "Tron-density UX rework, validated end-to-end on Windows Server 2022.",
+      "entries": [
+        "Tron-theme the setup launcher progress window (cyan accent bar, Bahnschrift fonts, accent marquee) to match the shell's App.xaml palette.",
+        "Expand shell resource dictionary with status chip, tonal button variants, compact tiles, sub-agent badge, and live-clock text styles.",
+        "Redesign OverviewSectionControl around hero card + operational snapshot + narrative grid + authored-surfaces legend.",
+        "Add Tron command-center density to MainWindow: live clock (HH:MM:SS) in the title bar, sub-agent footer row (SENTINEL/ARCHITECT/FORGE/SCRIBE/RECON/NEXUS/WATCHDOG), and a ScrollViewer wrapping the main content so the full layout reaches low-resolution displays.",
+        "Add browser dashboard polish layer: prefers-reduced-motion, focus-visible outlines, accent pulse animation, <dialog>::backdrop blur.",
+        "Add one-shot ProgramData migration from legacy MasterControlProgram to MasterControlOrchestrationServer path, with safe fallback if the rename cannot complete.",
+        "Update GitHub repository URL references to flynn33/Master-Control-Orchestration-Server.",
+        "Guard Package-MasterControlOrchestrationServer.ps1 git calls so packaging works outside a git repo.",
+        "Update PlatformToolset from v143 to v145 so the shell builds on Visual Studio 2026.",
+        "Validated end-to-end on Windows Server 2022 Datacenter (21H2, build 20348): cmake configure + build (0 errors, 0 warnings), ctest 4/4 green, package staged (44 MB), unattended install smoke CLEAN, shell launches and renders Tron UI with live clock, bootstrapper preflight/validate reports valid:true."
+      ]
+    },
     {
       "version": "0.1.66",
       "tag": "v0.1.66",

@@ -21,8 +21,8 @@ void OverviewSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnap
     EnvironmentNarrativeText().Text(winrt::hstring(snapshot.environmentText));
     ConfigurationNarrativeText().Text(winrt::hstring(snapshot.configurationText));
     OverviewStatusText().Text(snapshot.apiHealthy
-        ? L"Admin API reachable. The desktop shell is synchronized with the local service snapshot."
-        : L"Admin API offline. The shell is holding the most recent cached state until the service responds.");
+        ? L"ADMIN API ONLINE · SYNCHRONIZED"
+        : L"ADMIN API OFFLINE · CACHED STATE");
 }
 
 } // namespace winrt::MasterControlShell::implementation

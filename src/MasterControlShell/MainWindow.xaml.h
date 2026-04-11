@@ -87,6 +87,7 @@ private:
     std::wstring currentDestination_ = L"overview";
     std::map<std::wstring, Microsoft::UI::Xaml::FrameworkElement> cachedViews_;
     Microsoft::UI::Dispatching::DispatcherQueueTimer refreshTimer_{ nullptr };
+    Microsoft::UI::Dispatching::DispatcherQueueTimer clockTimer_{ nullptr };
     std::atomic_bool refreshInFlight_{ false };
 };
 

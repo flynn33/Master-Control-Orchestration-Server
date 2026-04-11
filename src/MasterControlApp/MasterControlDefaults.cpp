@@ -303,6 +303,22 @@ AppPaths resolveAppPaths() {
     const auto dataDirectoryOverride = wideEnvironmentVariable(kDataDirectoryOverrideVariable);
     const auto defaultDataDirectory = programDataDirectory() / kCurrentDataDirectoryLeaf;
     const auto legacyDataDirectory = programDataDirectory() / kLegacyDataDirectoryLeaf;
+
+    // One-shot ProgramData migration: if only the legacy "MasterControlProgram"
+    // directory exists, attempt to rename it to the canonical product-name path so
+    // installs from pre-0.2 builds are invisibly unified. On failure (files in use,
+    // permission denied), we fall back to reading from the legacy path — this
+    // preserves existing behavior so we never break an upgrade.
+    std::error_code migrationError;
+    if (!dataDirectoryOverride.has_value() &&
+        !std::filesystem::exists(defaultDataDirectory, migrationError) &&
+        std::filesystem::exists(legacyDataDirectory, migrationError)) {
+        migrationError.clear();
+        std::filesystem::rename(legacyDataDirectory, defaultDataDirectory, migrationError);
+        // If rename failed, migrationError is set; defaultDataDirectory will not
+        // exist below and we'll transparently fall back to legacyDataDirectory.
+    }
+
     const auto dataDirectory = dataDirectoryOverride.has_value()
         ? std::filesystem::path(*dataDirectoryOverride)
         : (!std::filesystem::exists(defaultDataDirectory) && std::filesystem::exists(legacyDataDirectory)

@@ -834,6 +834,33 @@ void MainWindow::ConfigureTimer() {
     } catch (const winrt::hresult_error& error) {
         writeShellLog(L"Dispatcher timer fallback activated: " + std::wstring(error.message().c_str()));
     }
+
+    // Live-clock timer: one-second tick that updates the Tron-style LIVE · HH:MM:SS
+    // indicator in the title bar. Kept separate from the 10-second refresh timer so
+    // the clock stays smooth without dragging RefreshAsync with it.
+    try {
+        clockTimer_ = DispatcherQueue().CreateTimer();
+        clockTimer_.Interval(std::chrono::seconds(1));
+        const auto weakThis = get_weak();
+        auto updateClock = [weakThis]() {
+            if (const auto self = weakThis.get()) {
+                SYSTEMTIME now{};
+                GetLocalTime(&now);
+                wchar_t buffer[16]{};
+                swprintf_s(buffer, L"%02u:%02u:%02u", now.wHour, now.wMinute, now.wSecond);
+                try {
+                    self->LiveClockText().Text(winrt::hstring(buffer));
+                } catch (const winrt::hresult_error&) {
+                    // Title bar not yet realized; ignore and retry next tick.
+                }
+            }
+        };
+        clockTimer_.Tick([updateClock](auto&&, auto&&) { updateClock(); });
+        updateClock();
+        clockTimer_.Start();
+    } catch (const winrt::hresult_error& error) {
+        writeShellLog(L"Live clock timer fallback activated: " + std::wstring(error.message().c_str()));
+    }
 }
 
 void MainWindow::EnsureBootstrapSurface(::MasterControlShell::ShellSnapshot& snapshot) {

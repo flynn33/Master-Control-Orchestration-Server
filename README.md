@@ -3,7 +3,7 @@
 Master Control Orchestration Server is a Forsetti-compliant Windows orchestration control plane for guided setup, governance, MCP services, sub-agents, AI provider routing, telemetry, and browser-based operations.
 
 - Repository slug: `master-control-dashboard`
-- Repository URL: https://github.com/flynn33/master-control-dashboard
+- Repository URL: https://github.com/flynn33/Master-Control-Orchestration-Server
 
 ## Current Release
 
@@ -84,4 +84,4 @@ cmake --install build\debug --config Debug --prefix dist\debug
 - [Version Index](docs/versions/index.md)
 - [Latest Release Notes](docs/versions/latest.md)
 
-Repository URL: https://github.com/flynn33/master-control-dashboard
+Repository URL: https://github.com/flynn33/Master-Control-Orchestration-Server

@@ -42,7 +42,7 @@ add_custom_target(MasterControlShell ALL
         /restore
         /t:Build
         /p:RestorePackagesConfig=true
-        /p:PlatformToolset=v143
+        /p:PlatformToolset=v145
         /p:Configuration=$<CONFIG>
         /p:Platform=x64
         /p:OutDir=${MASTERCONTROL_SHELL_OUTPUT_DIR}

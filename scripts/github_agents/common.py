@@ -10,7 +10,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 PROJECT_NAME = "Master Control Orchestration Server"
 REPOSITORY_NAME = "master-control-dashboard"
-REPOSITORY_URL = "https://github.com/flynn33/master-control-dashboard"
+REPOSITORY_URL = "https://github.com/flynn33/Master-Control-Orchestration-Server"
 DEFAULT_VERSION = "0.1.0"
 AGENT_COMMIT_PREFIX = "chore(agents):"
 

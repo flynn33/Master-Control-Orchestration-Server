@@ -49,9 +49,23 @@ enum class InstallDirectoryPromptResult {
 
 struct ProgressWindow final {
     HWND handle = nullptr;
+    HWND headerLabel = nullptr;
     HWND statusLabel = nullptr;
+    HWND stageLabel = nullptr;
     HWND progressBar = nullptr;
+    HFONT headerFont = nullptr;
+    HFONT bodyFont = nullptr;
+    HFONT eyebrowFont = nullptr;
+    HBRUSH backgroundBrush = nullptr;
 };
+
+// Tron-inspired palette for the Win32 setup launcher, kept in sync with
+// src/MasterControlShell/App.xaml so the installer feels continuous with
+// the shell it is about to deliver.
+constexpr COLORREF kTronBackgroundColor = RGB(6, 10, 16);     // #060A10
+constexpr COLORREF kTronAccentColor = RGB(0, 246, 255);       // #00F6FF
+constexpr COLORREF kTronTextPrimaryColor = RGB(230, 252, 255); // #E6FCFF
+constexpr COLORREF kTronTextMutedColor = RGB(140, 183, 196);   // #8CB7C4
 
 struct ShellLaunchResult final {
     bool promptShown = false;
@@ -917,10 +931,61 @@ InstallDirectoryPromptResult promptForInstallDirectory(LauncherOptions& options,
 LRESULT CALLBACK progressWindowProc(HWND windowHandle, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_CLOSE:
+        // Ignore close requests while the bootstrapper is still executing;
+        // the setup launcher destroys the window from its wait loop instead.
         return 0;
+    case WM_CTLCOLORSTATIC: {
+        HDC dc = reinterpret_cast<HDC>(wParam);
+        SetBkMode(dc, TRANSPARENT);
+        // Eyebrow label is painted in accent cyan; body labels in primary text.
+        const HWND control = reinterpret_cast<HWND>(lParam);
+        const auto controlId = GetWindowLongPtrW(control, GWLP_ID);
+        if (controlId == 1 /* eyebrow */) {
+            SetTextColor(dc, kTronAccentColor);
+        } else if (controlId == 3 /* stage label */) {
+            SetTextColor(dc, kTronTextMutedColor);
+        } else {
+            SetTextColor(dc, kTronTextPrimaryColor);
+        }
+        return reinterpret_cast<LRESULT>(GetStockObject(NULL_BRUSH));
+    }
+    case WM_ERASEBKGND: {
+        HDC dc = reinterpret_cast<HDC>(wParam);
+        RECT clientRect{};
+        GetClientRect(windowHandle, &clientRect);
+        HBRUSH background = CreateSolidBrush(kTronBackgroundColor);
+        FillRect(dc, &clientRect, background);
+        DeleteObject(background);
+
+        // Top accent bar (cyan, 2px) — matches the shell hero card edge.
+        HBRUSH accent = CreateSolidBrush(kTronAccentColor);
+        RECT accentBar = { clientRect.left, clientRect.top, clientRect.right, clientRect.top + 2 };
+        FillRect(dc, &accentBar, accent);
+        DeleteObject(accent);
+
+        return 1;
+    }
     default:
         return DefWindowProcW(windowHandle, message, wParam, lParam);
     }
+}
+
+HFONT createTronFont(const int height, const int weight) {
+    return CreateFontW(
+        height,
+        0,
+        0,
+        0,
+        weight,
+        FALSE,
+        FALSE,
+        FALSE,
+        DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_SWISS,
+        L"Bahnschrift SemiCondensed");
 }
 
 void centerWindowOnScreen(HWND windowHandle) {
@@ -951,55 +1016,82 @@ ProgressWindow createProgressWindow(const LauncherOptions& options) {
     windowClass.hInstance = GetModuleHandleW(nullptr);
     windowClass.hCursor = LoadCursor(nullptr, IDC_WAIT);
     windowClass.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
-    windowClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    // Background painted in WM_ERASEBKGND for precise Tron colors; the class brush
+    // is intentionally null so the default gray never flashes on resize.
+    windowClass.hbrBackground = nullptr;
     windowClass.lpszClassName = kProgressWindowClassName;
     RegisterClassW(&windowClass);
 
     ProgressWindow progressWindow{};
+    progressWindow.backgroundBrush = CreateSolidBrush(kTronBackgroundColor);
     progressWindow.handle = CreateWindowExW(
         WS_EX_DLGMODALFRAME,
         kProgressWindowClassName,
-        L"Master Control Orchestration Server Setup",
+        L"MASTER CONTROL ORCHESTRATION SERVER · SETUP",
         WS_CAPTION | WS_POPUP | WS_SYSMENU,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
-        520,
-        190,
+        560,
+        240,
         nullptr,
         nullptr,
         GetModuleHandleW(nullptr),
         nullptr);
 
     if (progressWindow.handle == nullptr) {
+        if (progressWindow.backgroundBrush != nullptr) {
+            DeleteObject(progressWindow.backgroundBrush);
+            progressWindow.backgroundBrush = nullptr;
+        }
         return progressWindow;
     }
 
-    const HFONT guiFont = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-    const auto header = CreateWindowW(
+    progressWindow.eyebrowFont = createTronFont(-12, FW_SEMIBOLD);
+    progressWindow.headerFont = createTronFont(-22, FW_SEMIBOLD);
+    progressWindow.bodyFont = createTronFont(-13, FW_NORMAL);
+
+    // Eyebrow label (accent cyan, letter-spaced) — id 1
+    progressWindow.headerLabel = CreateWindowW(
         L"STATIC",
-        L"Installing Master Control Orchestration Server",
-        WS_CHILD | WS_VISIBLE,
-        20,
-        20,
-        460,
+        L"STAGE · PROVISIONING ORCHESTRATION CONTROL PLANE",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
         24,
+        22,
+        512,
+        18,
         progressWindow.handle,
-        nullptr,
+        reinterpret_cast<HMENU>(1),
         GetModuleHandleW(nullptr),
         nullptr);
 
+    // Hero title (primary text) — id 2
+    const HWND titleLabel = CreateWindowW(
+        L"STATIC",
+        L"Installing Master Control Orchestration Server",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        24,
+        44,
+        512,
+        32,
+        progressWindow.handle,
+        reinterpret_cast<HMENU>(2),
+        GetModuleHandleW(nullptr),
+        nullptr);
+
+    // Stage/status detail — id 3 (muted text)
     const std::wstring detailText =
-        L"Installing to:\n" + options.installDirectory.wstring() + L"\n\nPlease wait while setup completes.";
+        L"Target  " + options.installDirectory.wstring() +
+        L"\nStage   Preparing payload · Holding for bootstrapper";
     progressWindow.statusLabel = CreateWindowW(
         L"STATIC",
         detailText.c_str(),
-        WS_CHILD | WS_VISIBLE,
-        20,
-        52,
-        460,
-        60,
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        24,
+        84,
+        512,
+        54,
         progressWindow.handle,
-        nullptr,
+        reinterpret_cast<HMENU>(3),
         GetModuleHandleW(nullptr),
         nullptr);
 
@@ -1007,19 +1099,23 @@ ProgressWindow createProgressWindow(const LauncherOptions& options) {
         0,
         PROGRESS_CLASSW,
         nullptr,
-        WS_CHILD | WS_VISIBLE | PBS_MARQUEE,
-        20,
-        124,
-        460,
+        WS_CHILD | WS_VISIBLE | PBS_MARQUEE | PBS_SMOOTH,
         24,
+        150,
+        512,
+        18,
         progressWindow.handle,
         nullptr,
         GetModuleHandleW(nullptr),
         nullptr);
 
-    SendMessageW(header, WM_SETFONT, reinterpret_cast<WPARAM>(guiFont), TRUE);
-    SendMessageW(progressWindow.statusLabel, WM_SETFONT, reinterpret_cast<WPARAM>(guiFont), TRUE);
-    SendMessageW(progressWindow.progressBar, PBM_SETMARQUEE, TRUE, 50);
+    SendMessageW(progressWindow.headerLabel, WM_SETFONT, reinterpret_cast<WPARAM>(progressWindow.eyebrowFont), TRUE);
+    SendMessageW(titleLabel, WM_SETFONT, reinterpret_cast<WPARAM>(progressWindow.headerFont), TRUE);
+    SendMessageW(progressWindow.statusLabel, WM_SETFONT, reinterpret_cast<WPARAM>(progressWindow.bodyFont), TRUE);
+    SendMessageW(progressWindow.progressBar, PBM_SETMARQUEE, TRUE, 40);
+    // Color the marquee bar to match the accent; default Explorer green is not on-theme.
+    SendMessageW(progressWindow.progressBar, PBM_SETBARCOLOR, 0, kTronAccentColor);
+    SendMessageW(progressWindow.progressBar, PBM_SETBKCOLOR, 0, kTronBackgroundColor);
 
     centerWindowOnScreen(progressWindow.handle);
     ShowWindow(progressWindow.handle, SW_SHOWNORMAL);
@@ -1031,8 +1127,26 @@ void destroyProgressWindow(ProgressWindow& progressWindow) {
     if (progressWindow.handle != nullptr) {
         DestroyWindow(progressWindow.handle);
         progressWindow.handle = nullptr;
+        progressWindow.headerLabel = nullptr;
         progressWindow.statusLabel = nullptr;
+        progressWindow.stageLabel = nullptr;
         progressWindow.progressBar = nullptr;
+    }
+    if (progressWindow.eyebrowFont != nullptr) {
+        DeleteObject(progressWindow.eyebrowFont);
+        progressWindow.eyebrowFont = nullptr;
+    }
+    if (progressWindow.headerFont != nullptr) {
+        DeleteObject(progressWindow.headerFont);
+        progressWindow.headerFont = nullptr;
+    }
+    if (progressWindow.bodyFont != nullptr) {
+        DeleteObject(progressWindow.bodyFont);
+        progressWindow.bodyFont = nullptr;
+    }
+    if (progressWindow.backgroundBrush != nullptr) {
+        DeleteObject(progressWindow.backgroundBrush);
+        progressWindow.backgroundBrush = nullptr;
     }
 }
 

@@ -6,18 +6,38 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" Padding="0,0,4,0">
         <StackPanel Spacing="20">
-            <Border Style="{StaticResource ShellCardStyle}">
-                <StackPanel Spacing="14">
-                    <TextBlock Text="Operational Summary" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                    <TextBlock x:Name="OverviewTextBlock" Style="{StaticResource ShellBodyTextStyle}" Text="Loading shell snapshot..." />
-                    <Border Background="{StaticResource ShellPanelDeepBrush}" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="16" Padding="16">
-                        <TextBlock x:Name="OverviewStatusText" Style="{StaticResource ShellBodyTextStyle}" Text="Waiting for local service synchronization." />
+
+            <!-- Hero header -->
+            <Border Style="{StaticResource ShellHeroCardStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="MASTER CONTROL · OVERVIEW" Style="{StaticResource ShellEyebrowTextStyle}" />
+                    <TextBlock Text="Operational Summary" Style="{StaticResource ShellHeroTitleTextStyle}" />
+                    <TextBlock
+                        Style="{StaticResource ShellBodyTextStyle}"
+                        Foreground="{StaticResource ShellTextMutedBrush}"
+                        Text="High-signal state of the orchestration control plane. Drill into Telemetry, Runtime, or CLU for details." />
+                    <Border Style="{StaticResource ShellStatusChipStyle}" Margin="0,6,0,0">
+                        <TextBlock x:Name="OverviewStatusText"
+                                   Style="{StaticResource ShellStatusChipTextStyle}"
+                                   Text="WAITING FOR LOCAL SERVICE SYNCHRONIZATION" />
                     </Border>
                 </StackPanel>
             </Border>
 
+            <!-- Operational summary narrative -->
+            <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="OPERATIONAL SNAPSHOT" Style="{StaticResource ShellEyebrowTextStyle}" />
+                    <TextBlock Text="Live State" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock x:Name="OverviewTextBlock"
+                               Style="{StaticResource ShellBodyTextStyle}"
+                               Text="Loading shell snapshot..." />
+                </StackPanel>
+            </Border>
+
+            <!-- Environment + Configuration narratives -->
             <Grid ColumnSpacing="20">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -25,24 +45,35 @@
                 </Grid.ColumnDefinitions>
 
                 <Border Style="{StaticResource ShellCardStyle}">
-                    <StackPanel Spacing="12">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="HOST &amp; NETWORK" Style="{StaticResource ShellEyebrowTextStyle}" />
                         <TextBlock Text="Environment Narrative" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                        <TextBlock x:Name="EnvironmentNarrativeText" Style="{StaticResource ShellDataTextStyle}" Text="Environment details will populate here." />
+                        <TextBlock x:Name="EnvironmentNarrativeText"
+                                   Style="{StaticResource ShellDataTextStyle}"
+                                   Text="Environment details will populate here." />
                     </StackPanel>
                 </Border>
 
                 <Border Grid.Column="1" Style="{StaticResource ShellCardStyle}">
-                    <StackPanel Spacing="12">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="RUNTIME CONFIGURATION" Style="{StaticResource ShellEyebrowTextStyle}" />
                         <TextBlock Text="Configuration Narrative" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                        <TextBlock x:Name="ConfigurationNarrativeText" Style="{StaticResource ShellDataTextStyle}" Text="Configuration details will populate here." />
+                        <TextBlock x:Name="ConfigurationNarrativeText"
+                                   Style="{StaticResource ShellDataTextStyle}"
+                                   Text="Configuration details will populate here." />
                     </StackPanel>
                 </Border>
             </Grid>
 
-            <Border Style="{StaticResource ShellCardStyle}">
-                <TextBlock
-                    Style="{StaticResource ShellBodyTextStyle}"
-                    Text="This shell now uses dedicated authored desktop sections so operations, telemetry, runtime orchestration, provider routing, and system settings can grow independently without collapsing back into one oversized page." />
+            <!-- Legend / orientation footer -->
+            <Border Style="{StaticResource ShellCardStyle}" Background="{StaticResource ShellPanelDeepBrush}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="AUTHORED SURFACES" Style="{StaticResource ShellEyebrowTextStyle}" />
+                    <TextBlock
+                        Style="{StaticResource ShellBodyTextStyle}"
+                        Foreground="{StaticResource ShellTextMutedBrush}"
+                        Text="Operations, telemetry, runtime orchestration, provider routing, security posture, and system settings each own a dedicated desktop section so they can evolve independently without collapsing back into a single oversized page." />
+                </StackPanel>
             </Border>
         </StackPanel>
     </ScrollViewer>

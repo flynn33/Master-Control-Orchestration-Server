@@ -63,6 +63,47 @@
                 <Setter Property="Padding" Value="12" />
             </Style>
 
+            <!-- Compact variant modelled after the Tron command-center reference:
+                 tighter padding, thinner inner spacing for dense metric grids. -->
+            <Style x:Key="ShellCompactTileStyle" TargetType="Border" BasedOn="{StaticResource ShellMetricTileStyle}">
+                <Setter Property="Padding" Value="8,6" />
+                <Setter Property="CornerRadius" Value="1" />
+            </Style>
+
+            <!-- Sub-agent footer badge: rounded pill with accent border, used for the
+                 SENTINEL / ARCHITECT / FORGE / SCRIBE / RECON / NEXUS / WATCHDOG row. -->
+            <Style x:Key="ShellSubAgentBadgeStyle" TargetType="Border">
+                <Setter Property="Background" Value="#14000F16" />
+                <Setter Property="BorderBrush" Value="{StaticResource ShellTileEdgeBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="3" />
+                <Setter Property="Padding" Value="10,7" />
+                <Setter Property="MinWidth" Value="108" />
+            </Style>
+
+            <Style x:Key="ShellSubAgentBadgeTitleStyle" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{StaticResource ShellAccentBrush}" />
+                <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="FontSize" Value="11" />
+                <Setter Property="CharacterSpacing" Value="180" />
+            </Style>
+
+            <Style x:Key="ShellSubAgentBadgeSubtitleStyle" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{StaticResource ShellTextMutedBrush}" />
+                <Setter Property="FontFamily" Value="Consolas" />
+                <Setter Property="FontSize" Value="9" />
+                <Setter Property="CharacterSpacing" Value="80" />
+            </Style>
+
+            <Style x:Key="ShellLiveClockTextStyle" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{StaticResource ShellAccentBrush}" />
+                <Setter Property="FontFamily" Value="Consolas" />
+                <Setter Property="FontWeight" Value="Bold" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="CharacterSpacing" Value="60" />
+            </Style>
+
             <Style x:Key="ShellEyebrowTextStyle" TargetType="TextBlock">
                 <Setter Property="Foreground" Value="{StaticResource ShellAccentBrush}" />
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
@@ -147,6 +188,66 @@
                 <Setter Property="Foreground" Value="{StaticResource ShellAccentBrush}" />
                 <Setter Property="Background" Value="#AA091118" />
                 <Setter Property="BorderBrush" Value="#6600F6FF" />
+            </Style>
+
+            <SolidColorBrush x:Key="ShellFocusBrush" Color="#CC00F6FF" />
+            <SolidColorBrush x:Key="ShellPressFillBrush" Color="#2200F6FF" />
+            <SolidColorBrush x:Key="ShellSkeletonBrush" Color="#22FFFFFF" />
+            <SolidColorBrush x:Key="ShellSuccessSoftBrush" Color="#331CF2C1" />
+            <SolidColorBrush x:Key="ShellWarningSoftBrush" Color="#33FFC857" />
+            <SolidColorBrush x:Key="ShellDangerSoftBrush" Color="#33FF6A80" />
+
+            <Style x:Key="ShellStatusChipStyle" TargetType="Border">
+                <Setter Property="Background" Value="{StaticResource ShellAccentSoftBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource ShellAccentBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="999" />
+                <Setter Property="Padding" Value="10,4" />
+                <Setter Property="HorizontalAlignment" Value="Left" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+
+            <Style x:Key="ShellStatusChipTextStyle" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{StaticResource ShellAccentBrush}" />
+                <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="FontSize" Value="11" />
+                <Setter Property="CharacterSpacing" Value="120" />
+            </Style>
+
+            <Style x:Key="ShellSuccessButtonStyle" TargetType="Button" BasedOn="{StaticResource ShellCommandButtonStyle}">
+                <Setter Property="Foreground" Value="{StaticResource ShellSuccessBrush}" />
+                <Setter Property="Background" Value="{StaticResource ShellSuccessSoftBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource ShellSuccessBrush}" />
+            </Style>
+
+            <Style x:Key="ShellWarningButtonStyle" TargetType="Button" BasedOn="{StaticResource ShellCommandButtonStyle}">
+                <Setter Property="Foreground" Value="{StaticResource ShellWarningBrush}" />
+                <Setter Property="Background" Value="{StaticResource ShellWarningSoftBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource ShellWarningBrush}" />
+            </Style>
+
+            <Style x:Key="ShellDangerButtonStyle" TargetType="Button" BasedOn="{StaticResource ShellCommandButtonStyle}">
+                <Setter Property="Foreground" Value="{StaticResource ShellDangerBrush}" />
+                <Setter Property="Background" Value="{StaticResource ShellDangerSoftBrush}" />
+                <Setter Property="BorderBrush" Value="{StaticResource ShellDangerBrush}" />
+            </Style>
+
+            <Style x:Key="ShellMetricLabelTextStyle" TargetType="TextBlock" BasedOn="{StaticResource ShellLabelTextStyle}">
+                <Setter Property="FontSize" Value="10" />
+                <Setter Property="CharacterSpacing" Value="140" />
+                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            </Style>
+
+            <Style x:Key="ShellMetricValueTextStyle" TargetType="TextBlock" BasedOn="{StaticResource ShellValueTextStyle}">
+                <Setter Property="FontSize" Value="24" />
+            </Style>
+
+            <Style x:Key="ShellSkeletonBlockStyle" TargetType="Border">
+                <Setter Property="Background" Value="{StaticResource ShellSkeletonBrush}" />
+                <Setter Property="CornerRadius" Value="2" />
+                <Setter Property="Height" Value="14" />
+                <Setter Property="HorizontalAlignment" Value="Stretch" />
             </Style>
 
             <Style x:Key="ShellListViewItemStyle" TargetType="ListViewItem">

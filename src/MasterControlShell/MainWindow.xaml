@@ -47,6 +47,12 @@
                         </StackPanel>
 
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                            <Border Padding="10,4" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="3">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="LIVE" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                    <TextBlock x:Name="LiveClockText" Text="--:--:--" Style="{StaticResource ShellLiveClockTextStyle}" />
+                                </StackPanel>
+                            </Border>
                             <Border x:Name="ApiBadgeBorder" Padding="10,4" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="3">
                                 <TextBlock x:Name="ApiBadgeText" Text="API UNKNOWN" Style="{StaticResource ShellEyebrowTextStyle}" />
                             </Border>
@@ -80,11 +86,12 @@
                         OpenPaneLength="252"
                         PaneTitle="SURFACES"
                         SelectionChanged="ShellNavigation_SelectionChanged">
+                        <ScrollViewer HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto" Padding="0,0,8,0">
                         <Grid Margin="14,12,14,14">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <Border Style="{StaticResource ShellHeroCardStyle}">
@@ -268,9 +275,78 @@
                             </Grid>
 
                             <Border Grid.Row="2" Margin="0,18,0,0" Style="{StaticResource ShellCardStyle}">
-                                <ContentPresenter x:Name="SectionContentHost" />
+                                <Grid RowSpacing="14">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <ContentPresenter Grid.Row="0" x:Name="SectionContentHost" />
+
+                                    <!-- Sub-agents footer pill row: Tron command-center motif. -->
+                                    <Grid Grid.Row="1">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Grid.Row="0" Text="SUB-AGENT GRID" Style="{StaticResource ShellEyebrowTextStyle}" Margin="0,0,0,8" />
+                                        <Grid Grid.Row="1" ColumnSpacing="10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0" Style="{StaticResource ShellSubAgentBadgeStyle}">
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock Text="SENTINEL" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
+                                                    <TextBlock Text="perimeter watch" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Grid.Column="1" Style="{StaticResource ShellSubAgentBadgeStyle}">
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock Text="ARCHITECT" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
+                                                    <TextBlock Text="plan + design" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Grid.Column="2" Style="{StaticResource ShellSubAgentBadgeStyle}">
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock Text="FORGE" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
+                                                    <TextBlock Text="build + compile" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Grid.Column="3" Style="{StaticResource ShellSubAgentBadgeStyle}">
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock Text="SCRIBE" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
+                                                    <TextBlock Text="docs + records" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Grid.Column="4" Style="{StaticResource ShellSubAgentBadgeStyle}">
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock Text="RECON" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
+                                                    <TextBlock Text="discovery probe" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Grid.Column="5" Style="{StaticResource ShellSubAgentBadgeStyle}">
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock Text="NEXUS" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
+                                                    <TextBlock Text="provider routing" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
+                                                </StackPanel>
+                                            </Border>
+                                            <Border Grid.Column="6" Style="{StaticResource ShellSubAgentBadgeStyle}">
+                                                <StackPanel Spacing="3">
+                                                    <TextBlock Text="WATCHDOG" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
+                                                    <TextBlock Text="soak + uptime" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+                                    </Grid>
+                                </Grid>
                             </Border>
                         </Grid>
+                        </ScrollViewer>
                     </NavigationView>
                 </Border>
             </Grid>
