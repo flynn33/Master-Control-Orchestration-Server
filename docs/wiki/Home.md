@@ -1,6 +1,6 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.2.10-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--12-031018?style=flat-square) ![modules](https://img.shields.io/badge/modules-19-00aacc?style=flat-square) ![platform](https://img.shields.io/badge/platform-Win11%20·%20Server%202022-0a1018?style=flat-square) ![theme](https://img.shields.io/badge/theme-Tron-00f6ff?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.2.11-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--12-031018?style=flat-square) ![modules](https://img.shields.io/badge/modules-19-00aacc?style=flat-square) ![platform](https://img.shields.io/badge/platform-Win11%20·%20Server%202022-0a1018?style=flat-square) ![theme](https://img.shields.io/badge/theme-Tron-00f6ff?style=flat-square)
 
 > A single-binary, Forsetti-compliant Windows control plane for AI orchestration, 
 > MCP hosting, sub-agents, platform governance, and telemetry — wrapped in a Tron aesthetic.
@@ -40,7 +40,7 @@ flowchart LR
 
 | Field | Value |
 | --- | --- |
-| **Version** | `v0.2.10` |
+| **Version** | `v0.2.11` |
 | **Released** | `2026-04-12` |
 | **Summary** | Automated patch release for Master Control Orchestration Server. |
 | **Forsetti modules** | 19 |

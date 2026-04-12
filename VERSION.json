@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.2.10",
-  "current_tag": "v0.2.10",
+  "current_version": "0.2.11",
+  "current_tag": "v0.2.11",
   "released_at": "2026-04-12",
-  "last_release_commit": "d08d3476e137028b76019c25a1902d7b4d357cbb",
+  "last_release_commit": "2d72b4b2303cbca75a8f4267d834685cdcab10d7",
   "history": [
+    {
+      "version": "0.2.11",
+      "tag": "v0.2.11",
+      "released_at": "2026-04-12",
+      "commit": "2d72b4b2303cbca75a8f4267d834685cdcab10d7",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "fix(shell): freeze Auto-Connect card during user interaction (flynn33)"
+      ]
+    },
     {
       "version": "0.2.10",
       "tag": "v0.2.10",

@@ -5,6 +5,13 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.2.11] - 2026-04-12
+### Summary
+Automated patch release for Master Control Orchestration Server.
+
+### Included Changes
+- fix(shell): freeze Auto-Connect card during user interaction (flynn33)
+
 ## [0.2.10] - 2026-04-12
 ### Summary
 Automated patch release for Master Control Orchestration Server.
