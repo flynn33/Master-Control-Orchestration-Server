@@ -91,8 +91,9 @@
                         IsPaneOpen="False"
                         IsPaneToggleButtonVisible="False"
                         IsSettingsVisible="False"
+                        IsTitleBarAutoPaddingEnabled="False"
                         OpenPaneLength="0"
-                        PaneDisplayMode="LeftMinimal"
+                        PaneDisplayMode="Top"
                         PaneTitle=""
                         SelectionChanged="ShellNavigation_SelectionChanged">
                         <ScrollViewer HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto" Padding="0,0,8,0">

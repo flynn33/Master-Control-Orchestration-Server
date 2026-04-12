@@ -302,6 +302,112 @@
             <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#00E8E8" />
             <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#00FFFF" />
 
+            <!-- ================================================================
+                 WinUI 3 ButtonForeground / Background / Border theme resource
+                 overrides for ALL visual states. Without these, the Button
+                 ControlTemplate's PointerOver and Pressed states reapply
+                 Fluent defaults (dark text on light background).
+                 ================================================================ -->
+            <SolidColorBrush x:Key="ButtonForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="ButtonForegroundPressed" Color="#C0E8F0" />
+            <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="#5A8590" />
+            <SolidColorBrush x:Key="ButtonBackground" Color="#F0040E18" />
+            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#F0081828" />
+            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#F0061420" />
+            <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="#F0020810" />
+            <SolidColorBrush x:Key="ButtonBorderBrush" Color="#9900E8FF" />
+            <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="#CC00F6FF" />
+            <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="#7700DFEF" />
+            <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="#3300AACC" />
+
+            <!-- ToggleButton visual state overrides -->
+            <SolidColorBrush x:Key="ToggleButtonForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ToggleButtonForegroundPointerOver" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="ToggleButtonForegroundPressed" Color="#C0E8F0" />
+            <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="#00FFFF" />
+            <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="#7DFFFF" />
+            <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#00CCCC" />
+            <SolidColorBrush x:Key="ToggleButtonBackground" Color="#F0040E18" />
+            <SolidColorBrush x:Key="ToggleButtonBackgroundPointerOver" Color="#F0081828" />
+            <SolidColorBrush x:Key="ToggleButtonBackgroundPressed" Color="#F0061420" />
+            <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#2200FFFF" />
+
+            <!-- ComboBox overrides — the dropdown popup and items render
+                 with Fluent defaults unless these are set. -->
+            <SolidColorBrush x:Key="ComboBoxForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ComboBoxForegroundPointerOver" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="ComboBoxForegroundPressed" Color="#C0E8F0" />
+            <SolidColorBrush x:Key="ComboBoxForegroundDisabled" Color="#5A8590" />
+            <SolidColorBrush x:Key="ComboBoxBackground" Color="#F0020A14" />
+            <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#F0081828" />
+            <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="#F0061420" />
+            <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="#6600FFFF" />
+            <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="#9900F6FF" />
+            <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#F0040E18" />
+            <SolidColorBrush x:Key="ComboBoxDropDownForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ComboBoxItemForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ComboBoxItemForegroundSelected" Color="#00FFFF" />
+            <SolidColorBrush x:Key="ComboBoxItemForegroundSelectedPointerOver" Color="#7DFFFF" />
+            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerOver" Color="#F0061420" />
+
+            <!-- TextBox overrides for focused/hover states -->
+            <SolidColorBrush x:Key="TextBoxForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="TextBoxForegroundPointerOver" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="TextBoxForegroundFocused" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="TextBoxBackground" Color="#F0020A14" />
+            <SolidColorBrush x:Key="TextBoxBackgroundPointerOver" Color="#F0061420" />
+            <SolidColorBrush x:Key="TextBoxBackgroundFocused" Color="#F0061420" />
+            <SolidColorBrush x:Key="TextBoxBorderBrush" Color="#6600FFFF" />
+            <SolidColorBrush x:Key="TextBoxBorderBrushPointerOver" Color="#9900F6FF" />
+            <SolidColorBrush x:Key="TextBoxBorderBrushFocused" Color="#CC00F6FF" />
+            <SolidColorBrush x:Key="TextBoxPlaceholderForeground" Color="#7BA4B0" />
+
+            <!-- ToggleSwitch overrides -->
+            <SolidColorBrush x:Key="ToggleSwitchContentForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ToggleSwitchHeaderForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="#00CCDD" />
+            <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="#00FFFF" />
+            <SolidColorBrush x:Key="ToggleSwitchFillOff" Color="#F0040E18" />
+            <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="#00FFFF" />
+            <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="#6600FFFF" />
+            <SolidColorBrush x:Key="ToggleSwitchKnobFillOn" Color="#000A12" />
+            <SolidColorBrush x:Key="ToggleSwitchKnobFillOff" Color="#9ECCDA" />
+
+            <!-- ListView / NavigationView item overrides -->
+            <SolidColorBrush x:Key="ListViewItemForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ListViewItemForegroundPointerOver" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="#00FFFF" />
+            <SolidColorBrush x:Key="NavigationViewItemForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="#00FFFF" />
+            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="Transparent" />
+
+            <!-- Flyout / MenuFlyout / popup overrides -->
+            <SolidColorBrush x:Key="FlyoutPresenterBackground" Color="#F0040E18" />
+            <SolidColorBrush x:Key="FlyoutBorderThemeBrush" Color="#6600FFFF" />
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#F0040E18" />
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#6600FFFF" />
+            <SolidColorBrush x:Key="MenuFlyoutItemForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="MenuFlyoutItemForegroundPointerOver" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="MenuFlyoutItemBackground" Color="Transparent" />
+            <SolidColorBrush x:Key="MenuFlyoutItemBackgroundPointerOver" Color="#F0081828" />
+
+            <!-- ContentDialog overrides (for settings, warnings) -->
+            <SolidColorBrush x:Key="ContentDialogBackground" Color="#F0040E18" />
+            <SolidColorBrush x:Key="ContentDialogForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ContentDialogBorderBrush" Color="#8800FFFF" />
+            <SolidColorBrush x:Key="ContentDialogTopOverlay" Color="Transparent" />
+
+            <!-- ScrollBar/ScrollViewer overrides -->
+            <SolidColorBrush x:Key="ScrollBarThumbFill" Color="#4400FFFF" />
+            <SolidColorBrush x:Key="ScrollBarThumbFillPointerOver" Color="#6600FFFF" />
+            <SolidColorBrush x:Key="ScrollBarTrackFill" Color="Transparent" />
+
+            <!-- ProgressBar overrides -->
+            <SolidColorBrush x:Key="ProgressBarForeground" Color="#00FFFF" />
+            <SolidColorBrush x:Key="ProgressBarBackground" Color="#22FFFFFF" />
+
             <!-- Implicit default for ALL TextBlocks — without this, any
                  TextBlock that doesn't pass an explicit Style renders with
                  the Fluent default foreground which is invisible on our

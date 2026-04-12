@@ -28,7 +28,7 @@
                             SelectionChanged="QuickConnectProviderSelector_SelectionChanged"
                             PlaceholderText="Choose ChatGPT, Codex, Claude Code, Grok, or generic OpenAI-compatible" />
 
-                        <Border Background="#1000DFFF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0" Padding="10,8">
+                        <Border Background="{StaticResource ShellPanelDeepBrush}" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0" Padding="10,8">
                             <TextBlock
                                 x:Name="QuickConnectSummaryText"
                                 Style="{StaticResource ShellBodyTextStyle}"
@@ -72,7 +72,7 @@
                             Height="160"
                             BorderBrush="{StaticResource ShellTileEdgeBrush}"
                             BorderThickness="1"
-                            Background="#0C071117" />
+                            Background="{StaticResource ShellPanelDeepBrush}" />
 
                         <StackPanel Orientation="Horizontal" Spacing="12">
                             <Button x:Name="ConnectQuickProviderButton" Click="ConnectQuickProviderButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Auto-Connect" />
