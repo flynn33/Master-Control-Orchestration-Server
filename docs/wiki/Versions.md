@@ -11,13 +11,13 @@ analyzes commit history to decide between patch / minor / major.
 
 | Field | Value |
 | --- | --- |
-| **Version** | `v0.2.7` |
-| **Released** | `2026-04-11` |
+| **Version** | `v0.2.8` |
+| **Released** | `2026-04-12` |
 | **Summary** | Automated patch release for Master Control Orchestration Server. |
 
 ### Highlights
 
-- docs(wiki): overhaul wiki agent and source pages (flynn33)
+- fix(runtime): use synchronous refresh in dashboard snapshot (flynn33)
 
 ---
 
@@ -44,6 +44,7 @@ Versions are tracked in `VERSION.json` and tagged as GitHub Releases.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| `v0.2.8` | `2026-04-12` | Automated patch release for Master Control Orchestration Server. |
 | `v0.2.7` | `2026-04-11` | Automated patch release for Master Control Orchestration Server. |
 | `v0.2.6` | `2026-04-11` | Automated patch release for Master Control Orchestration Server. |
 | `v0.2.5` | `2026-04-11` | Automated patch release for Master Control Orchestration Server. |
@@ -63,6 +64,5 @@ Versions are tracked in `VERSION.json` and tagged as GitHub Releases.
 | `v0.1.58` | `2026-04-03` | Automated patch release for Master Control Orchestration Server. |
 | `v0.1.57` | `2026-04-03` | Automated patch release for Master Control Orchestration Server. |
 | `v0.1.56` | `2026-04-03` | Automated patch release for Master Control Orchestration Server. |
-| `v0.1.55` | `2026-04-03` | Automated patch release for Master Control Orchestration Server. |
 
 See also: [Automation](Automation) · [Operations](Operations)

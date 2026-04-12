@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.2.7",
-  "current_tag": "v0.2.7",
-  "released_at": "2026-04-11",
-  "last_release_commit": "712972bf9c6d397dbe5b8dc9ab7d81a9d2cddbb7",
+  "current_version": "0.2.8",
+  "current_tag": "v0.2.8",
+  "released_at": "2026-04-12",
+  "last_release_commit": "587587a1c4aef10b63331f6e29ba8cd7afdb6f7b",
   "history": [
+    {
+      "version": "0.2.8",
+      "tag": "v0.2.8",
+      "released_at": "2026-04-12",
+      "commit": "587587a1c4aef10b63331f6e29ba8cd7afdb6f7b",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "fix(runtime): use synchronous refresh in dashboard snapshot (flynn33)"
+      ]
+    },
     {
       "version": "0.2.7",
       "tag": "v0.2.7",

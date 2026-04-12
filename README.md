@@ -1,13 +1,13 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.2.7-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--11-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.2.8-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--12-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
 
 > Forsetti-compliant Windows orchestration control plane for MCP services, AI provider routing, 
 > CLU governance, sub-agents, platform gateways, telemetry, and browser-based operations — 
 > all delivered as a single Tron-themed product.
 
 - **Repository:** [`master-control-dashboard`](https://github.com/flynn33/Master-Control-Orchestration-Server)
-- **Current release:** `v0.2.7` (2026-04-11)
+- **Current release:** `v0.2.8` (2026-04-12)
 - **Forsetti modules:** 19
 
 ---
@@ -104,11 +104,11 @@ See [Operations](docs/wiki/Operations.md) for the full deployment matrix, and
 
 ## Current release
 
-**`v0.2.7` — 2026-04-11**
+**`v0.2.8` — 2026-04-12**
 
 Automated patch release for Master Control Orchestration Server.
 
-- docs(wiki): overhaul wiki agent and source pages (flynn33)
+- fix(runtime): use synchronous refresh in dashboard snapshot (flynn33)
 
 ---
 

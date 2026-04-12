@@ -1,9 +1,10 @@
 # Version Index
 
-Current tracked release: `v0.2.7`
+Current tracked release: `v0.2.8`
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| [v0.2.8](v0.2.8.md) | 2026-04-12 | Automated patch release for Master Control Orchestration Server. |
 | [v0.2.7](v0.2.7.md) | 2026-04-11 | Automated patch release for Master Control Orchestration Server. |
 | [v0.2.6](v0.2.6.md) | 2026-04-11 | Automated patch release for Master Control Orchestration Server. |
 | [v0.2.5](v0.2.5.md) | 2026-04-11 | Automated patch release for Master Control Orchestration Server. |
