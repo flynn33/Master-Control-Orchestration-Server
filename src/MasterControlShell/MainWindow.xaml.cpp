@@ -60,6 +60,13 @@ constexpr wchar_t kExportsView[] = L"ExportsSectionView";
 constexpr wchar_t kSecurityView[] = L"SecuritySectionView";
 constexpr wchar_t kSettingsView[] = L"SettingsSectionView";
 
+static bool isInteractiveFormSection(const std::wstring& viewId) {
+    return viewId == kProvidersView
+        || viewId == kSecurityView
+        || viewId == kSettingsView
+        || viewId == kImportsView;
+}
+
 void writeShellLog(const std::wstring& message) {
     try {
         wchar_t buffer[MAX_PATH]{};
@@ -898,8 +905,19 @@ void MainWindow::EnsureBootstrapSurface(::MasterControlShell::ShellSnapshot& sna
 
 void MainWindow::SetCurrentDestination(const std::wstring& destinationId) {
     currentDestination_ = destinationId.empty() ? std::wstring(kOverviewDestination) : destinationId;
-    SectionContentHost().Content(ResolvePrimaryViewForDestination(currentDestination_, currentSnapshot_));
+    const auto view = ResolvePrimaryViewForDestination(currentDestination_, currentSnapshot_);
+    SectionContentHost().Content(view);
     ApplySectionMetadata(currentSnapshot_);
+
+    // Interactive form sections are excluded from the timed refresh so
+    // they must receive data when the user navigates to them.
+    const auto slotIter = currentSnapshot_.viewInjectionsBySlot.find(currentDestination_);
+    if (slotIter != currentSnapshot_.viewInjectionsBySlot.end() && !slotIter->second.empty()) {
+        const auto& viewId = slotIter->second.front().viewId;
+        if (isInteractiveFormSection(viewId) && view != nullptr) {
+            applySnapshotToView(view, viewId, currentSnapshot_);
+        }
+    }
 
     // Bring the section content into view so clicking Connect AI Model /
     // Assign Responsibility / etc. actually reveals the Providers section
@@ -997,7 +1015,7 @@ void MainWindow::ApplySectionMetadata(const ::MasterControlShell::ShellSnapshot&
 
 void MainWindow::ApplyCachedSectionSnapshots(const ::MasterControlShell::ShellSnapshot& snapshot) {
     for (auto& [viewId, view] : cachedViews_) {
-        if (view != nullptr) {
+        if (view != nullptr && !isInteractiveFormSection(viewId)) {
             applySnapshotToView(view, viewId, snapshot);
         }
     }
