@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.2.8",
-  "current_tag": "v0.2.8",
+  "current_version": "0.2.9",
+  "current_tag": "v0.2.9",
   "released_at": "2026-04-12",
-  "last_release_commit": "587587a1c4aef10b63331f6e29ba8cd7afdb6f7b",
+  "last_release_commit": "5a669db0f90a6ad18bb0c76762d43a115e0cd8b7",
   "history": [
+    {
+      "version": "0.2.9",
+      "tag": "v0.2.9",
+      "released_at": "2026-04-12",
+      "commit": "5a669db0f90a6ad18bb0c76762d43a115e0cd8b7",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "fix(shell): eliminate black fonts and left-pane gap (flynn33)"
+      ]
+    },
     {
       "version": "0.2.8",
       "tag": "v0.2.8",
