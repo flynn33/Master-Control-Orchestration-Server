@@ -7755,7 +7755,9 @@ public:
         , surfaceService_(std::move(surfaceService)) {}
 
     DashboardSnapshot snapshot() override {
-        inventoryService_->refreshAsync();
+        // Use synchronous refresh so the snapshot always reflects the latest
+        // configuration state — callers expect a consistent view.
+        inventoryService_->refresh();
 
         DashboardSnapshot snapshot;
         snapshot.telemetry = telemetryService_->captureSnapshot();
