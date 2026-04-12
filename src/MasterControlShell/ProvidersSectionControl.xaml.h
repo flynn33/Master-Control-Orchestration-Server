@@ -130,6 +130,7 @@ private:
     // Multi-select target ids chosen in the AutoConnectRoleSelector ListView.
     // Replaces the former single-responsibility ComboBox selection.
     std::vector<std::wstring> selectedAutoConnectRoleTargetIds_;
+    bool autoConnectRoleHandlerWired_ = false;
     int selectedSubAgentGroupIndex_ = -1;
     std::wstring selectedSubAgentGroupId_;
     int selectedAssignmentTargetIndex_ = -1;

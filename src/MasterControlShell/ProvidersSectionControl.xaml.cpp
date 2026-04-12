@@ -630,9 +630,19 @@ void ProvidersSectionControl::RefreshProviderSelector() {
 }
 
 void ProvidersSectionControl::RefreshQuickConnectProviderSelector() {
+    // Skip the full rebuild when the capability list hasn't changed and the
+    // user already has a provider selected.  The periodic ApplySnapshot timer
+    // fires every 10 seconds and previously rebuilt the ComboBox each time,
+    // which fired SelectionChanged and cleared the user's credential / role
+    // state mid-interaction.
+    const bool sameCapabilityCount =
+        QuickConnectProviderSelector().Items().Size() == static_cast<uint32_t>(providerCapabilities_.size());
+    if (sameCapabilityCount && !selectedQuickConnectProviderId_.empty()) {
+        return; // no structural change — keep the user's selection intact
+    }
+
     const auto previousSelection = selectedQuickConnectProviderId_;
     suspendDirtyTracking_ = true;
-    selectedQuickConnectProviderId_.clear();
     QuickConnectProviderSelector().Items().Clear();
 
     for (const auto& capability : providerCapabilities_) {
@@ -651,18 +661,17 @@ void ProvidersSectionControl::RefreshQuickConnectProviderSelector() {
                     std::wstring(unbox_value_or<winrt::hstring>(item.Tag(), winrt::hstring()).c_str());
                 if (providerId == previousSelection) {
                     selectedIndex = static_cast<int>(itemIndex);
+                    selectedQuickConnectProviderId_ = previousSelection;
                     break;
                 }
             }
         }
     }
 
-    if (selectedIndex < 0 && QuickConnectProviderSelector().Items().Size() > 0) {
-        selectedIndex = 0;
-        if (const auto item = QuickConnectProviderSelector().Items().GetAt(0).try_as<ComboBoxItem>()) {
-            selectedQuickConnectProviderId_ =
-                std::wstring(unbox_value_or<winrt::hstring>(item.Tag(), winrt::hstring()).c_str());
-        }
+    if (selectedIndex < 0) {
+        // Previous selection not found — clear rather than auto-selecting
+        // index 0, which would overwrite a deliberate user choice.
+        selectedQuickConnectProviderId_.clear();
     }
 
     QuickConnectProviderSelector().SelectedIndex(selectedIndex);
@@ -736,10 +745,12 @@ void ProvidersSectionControl::RefreshQuickConnectResponsibilitySelector() {
         }
     }
 
-    // Rewire the selection-changed event each refresh. Using RevokeRefcounted
-    // tokens here would add complexity; since Refresh is idempotent and
-    // inexpensive, we accept occasional duplicate handler registration and
-    // rely on suspendDirtyTracking_ to debounce.
+    // Wire the selection-changed event only once. Previous code re-registered
+    // on every ApplySnapshot cycle, stacking duplicate handlers that each
+    // cleared and rebuilt selectedAutoConnectRoleTargetIds_ — causing the
+    // provider selector to appear to reset when the user clicked a role.
+    if (!autoConnectRoleHandlerWired_) {
+    autoConnectRoleHandlerWired_ = true;
     listView.SelectionChanged([this](auto const& sender, auto const&) {
         selectedAutoConnectRoleTargetIds_.clear();
         const auto lv = sender.template try_as<ListView>();
@@ -759,6 +770,7 @@ void ProvidersSectionControl::RefreshQuickConnectResponsibilitySelector() {
         }
         UpdateEditorState();
     });
+    } // end once-only handler wiring
 
     suspendDirtyTracking_ = false;
 }
