@@ -1,11 +1,21 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.2.11",
-  "current_tag": "v0.2.11",
+  "current_version": "0.2.12",
+  "current_tag": "v0.2.12",
   "released_at": "2026-04-12",
-  "last_release_commit": "2d72b4b2303cbca75a8f4267d834685cdcab10d7",
+  "last_release_commit": "310d331dbce70cd04be1e3a1b946ecb319d56dbc",
   "history": [
+    {
+      "version": "0.2.12",
+      "tag": "v0.2.12",
+      "released_at": "2026-04-12",
+      "commit": "310d331dbce70cd04be1e3a1b946ecb319d56dbc",
+      "summary": "Automated patch release for Master Control Orchestration Server.",
+      "entries": [
+        "fix(shell): exclude interactive forms from background refresh timer (flynn33)"
+      ]
+    },
     {
       "version": "0.2.11",
       "tag": "v0.2.11",

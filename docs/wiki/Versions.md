@@ -11,13 +11,13 @@ analyzes commit history to decide between patch / minor / major.
 
 | Field | Value |
 | --- | --- |
-| **Version** | `v0.2.11` |
+| **Version** | `v0.2.12` |
 | **Released** | `2026-04-12` |
 | **Summary** | Automated patch release for Master Control Orchestration Server. |
 
 ### Highlights
 
-- fix(shell): freeze Auto-Connect card during user interaction (flynn33)
+- fix(shell): exclude interactive forms from background refresh timer (flynn33)
 
 ---
 
@@ -44,6 +44,7 @@ Versions are tracked in `VERSION.json` and tagged as GitHub Releases.
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| `v0.2.12` | `2026-04-12` | Automated patch release for Master Control Orchestration Server. |
 | `v0.2.11` | `2026-04-12` | Automated patch release for Master Control Orchestration Server. |
 | `v0.2.10` | `2026-04-12` | Automated patch release for Master Control Orchestration Server. |
 | `v0.2.9` | `2026-04-12` | Automated patch release for Master Control Orchestration Server. |
@@ -63,6 +64,5 @@ Versions are tracked in `VERSION.json` and tagged as GitHub Releases.
 | `v0.1.62` | `2026-04-10` | Automated patch release for Master Control Orchestration Server. |
 | `v0.1.61` | `2026-04-10` | Automated patch release for Master Control Orchestration Server. |
 | `v0.1.60` | `2026-04-10` | Automated patch release for Master Control Orchestration Server. |
-| `v0.1.59` | `2026-04-03` | Automated patch release for Master Control Orchestration Server. |
 
 See also: [Automation](Automation) · [Operations](Operations)
