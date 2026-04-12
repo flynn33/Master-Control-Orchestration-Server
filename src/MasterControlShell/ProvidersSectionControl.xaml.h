@@ -131,6 +131,7 @@ private:
     // Replaces the former single-responsibility ComboBox selection.
     std::vector<std::wstring> selectedAutoConnectRoleTargetIds_;
     bool autoConnectRoleHandlerWired_ = false;
+    bool quickConnectActive_ = false; // true while user is editing the Auto-Connect card; blocks ApplySnapshot from touching those controls
     int selectedSubAgentGroupIndex_ = -1;
     std::wstring selectedSubAgentGroupId_;
     int selectedAssignmentTargetIndex_ = -1;

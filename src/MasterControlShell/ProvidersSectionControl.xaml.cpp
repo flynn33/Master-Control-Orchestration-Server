@@ -150,6 +150,10 @@ void ProvidersSectionControl::QuickConnectProviderSelector_SelectionChanged(
             std::wstring(unbox_value_or<winrt::hstring>(selectedItem.Tag(), winrt::hstring()).c_str());
     }
 
+    // Mark the Auto-Connect card as active so ApplySnapshot won't
+    // clobber controls while the user is filling in credentials/roles.
+    quickConnectActive_ = !selectedQuickConnectProviderId_.empty();
+
     QuickConnectCredentialFieldOneValueBox().Password(L"");
     QuickConnectCredentialFieldTwoValueBox().Password(L"");
     selectedAutoConnectRoleTargetIds_.clear();
@@ -210,13 +214,20 @@ void ProvidersSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
     }
     populateListView(ProviderExecutionHistoryListView(), executionHistoryRows);
 
-    RefreshQuickConnectProviderSelector();
+    // Only refresh the Auto-Connect card controls when the user is NOT
+    // actively editing them. The 10-second ApplySnapshot timer previously
+    // rebuilt the provider ComboBox and role ListView every cycle, firing
+    // SelectionChanged events that wiped credentials and role state.
+    if (!quickConnectActive_) {
+        RefreshQuickConnectProviderSelector();
+        RefreshQuickConnectResponsibilitySelector();
+    }
+
     RefreshProviderSelector();
     RefreshSubAgentGroupSelector();
     RefreshSubAgentMemberSelector();
     RefreshAssignmentSelectors();
     RefreshExecutionTargetSelector();
-    RefreshQuickConnectResponsibilitySelector();
 
     if (!autonomyDirty_) {
         suspendDirtyTracking_ = true;
@@ -752,6 +763,9 @@ void ProvidersSectionControl::RefreshQuickConnectResponsibilitySelector() {
     if (!autoConnectRoleHandlerWired_) {
     autoConnectRoleHandlerWired_ = true;
     listView.SelectionChanged([this](auto const& sender, auto const&) {
+        if (suspendDirtyTracking_) {
+            return; // guard against spurious events during programmatic rebuild
+        }
         selectedAutoConnectRoleTargetIds_.clear();
         const auto lv = sender.template try_as<ListView>();
         if (lv == nullptr) {
@@ -1235,6 +1249,7 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ConnectQuickPr
             message = L"Auto-connect failed. Check the local installer logs for details.";
         }
         QuickConnectStatusText().Text(winrt::hstring(message));
+        quickConnectActive_ = false;
         UpdateEditorState();
         co_return;
     }
@@ -1280,6 +1295,8 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ConnectQuickPr
 
     QuickConnectStatusText().Text(winrt::hstring(message));
     SetStatus(winrt::hstring(message));
+    quickConnectActive_ = false;
+    selectedAutoConnectRoleTargetIds_.clear();
     if (refreshRequested_) {
         refreshRequested_();
     }
