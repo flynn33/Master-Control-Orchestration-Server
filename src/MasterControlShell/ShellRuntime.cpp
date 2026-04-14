@@ -1445,6 +1445,9 @@ ShellAutoConnectProviderResult postAutoConnectProviderToAdminApi(
 
     JsonObject payload;
     payload.SetNamedValue(L"kind", JsonValue::CreateStringValue(request.kind));
+    if (!request.providerId.empty()) {
+        payload.SetNamedValue(L"providerId", JsonValue::CreateStringValue(request.providerId));
+    }
     payload.SetNamedValue(L"allowAutonomousControl",
                           JsonValue::CreateBooleanValue(request.allowAutonomousControl));
     payload.SetNamedValue(L"discoverModels", JsonValue::CreateBooleanValue(request.discoverModels));

@@ -58,7 +58,8 @@ std::string to_string(EndpointStatus value) {
         { EndpointStatus::Unknown, "unknown" },
         { EndpointStatus::Online, "online" },
         { EndpointStatus::Offline, "offline" },
-        { EndpointStatus::Degraded, "degraded" }
+        { EndpointStatus::Degraded, "degraded" },
+        { EndpointStatus::Template, "template" }
     });
 }
 
@@ -184,7 +185,8 @@ EndpointStatus endpointStatusFromString(const std::string& value) {
         { EndpointStatus::Unknown, "unknown" },
         { EndpointStatus::Online, "online" },
         { EndpointStatus::Offline, "offline" },
-        { EndpointStatus::Degraded, "degraded" }
+        { EndpointStatus::Degraded, "degraded" },
+        { EndpointStatus::Template, "template" }
     });
 }
 

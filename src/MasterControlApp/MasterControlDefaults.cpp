@@ -273,10 +273,11 @@ RuntimeEndpoint makeEndpoint(const std::string& id,
     endpoint.host = host;
     endpoint.port = port;
     endpoint.protocol = "http";
-    endpoint.status = EndpointStatus::Unknown;
+    endpoint.status = EndpointStatus::Template;
     endpoint.routePath = routePath;
     endpoint.description = description;
     endpoint.lastCheckedUtc = "";
+    endpoint.isTemplate = true;
     return endpoint;
 }
 
@@ -390,9 +391,9 @@ std::vector<RuntimeEndpoint> buildDefaultSeededEndpoints() {
 
 std::vector<ProviderConnection> buildDefaultProviders() {
     return {
-        ProviderConnection{ "codex", ProviderKind::Codex, "Codex", "https://api.openai.com/v1", "gpt-5.4", true, false, false },
-        ProviderConnection{ "claude-code", ProviderKind::ClaudeCode, "Claude Code", "https://api.anthropic.com", "", true, false, false },
-        ProviderConnection{ "xai-grok", ProviderKind::XAI, "xAI / Grok", "https://api.x.ai/v1", "grok-code-fast-1", true, false, false }
+        ProviderConnection{ "codex", ProviderKind::Codex, "Codex", "https://api.openai.com/v1", "gpt-5.4", true, false, false, true },
+        ProviderConnection{ "claude-code", ProviderKind::ClaudeCode, "Claude Code", "https://api.anthropic.com", "", true, false, false, true },
+        ProviderConnection{ "xai-grok", ProviderKind::XAI, "xAI / Grok", "https://api.x.ai/v1", "grok-code-fast-1", true, false, false, true }
     };
 }
 

@@ -5,6 +5,7 @@
 #include "MasterControl/MasterControlDefaults.h"
 #include "MasterControl/MasterControlModels.h"
 #include "MasterControl/MasterControlRuntime.h"
+#include "MasterControl/MasterControlVersion.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -1274,6 +1275,101 @@ int main() {
         success &= expect(
             snapshot.governance.platformGateways.size() == 3 && snapshot.governance.governanceServers.size() == 3,
             "CLU should be aware of all platform gateway and governance server lanes.");
+
+        // =====================================================================
+        // Provider Identity Remediation Tests
+        // =====================================================================
+        // ChatGPT and Codex must resolve to distinct capabilities despite
+        // sharing ProviderKind::Codex.
+        success &= expect(
+            hasProviderCapability(snapshot.providerCapabilities, "chatgpt"),
+            "ChatGPT provider module should publish a capability descriptor with providerId 'chatgpt'.");
+        {
+            const auto codexCap = std::find_if(
+                snapshot.providerCapabilities.begin(), snapshot.providerCapabilities.end(),
+                [](const auto& c) { return c.providerId == "codex"; });
+            const auto chatgptCap = std::find_if(
+                snapshot.providerCapabilities.begin(), snapshot.providerCapabilities.end(),
+                [](const auto& c) { return c.providerId == "chatgpt"; });
+            success &= expect(
+                codexCap != snapshot.providerCapabilities.end() &&
+                    chatgptCap != snapshot.providerCapabilities.end(),
+                "Both Codex and ChatGPT capabilities should coexist in the provider catalog.");
+            if (codexCap != snapshot.providerCapabilities.end() &&
+                chatgptCap != snapshot.providerCapabilities.end()) {
+                success &= expect(
+                    codexCap->displayName != chatgptCap->displayName,
+                    "Codex and ChatGPT should have distinct display names despite shared ProviderKind.");
+                success &= expect(
+                    codexCap->providerId == "codex" && chatgptCap->providerId == "chatgpt",
+                    "Codex and ChatGPT should have distinct providerIds.");
+            }
+        }
+        // Execution registrations should also be distinct by providerId
+        {
+            const auto codexReg = std::find_if(
+                snapshot.providerExecutionRegistrations.begin(),
+                snapshot.providerExecutionRegistrations.end(),
+                [](const auto& r) { return r.providerId == "codex"; });
+            const auto chatgptReg = std::find_if(
+                snapshot.providerExecutionRegistrations.begin(),
+                snapshot.providerExecutionRegistrations.end(),
+                [](const auto& r) { return r.providerId == "chatgpt"; });
+            success &= expect(
+                codexReg != snapshot.providerExecutionRegistrations.end() &&
+                    chatgptReg != snapshot.providerExecutionRegistrations.end(),
+                "Both Codex and ChatGPT should have distinct execution registrations.");
+        }
+
+        // =====================================================================
+        // First-Run Template Distinction Tests
+        // =====================================================================
+        {
+            // Verify the default builder functions produce template-flagged objects
+            const auto defaultEndpoints = MasterControl::buildDefaultSeededEndpoints();
+            const bool allSeededAreTemplates = std::all_of(
+                defaultEndpoints.begin(), defaultEndpoints.end(),
+                [](const MasterControl::RuntimeEndpoint& endpoint) {
+                    return endpoint.status == MasterControl::EndpointStatus::Template && endpoint.isTemplate;
+                });
+            success &= expect(allSeededAreTemplates,
+                "All seeded endpoints from buildDefaultSeededEndpoints() should have Template status and isTemplate=true.");
+
+            const auto defaultProviders = MasterControl::buildDefaultProviders();
+            const bool allDefaultsAreTemplates = std::all_of(
+                defaultProviders.begin(), defaultProviders.end(),
+                [](const MasterControl::ProviderConnection& provider) { return provider.isTemplate; });
+            success &= expect(allDefaultsAreTemplates,
+                "All default providers from buildDefaultProviders() should have isTemplate=true.");
+
+            // Verify the snapshot reflects template providers
+            const bool snapshotProvidersHaveTemplates = std::any_of(
+                snapshot.providers.begin(), snapshot.providers.end(),
+                [](const MasterControl::ProviderConnection& provider) { return provider.isTemplate; });
+            success &= expect(snapshotProvidersHaveTemplates,
+                "Application snapshot should contain template-flagged providers on first run.");
+        }
+
+        // =====================================================================
+        // Version Alignment Tests
+        // =====================================================================
+#ifdef MASTERCONTROL_VERSION
+        success &= expect(
+            std::string(MASTERCONTROL_VERSION).size() > 0,
+            "MASTERCONTROL_VERSION macro should be defined and non-empty.");
+        success &= expect(
+            std::string(MASTERCONTROL_VERSION).find('.') != std::string::npos,
+            "MASTERCONTROL_VERSION should contain a dot-separated version string.");
+#endif
+
+        // =====================================================================
+        // Progressive Disclosure Configuration Tests
+        // =====================================================================
+        {
+            const auto defaultConfig = MasterControl::buildDefaultConfiguration();
+            success &= expect(!defaultConfig.advancedMode,
+                "Default configuration should have advancedMode=false for basic/guided first-run.");
+        }
 
         const auto platformServicesDocument = httpGetJson(application.browserUrl() + "api/platform-services");
         success &= expect(platformServicesDocument.has_value(), "The browser admin server should expose platform service inventory.");

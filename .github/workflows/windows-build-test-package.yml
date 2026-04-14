@@ -1,0 +1,100 @@
+name: Windows Build, Test, and Package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-product-gate:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Discover and document toolchain
+        shell: pwsh
+        run: |
+          $vsInstall = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          Write-Host "Visual Studio install: $vsInstall"
+          $vsVersion = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest -products * -property installationVersion
+          Write-Host "Visual Studio version: $vsVersion"
+          cmake --version
+          Write-Host "vcpkg: $(vcpkg version 2>&1 | Select-Object -First 1)"
+
+      - name: Bootstrap vcpkg and install dependencies
+        shell: pwsh
+        run: |
+          vcpkg install nlohmann-json:x64-windows
+
+      - name: Configure (Release)
+        shell: pwsh
+        run: |
+          cmake --preset release
+
+      - name: Build (Release)
+        shell: pwsh
+        run: |
+          cmake --build build/release --config Release
+
+      - name: Test (CTest)
+        shell: pwsh
+        run: |
+          ctest --test-dir build/release -C Release --output-on-failure --timeout 300
+
+      - name: Package
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/Package-MasterControlOrchestrationServer.ps1 -Preset release -SkipBuild
+
+      - name: Smoke validation - verify package contents
+        shell: pwsh
+        run: |
+          $packageDir = Get-ChildItem -Path dist/release -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $packageDir) {
+            Write-Error "No package output found in dist/release"
+            exit 1
+          }
+          $requiredFiles = @(
+            "MasterControlServiceHost.exe",
+            "MasterControlShell.exe",
+            "MasterControlBootstrapper.exe"
+          )
+          foreach ($file in $requiredFiles) {
+            $found = Get-ChildItem -Path $packageDir.FullName -Recurse -Filter $file
+            if (-not $found) {
+              Write-Error "Missing required binary: $file"
+              exit 1
+            }
+            Write-Host "Found: $($found.FullName)"
+          }
+          $versionJson = Get-Content -Path VERSION.json -Raw | ConvertFrom-Json
+          Write-Host "Package version: $($versionJson.current_version)"
+
+      - name: Bootstrapper preflight validation
+        shell: pwsh
+        run: |
+          $bootstrapper = Get-ChildItem -Path dist/release -Recurse -Filter "MasterControlBootstrapper.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($bootstrapper) {
+            & $bootstrapper.FullName preflight --json-output 2>&1 | Out-Host
+            Write-Host "Bootstrapper preflight completed (exit: $LASTEXITCODE)"
+          } else {
+            Write-Warning "Bootstrapper binary not found in package output - skipping preflight"
+          }
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mastercontrol-release-package
+          path: dist/release/
+          retention-days: 14

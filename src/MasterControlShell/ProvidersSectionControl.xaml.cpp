@@ -25,11 +25,32 @@ namespace {
 const ::MasterControlShell::ShellProviderCapability* findCapabilityForProvider(
     const std::vector<::MasterControlShell::ShellProviderCapability>& capabilities,
     const ::MasterControlShell::ShellProviderConnection& provider) {
-    const auto iterator = std::find_if(
-        capabilities.begin(),
-        capabilities.end(),
+    // Resolve by provider id first (exact match, then prefix match for auto-connect ids),
+    // fall back to kind-based match for backward compatibility.
+    if (!provider.id.empty()) {
+        const auto exact = std::find_if(
+            capabilities.begin(), capabilities.end(),
+            [&provider](const auto& capability) { return capability.providerId == provider.id; });
+        if (exact != capabilities.end()) {
+            return &(*exact);
+        }
+        // Prefix match for auto-connect-generated ids ({providerId}-YYYYMMDD-HHMMSS)
+        const auto prefix = std::find_if(
+            capabilities.begin(), capabilities.end(),
+            [&provider](const auto& capability) {
+                return !capability.providerId.empty()
+                    && provider.id.size() > capability.providerId.size()
+                    && provider.id[capability.providerId.size()] == L'-'
+                    && provider.id.compare(0, capability.providerId.size(), capability.providerId) == 0;
+            });
+        if (prefix != capabilities.end()) {
+            return &(*prefix);
+        }
+    }
+    const auto kindMatch = std::find_if(
+        capabilities.begin(), capabilities.end(),
         [&provider](const auto& capability) { return capability.kind == provider.kind; });
-    return iterator == capabilities.end() ? nullptr : &(*iterator);
+    return kindMatch == capabilities.end() ? nullptr : &(*kindMatch);
 }
 
 const ::MasterControlShell::ShellProviderCredentialStatus* findCredentialStatus(
@@ -529,6 +550,11 @@ void ProvidersSectionControl::PopulateProviderEditor(const size_t index) {
 
     int selectedKindIndex = 4;
     const auto desiredKind = provider.kind.empty() ? std::wstring(L"generic") : provider.kind;
+    // Resolve the capability for this provider to get the canonical display name,
+    // then match the combo box item by both kind tag and display name.
+    const auto* resolvedCapability = findCapabilityForProvider(providerCapabilities_, provider);
+    const std::wstring expectedDisplayName = resolvedCapability
+        ? resolvedCapability->displayName : std::wstring();
     for (uint32_t itemIndex = 0; itemIndex < ProviderKindComboBox().Items().Size(); ++itemIndex) {
         if (const auto item = ProviderKindComboBox().Items().GetAt(itemIndex).try_as<ComboBoxItem>()) {
             const auto tagValue =
@@ -536,15 +562,13 @@ void ProvidersSectionControl::PopulateProviderEditor(const size_t index) {
             const auto contentValue =
                 std::wstring(unbox_value_or<winrt::hstring>(item.Content(), winrt::hstring()).c_str());
             if (tagValue == desiredKind) {
-                if (provider.id == L"chatgpt" && contentValue == L"ChatGPT") {
+                // When a resolved capability is available, match on display name to
+                // disambiguate providers that share the same kind (e.g., ChatGPT vs Codex).
+                if (!expectedDisplayName.empty() && contentValue == expectedDisplayName) {
                     selectedKindIndex = static_cast<int>(itemIndex);
                     break;
                 }
-                if (provider.id == L"xai-grok" && contentValue == L"Grok") {
-                    selectedKindIndex = static_cast<int>(itemIndex);
-                    break;
-                }
-                if (provider.id != L"chatgpt" && provider.id != L"xai-grok") {
+                if (expectedDisplayName.empty()) {
                     selectedKindIndex = static_cast<int>(itemIndex);
                     break;
                 }
@@ -1227,6 +1251,7 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ConnectQuickPr
     // Build the auto-connect request. The runtime decides everything else.
     ::MasterControlShell::ShellAutoConnectProviderRequest request{};
     request.kind = capability->kind.empty() ? std::wstring(L"generic") : capability->kind;
+    request.providerId = capability->providerId;
     request.credentials = credentialValues;
     request.assignmentTargetIds = selectedAutoConnectRoleTargetIds_;
     request.allowAutonomousControl = false;

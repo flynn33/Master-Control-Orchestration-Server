@@ -136,6 +136,7 @@ struct ShellActivityStreamResult final {
 // url, model discovery, dpapi encryption, assignment fan-out) is automated.
 struct ShellAutoConnectProviderRequest final {
     std::wstring kind;                                    // e.g. "Codex", "ClaudeCode", "XAI"
+    std::wstring providerId;                              // concrete provider id (e.g. "chatgpt", "codex")
     std::vector<std::pair<std::wstring, std::wstring>> credentials;
     std::vector<std::wstring> assignmentTargetIds;        // roles, groups, or sub-agents
     bool allowAutonomousControl = false;

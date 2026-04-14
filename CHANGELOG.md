@@ -5,6 +5,23 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.3.0-rc.1] - 2026-04-14
+### Summary
+Productization and stabilization remediation pass covering 10 workstreams.
+
+### Included Changes
+- fix(runtime): resolve provider capabilities by providerId instead of kind — fixes ChatGPT/Codex collision
+- feat(runtime): mark seeded endpoints and default providers as templates with EndpointStatus::Template
+- feat(browser): add quick-connect workflows for ChatGPT, Codex, Claude Code, and xAI
+- feat(browser): add progressive disclosure with runtime-backed advancedMode toggle
+- feat(build): unify versioning — VERSION.json drives CMake, bootstrapper, and module manifests
+- feat(ci): add Windows Build, Test, and Package workflow with release gating
+- fix(runtime): harden process execution with concurrent pipe draining, 5-min timeout, bounded capture
+- feat(runtime): add GET /api/environment-hints for credential auto-detection
+- feat(runtime): add POST /api/settings/advanced-mode for progressive disclosure toggle
+- test: add provider identity, template distinction, version alignment, and progressive disclosure tests
+- docs: revise README to accurately describe multi-binary architecture and prerequisites
+
 ## [0.2.12] - 2026-04-12
 ### Summary
 Automated patch release for Master Control Orchestration Server.

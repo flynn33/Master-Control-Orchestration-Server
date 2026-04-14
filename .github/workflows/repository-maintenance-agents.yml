@@ -1,9 +1,10 @@
 name: Repository Maintenance Agents
 
 on:
-  push:
-    branches:
-      - main
+  workflow_run:
+    workflows: ["Windows Build, Test, and Package"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -76,6 +77,24 @@ jobs:
         if: steps.prepare.outputs.repo_changed == 'true'
         shell: bash
         run: git push
+
+      - name: Verify Windows product gate passed for this commit
+        if: steps.prepare.outputs.release_changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          HEAD_SHA=$(git rev-parse HEAD)
+          echo "Checking Windows Build, Test, and Package status for commit $HEAD_SHA..."
+          RESULT=$(gh api "repos/${{ github.repository }}/commits/$HEAD_SHA/check-runs" \
+            --jq '.check_runs[] | select(.name == "windows-product-gate") | .conclusion' \
+            | head -1)
+          if [ "$RESULT" != "success" ]; then
+            echo "ERROR: Windows product gate has not passed for commit $HEAD_SHA (status: ${RESULT:-not found})"
+            echo "Release cannot proceed without a successful Windows build, test, and package run."
+            exit 1
+          fi
+          echo "Windows product gate passed for $HEAD_SHA"
 
       - name: Publish GitHub release
         if: steps.prepare.outputs.release_changed == 'true'

@@ -546,6 +546,40 @@ function guidedFollowThroughText(destinationId) {
 
 function guidedWorkflowDefinitions() {
   return {
+    // -----------------------------------------------------------------------
+    // Outcome-driven quick-connect workflows (pre-fill provider identity)
+    // -----------------------------------------------------------------------
+    'connect-chatgpt': {
+      title: 'Connect ChatGPT',
+      eyebrow: 'QUICK CONNECT',
+      description: 'Set up ChatGPT as an orchestration provider. Enter your OpenAI API key and the runtime handles the rest.',
+      destinationId: 'providers',
+      presets: { capabilityId: 'chatgpt', kind: 'codex' }
+    },
+    'connect-codex': {
+      title: 'Connect Codex',
+      eyebrow: 'QUICK CONNECT',
+      description: 'Set up Codex as a coding and architecture provider. Enter your OpenAI API key to get started.',
+      destinationId: 'providers',
+      presets: { capabilityId: 'codex', kind: 'codex' }
+    },
+    'connect-claude-code': {
+      title: 'Connect Claude Code',
+      eyebrow: 'QUICK CONNECT',
+      description: 'Set up Claude Code for architecture and specialist coding execution. Enter your Anthropic API key or auth token.',
+      destinationId: 'providers',
+      presets: { capabilityId: 'claude-code', kind: 'claude_code' }
+    },
+    'connect-xai': {
+      title: 'Connect xAI / Grok',
+      eyebrow: 'QUICK CONNECT',
+      description: 'Set up xAI Grok for orchestration. Enter your xAI API key to begin.',
+      destinationId: 'providers',
+      presets: { capabilityId: 'xai-grok', kind: 'xai' }
+    },
+    // -----------------------------------------------------------------------
+    // Existing guided workflows
+    // -----------------------------------------------------------------------
     'connect-model': {
       title: 'Connect AI Model',
       eyebrow: 'GUIDED SETUP',
@@ -1601,6 +1635,7 @@ function currentConfig() {
     beaconPort: safeNumber(state.config?.beaconPort, 7301),
     beaconEnabled: state.config?.beaconEnabled ?? true,
     aiAutonomyEnabled: state.config?.aiAutonomyEnabled ?? false,
+    advancedMode: state.config?.advancedMode ?? false,
     security: {
       enableTls: state.config?.security?.enableTls ?? false,
       enableAuthentication: state.config?.security?.enableAuthentication ?? false,
@@ -1702,7 +1737,16 @@ async function openGuidedWorkflow(workflowId) {
   state.overlayRouteId = '';
   state.guidedWorkflow = defaultGuidedWorkflowState();
   state.guidedWorkflow.id = workflowId;
-  state.guidedWorkflow.providerCapabilityId = dashboardSnapshot().providerCapabilities[0]?.providerId || '';
+  // Quick-connect workflows pre-set the capability from definition presets.
+  // Generic connect-model workflow defaults to the first available capability.
+  const presets = definition.presets;
+  if (presets?.capabilityId) {
+    state.guidedWorkflow.providerCapabilityId = presets.capabilityId;
+    // Route quick-connect workflows through the generic connect-model form
+    state.guidedWorkflow.id = 'connect-model';
+  } else {
+    state.guidedWorkflow.providerCapabilityId = dashboardSnapshot().providerCapabilities[0]?.providerId || '';
+  }
   state.guidedWorkflow.importMode = 'package';
   state.guidedWorkflow.runtimeMaintenanceKind = 'mcp';
   state.guidedWorkflow.status = makeStatus(definition.description, 'info');
@@ -1832,12 +1876,28 @@ function providerKindOptions(selectedKind) {
   `).join('');
 }
 
+function resolveProviderCapability(capabilities, providerId, kind) {
+  // Resolve by providerId first (exact match, then prefix match for auto-connect ids),
+  // fall back to kind-based match for backward compatibility.
+  if (providerId) {
+    const exact = capabilities.find((c) => c.providerId === providerId);
+    if (exact) return exact;
+    const prefix = capabilities.find((c) =>
+      c.providerId && providerId.length > c.providerId.length
+      && providerId[c.providerId.length] === '-'
+      && providerId.startsWith(c.providerId));
+    if (prefix) return prefix;
+  }
+  return capabilities.find((c) => c.kind === kind) || null;
+}
+
 function selectedProviderCapability() {
   const snapshot = dashboardSnapshot();
   const draft = state.providerDraft;
   const provider = snapshot.providers.find((candidate) => candidate.id === draft.id);
   const kind = provider?.kind || draft.kind;
-  return snapshot.providerCapabilities.find((capability) => capability.kind === kind) || null;
+  const providerId = provider?.id || draft.id;
+  return resolveProviderCapability(snapshot.providerCapabilities, providerId, kind);
 }
 
 function selectedProviderCredentialStatus() {
@@ -1893,11 +1953,38 @@ function renderSurfaceToolbar() {
   `).join('');
 }
 
+function isAdvancedMode() {
+  return currentConfig().advancedMode;
+}
+
+function advancedOnly(html) {
+  return isAdvancedMode() ? html : '';
+}
+
+function activeEndpoints(snapshot) {
+  return snapshot.endpoints.filter((e) => !e.isTemplate);
+}
+
+function templateEndpoints(snapshot) {
+  return snapshot.endpoints.filter((e) => e.isTemplate);
+}
+
+function activeProviders(snapshot) {
+  return snapshot.providers.filter((p) => !p.isTemplate);
+}
+
+function templateProviders(snapshot) {
+  return snapshot.providers.filter((p) => p.isTemplate);
+}
+
 function renderSurfaceSummary() {
   const snapshot = dashboardSnapshot();
   const config = currentConfig();
-  const onlineEndpoints = snapshot.endpoints.filter((endpoint) => String(endpoint.status || '').toLowerCase() === 'online').length;
-  const enabledProviders = snapshot.providers.filter((provider) => provider.enabled).length;
+  const active = activeEndpoints(snapshot);
+  const templates = templateEndpoints(snapshot);
+  const onlineEndpoints = active.filter((endpoint) => String(endpoint.status || '').toLowerCase() === 'online').length;
+  const enabledProviders = activeProviders(snapshot).filter((provider) => provider.enabled).length;
+  const templateProviderCount = templateProviders(snapshot).length;
   const currentOverlay = state.guidedWorkflow.id
     ? guidedWorkflowDefinition(state.guidedWorkflow.id)?.title || 'Guided setup open'
     : state.overlayRouteId
@@ -1907,8 +1994,8 @@ function renderSurfaceSummary() {
   surfaceSummary.innerHTML = `
     <div class="summary-grid">
       ${metricCard('Destination', labelForDestination(state.currentDestination), 'active view')}
-      ${metricCard('Endpoints', formatCount(snapshot.endpoints.length), `${onlineEndpoints} online`)}
-      ${metricCard('Providers', formatCount(snapshot.providers.length), `${enabledProviders} enabled`)}
+      ${metricCard('Endpoints', formatCount(active.length), `${onlineEndpoints} online` + (templates.length ? ` · ${templates.length} templates` : ''))}
+      ${metricCard('Providers', formatCount(activeProviders(snapshot).length), `${enabledProviders} enabled` + (templateProviderCount ? ` · ${templateProviderCount} templates` : ''))}
       ${metricCard('Exports', formatCount(state.exports.length), `${snapshot.installHistory.length} installs tracked`)}
     </div>
     <article class="panel-block summary-notice" data-tone="${escapeHtml(state.surfaceNotice.tone)}">
@@ -1930,8 +2017,11 @@ function renderOverviewView() {
   const config = currentConfig();
   const snapshot = dashboardSnapshot();
   const telemetry = snapshot.telemetry;
-  const onlineEndpoints = snapshot.endpoints.filter((endpoint) => String(endpoint.status || '').toLowerCase() === 'online').length;
-  const enabledProviders = snapshot.providers.filter((provider) => provider.enabled).length;
+  const active = activeEndpoints(snapshot);
+  const templates = templateEndpoints(snapshot);
+  const onlineEndpoints = active.filter((endpoint) => String(endpoint.status || '').toLowerCase() === 'online').length;
+  const activeProviderList = activeProviders(snapshot);
+  const enabledProviders = activeProviderList.filter((provider) => provider.enabled).length;
   const trustedHosts = safeArray(config.security.trustedRemoteHosts);
 
   const missionBrief = [
@@ -1958,11 +2048,23 @@ function renderOverviewView() {
   return `
     <section class="section-shell">
       <div class="card-grid">
-        ${metricCard('Live Endpoints', formatCount(snapshot.endpoints.length), `${onlineEndpoints} online now`)}
-        ${metricCard('Providers', formatCount(snapshot.providers.length), `${enabledProviders} enabled`)}
+        ${metricCard('Active Endpoints', formatCount(active.length), `${onlineEndpoints} online` + (templates.length ? ` · ${templates.length} templates` : ''))}
+        ${metricCard('Providers', formatCount(activeProviderList.length), `${enabledProviders} enabled` + (templateProviders(snapshot).length ? ` · ${templateProviders(snapshot).length} templates` : ''))}
         ${metricCard('Exports', formatCount(state.exports.length), `${snapshot.installHistory.length} recorded installs`)}
         ${metricCard('Host CPU', formatPercent(telemetry.cpuPercent || 0), telemetry.hostName || 'awaiting telemetry')}
       </div>
+
+      <article class="panel-block">
+        <p class="eyebrow">Get Started</p>
+        <h3>Connect a Provider</h3>
+        <p class="narrative-copy">Choose a provider to connect. Enter your API key and the runtime handles capability resolution, model discovery, credential encryption, and assignment.</p>
+        ${renderGuidedWorkflowLaunchers([
+          'connect-chatgpt',
+          'connect-codex',
+          'connect-claude-code',
+          'connect-xai'
+        ])}
+      </article>
 
       <div class="section-actions">
         <button type="button" data-destination="runtime">Open Runtime Lanes</button>
@@ -1972,13 +2074,14 @@ function renderOverviewView() {
       </div>
 
       <article class="panel-block">
-        <p class="eyebrow">Guided Setup</p>
-        <h3>Fast Start Workflows</h3>
-        <p class="narrative-copy">Use walkthroughs instead of raw admin forms when you need to connect models, publish MCP lanes, create sub-agents, or manage Forsetti modules quickly.</p>
+        <p class="eyebrow">More Setup Options</p>
+        <h3>Advanced Workflows</h3>
+        <p class="narrative-copy">Use walkthroughs for raw admin tasks: connect a generic model, publish MCP lanes, create sub-agents, or manage Forsetti modules.</p>
         ${renderGuidedWorkflowLaunchers([
           'connect-model',
           'new-mcp',
           'new-subagent',
+          'new-subagent-group',
           'manage-forsetti-modules',
           'guided-import'
         ])}
@@ -2160,13 +2263,13 @@ function renderRuntimeView() {
         </thead>
         <tbody>
           ${snapshot.endpoints.map((endpoint) => `
-            <tr>
-              <td>${escapeHtml(endpoint.displayName)}</td>
+            <tr${endpoint.isTemplate ? ' class="template-row"' : ''}>
+              <td>${escapeHtml(endpoint.displayName)}${endpoint.isTemplate ? ' <span class="badge badge-template">TEMPLATE</span>' : ''}</td>
               <td>${escapeHtml(endpoint.kind)}</td>
               <td>${escapeHtml(endpoint.host)}</td>
               <td>${escapeHtml(endpoint.port)}</td>
-              <td>${statusPill(endpoint.status)}</td>
-              <td>${endpoint.userDefined ? 'Custom' : 'Managed'}</td>
+              <td>${endpoint.isTemplate ? statusPill('template') : statusPill(endpoint.status)}</td>
+              <td>${endpoint.userDefined ? 'Custom' : endpoint.isTemplate ? 'Template' : 'Managed'}</td>
             </tr>
           `).join('')}
         </tbody>
@@ -2650,9 +2753,9 @@ function renderProvidersView() {
           type="button"
           class="provider-card provider-card-button ${draft.id === provider.id ? 'is-selected' : ''}"
           data-provider-id="${escapeHtml(provider.id)}">
-          <strong>${escapeHtml(provider.displayName)}</strong>
+          <strong>${escapeHtml(provider.displayName)}${provider.isTemplate ? ' <span class="badge badge-template">TEMPLATE</span>' : ''}</strong>
           <div>${escapeHtml(provider.baseUrl)}</div>
-          <div>${escapeHtml(provider.kind)} | ${provider.enabled ? 'enabled' : 'disabled'} | autonomy ${provider.allowAutonomousControl ? 'on' : 'off'} | credentials ${provider.credentialsConfigured ? 'ready' : 'missing'}</div>
+          <div>${provider.isTemplate ? 'Not configured \u2014 click to set up' : `${escapeHtml(provider.kind)} | ${provider.enabled ? 'enabled' : 'disabled'} | autonomy ${provider.allowAutonomousControl ? 'on' : 'off'} | credentials ${provider.credentialsConfigured ? 'ready' : 'missing'}`}</div>
         </button>
       `).join('')}
     </div>
@@ -2803,7 +2906,7 @@ function renderProvidersView() {
         </article>
 
         <div class="surface-stack">
-          <form class="surface-form panel-block" data-form-kind="ai-autonomy">
+          ${advancedOnly(`<form class="surface-form panel-block" data-form-kind="ai-autonomy">
             <p class="eyebrow">Autonomy Gate</p>
             <h3>Global AI Control</h3>
             <label class="checkbox-field">
@@ -2811,7 +2914,7 @@ function renderProvidersView() {
               <span>Allow AI full autonomy when the user explicitly enables it.</span>
             </label>
             <button type="submit">Save Autonomy Setting</button>
-          </form>
+          </form>`)}
 
           <form class="surface-form panel-block" data-form-kind="provider">
             <p class="eyebrow">Provider Editor</p>
@@ -2841,6 +2944,7 @@ function renderProvidersView() {
 
           ${credentialFormMarkup}
 
+          ${advancedOnly(`
           <article class="panel-block">
             <p class="eyebrow">Sub-Agent Groups</p>
             <h3>Reusable Specialist Lanes</h3>
@@ -2899,9 +3003,11 @@ function renderProvidersView() {
             </label>
             <button type="submit">Run Provider Task</button>
           </form>
+          `)}
         </div>
       </div>
 
+      ${advancedOnly(`
       <div class="split-grid">
         <article class="panel-block">
           <p class="eyebrow">Provider Modules</p>
@@ -2927,6 +3033,7 @@ function renderProvidersView() {
           ${executionHistoryMarkup}
         </article>
       </div>
+      `)}
     </section>
   `;
 }
@@ -3128,6 +3235,10 @@ function renderSettingsView() {
             <label class="checkbox-field">
               <input name="beaconEnabled" type="checkbox"${checkedAttr(config.beaconEnabled)}>
               <span>Broadcast the LAN beacon and gateway metadata.</span>
+            </label>
+            <label class="checkbox-field">
+              <input name="advancedMode" type="checkbox"${checkedAttr(config.advancedMode)} data-action="toggle-advanced-mode">
+              <span>Show advanced controls (sub-agent groups, assignment matrix, execution history, governance tools, import/export mechanics).</span>
             </label>
             <button type="submit">Save Settings</button>
           </form>
@@ -3691,9 +3802,27 @@ async function submitGuidedProviderForm(form) {
       message: providerResult.message || `Connected AI model route '${displayName}'.`
     });
   } catch (error) {
-    state.guidedWorkflow.status = makeStatus(error.message, 'error');
+    const friendlyMessage = friendlyProviderError(error.message, displayName);
+    state.guidedWorkflow.status = makeStatus(friendlyMessage, 'error');
     renderGuidedWorkflowOverlay();
   }
+}
+
+function friendlyProviderError(rawMessage, providerName) {
+  const raw = String(rawMessage || '').toLowerCase();
+  if (raw.includes('not currently supported')) {
+    return `Could not find a provider module for '${providerName}'. Check that the required Forsetti module is installed and enabled.`;
+  }
+  if (raw.includes('fetch') || raw.includes('network') || raw.includes('timeout')) {
+    return `Could not reach the orchestration server. Check that the service is running and your network connection is available.`;
+  }
+  if (raw.includes('401') || raw.includes('unauthorized') || raw.includes('forbidden')) {
+    return `Authentication failed for '${providerName}'. Double-check the API key or credentials you entered.`;
+  }
+  if (raw.includes('credential') || raw.includes('required')) {
+    return rawMessage;
+  }
+  return rawMessage || `An unexpected error occurred while connecting '${providerName}'.`;
 }
 
 async function submitGuidedProviderAssignmentForm(form) {
@@ -4652,6 +4781,18 @@ function handleSurfaceClick(event) {
 }
 
 function handleDynamicChange(event) {
+  if (event.target.dataset?.action === 'toggle-advanced-mode') {
+    const enabled = event.target.checked;
+    loadJson('/api/settings/advanced-mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled })
+    }).then(() => {
+      state.config.advancedMode = enabled;
+      renderView();
+    }).catch(() => {});
+    return;
+  }
   const guidedField = event.target.closest('[data-guided-field]');
   if (guidedField) {
     const field = guidedField.dataset.guidedField;

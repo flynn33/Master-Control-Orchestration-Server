@@ -46,8 +46,9 @@ constexpr wchar_t kBootstrapperServiceNameEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_S
 constexpr wchar_t kBootstrapperUninstallRegistryKeyEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_UNINSTALL_KEY";
 constexpr wchar_t kLegacyInstallLeaf[] = L"Master Control Program";
 
+#include "MasterControl/MasterControlVersion.h"
 #ifndef MASTERCONTROL_BOOTSTRAPPER_VERSION
-#define MASTERCONTROL_BOOTSTRAPPER_VERSION "0.1.0"
+#define MASTERCONTROL_BOOTSTRAPPER_VERSION MASTERCONTROL_VERSION
 #endif
 
 struct IntegrationOptions final {

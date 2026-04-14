@@ -124,6 +124,79 @@ bool startsWithInsensitive(const std::string& value, const std::string& prefix) 
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Provider identity resolution helpers
+// ---------------------------------------------------------------------------
+// Resolve a ProviderCapabilityDescriptor by concrete provider identity rather
+// than by coarse ProviderKind. The lookup order is:
+//   1. Exact match on capability.providerId == providerId
+//   2. Prefix match for auto-connect-generated ids (format: {providerId}-YYYYMMDD-HHMMSS)
+//   3. Fallback to kind-based match (backward compatibility with pre-existing configs)
+// This ensures ChatGPT and Codex (both ProviderKind::Codex) resolve to their
+// own distinct capability descriptors.
+// ---------------------------------------------------------------------------
+
+template <typename Iterator>
+Iterator findCapabilityByProviderId(
+    Iterator begin, Iterator end,
+    const std::string& providerId, ProviderKind kind) {
+    if (!providerId.empty()) {
+        // Exact providerId match
+        auto exact = std::find_if(begin, end,
+            [&providerId](const ProviderCapabilityDescriptor& capability) {
+                return capability.providerId == providerId;
+            });
+        if (exact != end) {
+            return exact;
+        }
+        // Prefix match for auto-connect-generated ids ({providerId}-YYYYMMDD-HHMMSS)
+        auto prefix = std::find_if(begin, end,
+            [&providerId](const ProviderCapabilityDescriptor& capability) {
+                return !capability.providerId.empty()
+                    && providerId.size() > capability.providerId.size()
+                    && providerId[capability.providerId.size()] == '-'
+                    && providerId.compare(0, capability.providerId.size(), capability.providerId) == 0;
+            });
+        if (prefix != end) {
+            return prefix;
+        }
+    }
+    // Fallback: kind-based match for backward compatibility
+    return std::find_if(begin, end,
+        [kind](const ProviderCapabilityDescriptor& capability) {
+            return capability.kind == kind;
+        });
+}
+
+template <typename Iterator>
+Iterator findExecutionRegistrationByProviderId(
+    Iterator begin, Iterator end,
+    const std::string& providerId, ProviderKind kind) {
+    if (!providerId.empty()) {
+        auto exact = std::find_if(begin, end,
+            [&providerId](const ProviderExecutionRegistration& registration) {
+                return registration.providerId == providerId;
+            });
+        if (exact != end) {
+            return exact;
+        }
+        auto prefix = std::find_if(begin, end,
+            [&providerId](const ProviderExecutionRegistration& registration) {
+                return !registration.providerId.empty()
+                    && providerId.size() > registration.providerId.size()
+                    && providerId[registration.providerId.size()] == '-'
+                    && providerId.compare(0, registration.providerId.size(), registration.providerId) == 0;
+            });
+        if (prefix != end) {
+            return prefix;
+        }
+    }
+    return std::find_if(begin, end,
+        [kind](const ProviderExecutionRegistration& registration) {
+            return registration.kind == kind;
+        });
+}
+
 bool isRemoteSource(const std::string& source) {
     return startsWith(source, "http://") || startsWith(source, "https://");
 }
@@ -608,6 +681,17 @@ ProcessCaptureResult runProcessCapture(const std::wstring& commandLine,
     CloseHandle(stderrWrite);
 
     if (!result.launched) {
+        const DWORD lastError = GetLastError();
+        wchar_t* messageBuffer = nullptr;
+        FormatMessageW(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+            nullptr, lastError, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+            reinterpret_cast<LPWSTR>(&messageBuffer), 0, nullptr);
+        result.stderrText = "Failed to launch process (error " + std::to_string(lastError) + "): "
+            + (messageBuffer ? utf8FromWide(messageBuffer) : "unknown error");
+        if (messageBuffer) {
+            LocalFree(messageBuffer);
+        }
         CloseHandle(stdoutRead);
         CloseHandle(stderrRead);
         return result;
@@ -680,20 +764,83 @@ ProcessCaptureResult runProcessCapture(const std::wstring& commandLine,
         ResumeThread(processInformation.hThread);
     }
 
-    auto readPipe = [](HANDLE handle) {
+    // -----------------------------------------------------------------------
+    // Hardened pipe draining + timeout enforcement
+    // -----------------------------------------------------------------------
+    // The canonical execution sequence is:
+    //   1. Launch reader threads (they block on pipe data)
+    //   2. WaitForSingleObject(hProcess, timeout) — if timeout kills process
+    //   3. Join reader threads (pipe broken by process exit → quick return)
+    //   4. Read exit code, close handles
+    // This avoids the classic Windows pipe deadlock where sequential reads
+    // block if the child fills one pipe buffer before the other is drained.
+    // -----------------------------------------------------------------------
+
+    static constexpr size_t kMaxCaptureBytes = 4 * 1024 * 1024; // 4 MB per stream
+
+    auto readPipeBounded = [](HANDLE handle) -> std::string {
         std::string captured;
         char buffer[4096];
         DWORD bytesRead = 0;
+        bool truncated = false;
         while (ReadFile(handle, buffer, sizeof(buffer), &bytesRead, nullptr) && bytesRead > 0) {
+            if (!truncated && captured.size() + bytesRead > kMaxCaptureBytes) {
+                const size_t remaining = kMaxCaptureBytes - captured.size();
+                if (remaining > 0) {
+                    captured.append(buffer, static_cast<size_t>(remaining));
+                }
+                truncated = true;
+            }
+            if (truncated) {
+                // Continue draining the pipe so the child process is not blocked.
+                continue;
+            }
             captured.append(buffer, buffer + bytesRead);
+        }
+        if (truncated) {
+            captured.insert(0, "[output truncated: exceeded 4 MB capture limit — first 4 MB preserved]\n");
         }
         return captured;
     };
 
-    result.stdoutText = readPipe(stdoutRead);
-    result.stderrText = readPipe(stderrRead);
-    WaitForSingleObject(processInformation.hProcess, INFINITE);
+    // Step 1: Launch concurrent reader threads
+    std::string stdoutCapture, stderrCapture;
+    std::thread stdoutThread([&stdoutCapture, stdoutRead, &readPipeBounded]() {
+        stdoutCapture = readPipeBounded(stdoutRead);
+    });
+    std::thread stderrThread([&stderrCapture, stderrRead, &readPipeBounded]() {
+        stderrCapture = readPipeBounded(stderrRead);
+    });
 
+    // Step 2: Wait for process exit with timeout
+    const DWORD timeoutMs = resourcePolicy.enforce ? 300000 : 300000; // 5-minute default
+    const DWORD waitResult = WaitForSingleObject(processInformation.hProcess, timeoutMs);
+    if (waitResult == WAIT_TIMEOUT) {
+        // Kill the process (tree if job object exists, single process otherwise).
+        // Killing the process breaks the pipes, which unblocks the reader threads.
+        if (jobObject != nullptr) {
+            TerminateJobObject(jobObject, ERROR_TIMEOUT);
+        } else {
+            // Note: TerminateProcess does NOT kill child processes when no job object
+            // is present. Child processes become orphaned in this case.
+            TerminateProcess(processInformation.hProcess, ERROR_TIMEOUT);
+        }
+        result.stderrText += "\n[Process terminated: execution exceeded "
+            + std::to_string(timeoutMs / 1000) + "s timeout]";
+    }
+
+    // Step 3: Join reader threads (safe — pipes are broken by process exit/kill)
+    stdoutThread.join();
+    stderrThread.join();
+    result.stdoutText = std::move(stdoutCapture);
+    if (!stderrCapture.empty()) {
+        if (!result.stderrText.empty()) {
+            result.stderrText += "\n";
+        }
+        result.stderrText += stderrCapture;
+    }
+
+    // Step 4: Read exit code and clean up handles
     DWORD exitCode = 0;
     if (GetExitCodeProcess(processInformation.hProcess, &exitCode) != 0) {
         result.exitCode = static_cast<int>(exitCode);
@@ -1765,10 +1912,8 @@ public:
             return OperationResult{ false, false, "Provider base URL is required." };
         }
         const auto capabilities = providerCatalogService_->listCapabilities();
-        const auto capabilityIterator = std::find_if(
-            capabilities.begin(),
-            capabilities.end(),
-            [&provider](const ProviderCapabilityDescriptor& capability) { return capability.kind == provider.kind; });
+        const auto capabilityIterator = findCapabilityByProviderId(
+            capabilities.begin(), capabilities.end(), provider.id, provider.kind);
         if (capabilityIterator == capabilities.end()) {
             return OperationResult{ false, false, "The selected provider kind is not currently supported by an active provider module." };
         }
@@ -1776,6 +1921,7 @@ public:
         std::lock_guard<std::mutex> lock(state_->mutex);
         auto& providers = state_->configuration.providers;
         ProviderConnection normalizedProvider = provider;
+        normalizedProvider.isTemplate = false; // User-saved providers are no longer templates
         if (normalizedProvider.modelId.empty()) {
             normalizedProvider.modelId = capabilityIterator->recommendedModel;
         }
@@ -1813,10 +1959,8 @@ public:
 
         // -- Stage 1: Resolve capability ---------------------------------------
         const auto capabilities = providerCatalogService_->listCapabilities();
-        const auto capabilityIterator = std::find_if(
-            capabilities.begin(),
-            capabilities.end(),
-            [&request](const ProviderCapabilityDescriptor& capability) { return capability.kind == request.kind; });
+        const auto capabilityIterator = findCapabilityByProviderId(
+            capabilities.begin(), capabilities.end(), request.providerId, request.kind);
         if (capabilityIterator == capabilities.end()) {
             result.errorMessage = "The selected provider kind has no active provider module.";
             recordStep("resolve-capability", false, result.errorMessage);
@@ -2223,12 +2367,9 @@ public:
         }
 
         const auto capabilities = providerCatalogService_->listCapabilities();
-        const auto capabilityIterator = std::find_if(
-            capabilities.begin(),
-            capabilities.end(),
-            [providerKind = providerIterator->kind](const ProviderCapabilityDescriptor& capability) {
-                return capability.kind == providerKind;
-            });
+        const auto capabilityIterator = findCapabilityByProviderId(
+            capabilities.begin(), capabilities.end(),
+            providerIterator->id, providerIterator->kind);
         if (capabilityIterator == capabilities.end()) {
             return OperationResult{ false, false, "Provider module metadata is not available for the selected route." };
         }
@@ -3097,12 +3238,9 @@ public:
         record.modelId = providerIterator->modelId;
 
         const auto registrations = providerExecutionCatalogService_->listRegistrations();
-        const auto registrationIterator = std::find_if(
-            registrations.begin(),
-            registrations.end(),
-            [providerKind = providerIterator->kind](const ProviderExecutionRegistration& registration) {
-                return registration.kind == providerKind;
-            });
+        const auto registrationIterator = findExecutionRegistrationByProviderId(
+            registrations.begin(), registrations.end(),
+            providerIterator->id, providerIterator->kind);
         if (registrationIterator == registrations.end()) {
             record.errorMessage = "No active provider execution module is available for the assigned provider kind.";
             record.completedAtUtc = timestampNowUtc();
@@ -9010,6 +9148,22 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "GET" && request.path == "/api/beacon") {
             return jsonResponse(beaconService_->currentAdvertisement());
         }
+        if (request.method == "GET" && request.path == "/api/environment-hints") {
+            // Report which provider credential environment variables are set,
+            // enabling guided workflows to pre-fill detected credentials.
+            const auto capabilities = providerCatalogService_->listCapabilities();
+            nlohmann::json hints = nlohmann::json::object();
+            for (const auto& capability : capabilities) {
+                for (const auto& field : capability.credentialFields) {
+                    if (!field.environmentVariableHint.empty()) {
+                        const auto wideHint = wideFromUtf8(field.environmentVariableHint);
+                        const DWORD exists = GetEnvironmentVariableW(wideHint.c_str(), nullptr, 0);
+                        hints[field.environmentVariableHint] = (exists > 0);
+                    }
+                }
+            }
+            return jsonResponse(hints);
+        }
         if (request.method == "GET" && request.path == "/api/platform-services") {
             return jsonResponse(nlohmann::json{
                 { "gateways", gateways },
@@ -9084,6 +9238,21 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 { "routeable", platform == PlatformTarget::Windows ||
                         (selectedAppleHost.has_value() && isAppleHostReadyForPlatform(*selectedAppleHost, platform)) }
             });
+        }
+        if (request.method == "POST" && request.path == "/api/settings/advanced-mode") {
+            try {
+                const auto body = nlohmann::json::parse(request.body);
+                const bool enabled = body.value("enabled", false);
+                auto configuration = configurationService_->current();
+                configuration.advancedMode = enabled;
+                const auto result = configurationService_->update(configuration, false);
+                if (!result.succeeded) {
+                    return jsonResponse(result, 400);
+                }
+                return jsonResponse(OperationResult{ true, false, enabled ? "Advanced mode enabled." : "Advanced mode disabled." });
+            } catch (const std::exception& error) {
+                return jsonResponse(OperationResult{ false, false, error.what() }, 400);
+            }
         }
         if (request.method == "POST" && request.path == "/api/config") {
             const bool confirmUnsafeChanges = request.headers.contains("X-Confirm-Unsafe") &&

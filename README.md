@@ -14,17 +14,30 @@
 
 ## Why this project exists
 
-Modern AI orchestration usually means stitching together a half-dozen CLI tools, 
-duct-taping JSON config across them, and praying nothing rotates. This project 
-collapses that into one Windows-native control plane: install once, point your 
-providers and sub-agents at it, and run everything from a single Tron-styled shell 
-or browser dashboard.
+This project provides a Windows-native orchestration control plane for managing AI 
+providers, MCP services, sub-agents, and platform gateways on an internal LAN. It 
+brings together service hosting, a desktop operator shell, and a browser admin 
+surface — all backed by one shared in-process runtime.
+
+**Target audience:** Developers and operators running AI orchestration infrastructure 
+on a secure internal network. This is not a consumer-ready one-click product — it 
+requires a Windows build toolchain (Visual Studio 2022+, CMake 3.28+, vcpkg) or 
+the bootstrapper-assisted install path.
+
+### Architecture
+
+The product consists of multiple binaries sharing a single runtime library:
+
+- **MasterControlServiceHost** — Windows service entry point (background daemon)
+- **MasterControlShell** — WinUI 3 desktop operator shell (local UI)
+- **Browser surface** — Vanilla JS admin dashboard served by the service host (remote access)
+- **MasterControlBootstrapper** — Installer/upgrader/repair tool with Tron progress UI
 
 ### Highlights
 
 | | |
 | --- | --- |
-| **Single-binary control plane** | Windows service host, WinUI 3 desktop shell, and browser admin UI — all backed by the same in-process runtime |
+| **Multi-binary control plane** | Windows service host, WinUI 3 desktop shell, and browser admin UI — all backed by the same in-process runtime |
 | **Auto-Connect AI providers** | Enter credentials, pick roles, runtime handles capability resolution, model discovery, DPAPI encryption, and assignment fan-out |
 | **Live command stream** | Every admin API request is captured by a 512-event ring buffer with millisecond timestamps, methods, targets, status codes, and latency |
 | **CLU governance** | First-class Forsetti service module for posture, rules, role routing, Apple operations, and platform governance execution |

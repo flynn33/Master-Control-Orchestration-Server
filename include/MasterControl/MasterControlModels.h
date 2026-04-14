@@ -29,7 +29,8 @@ enum class EndpointStatus {
     Unknown,
     Online,
     Offline,
-    Degraded
+    Degraded,
+    Template
 };
 
 enum class ProviderKind {
@@ -144,6 +145,7 @@ struct RuntimeEndpoint final {
     std::string routePath;
     std::string specialization;
     bool userDefined = false;
+    bool isTemplate = false;
 };
 
 struct ManagedNodeProfile final {
@@ -178,6 +180,7 @@ struct ProviderConnection final {
     bool enabled = true;
     bool allowAutonomousControl = false;
     bool credentialsConfigured = false;
+    bool isTemplate = false;
 };
 
 struct ProviderCredentialFieldDescriptor final {
@@ -307,6 +310,7 @@ struct ProviderExecutionRecord final {
 
 struct AutoConnectRequest final {
     ProviderKind kind = ProviderKind::Generic;
+    std::string providerId;
     std::map<std::string, std::string> credentials;
     // Optional overrides — leave empty to use capability defaults.
     std::string displayNameOverride;
@@ -740,6 +744,7 @@ struct AppConfiguration final {
     uint16_t beaconBroadcastIntervalSeconds = 15;
     bool beaconEnabled = true;
     bool aiAutonomyEnabled = false;
+    bool advancedMode = false;
     SecuritySettings security;
     ResourceAllocationProfile resourceAllocation;
     std::vector<ProviderConnection> providers;
@@ -854,7 +859,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     lastCheckedUtc,
     routePath,
     specialization,
-    userDefined)
+    userDefined,
+    isTemplate)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ManagedNodeProfile,
@@ -888,7 +894,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     modelId,
     enabled,
     allowAutonomousControl,
-    credentialsConfigured)
+    credentialsConfigured,
+    isTemplate)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ProviderCredentialFieldDescriptor,
@@ -1006,6 +1013,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     AutoConnectRequest,
     kind,
+    providerId,
     credentials,
     displayNameOverride,
     baseUrlOverride,
@@ -1414,6 +1422,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     beaconBroadcastIntervalSeconds,
     beaconEnabled,
     aiAutonomyEnabled,
+    advancedMode,
     security,
     resourceAllocation,
     providers,

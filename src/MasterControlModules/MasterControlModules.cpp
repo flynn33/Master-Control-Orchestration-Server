@@ -3,6 +3,7 @@
 // Proprietary and Confidential.
 
 #include "MasterControl/MasterControlModules.h"
+#include "MasterControl/MasterControlVersion.h"
 
 #include "ForsettiCore/ForsettiContext.h"
 #include "MasterControl/MasterControlContracts.h"
@@ -23,7 +24,7 @@ Forsetti::ModuleDescriptor makeDescriptor(const std::string& moduleId,
     return Forsetti::ModuleDescriptor{
         moduleId,
         displayName,
-        Forsetti::SemVer{ 0, 1, 0 },
+        Forsetti::SemVer{ MASTERCONTROL_VERSION_MAJOR, MASTERCONTROL_VERSION_MINOR, MASTERCONTROL_VERSION_PATCH },
         moduleType
     };
 }
@@ -38,10 +39,10 @@ Forsetti::ModuleManifest makeManifest(const std::string& moduleId,
         "1.0",
         moduleId,
         displayName,
-        Forsetti::SemVer{ 0, 1, 0 },
+        Forsetti::SemVer{ MASTERCONTROL_VERSION_MAJOR, MASTERCONTROL_VERSION_MINOR, MASTERCONTROL_VERSION_PATCH },
         moduleType,
         { Forsetti::Platform::Windows },
-        Forsetti::SemVer{ 0, 1, 0 },
+        Forsetti::SemVer{ MASTERCONTROL_VERSION_MAJOR, MASTERCONTROL_VERSION_MINOR, MASTERCONTROL_VERSION_PATCH },
         std::nullopt,
         std::move(capabilities),
         std::move(iapProductId),

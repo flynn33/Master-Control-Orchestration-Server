@@ -4,8 +4,22 @@
 
 cmake_minimum_required(VERSION 3.28)
 
+# ---------------------------------------------------------------------------
+# Version: single source of truth is VERSION.json
+# ---------------------------------------------------------------------------
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.json" _mc_version_json)
+string(JSON _mc_current_version GET "${_mc_version_json}" "current_version")
+# Strip any pre-release suffix (e.g., "0.3.0-rc.1" → "0.3.0") for CMake project()
+# which only accepts MAJOR.MINOR.PATCH[.TWEAK].
+string(REGEX REPLACE "-.*$" "" _mc_base_version "${_mc_current_version}")
+string(REPLACE "." ";" _mc_version_parts "${_mc_base_version}")
+list(GET _mc_version_parts 0 _mc_ver_major)
+list(GET _mc_version_parts 1 _mc_ver_minor)
+list(GET _mc_version_parts 2 _mc_ver_patch)
+message(STATUS "Master Control version from VERSION.json: ${_mc_current_version} (CMake base: ${_mc_base_version})")
+
 project(MasterControlOrchestrationServer
-    VERSION 0.1.0
+    VERSION ${_mc_ver_major}.${_mc_ver_minor}.${_mc_ver_patch}
     DESCRIPTION "Master Control Orchestration Server - Forsetti-compliant Windows control plane"
     LANGUAGES CXX
 )
@@ -17,6 +31,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 if(MSVC)
     add_compile_options(/W4 /WX /permissive- /EHsc)
 endif()
+
+# Generate MasterControlVersion.h from VERSION.json at configure time
+set(MASTERCONTROL_FULL_VERSION "${_mc_current_version}")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/MasterControl/MasterControlVersion.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/MasterControl/MasterControlVersion.h"
+    @ONLY
+)
 
 include(CTest)
 
@@ -36,6 +58,7 @@ set(FORSETTI_VENDOR_DIR "${CMAKE_SOURCE_DIR}/Forsetti-Framework-Windows-main/For
 
 include_directories(
     "${FORSETTI_VENDOR_DIR}/include"
+    "${CMAKE_CURRENT_BINARY_DIR}/include"
 )
 
 add_subdirectory("${FORSETTI_VENDOR_DIR}" "${CMAKE_BINARY_DIR}/vendor/forsetti")

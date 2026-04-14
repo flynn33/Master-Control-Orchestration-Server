@@ -900,6 +900,23 @@ dialog:focus-visible {
   backdrop-filter: blur(4px);
 }
 
+/* Template endpoint/provider styling */
+.template-row {
+  opacity: 0.5;
+}
+
+.badge-template {
+  display: inline-block;
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+  padding: 0.1em 0.5em;
+  border: 1px solid rgba(0, 246, 255, 0.25);
+  border-radius: 0;
+  color: rgba(0, 246, 255, 0.6);
+  vertical-align: middle;
+  margin-left: 0.4em;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
