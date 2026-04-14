@@ -355,6 +355,111 @@ struct AutoConnectResult final {
 };
 
 // ---------------------------------------------------------------------------
+// First-Run Setup & Readiness
+// ---------------------------------------------------------------------------
+// ReadinessSnapshot is the runtime-backed state model consumed by both the
+// browser and the shell to drive first-run routing, readiness review, and
+// "Fix now" remediation buttons. Workflow readiness is source-neutral: a
+// manually created workflow satisfies the readiness rule exactly as a
+// starter template instantiated by the wizard would.
+// ---------------------------------------------------------------------------
+
+struct ReadinessIssue final {
+    std::string id;                     // stable issue id (e.g. "providers.none-ready")
+    std::string category;               // "providers" | "mcp" | "workflows" | "specialists"
+    std::string severity;               // "info" | "warning" | "blocking"
+    std::string title;                  // plain-language short phrase
+    std::string detail;                 // one-sentence explanation
+    std::string remediationDestination; // e.g. "providers" | "runtime" | "setup/providers"
+    std::string remediationLabel;       // button label e.g. "Connect a provider"
+};
+
+struct ReadinessSnapshot final {
+    bool setupStarted = false;
+    bool firstRunCompleted = false;
+    int providersReadyCount = 0;
+    int providersMissingCount = 0;
+    int mcpReadyCount = 0;
+    int mcpMissingCount = 0;
+    int workflowsReadyCount = 0;
+    int workflowsMissingCount = 0;
+    int specialistsReadyCount = 0;
+    int specialistsMissingCount = 0;
+    std::vector<ReadinessIssue> blockingIssues;
+    // "connect-first-provider" | "add-mcp" | "create-specialist" |
+    // "create-starter-workflow" | "review" | "complete"
+    std::string recommendedNextStep;
+    std::string updatedAtUtc;
+};
+
+// ---------------------------------------------------------------------------
+// Setup Dependencies (WS4 Provider Install Automation)
+// ---------------------------------------------------------------------------
+// Used for provider-ecosystem dependency orchestration such as the Claude
+// Code CLI. Each dependency follows an explicit three-branch preflight:
+//   ready           — the dependency is installed and callable
+//   installable     — the dependency is missing but its prerequisite (npm)
+//                     is present, so an install command can run safely
+//   prerequisite-missing — the prerequisite itself (e.g. Node.js/npm) is
+//                     missing; no install command is ever attempted
+// ---------------------------------------------------------------------------
+
+struct SupportedDependency final {
+    std::string id;                 // stable id (e.g. "claude-code-cli")
+    std::string displayName;        // user-facing name
+    std::string description;        // short sentence explaining purpose
+    std::string detectCommand;      // commandline that reports version on stdout (exit 0)
+    std::string installMethod;      // install commandline (documented to user)
+    std::string docsUrl;            // manual-install fallback link
+    bool requiresElevation = false; // informational only — runtime never auto-elevates
+    int installTimeoutSeconds = 300;
+};
+
+struct DependencyDetection final {
+    std::string id;
+    std::string state;              // enum-as-string: see DependencyState below
+    std::string preflight;          // "ready" | "installable" | "prerequisite-missing"
+    std::string detectedVersion;
+    std::string detail;             // plain-language explanation / remediation hint
+    std::string detectedAtUtc;
+};
+
+struct DependencyInstallResult final {
+    std::string id;
+    bool succeeded = false;
+    std::string finalState;         // "ready" | "failed" | "manual-action-required"
+    std::string summary;            // user-facing one-liner
+    std::string stdoutTail;         // last ~2KB of install stdout (for diagnostics)
+    std::string stderrTail;         // last ~2KB of install stderr
+    int exitCode = 0;
+    int totalLatencyMs = 0;
+    DependencyDetection postInstallDetection;
+};
+
+// ---------------------------------------------------------------------------
+// Starter Workflow Templates (WS6)
+// ---------------------------------------------------------------------------
+
+struct StarterWorkflowTemplate final {
+    std::string id;
+    std::string displayName;
+    std::string description;
+    int requiresProviders = 0;
+    int requiresMcp = 0;
+    int requiresSpecialists = 0;
+};
+
+struct StarterWorkflowInstantiateRequest final {
+    std::string displayNameOverride;
+};
+
+struct StarterWorkflowInstantiateResult final {
+    bool succeeded = false;
+    std::string workflowId;
+    std::string message;
+};
+
+// ---------------------------------------------------------------------------
 // Live Activity Stream
 // ---------------------------------------------------------------------------
 // Every incoming admin API request, outgoing provider execution, governance
@@ -745,6 +850,10 @@ struct AppConfiguration final {
     bool beaconEnabled = true;
     bool aiAutonomyEnabled = false;
     bool advancedMode = false;
+    bool firstRunCompleted = false;
+    std::string firstRunStartedAtUtc;
+    std::string firstRunCompletedAtUtc;
+    std::vector<std::string> firstRunSkippedSteps;
     SecuritySettings security;
     ResourceAllocationProfile resourceAllocation;
     std::vector<ProviderConnection> providers;
@@ -1049,6 +1158,83 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     totalLatencyMs,
     errorMessage,
     summary)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ReadinessIssue,
+    id,
+    category,
+    severity,
+    title,
+    detail,
+    remediationDestination,
+    remediationLabel)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ReadinessSnapshot,
+    setupStarted,
+    firstRunCompleted,
+    providersReadyCount,
+    providersMissingCount,
+    mcpReadyCount,
+    mcpMissingCount,
+    workflowsReadyCount,
+    workflowsMissingCount,
+    specialistsReadyCount,
+    specialistsMissingCount,
+    blockingIssues,
+    recommendedNextStep,
+    updatedAtUtc)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    SupportedDependency,
+    id,
+    displayName,
+    description,
+    detectCommand,
+    installMethod,
+    docsUrl,
+    requiresElevation,
+    installTimeoutSeconds)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    DependencyDetection,
+    id,
+    state,
+    preflight,
+    detectedVersion,
+    detail,
+    detectedAtUtc)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    DependencyInstallResult,
+    id,
+    succeeded,
+    finalState,
+    summary,
+    stdoutTail,
+    stderrTail,
+    exitCode,
+    totalLatencyMs,
+    postInstallDetection)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    StarterWorkflowTemplate,
+    id,
+    displayName,
+    description,
+    requiresProviders,
+    requiresMcp,
+    requiresSpecialists)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    StarterWorkflowInstantiateRequest,
+    displayNameOverride)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    StarterWorkflowInstantiateResult,
+    succeeded,
+    workflowId,
+    message)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ActivityEvent,
@@ -1423,6 +1609,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     beaconEnabled,
     aiAutonomyEnabled,
     advancedMode,
+    firstRunCompleted,
+    firstRunStartedAtUtc,
+    firstRunCompletedAtUtc,
+    firstRunSkippedSteps,
     security,
     resourceAllocation,
     providers,

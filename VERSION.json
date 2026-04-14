@@ -1,11 +1,35 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.3.0-rc.1",
-  "current_tag": "v0.3.0-rc.1",
+  "current_version": "0.4.0-rc.1",
+  "current_tag": "v0.4.0-rc.1",
   "released_at": "2026-04-14",
   "last_release_commit": "",
   "history": [
+    {
+      "version": "0.4.0-rc.1",
+      "tag": "v0.4.0-rc.1",
+      "released_at": "2026-04-14",
+      "commit": "",
+      "summary": "Ease-of-use remediation: first-run setup wizard, browser auto-connect refactor, environment hints UI, Claude Code CLI install automation, shell/browser parity, readiness dashboard, starter workflow templates, exports demotion.",
+      "entries": [
+        "feat(runtime): add /api/readiness with source-neutral workflow readiness (guided + manual count)",
+        "feat(runtime): add /api/setup/start, /api/setup/complete, /api/setup/reset for setup lifecycle",
+        "feat(runtime): add /api/setup/dependencies with three-branch preflight (ready/installable/prerequisite-missing)",
+        "feat(runtime): add /api/setup/dependencies/{id}/install for Claude Code CLI orchestration",
+        "feat(runtime): add /api/setup/workflow-templates with three starter templates",
+        "feat(browser): first-run setup wizard with Guided / Manual / Import Existing entry modes",
+        "feat(browser): guided provider form now uses /api/providers/auto-connect with manual fallback",
+        "feat(browser): environment hints displayed on credential fields (detected / needed / none)",
+        "feat(browser): readiness dashboard with Fix-now routing and starter workflow picker",
+        "feat(browser): localStorage-backed wizard state persistence across refresh",
+        "feat(shell): advancedMode and firstRunCompleted now exposed in ShellHostSnapshot",
+        "feat(build): ReadinessCopy.h shared copy header consumed by both surfaces",
+        "chore(browser): exports demoted from primary nav to advanced-only",
+        "fix(browser): stale kind preset removed from connect-chatgpt quick-connect entry",
+        "test: add /api/readiness shape, setup lifecycle round-trip, dependency catalog, workflow templates coverage"
+      ]
+    },
     {
       "version": "0.3.0-rc.1",
       "tag": "v0.3.0-rc.1",

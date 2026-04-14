@@ -110,6 +110,11 @@ bool startsWith(const std::string& value, const std::string& prefix) {
     return value.rfind(prefix, 0) == 0;
 }
 
+bool endsWith(const std::string& value, const std::string& suffix) {
+    if (suffix.size() > value.size()) { return false; }
+    return std::equal(suffix.rbegin(), suffix.rend(), value.rbegin());
+}
+
 bool startsWithInsensitive(const std::string& value, const std::string& prefix) {
     if (value.size() < prefix.size()) {
         return false;
@@ -199,6 +204,146 @@ Iterator findExecutionRegistrationByProviderId(
 
 bool isRemoteSource(const std::string& source) {
     return startsWith(source, "http://") || startsWith(source, "https://");
+}
+
+// ---------------------------------------------------------------------------
+// WS1 / WS4 / WS6 — Setup helpers
+// ---------------------------------------------------------------------------
+
+// Readiness snapshot assembly. Source-neutral: a manually created workflow
+// counts as ready exactly as a wizard-instantiated starter template does.
+ReadinessSnapshot computeReadinessSnapshot(const DashboardSnapshot& snapshot,
+                                           const AppConfiguration& config) {
+    ReadinessSnapshot result;
+    result.setupStarted = !config.firstRunStartedAtUtc.empty() || config.firstRunCompleted;
+    result.firstRunCompleted = config.firstRunCompleted;
+
+    // Providers: credentialed + enabled + not template.
+    for (const auto& provider : snapshot.providers) {
+        const bool ready = provider.credentialsConfigured && provider.enabled && !provider.isTemplate;
+        if (ready) { ++result.providersReadyCount; } else { ++result.providersMissingCount; }
+    }
+
+    // MCP servers: online endpoint of the MCPServer kind, not template.
+    for (const auto& endpoint : snapshot.endpoints) {
+        if (endpoint.kind != EndpointKind::MCPServer) {
+            continue;
+        }
+        if (endpoint.isTemplate) { ++result.mcpMissingCount; continue; }
+        if (endpoint.status == EndpointStatus::Online) { ++result.mcpReadyCount; }
+        else { ++result.mcpMissingCount; }
+    }
+
+    // Specialists: sub-agent endpoints with at least one provider assignment.
+    std::set<std::string> assignedSpecialists;
+    for (const auto& assignment : snapshot.providerAssignments) {
+        if (assignment.kind == ProviderAssignmentTargetKind::SubAgent) {
+            assignedSpecialists.insert(assignment.targetId);
+        }
+    }
+    for (const auto& endpoint : snapshot.endpoints) {
+        if (endpoint.kind != EndpointKind::SubAgent) {
+            continue;
+        }
+        if (endpoint.isTemplate) { ++result.specialistsMissingCount; continue; }
+        if (assignedSpecialists.count(endpoint.id) > 0) { ++result.specialistsReadyCount; }
+        else { ++result.specialistsMissingCount; }
+    }
+
+    // Workflows: source-neutral. A workflow is valid when it has at least one
+    // provider assignment and at least one executable target (specialist or
+    // role). Count of ready workflows = count of distinct providers that have
+    // at least one assignment to a specialist or role. Missing = 1 if zero
+    // valid workflows exist, otherwise 0.
+    std::set<std::string> providersWithValidAssignment;
+    for (const auto& assignment : snapshot.providerAssignments) {
+        if (assignment.providerId.empty()) {
+            continue;
+        }
+        if (assignment.kind == ProviderAssignmentTargetKind::SubAgent
+            || assignment.kind == ProviderAssignmentTargetKind::Role
+            || assignment.kind == ProviderAssignmentTargetKind::SubAgentGroup) {
+            providersWithValidAssignment.insert(assignment.providerId);
+        }
+    }
+    result.workflowsReadyCount = static_cast<int>(providersWithValidAssignment.size());
+    result.workflowsMissingCount = (result.workflowsReadyCount == 0) ? 1 : 0;
+
+    // Blocking issues + recommended next step.
+    if (result.providersReadyCount == 0) {
+        result.blockingIssues.push_back(ReadinessIssue{
+            "providers.none-ready", "providers", "blocking",
+            "No providers connected",
+            "Connect at least one AI provider to get started.",
+            "providers", "Connect a provider"
+        });
+        result.recommendedNextStep = "connect-first-provider";
+    } else if (result.mcpReadyCount == 0) {
+        result.blockingIssues.push_back(ReadinessIssue{
+            "mcp.none-ready", "mcp", "warning",
+            "No MCP servers online",
+            "Add or bring online at least one MCP server so providers can share tool lanes.",
+            "runtime", "Add MCP server"
+        });
+        result.recommendedNextStep = "add-mcp";
+    } else if (result.specialistsReadyCount == 0) {
+        result.blockingIssues.push_back(ReadinessIssue{
+            "specialists.none-ready", "specialists", "warning",
+            "No specialists assigned",
+            "Assign at least one specialist/role so providers have something to execute.",
+            "providers", "Assign a specialist"
+        });
+        result.recommendedNextStep = "create-specialist";
+    } else if (result.workflowsReadyCount == 0) {
+        result.blockingIssues.push_back(ReadinessIssue{
+            "workflows.none-ready", "workflows", "warning",
+            "No workflows created",
+            "Create a starter workflow (or wire up a manual one) to complete setup.",
+            "setup-readiness", "Create a workflow"
+        });
+        result.recommendedNextStep = "create-starter-workflow";
+    } else if (!result.firstRunCompleted) {
+        result.recommendedNextStep = "review";
+    } else {
+        result.recommendedNextStep = "complete";
+    }
+
+    result.updatedAtUtc = timestampNowUtc();
+    return result;
+}
+
+// Supported-dependency catalog (WS4). Currently one entry: Claude Code CLI.
+std::vector<SupportedDependency> buildSupportedDependencyCatalog() {
+    return {
+        SupportedDependency{
+            "claude-code-cli",
+            "Claude Code CLI",
+            "CLI runtime for Claude Code provider execution.",
+            "claude --version",
+            "npm install -g @anthropic-ai/claude-code",
+            "https://docs.anthropic.com/claude-code",
+            false,
+            300
+        }
+    };
+}
+
+// Starter workflow template catalog (WS6).
+std::vector<StarterWorkflowTemplate> buildStarterWorkflowTemplates() {
+    return {
+        StarterWorkflowTemplate{
+            "single-provider-demo", "Single-Provider Demo",
+            "One provider, no MCP, simple task routing.", 1, 0, 0
+        },
+        StarterWorkflowTemplate{
+            "mcp-assisted-demo", "MCP-Assisted Demo",
+            "One provider plus one MCP server.", 1, 1, 0
+        },
+        StarterWorkflowTemplate{
+            "specialist-team-demo", "Specialist Team Demo",
+            "Two providers with planner + coder specialists.", 2, 0, 2
+        }
+    };
 }
 
 std::string extractHostFromUrl(const std::string& source) {
@@ -9163,6 +9308,302 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 }
             }
             return jsonResponse(hints);
+        }
+        // -------------------------------------------------------------------
+        // WS1 — Readiness and setup lifecycle
+        // -------------------------------------------------------------------
+        if (request.method == "GET" && request.path == "/api/readiness") {
+            const auto snap = adminApiService_->snapshot();
+            const auto cfg = configurationService_->current();
+            return jsonResponse(computeReadinessSnapshot(snap, cfg));
+        }
+        if (request.method == "POST" && request.path == "/api/setup/start") {
+            auto cfg = configurationService_->current();
+            if (cfg.firstRunStartedAtUtc.empty()) {
+                cfg.firstRunStartedAtUtc = timestampNowUtc();
+                const auto result = configurationService_->update(cfg, false);
+                if (!result.succeeded) {
+                    return jsonResponse(result, 400);
+                }
+            }
+            return jsonResponse(OperationResult{ true, false, "Setup started." });
+        }
+        if (request.method == "POST" && request.path == "/api/setup/complete") {
+            std::vector<std::string> skippedSteps;
+            try {
+                if (!request.body.empty()) {
+                    const auto body = nlohmann::json::parse(request.body);
+                    if (body.contains("skippedSteps") && body["skippedSteps"].is_array()) {
+                        for (const auto& entry : body["skippedSteps"]) {
+                            if (entry.is_string()) {
+                                skippedSteps.push_back(entry.get<std::string>());
+                            }
+                        }
+                    }
+                }
+            } catch (const std::exception&) {
+                // Body is optional — treat parse errors as empty body.
+            }
+            auto cfg = configurationService_->current();
+            cfg.firstRunCompleted = true;
+            cfg.firstRunCompletedAtUtc = timestampNowUtc();
+            cfg.firstRunSkippedSteps = skippedSteps;
+            const auto result = configurationService_->update(cfg, false);
+            if (!result.succeeded) {
+                return jsonResponse(result, 400);
+            }
+            return jsonResponse(OperationResult{ true, false, "Setup marked complete." });
+        }
+        if (request.method == "POST" && request.path == "/api/setup/reset") {
+            auto cfg = configurationService_->current();
+            cfg.firstRunCompleted = false;
+            cfg.firstRunStartedAtUtc.clear();
+            cfg.firstRunCompletedAtUtc.clear();
+            cfg.firstRunSkippedSteps.clear();
+            const auto result = configurationService_->update(cfg, false);
+            if (!result.succeeded) {
+                return jsonResponse(result, 400);
+            }
+            return jsonResponse(OperationResult{ true, false, "Setup reset." });
+        }
+        // -------------------------------------------------------------------
+        // WS4 — Provider install automation (Claude Code CLI only)
+        // -------------------------------------------------------------------
+        if (request.method == "GET" && request.path == "/api/setup/dependencies") {
+            const auto catalog = buildSupportedDependencyCatalog();
+            nlohmann::json document = nlohmann::json::object();
+            nlohmann::json array = nlohmann::json::array();
+            const auto workDir = std::filesystem::current_path();
+            for (const auto& descriptor : catalog) {
+                DependencyDetection detection;
+                detection.id = descriptor.id;
+                detection.detectedAtUtc = timestampNowUtc();
+                // Branch A — probe the dependency itself.
+                const auto detectCommandLine = std::wstring(L"cmd.exe /c ") + wideFromUtf8(descriptor.detectCommand);
+                const auto detectProbe = runProcessCapture(detectCommandLine, workDir, {}, std::nullopt, false);
+                if (detectProbe.launched && detectProbe.exitCode == 0) {
+                    detection.state = "ready";
+                    detection.preflight = "ready";
+                    // Extract the first non-empty stdout line as detected version.
+                    std::string firstLine;
+                    for (char ch : detectProbe.stdoutText) {
+                        if (ch == '\r' || ch == '\n') { if (!firstLine.empty()) break; else continue; }
+                        firstLine += ch;
+                    }
+                    detection.detectedVersion = firstLine;
+                } else {
+                    // Branch B/C — probe the prerequisite (npm).
+                    const auto npmProbe = runProcessCapture(L"cmd.exe /c npm --version", workDir, {}, std::nullopt, false);
+                    if (npmProbe.launched && npmProbe.exitCode == 0) {
+                        detection.state = "not-installed";
+                        detection.preflight = "installable";
+                        detection.detail = descriptor.displayName + " not detected. npm available — ready to install.";
+                    } else {
+                        detection.state = "manual-action-required";
+                        detection.preflight = "prerequisite-missing";
+                        detection.detail = "Node.js/npm is required to install " + descriptor.displayName
+                            + " but was not detected on PATH. Install Node.js 18+ from https://nodejs.org, then restart MCOS and retry.";
+                    }
+                }
+                array.push_back({
+                    { "descriptor", descriptor },
+                    { "detection", detection }
+                });
+            }
+            document["dependencies"] = array;
+            return jsonResponse(document);
+        }
+        if (request.method == "POST" && startsWith(request.path, "/api/setup/dependencies/")
+            && endsWith(request.path, "/install")) {
+            const auto prefix = std::string("/api/setup/dependencies/");
+            const auto suffix = std::string("/install");
+            const auto id = request.path.substr(prefix.size(),
+                request.path.size() - prefix.size() - suffix.size());
+            const auto catalog = buildSupportedDependencyCatalog();
+            const auto descriptorIt = std::find_if(catalog.begin(), catalog.end(),
+                [&id](const SupportedDependency& d) { return d.id == id; });
+            if (descriptorIt == catalog.end()) {
+                return jsonResponse(OperationResult{ false, false, "Unknown dependency id." }, 404);
+            }
+            const auto& descriptor = *descriptorIt;
+            const auto workDir = std::filesystem::current_path();
+            const auto installStart = std::chrono::steady_clock::now();
+            DependencyInstallResult result;
+            result.id = descriptor.id;
+
+            // Re-run preflight first so short-circuits happen before any install.
+            const auto detectCommandLine = std::wstring(L"cmd.exe /c ") + wideFromUtf8(descriptor.detectCommand);
+            const auto preDetect = runProcessCapture(detectCommandLine, workDir, {}, std::nullopt, false);
+            if (preDetect.launched && preDetect.exitCode == 0) {
+                // Branch A — already installed.
+                std::string firstLine;
+                for (char ch : preDetect.stdoutText) {
+                    if (ch == '\r' || ch == '\n') { if (!firstLine.empty()) break; else continue; }
+                    firstLine += ch;
+                }
+                result.succeeded = true;
+                result.finalState = "ready";
+                result.exitCode = 0;
+                result.summary = "Already installed (" + firstLine + ").";
+                result.postInstallDetection = DependencyDetection{
+                    descriptor.id, "ready", "ready", firstLine, "", timestampNowUtc()
+                };
+            } else {
+                const auto npmProbe = runProcessCapture(L"cmd.exe /c npm --version", workDir, {}, std::nullopt, false);
+                if (!npmProbe.launched || npmProbe.exitCode != 0) {
+                    // Branch C — prerequisite missing. No install attempted.
+                    result.succeeded = false;
+                    result.finalState = "manual-action-required";
+                    result.exitCode = -1;
+                    result.summary = "Cannot install: Node.js/npm not detected. Install Node.js 18+ from "
+                                   + descriptor.docsUrl + " and retry.";
+                    result.postInstallDetection = DependencyDetection{
+                        descriptor.id, "manual-action-required", "prerequisite-missing", "",
+                        "Node.js/npm not on PATH.", timestampNowUtc()
+                    };
+                } else {
+                    // Branch B — install.
+                    const auto installCommandLine = std::wstring(L"cmd.exe /c ") + wideFromUtf8(descriptor.installMethod);
+                    const auto installProbe = runProcessCapture(installCommandLine, workDir, {}, std::nullopt, true);
+                    // Truncate stdout/stderr tails to last ~2KB for the response payload.
+                    auto tailOf = [](const std::string& s) -> std::string {
+                        constexpr size_t kTail = 2048;
+                        return s.size() <= kTail ? s : s.substr(s.size() - kTail);
+                    };
+                    result.stdoutTail = tailOf(installProbe.stdoutText);
+                    result.stderrTail = tailOf(installProbe.stderrText);
+                    result.exitCode = installProbe.exitCode;
+
+                    const auto postDetect = runProcessCapture(detectCommandLine, workDir, {}, std::nullopt, false);
+                    std::string postVersion;
+                    for (char ch : postDetect.stdoutText) {
+                        if (ch == '\r' || ch == '\n') { if (!postVersion.empty()) break; else continue; }
+                        postVersion += ch;
+                    }
+                    const bool nowReady = postDetect.launched && postDetect.exitCode == 0;
+                    const auto stderrLower = [&]() {
+                        std::string lower = installProbe.stderrText;
+                        std::transform(lower.begin(), lower.end(), lower.begin(),
+                                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+                        return lower;
+                    }();
+                    const bool elevationFailure = installProbe.exitCode != 0
+                        && (stderrLower.find("eacces") != std::string::npos
+                            || stderrLower.find("eperm") != std::string::npos);
+                    if (nowReady) {
+                        result.succeeded = true;
+                        result.finalState = "ready";
+                        result.summary = descriptor.displayName + " installed (" + postVersion + ").";
+                        result.postInstallDetection = DependencyDetection{
+                            descriptor.id, "ready", "ready", postVersion, "", timestampNowUtc()
+                        };
+                    } else if (elevationFailure) {
+                        result.succeeded = false;
+                        result.finalState = "manual-action-required";
+                        result.summary = "npm install failed with a permission error. Run '"
+                            + descriptor.installMethod + "' from an elevated PowerShell and return here.";
+                        result.postInstallDetection = DependencyDetection{
+                            descriptor.id, "manual-action-required", "installable", "",
+                            "Elevation required.", timestampNowUtc()
+                        };
+                    } else {
+                        result.succeeded = false;
+                        result.finalState = "failed";
+                        result.summary = "Install returned exit code " + std::to_string(installProbe.exitCode) + ".";
+                        result.postInstallDetection = DependencyDetection{
+                            descriptor.id,
+                            nowReady ? "ready" : "failed",
+                            "installable",
+                            postVersion,
+                            "Post-install detection did not find " + descriptor.displayName + ".",
+                            timestampNowUtc()
+                        };
+                    }
+                }
+            }
+            const auto installEnd = std::chrono::steady_clock::now();
+            result.totalLatencyMs = static_cast<int>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(installEnd - installStart).count());
+            return jsonResponse(result, result.succeeded ? 200 : 200);
+        }
+        // -------------------------------------------------------------------
+        // WS6 — Starter workflow templates
+        // -------------------------------------------------------------------
+        if (request.method == "GET" && request.path == "/api/setup/workflow-templates") {
+            const auto templates = buildStarterWorkflowTemplates();
+            nlohmann::json document = { { "templates", templates } };
+            return jsonResponse(document);
+        }
+        if (request.method == "POST"
+            && startsWith(request.path, "/api/setup/workflow-templates/")
+            && endsWith(request.path, "/instantiate")) {
+            const auto prefix = std::string("/api/setup/workflow-templates/");
+            const auto suffix = std::string("/instantiate");
+            const auto id = request.path.substr(prefix.size(),
+                request.path.size() - prefix.size() - suffix.size());
+            const auto templates = buildStarterWorkflowTemplates();
+            const auto templateIt = std::find_if(templates.begin(), templates.end(),
+                [&id](const StarterWorkflowTemplate& t) { return t.id == id; });
+            if (templateIt == templates.end()) {
+                return jsonResponse(OperationResult{ false, false, "Unknown starter workflow template id." }, 404);
+            }
+            // Validate prerequisites against current readiness.
+            const auto snap = adminApiService_->snapshot();
+            const auto cfg = configurationService_->current();
+            const auto readiness = computeReadinessSnapshot(snap, cfg);
+            if (readiness.providersReadyCount < templateIt->requiresProviders) {
+                StarterWorkflowInstantiateResult fail;
+                fail.succeeded = false;
+                fail.message = "This starter workflow requires at least "
+                    + std::to_string(templateIt->requiresProviders)
+                    + " connected provider(s). Currently ready: "
+                    + std::to_string(readiness.providersReadyCount) + ".";
+                return jsonResponse(fail);
+            }
+            if (readiness.mcpReadyCount < templateIt->requiresMcp) {
+                StarterWorkflowInstantiateResult fail;
+                fail.succeeded = false;
+                fail.message = "This starter workflow requires at least "
+                    + std::to_string(templateIt->requiresMcp)
+                    + " MCP server(s) online. Currently ready: "
+                    + std::to_string(readiness.mcpReadyCount) + ".";
+                return jsonResponse(fail);
+            }
+            if (readiness.specialistsReadyCount < templateIt->requiresSpecialists) {
+                StarterWorkflowInstantiateResult fail;
+                fail.succeeded = false;
+                fail.message = "This starter workflow requires at least "
+                    + std::to_string(templateIt->requiresSpecialists)
+                    + " specialist(s) assigned. Currently ready: "
+                    + std::to_string(readiness.specialistsReadyCount) + ".";
+                return jsonResponse(fail);
+            }
+            // Pick the first ready provider and route an assignment to a
+            // default role target ("planner"). This produces a minimal but
+            // real workflow: one provider wired to one role. If the template
+            // requires more, pick additional ready providers/specialists in
+            // order. The result is immediately observable via /api/readiness.
+            std::vector<std::string> readyProviderIds;
+            for (const auto& provider : snap.providers) {
+                if (provider.credentialsConfigured && provider.enabled && !provider.isTemplate) {
+                    readyProviderIds.push_back(provider.id);
+                }
+            }
+            const auto primaryProviderId = readyProviderIds.front();
+            // Create or overwrite a role assignment for "planner".
+            ProviderAssignment assignment;
+            assignment.providerId = primaryProviderId;
+            assignment.targetId = "planner";
+            assignment.kind = ProviderAssignmentTargetKind::Role;
+            assignment.updatedAtUtc = timestampNowUtc();
+            const auto assignResult = providerAssignmentService_->upsertAssignment(assignment);
+            StarterWorkflowInstantiateResult success;
+            success.succeeded = assignResult.succeeded;
+            success.workflowId = templateIt->id + ":" + primaryProviderId + ":planner";
+            success.message = assignResult.succeeded
+                ? "Instantiated starter workflow '" + templateIt->displayName + "'."
+                : assignResult.message;
+            return jsonResponse(success);
         }
         if (request.method == "GET" && request.path == "/api/platform-services") {
             return jsonResponse(nlohmann::json{

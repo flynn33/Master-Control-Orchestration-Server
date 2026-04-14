@@ -5,6 +5,27 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.0-rc.1] - 2026-04-14
+### Summary
+Ease-of-use remediation pass: guided setup spine, browser auto-connect refactor, environment hints UI, Claude Code CLI install automation, shell/browser parity, readiness dashboard, starter workflow templates, exports demotion.
+
+### Included Changes
+- feat(runtime): add `/api/readiness` with source-neutral workflow readiness (guided + manual both count)
+- feat(runtime): add `/api/setup/start`, `/api/setup/complete`, `/api/setup/reset` for setup lifecycle
+- feat(runtime): add `/api/setup/dependencies` with three-branch preflight (ready / installable / prerequisite-missing)
+- feat(runtime): add `/api/setup/dependencies/{id}/install` for Claude Code CLI orchestration
+- feat(runtime): add `/api/setup/workflow-templates` with three starter templates
+- feat(browser): first-run setup wizard with Guided / Manual / Import Existing entry modes
+- feat(browser): guided provider form now uses `/api/providers/auto-connect` with manual fallback
+- feat(browser): environment hints displayed on credential fields (detected / needed / none)
+- feat(browser): readiness dashboard with "Fix now" routing and starter workflow picker
+- feat(browser): localStorage-backed wizard state persistence across refresh
+- feat(shell): `advancedMode` and `firstRunCompleted` now exposed in `ShellHostSnapshot`
+- feat(build): `ReadinessCopy.h` shared copy header consumed by both surfaces
+- chore(browser): exports demoted from primary nav to advanced-only
+- fix(browser): stale `kind` preset removed from `connect-chatgpt` quick-connect entry
+- test: add `/api/readiness` shape, setup lifecycle round-trip, dependency catalog, workflow templates coverage
+
 ## [0.3.0-rc.1] - 2026-04-14
 ### Summary
 Productization and stabilization remediation pass covering 10 workstreams.

@@ -1737,6 +1737,8 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     std::string macAddress = "n/a";
     bool beaconEnabled = true;
     bool aiAutonomyEnabled = false;
+    bool advancedMode = false;          // WS5 parity with browser
+    bool firstRunCompleted = false;     // WS1 parity with browser
     bool securityProtocolsEnabled = true;
     bool openLanAccess = true;
     ShellSecuritySettings securitySettings;
@@ -1792,6 +1794,8 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
 
             beaconEnabled = jsonBoolOr(*configuration, L"beaconEnabled", beaconEnabled);
             aiAutonomyEnabled = jsonBoolOr(*configuration, L"aiAutonomyEnabled", aiAutonomyEnabled);
+            advancedMode = jsonBoolOr(*configuration, L"advancedMode", advancedMode);
+            firstRunCompleted = jsonBoolOr(*configuration, L"firstRunCompleted", firstRunCompleted);
 
             if (configuration->HasKey(L"providers")) {
                 for (const auto& value : configuration->GetNamedArray(L"providers", JsonArray())) {
@@ -2230,6 +2234,8 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.beaconPort = beaconPort;
     snapshot.beaconEnabled = beaconEnabled;
     snapshot.aiAutonomyEnabled = aiAutonomyEnabled;
+    snapshot.advancedMode = advancedMode;
+    snapshot.firstRunCompleted = firstRunCompleted;
     snapshot.securityProtocolsEnabled = securityProtocolsEnabled;
     snapshot.openLanAccess = openLanAccess;
     snapshot.securitySettings = std::move(securitySettings);

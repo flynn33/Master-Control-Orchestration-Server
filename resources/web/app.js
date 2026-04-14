@@ -518,6 +518,9 @@ function defaultGuidedWorkflowState() {
     moduleAction: 'install',
     runtimeMaintenanceKind: 'mcp',
     importMode: 'package',
+    // WS2 — auto-connect progress steps and optional manual-fallback context.
+    progress: null,
+    fallback: null,
     status: makeStatus('Choose a guided workflow to start configuring the orchestration server.', 'info')
   };
 }
@@ -554,28 +557,29 @@ function guidedWorkflowDefinitions() {
       eyebrow: 'QUICK CONNECT',
       description: 'Set up ChatGPT as an orchestration provider. Enter your OpenAI API key and the runtime handles the rest.',
       destinationId: 'providers',
-      presets: { capabilityId: 'chatgpt', kind: 'codex' }
+      // capabilityId IS the providerId; runtime resolves kind internally.
+      presets: { capabilityId: 'chatgpt' }
     },
     'connect-codex': {
       title: 'Connect Codex',
       eyebrow: 'QUICK CONNECT',
       description: 'Set up Codex as a coding and architecture provider. Enter your OpenAI API key to get started.',
       destinationId: 'providers',
-      presets: { capabilityId: 'codex', kind: 'codex' }
+      presets: { capabilityId: 'codex' }
     },
     'connect-claude-code': {
       title: 'Connect Claude Code',
       eyebrow: 'QUICK CONNECT',
       description: 'Set up Claude Code for architecture and specialist coding execution. Enter your Anthropic API key or auth token.',
       destinationId: 'providers',
-      presets: { capabilityId: 'claude-code', kind: 'claude_code' }
+      presets: { capabilityId: 'claude-code' }
     },
     'connect-xai': {
       title: 'Connect xAI / Grok',
       eyebrow: 'QUICK CONNECT',
       description: 'Set up xAI Grok for orchestration. Enter your xAI API key to begin.',
       destinationId: 'providers',
-      presets: { capabilityId: 'xai-grok', kind: 'xai' }
+      presets: { capabilityId: 'xai-grok' }
     },
     // -----------------------------------------------------------------------
     // Existing guided workflows
@@ -733,6 +737,49 @@ function renderGuidedWorkflowLaunchers(workflowIds) {
   `;
 }
 
+// WS2 — render the auto-connect progress list so the user sees real
+// orchestration steps, not just a save-and-reload.
+function renderAutoConnectProgress(progress) {
+  if (!progress) { return ''; }
+  const steps = Array.isArray(progress.steps) ? progress.steps : [];
+  const stepsHtml = steps.map((step) => {
+    const icon = step.succeeded ? '[OK]' : '[FAIL]';
+    const latency = (typeof step.latencyMs === 'number' && step.latencyMs > 0)
+      ? ` <span class="step-latency">(${step.latencyMs} ms)</span>` : '';
+    return `<li class="auto-connect-step ${step.succeeded ? 'succeeded' : 'failed'}">${icon} <strong>${escapeHtml(step.stage || '')}</strong>${latency} — ${escapeHtml(step.message || '')}</li>`;
+  }).join('');
+  const header = progress.status === 'in-progress'
+    ? 'Auto-connecting...'
+    : (progress.status === 'done' ? 'Auto-connect complete.' : 'Auto-connect failed.');
+  const note = progress.note ? `<p class="narrative-copy">${escapeHtml(progress.note)}</p>` : '';
+  return `
+    <article class="panel-block auto-connect-progress" data-status="${escapeHtml(progress.status || '')}">
+      <p class="eyebrow">Orchestration Progress</p>
+      <h4>${escapeHtml(header)}</h4>
+      ${note}
+      <ol class="auto-connect-steps">${stepsHtml}</ol>
+    </article>
+  `;
+}
+
+// WS2 — render the manual-fallback banner when auto-connect fails, offering
+// the user a clear button to continue via the legacy manual flow.
+function renderAutoConnectFallbackBanner(fallback) {
+  if (!fallback || !fallback.active) { return ''; }
+  return `
+    <article class="panel-block auto-connect-fallback" data-status="fallback">
+      <p class="eyebrow">Manual Setup Available</p>
+      <h4>Auto-connect failed at ${escapeHtml(fallback.stage || 'orchestration')}</h4>
+      <p class="narrative-copy">${escapeHtml(fallback.message || '')}</p>
+      <p class="narrative-copy">You can continue with manual setup using the values you already entered.</p>
+      <div class="button-row">
+        <button type="button" class="route-button" data-action="continue-manual-fallback">Continue with manual setup</button>
+        <button type="button" class="route-button" data-action="clear-manual-fallback">Try auto-connect again</button>
+      </div>
+    </article>
+  `;
+}
+
 function renderGuidedWorkflowContent() {
   const workflow = state.guidedWorkflow || defaultGuidedWorkflowState();
   const definition = guidedWorkflowDefinition(workflow.id);
@@ -767,6 +814,8 @@ function renderGuidedWorkflowContent() {
     return `
       <section class="wizard-shell">
         ${statusMessage(workflow.status)}
+        ${renderAutoConnectProgress(workflow.progress)}
+        ${renderAutoConnectFallbackBanner(workflow.fallback)}
         <div class="wizard-step-list">
           <article class="wizard-step-card">
             <p class="eyebrow">Step 1</p>
@@ -825,15 +874,24 @@ function renderGuidedWorkflowContent() {
           <article class="wizard-summary-card">
             <p class="eyebrow">Credentials</p>
             <h3>Secure Route Setup</h3>
-            ${credentialFields.length ? credentialFields.slice(0, 2).map((field) => `
-              <label>${escapeHtml(field.label)}
+            ${credentialFields.length ? credentialFields.slice(0, 2).map((field) => {
+              const hint = environmentHintStatus(field);
+              const badge = hint.hint
+                ? `<span class="hint-badge ${hint.badgeClass}">${escapeHtml(hint.badgeText)}</span>`
+                : '';
+              const placeholder = hint.detected
+                ? `Using environment variable ${hint.hint} (type to override)`
+                : (field.placeholder || 'Credential value');
+              return `
+              <label>${escapeHtml(field.label)} ${badge}
                 <input
                   name="credential:${escapeHtml(field.fieldId)}"
                   type="password"
-                  placeholder="${escapeHtml(field.placeholder || 'Credential value')}">
+                  placeholder="${escapeHtml(placeholder)}">
               </label>
-              <p class="form-help">${escapeHtml([field.helpText, field.environmentVariableHint ? `Env: ${field.environmentVariableHint}` : ''].filter(Boolean).join(' '))}</p>
-            `).join('') : '<p class="narrative-copy">This connector does not publish credential requirements. You can still connect the route and add credentials later if needed.</p>'}
+              <p class="form-help">${escapeHtml(field.helpText || '')}</p>
+              `;
+            }).join('') : '<p class="narrative-copy">This connector does not publish credential requirements. You can still connect the route and add credentials later if needed.</p>'}
           </article>
 
           <article class="wizard-summary-card">
@@ -1623,9 +1681,147 @@ const state = {
   settingsStatus: makeStatus('Settings are authored locally and committed through the configuration API.', 'info'),
   securityStatus: makeStatus('Security changes require explicit confirmation before unsafe modes are applied.', 'info'),
   guidedWorkflow: defaultGuidedWorkflowState(),
+  // WS3 — environment hint map (env var name -> bool) from /api/environment-hints
+  environmentHints: {},
+  // WS1 — runtime readiness snapshot from /api/readiness
+  readiness: null,
+  // WS1 — first-run wizard state; see defaultWizardState()
+  wizard: defaultWizardState(),
+  // WS4 — setup dependency detect/install state per dependency id
+  setupDependencies: {},
   surfaceNotice: makeStatus('Browser host waiting for the first Forsetti surface snapshot.', 'info'),
   lastRefreshLabel: 'Pending'
 };
+
+// Shared user-facing copy — mirrors include/MasterControl/ReadinessCopy.h.
+// WS8 test asserts byte-for-byte equality between this object and the header.
+const READINESS_COPY = {
+  hintDetected: 'Credential detected',
+  hintNeeded: 'Additional information needed',
+  hintNone: 'No configuration detected',
+  readinessReady: 'Ready',
+  readinessNeedsAttention: 'Needs Attention',
+  readinessMissing: 'Missing',
+  readinessFailed: 'Failed',
+  nextConnectFirstProvider: 'connect-first-provider',
+  nextAddMcp: 'add-mcp',
+  nextCreateSpecialist: 'create-specialist',
+  nextCreateStarterWorkflow: 'create-starter-workflow',
+  nextReview: 'review',
+  nextComplete: 'complete'
+};
+
+function defaultWizardState() {
+  return {
+    mode: null,  // 'guided' | 'manual' | 'import' | null
+    stepIndex: 0,
+    steps: ['preflight', 'discovery', 'providers', 'mcp', 'specialist', 'workflow', 'review'],
+    stepState: {},
+    dismissed: false,
+    lastUpdatedUtc: null
+  };
+}
+
+// WS1 — persistence helpers for wizard state, guarded against localStorage
+// corruption, quota, or disabled storage.
+const WIZARD_STATE_KEY = 'mco.wizard.state.v1';
+function persistWizardState() {
+  try {
+    if (typeof localStorage === 'undefined') { return; }
+    const payload = { ...state.wizard, lastUpdatedUtc: new Date().toISOString() };
+    localStorage.setItem(WIZARD_STATE_KEY, JSON.stringify(payload));
+  } catch (_) { /* quota or disabled — non-fatal */ }
+}
+function restoreWizardState() {
+  try {
+    if (typeof localStorage === 'undefined') { return; }
+    const raw = localStorage.getItem(WIZARD_STATE_KEY);
+    if (!raw) { return; }
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.steps)) {
+      state.wizard = { ...defaultWizardState(), ...parsed };
+    }
+  } catch (_) {
+    // Corruption — reset to defaults.
+    try { localStorage.removeItem(WIZARD_STATE_KEY); } catch (_) {}
+  }
+}
+restoreWizardState();
+
+// WS3 — fetch and cache environment hints.
+async function loadEnvironmentHints() {
+  try {
+    const response = await fetch('/api/environment-hints');
+    if (!response.ok) { return; }
+    const json = await response.json();
+    if (json && typeof json === 'object') {
+      state.environmentHints = json;
+    }
+  } catch (_) { /* non-fatal */ }
+}
+
+// WS1 — mark setup complete and refresh.
+function markSetupCompleteAndRefresh() {
+  const skipped = [];
+  fetch('/api/setup/complete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ skippedSteps: skipped })
+  })
+    .then(() => {
+      state.wizard.dismissed = true;
+      persistWizardState();
+      state.currentDestination = 'setup-readiness';
+      return refreshDashboard({ preserveDynamicContent: false });
+    })
+    .catch(() => {});
+}
+
+// WS1 — fetch and cache readiness snapshot.
+async function loadReadiness() {
+  try {
+    const response = await fetch('/api/readiness');
+    if (!response.ok) { return; }
+    state.readiness = await response.json();
+  } catch (_) { /* non-fatal */ }
+}
+
+// WS4 — fetch and cache setup dependency catalog + detection.
+async function loadSetupDependencies() {
+  try {
+    const response = await fetch('/api/setup/dependencies');
+    if (!response.ok) { return; }
+    const json = await response.json();
+    const byId = {};
+    for (const entry of (json?.dependencies || [])) {
+      if (entry?.descriptor?.id) {
+        byId[entry.descriptor.id] = entry;
+      }
+    }
+    state.setupDependencies = byId;
+  } catch (_) { /* non-fatal */ }
+}
+
+// WS3 — describe a credential field's detected/needed state from the hint cache.
+function environmentHintStatus(field) {
+  const hint = field?.environmentVariableHint || '';
+  if (!hint) {
+    return { hint: '', detected: false, badgeClass: 'hint-none', badgeText: READINESS_COPY.hintNone };
+  }
+  const detected = state.environmentHints[hint] === true;
+  if (detected) {
+    return {
+      hint, detected: true,
+      badgeClass: 'hint-detected',
+      badgeText: `${READINESS_COPY.hintDetected} (${hint})`
+    };
+  }
+  return {
+    hint, detected: false,
+    badgeClass: 'hint-needed',
+    badgeText: `${READINESS_COPY.hintNeeded} (set ${hint} or paste below)`
+  };
+}
 
 function currentConfig() {
   return {
@@ -1773,7 +1969,9 @@ function labelForDestination(destinationId) {
       imports: 'Imports',
       exports: 'Exports',
       security: 'Security',
-      settings: 'Settings'
+      settings: 'Settings',
+      setup: 'Setup',
+      'setup-readiness': 'Setup Readiness'
     }[destinationId] || 'Overview');
 }
 
@@ -1857,6 +2055,9 @@ function metadataForDestination(destinationId) {
 }
 
 function resolvePrimaryViewForDestination(destinationId) {
+  // WS1/WS6 — client-side routes that don't live in the Forsetti surface map.
+  if (destinationId === 'setup') { return 'SetupWizardView'; }
+  if (destinationId === 'setup-readiness') { return 'SetupReadinessView'; }
   const injections = state.surface.viewInjectionsBySlot[destinationId] || [];
   return injections[0]?.viewId || '';
 }
@@ -1927,7 +2128,18 @@ function packageKindOptions(selectedKind) {
 }
 
 function renderSurfaceNavigation() {
-  surfaceNavigation.innerHTML = state.surface.navigationPointers.map((pointer) => `
+  // WS6/WS7 — synthesize a nav set that:
+  //   - prepends Setup Readiness so users can always reopen it
+  //   - hides Exports unless advancedMode is on (WS7 demotion)
+  const base = state.surface.navigationPointers.slice();
+  const readinessPointer = { destinationId: 'setup-readiness', label: 'Setup Readiness' };
+  const synthesized = [readinessPointer, ...base];
+  const advanced = isAdvancedMode();
+  const filtered = synthesized.filter((p) => {
+    if (p.destinationId === 'exports' && !advanced) { return false; }
+    return true;
+  });
+  surfaceNavigation.innerHTML = filtered.map((pointer) => `
     <button
       type="button"
       class="surface-nav-button ${pointer.destinationId === state.currentDestination ? 'is-active' : ''}"
@@ -2093,6 +2305,347 @@ function renderOverviewView() {
         ${narrativePanel('Security Posture', 'Trust Envelope', securityPosture)}
       </div>
     </section>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// WS1 — First-Run Setup Wizard (browser)
+// ---------------------------------------------------------------------------
+
+function renderFirstRunView() {
+  // Entry screen: three equal cards (Guided / Manual / Import Existing).
+  // Once a mode is chosen, subsequent renders dispatch to the step renderer.
+  if (!state.wizard.mode) {
+    return renderFirstRunEntryChoices();
+  }
+  if (state.wizard.mode === 'guided') {
+    return renderGuidedWizardStep();
+  }
+  if (state.wizard.mode === 'import') {
+    return renderImportConfigStep();
+  }
+  // Manual mode dismisses the wizard and lets the user use the operator surface.
+  // The banner in renderManualSetupBanner() keeps them oriented.
+  return renderUnavailableView('Manual Setup Active',
+    'Use the main navigation to configure providers, MCP servers, and workflows. Open Setup Readiness when ready.');
+}
+
+function renderFirstRunEntryChoices() {
+  return `
+    <section class="section-shell">
+      <article class="panel-block">
+        <p class="eyebrow">Welcome</p>
+        <h3>Start Here</h3>
+        <p class="narrative-copy">Choose how you want to set up Master Control. All three paths lead to the same outcome — a configured, ready orchestration instance.</p>
+        <div class="first-run-entry-grid">
+          <button type="button" class="first-run-entry-card" data-action="first-run-choose-guided">
+            <p class="eyebrow">GUIDED</p>
+            <h4>Guided Setup</h4>
+            <p class="narrative-copy">Step-by-step assistant. Preflight, discovery, connect providers, add MCP, create a specialist, pick a starter workflow, review.</p>
+          </button>
+          <button type="button" class="first-run-entry-card" data-action="first-run-choose-manual">
+            <p class="eyebrow">MANUAL</p>
+            <h4>Manual Setup</h4>
+            <p class="narrative-copy">Go straight to the full operator surface and configure each section yourself. Open Setup Readiness when done to mark complete.</p>
+          </button>
+          <button type="button" class="first-run-entry-card" data-action="first-run-choose-import">
+            <p class="eyebrow">IMPORT</p>
+            <h4>Import Existing Configuration</h4>
+            <p class="narrative-copy">Restore from an existing package, repo, or zip. We validate it, surface any gaps, and route you to fix them.</p>
+          </button>
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+// WS1 — guided wizard step host with a progress rail.
+function renderGuidedWizardStep() {
+  const wiz = state.wizard;
+  const stepId = wiz.steps[wiz.stepIndex] || 'preflight';
+  const railHtml = wiz.steps.map((id, idx) => {
+    const cls = idx === wiz.stepIndex ? 'active' : (idx < wiz.stepIndex ? 'done' : '');
+    return `<span class="wizard-step-rail-item ${cls}">${idx + 1}. ${escapeHtml(wizardStepLabel(id))}</span>`;
+  }).join('');
+  const body = renderWizardStepBody(stepId);
+  const backDisabled = wiz.stepIndex === 0 ? 'disabled' : '';
+  const isLast = wiz.stepIndex === wiz.steps.length - 1;
+  const nextLabel = isLast ? 'Complete setup' : 'Next';
+  return `
+    <section class="section-shell">
+      <article class="panel-block">
+        <p class="eyebrow">Guided Setup — Step ${wiz.stepIndex + 1} of ${wiz.steps.length}</p>
+        <h3>${escapeHtml(wizardStepLabel(stepId))}</h3>
+        <div class="wizard-step-rail">${railHtml}</div>
+        ${body}
+        <div class="button-row" style="margin-top:1rem;">
+          <button type="button" class="route-button" data-action="wizard-back" ${backDisabled}>Back</button>
+          <button type="button" class="route-button" data-action="wizard-skip">Skip</button>
+          <button type="button" data-action="wizard-next">${escapeHtml(nextLabel)}</button>
+          <button type="button" class="route-button" data-action="wizard-exit-manual">Switch to Manual</button>
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+function wizardStepLabel(stepId) {
+  switch (stepId) {
+    case 'preflight': return 'Preflight';
+    case 'discovery': return 'Discovery';
+    case 'providers': return 'Connect Providers';
+    case 'mcp': return 'Add MCP Server';
+    case 'specialist': return 'Create a Specialist';
+    case 'workflow': return 'Starter Workflow';
+    case 'review': return 'Readiness Review';
+    default: return stepId;
+  }
+}
+
+function renderWizardStepBody(stepId) {
+  const readiness = state.readiness || {};
+  switch (stepId) {
+    case 'preflight':
+      return `
+        <p class="narrative-copy">Checking runtime basics. If you can see this view, the admin API is reachable.</p>
+        <ul>
+          <li>Admin API: <strong>Reachable</strong></li>
+          <li>Configuration loaded: <strong>${state.config ? 'Yes' : 'No'}</strong></li>
+          <li>Dashboard snapshot loaded: <strong>${state.dashboard ? 'Yes' : 'No'}</strong></li>
+        </ul>
+      `;
+    case 'discovery': {
+      const detected = Object.entries(state.environmentHints || {}).filter(([, v]) => v === true);
+      const missing = Object.entries(state.environmentHints || {}).filter(([, v]) => v !== true);
+      return `
+        <p class="narrative-copy">We checked the environment for credentials so we can ask for less later.</p>
+        <h4>Detected</h4>
+        <ul>${detected.length
+          ? detected.map(([k]) => `<li><span class="hint-badge hint-detected">${READINESS_COPY.hintDetected}</span> ${escapeHtml(k)}</li>`).join('')
+          : '<li>No credentials detected in the environment yet.</li>'}
+        </ul>
+        <h4>Not detected</h4>
+        <ul>${missing.length
+          ? missing.map(([k]) => `<li><span class="hint-badge hint-needed">${READINESS_COPY.hintNeeded}</span> ${escapeHtml(k)}</li>`).join('')
+          : '<li>All known credential slots have detected values.</li>'}
+        </ul>
+      `;
+    }
+    case 'providers':
+      return `
+        <p class="narrative-copy">Connect at least one provider. Each card opens the guided connect flow for that provider.</p>
+        <div class="first-run-entry-grid">
+          <button type="button" class="first-run-entry-card" data-action="open-guided-workflow" data-workflow-id="connect-chatgpt"><h4>Connect ChatGPT</h4><p class="narrative-copy">OpenAI API key.</p></button>
+          <button type="button" class="first-run-entry-card" data-action="open-guided-workflow" data-workflow-id="connect-codex"><h4>Connect Codex</h4><p class="narrative-copy">OpenAI API key.</p></button>
+          <button type="button" class="first-run-entry-card" data-action="open-guided-workflow" data-workflow-id="connect-claude-code"><h4>Connect Claude Code</h4><p class="narrative-copy">Anthropic API key + Claude Code CLI.</p></button>
+          <button type="button" class="first-run-entry-card" data-action="open-guided-workflow" data-workflow-id="connect-xai"><h4>Connect xAI / Grok</h4><p class="narrative-copy">xAI API key.</p></button>
+        </div>
+        ${renderClaudeCodeDependencyCard()}
+        <p class="narrative-copy">Providers currently ready: <strong>${readiness.providersReadyCount || 0}</strong></p>
+      `;
+    case 'mcp':
+      return `
+        <p class="narrative-copy">Add at least one MCP server so providers can share a tool lane. You can skip this step and add one later.</p>
+        <button type="button" data-action="open-guided-workflow" data-workflow-id="new-mcp">Open MCP Server guided form</button>
+        <p class="narrative-copy">MCP servers currently ready: <strong>${readiness.mcpReadyCount || 0}</strong></p>
+      `;
+    case 'specialist':
+      return `
+        <p class="narrative-copy">Create a specialist (sub-agent) so providers have something to execute. You can skip this step and return later.</p>
+        <button type="button" data-action="open-guided-workflow" data-workflow-id="new-subagent">Open Sub-Agent guided form</button>
+        <p class="narrative-copy">Specialists currently ready: <strong>${readiness.specialistsReadyCount || 0}</strong></p>
+      `;
+    case 'workflow':
+      return renderStarterWorkflowStep();
+    case 'review':
+      return renderReadinessReviewStep();
+    default:
+      return '<p class="narrative-copy">Unknown step.</p>';
+  }
+}
+
+// WS6 — starter workflow template picker.
+let starterTemplatesCache = null;
+async function loadStarterWorkflowTemplates() {
+  try {
+    const response = await fetch('/api/setup/workflow-templates');
+    if (!response.ok) { return; }
+    const json = await response.json();
+    starterTemplatesCache = Array.isArray(json?.templates) ? json.templates : [];
+    // Re-render so the list populates.
+    if (state.currentDestination === 'setup' && state.wizard.mode === 'guided'
+        && state.wizard.steps[state.wizard.stepIndex] === 'workflow') {
+      renderCurrentContent();
+    }
+  } catch (_) { /* non-fatal */ }
+}
+function renderStarterWorkflowStep() {
+  if (starterTemplatesCache === null) {
+    loadStarterWorkflowTemplates();
+    return '<p class="narrative-copy">Loading starter workflow templates...</p>';
+  }
+  const selected = state.wizard.stepState.workflow?.selectedTemplateId || '';
+  const templates = starterTemplatesCache || [];
+  const cards = templates.map((t) => `
+    <label class="first-run-entry-card" data-action="select-starter-template" data-template-id="${escapeHtml(t.id)}">
+      <input type="radio" name="starter-template" value="${escapeHtml(t.id)}" ${selected === t.id ? 'checked' : ''}>
+      <h4>${escapeHtml(t.displayName)}</h4>
+      <p class="narrative-copy">${escapeHtml(t.description)}</p>
+      <p class="form-help">Requires ${t.requiresProviders} provider(s), ${t.requiresMcp} MCP, ${t.requiresSpecialists} specialist(s).</p>
+    </label>
+  `).join('');
+  const lastResult = state.wizard.stepState.workflow?.lastResult;
+  const resultHtml = lastResult
+    ? `<p class="narrative-copy" style="color:${lastResult.succeeded ? 'rgb(60,230,120)' : 'rgb(255,140,150)'}">${escapeHtml(lastResult.message || '')}</p>`
+    : '';
+  return `
+    <p class="narrative-copy">Pick a starter workflow to seed your first usable configuration. You can also skip and rely on anything you've already wired up manually.</p>
+    <div class="first-run-entry-grid">${cards}</div>
+    ${resultHtml}
+    <div class="button-row" style="margin-top:0.75rem;">
+      <button type="button" data-action="instantiate-starter-template" ${selected ? '' : 'disabled'}>Create this workflow</button>
+    </div>
+  `;
+}
+
+function renderReadinessReviewStep() {
+  const readiness = state.readiness || {};
+  const recommended = readiness.recommendedNextStep || '';
+  return `
+    <p class="narrative-copy">This is the same data the Setup Readiness dashboard uses. Complete setup when all required categories are ready.</p>
+    ${renderReadinessGridInline(readiness)}
+    ${recommended === 'complete' || recommended === 'review'
+      ? '<p class="narrative-copy">You can mark setup complete now.</p>'
+      : `<p class="narrative-copy">Recommended next step: <strong>${escapeHtml(recommended)}</strong></p>`}
+    <div class="button-row" style="margin-top:0.75rem;">
+      <button type="button" data-action="mark-setup-complete">Mark setup complete</button>
+    </div>
+  `;
+}
+
+function renderReadinessGridInline(readiness) {
+  const tile = (label, ready, missing, fixAction) => {
+    let state = 'needs-attention';
+    if (ready > 0 && missing === 0) { state = 'ready'; }
+    else if (ready === 0) { state = 'missing'; }
+    const stateLabel = state === 'ready' ? READINESS_COPY.readinessReady
+      : state === 'missing' ? READINESS_COPY.readinessMissing
+      : READINESS_COPY.readinessNeedsAttention;
+    return `
+      <div class="readiness-tile" data-state="${state}">
+        <p class="eyebrow">${escapeHtml(label)}</p>
+        <h4>${ready} / ${ready + missing}</h4>
+        <p class="narrative-copy">${escapeHtml(stateLabel)}</p>
+        ${fixAction ? `<button type="button" class="route-button" data-action="${fixAction}">Fix now</button>` : ''}
+      </div>
+    `;
+  };
+  return `
+    <div class="readiness-grid">
+      ${tile('Providers', readiness.providersReadyCount || 0, readiness.providersMissingCount || 0, 'readiness-fix-providers')}
+      ${tile('MCP Servers', readiness.mcpReadyCount || 0, readiness.mcpMissingCount || 0, 'readiness-fix-mcp')}
+      ${tile('Specialists', readiness.specialistsReadyCount || 0, readiness.specialistsMissingCount || 0, 'readiness-fix-specialist')}
+      ${tile('Workflows', readiness.workflowsReadyCount || 0, readiness.workflowsMissingCount || 0, 'readiness-fix-workflow')}
+    </div>
+  `;
+}
+
+// WS1 — Import Existing Configuration step (reuses existing import primitives).
+function renderImportConfigStep() {
+  return `
+    <section class="section-shell">
+      <article class="panel-block">
+        <p class="eyebrow">Import Existing Configuration</p>
+        <h3>Restore from a package, repo, or zip</h3>
+        <p class="narrative-copy">Use any of the existing import flows to restore an existing configuration. We'll validate the imported state and route any gaps to Setup Readiness.</p>
+        <div class="button-row">
+          <button type="button" data-action="open-guided-workflow" data-workflow-id="guided-import">Open guided import</button>
+          <button type="button" class="route-button" data-action="go-setup-readiness">Skip to Setup Readiness</button>
+          <button type="button" class="route-button" data-action="wizard-exit-manual">Switch to Manual</button>
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+// WS6 — Readiness dashboard (main view).
+function renderReadinessView() {
+  const readiness = state.readiness || {};
+  const dependencyCard = renderClaudeCodeDependencyCard();
+  const completeLabel = readiness.firstRunCompleted ? 'Setup complete' : 'Mark setup complete';
+  const completeDisabled = readiness.firstRunCompleted ? 'disabled' : '';
+  return `
+    <section class="section-shell">
+      <article class="panel-block">
+        <p class="eyebrow">Setup Readiness</p>
+        <h3>${escapeHtml(readiness.firstRunCompleted ? 'Setup complete' : 'Review and complete setup')}</h3>
+        <p class="narrative-copy">Updated: ${escapeHtml(readiness.updatedAtUtc || 'never')}</p>
+        ${renderReadinessGridInline(readiness)}
+      </article>
+      ${dependencyCard}
+      <article class="panel-block">
+        <p class="eyebrow">Complete</p>
+        <div class="button-row">
+          <button type="button" data-action="mark-setup-complete" ${completeDisabled}>${escapeHtml(completeLabel)}</button>
+          <button type="button" class="route-button" data-action="setup-reset">Reset setup (testing)</button>
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+// WS4 — Claude Code CLI dependency card (three-branch preflight).
+function renderClaudeCodeDependencyCard() {
+  const entry = state.setupDependencies?.['claude-code-cli'];
+  if (!entry) {
+    // Trigger a fetch if we haven't loaded dependencies yet.
+    if (Object.keys(state.setupDependencies || {}).length === 0) {
+      loadSetupDependencies().then(() => renderCurrentContent());
+    }
+    return '<article class="dependency-card" data-preflight=""><p class="narrative-copy">Checking Claude Code CLI...</p></article>';
+  }
+  const d = entry.detection || {};
+  const descriptor = entry.descriptor || {};
+  const preflight = d.preflight || 'unknown';
+  const installState = state.setupDependencies['claude-code-cli']?.installState;
+  const isInstalling = installState === 'installing';
+  let body = '';
+  if (preflight === 'ready') {
+    body = `
+      <h4>${escapeHtml(descriptor.displayName)} — <span style="color:rgb(60,230,120);">${escapeHtml(READINESS_COPY.readinessReady)}</span></h4>
+      <p class="narrative-copy">${escapeHtml(d.detectedVersion || '')}</p>
+    `;
+  } else if (preflight === 'installable') {
+    body = `
+      <h4>${escapeHtml(descriptor.displayName)} — <span style="color:rgb(255,200,60);">${escapeHtml(READINESS_COPY.readinessMissing)}</span></h4>
+      <p class="narrative-copy">${escapeHtml(d.detail || '')}</p>
+      <div class="button-row">
+        <button type="button" data-action="install-dependency" data-dependency-id="claude-code-cli" ${isInstalling ? 'disabled' : ''}>
+          ${isInstalling ? 'Installing...' : 'Install Claude Code CLI'}
+        </button>
+      </div>
+    `;
+  } else if (preflight === 'prerequisite-missing') {
+    body = `
+      <h4>${escapeHtml(descriptor.displayName)} — <span style="color:rgb(255,140,150);">${escapeHtml(READINESS_COPY.readinessFailed)}</span></h4>
+      <p class="narrative-copy">${escapeHtml(d.detail || '')}</p>
+      <p class="narrative-copy">Install Node.js from <a href="https://nodejs.org" target="_blank" rel="noopener">nodejs.org</a>, then reload this view.</p>
+    `;
+  } else {
+    body = `<h4>${escapeHtml(descriptor.displayName)}</h4><p class="narrative-copy">${escapeHtml(d.detail || 'Checking...')}</p>`;
+  }
+  const installResult = entry.lastInstallResult;
+  const installResultHtml = installResult ? `
+    <details style="margin-top:0.5rem;">
+      <summary>${escapeHtml(installResult.summary || '')}</summary>
+      ${installResult.stderrTail ? `<pre>${escapeHtml(installResult.stderrTail)}</pre>` : ''}
+    </details>
+  ` : '';
+  return `
+    <article class="dependency-card" data-preflight="${escapeHtml(preflight)}">
+      ${body}
+      ${installResultHtml}
+    </article>
   `;
 }
 
@@ -2858,15 +3411,24 @@ function renderProvidersView() {
       <p class="eyebrow">Secure Credentials</p>
       <h3>${escapeHtml(draft.displayName || draft.id)}</h3>
       <p class="narrative-copy">${escapeHtml(credentialStatus?.message || 'No credentials are stored yet for this route.')}</p>
-      ${credentialFields.length ? credentialFields.slice(0, 2).map((field) => `
-        <label>${escapeHtml(field.label)}
+      ${credentialFields.length ? credentialFields.slice(0, 2).map((field) => {
+        const hint = environmentHintStatus(field);
+        const badge = hint.hint
+          ? `<span class="hint-badge ${hint.badgeClass}">${escapeHtml(hint.badgeText)}</span>`
+          : '';
+        const placeholder = hint.detected
+          ? `Using environment variable ${hint.hint} (type to override)`
+          : (field.placeholder || 'Credential value');
+        return `
+        <label>${escapeHtml(field.label)} ${badge}
           <input
             name="credential:${escapeHtml(field.fieldId)}"
             type="password"
-            placeholder="${escapeHtml(field.placeholder || 'Credential value')}">
+            placeholder="${escapeHtml(placeholder)}">
         </label>
-        <p class="form-help">${escapeHtml([field.helpText, field.environmentVariableHint ? `Env: ${field.environmentVariableHint}` : ''].filter(Boolean).join(' '))}</p>
-      `).join('') : '<p class="narrative-copy">The selected provider kind has no published credential requirements.</p>'}
+        <p class="form-help">${escapeHtml(field.helpText || '')}</p>
+        `;
+      }).join('') : '<p class="narrative-copy">The selected provider kind has no published credential requirements.</p>'}
       <button type="submit"${credentialFields.length ? '' : ' disabled'}>Save Credentials</button>
     </form>
   ` : emptyState('Select a provider route', 'Save or select a provider route before entering credentials.');
@@ -3278,16 +3840,61 @@ function renderViewById(viewId) {
     case 'ExportsSectionView': return renderExportsView();
     case 'SecuritySectionView': return renderSecurityView();
     case 'SettingsSectionView': return renderSettingsView();
+    // WS1 — first-run wizard view; WS6 — readiness dashboard view.
+    case 'SetupWizardView': return renderFirstRunView();
+    case 'SetupReadinessView': return renderReadinessView();
     default:
       return renderUnavailableView('Unknown Forsetti View', `No browser renderer is registered for ${viewId || 'this destination'}.`);
   }
 }
 
 function renderCurrentContent() {
+  // WS1 — first-run routing: if setup isn't complete and the user hasn't
+  // explicitly chosen Manual or Import, short-circuit to the wizard.
+  if (shouldForceFirstRun()) {
+    surfaceContentHost.innerHTML = renderFirstRunView();
+    return;
+  }
+  // Manual/Import dismissed-wizard users see the normal operator surface,
+  // but we prepend a "Finish Setup" banner (WS1 Manual mode spec).
+  const manualBanner = renderManualSetupBanner();
   const viewId = resolvePrimaryViewForDestination(state.currentDestination);
-  surfaceContentHost.innerHTML = viewId
+  const main = viewId
     ? renderViewById(viewId)
     : renderUnavailableView('Forsetti View Unavailable', 'The selected destination did not publish a usable view injection.');
+  surfaceContentHost.innerHTML = manualBanner + main;
+}
+
+// WS1 — decide whether to force the first-run wizard to foreground.
+function shouldForceFirstRun() {
+  if (state.currentDestination === 'setup') { return true; }
+  if (state.currentDestination === 'setup-readiness') { return false; }
+  const readiness = state.readiness;
+  if (readiness && readiness.firstRunCompleted) { return false; }
+  if (state.wizard.dismissed) { return false; }
+  if (state.wizard.mode === 'manual' || state.wizard.mode === 'import') { return false; }
+  // Hide first-run on error pages so the user can still see diagnostics.
+  return !!readiness; // only force when we have a readiness response
+}
+
+// WS1 — Manual mode banner. Rendered above every view until setup complete.
+function renderManualSetupBanner() {
+  const readiness = state.readiness;
+  if (!readiness || readiness.firstRunCompleted) { return ''; }
+  if (!state.wizard.dismissed) { return ''; }
+  if (state.wizard.mode !== 'manual' && state.wizard.mode !== 'import') { return ''; }
+  const modeLabel = state.wizard.mode === 'manual' ? 'Manual Setup' : 'Import Existing Configuration';
+  return `
+    <article class="manual-setup-banner" role="status">
+      <div>
+        <strong>You're in ${escapeHtml(modeLabel)} mode.</strong>
+        Visit <em>Setup Readiness</em> when you're ready to confirm completion.
+      </div>
+      <div class="button-row">
+        <button type="button" class="route-button" data-action="go-setup-readiness">Open Setup Readiness</button>
+      </div>
+    </article>
+  `;
 }
 
 function renderOverlayRoute() {
@@ -3561,6 +4168,9 @@ async function refreshDashboard(options = {}) {
     state.config = config;
     state.surface = ensureBootstrapSurface(dashboard.surface || {});
     state.exports = safeArray(dashboard.exports);
+    // WS1/WS3 — readiness and environment hints are part of every refresh so
+    // both the first-run dispatcher and credential forms see fresh data.
+    await Promise.all([loadReadiness(), loadEnvironmentHints()]);
     state.lastRefreshLabel = formatTimestamp(new Date());
     setSurfaceNotice(`Forsetti browser surface synchronized at ${state.lastRefreshLabel}.`, 'success');
     setHealthBadge('Live', 'success');
@@ -3735,6 +4345,10 @@ async function completeGuidedWorkflow({ destinationId, statusBucket, message }) 
   await refreshDashboard({ preserveDynamicContent: false });
 }
 
+// WS2 — primary guided provider flow uses /api/providers/auto-connect (the richer
+// orchestration path the shell already uses). The legacy three-call flow
+// (/api/providers + /credentials + /assignments) is preserved as the manual
+// fallback so Rule 1 (manual setup remains first-class) holds.
 async function submitGuidedProviderForm(form) {
   const capability = selectedGuidedProviderCapability();
   if (!capability) {
@@ -3752,6 +4366,95 @@ async function submitGuidedProviderForm(form) {
     return;
   }
 
+  // Collect credentials from credential:* form fields.
+  const credentials = {};
+  for (const element of Array.from(form.elements)) {
+    if (element?.name && element.name.startsWith('credential:') && element.value) {
+      credentials[element.name.slice('credential:'.length)] = element.value;
+    }
+  }
+  const targetId = form.elements.targetId.value || '';
+
+  const payload = {
+    providerId: id,  // providerId IS the canonical identity; runtime resolves kind
+    credentials,
+    displayNameOverride: displayName,
+    baseUrlOverride: baseUrl,
+    modelIdOverride: form.elements.modelId.value.trim(),
+    allowAutonomousControl: form.elements.allowAutonomousControl.checked,
+    discoverModels: true,
+    assignmentTargetIds: targetId ? [targetId] : []
+  };
+
+  // Note template conversion so the user sees what's happening.
+  const existingTemplate = dashboardSnapshot().providers.find(
+    (p) => p.id === id && p.isTemplate
+  );
+  state.guidedWorkflow.progress = {
+    steps: [],
+    status: 'in-progress',
+    note: existingTemplate ? 'Converting template into live provider...' : ''
+  };
+  renderGuidedWorkflowOverlay();
+
+  try {
+    const result = await loadJson('/api/providers/auto-connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    state.guidedWorkflow.progress = {
+      steps: result.steps || [],
+      status: result.succeeded ? 'done' : 'failed',
+      summary: result.summary,
+      error: result.errorMessage
+    };
+    renderGuidedWorkflowOverlay();
+
+    if (!result.succeeded) {
+      renderAutoConnectFallback(form, payload, result);
+      return;
+    }
+
+    await completeGuidedWorkflow({
+      destinationId: 'providers',
+      statusBucket: 'provider',
+      message: result.summary || `Connected '${result.displayName || displayName}'.`
+    });
+  } catch (error) {
+    const friendlyMessage = friendlyProviderError(error.message, displayName);
+    state.guidedWorkflow.status = makeStatus(friendlyMessage, 'error');
+    renderGuidedWorkflowOverlay();
+  }
+}
+
+// Auto-connect fallback: when the orchestrated path fails, offer the user
+// the legacy manual three-call flow pre-filled with whatever they entered.
+// Rule 3 — explain the blocker; Rule 1 — preserve manual mode.
+function renderAutoConnectFallback(form, payload, result) {
+  const failedStep = (result.steps || []).find((s) => !s.succeeded);
+  const stageLabel = failedStep ? failedStep.stage : 'orchestration';
+  const stageMessage = failedStep ? failedStep.message : (result.errorMessage || 'Unknown failure.');
+  state.guidedWorkflow.fallback = {
+    active: true,
+    stage: stageLabel,
+    message: stageMessage,
+    payload
+  };
+  state.guidedWorkflow.status = makeStatus(
+    `Auto-connect failed at ${stageLabel}: ${stageMessage}. You can continue with manual setup.`,
+    'warning'
+  );
+  renderGuidedWorkflowOverlay();
+}
+
+// Invoked when the user clicks "Continue with manual setup" on the fallback
+// banner. Replays the pre-auto-connect three-call flow against the legacy
+// endpoints so manual mode is fully preserved.
+async function submitGuidedProviderFormManualFallback(payload) {
+  const id = payload.providerId;
+  const displayName = payload.displayNameOverride;
   try {
     const providerResult = await loadJson('/api/providers', {
       method: 'POST',
@@ -3759,51 +4462,47 @@ async function submitGuidedProviderForm(form) {
       body: JSON.stringify({
         id,
         displayName,
-        baseUrl,
-        modelId: form.elements.modelId.value.trim(),
-        kind: capability.kind || 'generic',
-        enabled: form.elements.enabled.checked,
-        allowAutonomousControl: form.elements.allowAutonomousControl.checked
+        baseUrl: payload.baseUrlOverride,
+        modelId: payload.modelIdOverride,
+        // kind is optional; runtime resolves by providerId. Keep empty to avoid
+        // regressing to the pre-remediation kind-based lookup path.
+        enabled: true,
+        allowAutonomousControl: !!payload.allowAutonomousControl
       })
     });
-
-    const values = {};
-    for (const element of Array.from(form.elements)) {
-      if (!element?.name || !element.name.startsWith('credential:') || !element.value) {
-        continue;
-      }
-      values[element.name.slice('credential:'.length)] = element.value;
-    }
-    if (Object.keys(values).length) {
+    if (payload.credentials && Object.keys(payload.credentials).length) {
       await loadJson('/api/providers/credentials', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ providerId: id, values })
+        body: JSON.stringify({ providerId: id, values: payload.credentials })
       });
     }
-
-    const targetId = form.elements.targetId.value;
-    if (targetId) {
-      const target = dashboardSnapshot().providerAssignmentTargets.find((candidate) => candidate.targetId === targetId);
+    const firstTargetId = (payload.assignmentTargetIds || [])[0];
+    if (firstTargetId) {
+      const target = dashboardSnapshot().providerAssignmentTargets.find(
+        (candidate) => candidate.targetId === firstTargetId
+      );
       await loadJson('/api/providers/assignments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          targetId,
+          targetId: firstTargetId,
           kind: target?.kind || 'role',
           providerId: id
         })
       });
     }
-
+    state.guidedWorkflow.fallback = null;
     await completeGuidedWorkflow({
       destinationId: 'providers',
       statusBucket: 'provider',
-      message: providerResult.message || `Connected AI model route '${displayName}'.`
+      message: providerResult.message || `Connected AI model route '${displayName}' via manual setup.`
     });
   } catch (error) {
-    const friendlyMessage = friendlyProviderError(error.message, displayName);
-    state.guidedWorkflow.status = makeStatus(friendlyMessage, 'error');
+    state.guidedWorkflow.status = makeStatus(
+      friendlyProviderError(error.message, displayName),
+      'error'
+    );
     renderGuidedWorkflowOverlay();
   }
 }
@@ -4632,6 +5331,175 @@ function handleSurfaceClick(event) {
   if (action === 'reset-provider-draft') {
     state.providerDraft = defaultProviderDraft();
     renderShell();
+    return;
+  }
+  if (action === 'continue-manual-fallback') {
+    const fallback = state.guidedWorkflow.fallback;
+    if (fallback && fallback.payload) {
+      submitGuidedProviderFormManualFallback(fallback.payload);
+    }
+    return;
+  }
+  if (action === 'clear-manual-fallback') {
+    state.guidedWorkflow.fallback = null;
+    state.guidedWorkflow.progress = null;
+    renderGuidedWorkflowOverlay();
+    return;
+  }
+  // WS1 — first-run mode selection
+  if (action === 'first-run-choose-guided') {
+    state.wizard = { ...defaultWizardState(), mode: 'guided', stepIndex: 0, dismissed: false };
+    persistWizardState();
+    fetch('/api/setup/start', { method: 'POST' }).catch(() => {});
+    renderCurrentContent();
+    return;
+  }
+  if (action === 'first-run-choose-manual') {
+    state.wizard = { ...defaultWizardState(), mode: 'manual', dismissed: true };
+    persistWizardState();
+    state.currentDestination = 'overview';
+    fetch('/api/setup/start', { method: 'POST' })
+      .then(() => refreshDashboard({ preserveDynamicContent: false }))
+      .catch(() => renderCurrentContent());
+    return;
+  }
+  if (action === 'first-run-choose-import') {
+    state.wizard = { ...defaultWizardState(), mode: 'import', dismissed: false };
+    persistWizardState();
+    fetch('/api/setup/start', { method: 'POST' }).catch(() => {});
+    renderCurrentContent();
+    return;
+  }
+  // WS1 — guided wizard navigation
+  if (action === 'wizard-back') {
+    if (state.wizard.stepIndex > 0) {
+      state.wizard.stepIndex--;
+      persistWizardState();
+      renderCurrentContent();
+    }
+    return;
+  }
+  if (action === 'wizard-skip' || action === 'wizard-next') {
+    const isLast = state.wizard.stepIndex === state.wizard.steps.length - 1;
+    if (isLast && action === 'wizard-next') {
+      // Complete setup on the last step's Next.
+      markSetupCompleteAndRefresh();
+      return;
+    }
+    state.wizard.stepIndex = Math.min(state.wizard.stepIndex + 1, state.wizard.steps.length - 1);
+    persistWizardState();
+    renderCurrentContent();
+    return;
+  }
+  if (action === 'wizard-exit-manual') {
+    state.wizard.mode = 'manual';
+    state.wizard.dismissed = true;
+    persistWizardState();
+    state.currentDestination = 'overview';
+    refreshDashboard({ preserveDynamicContent: false });
+    return;
+  }
+  if (action === 'go-setup-readiness') {
+    state.currentDestination = 'setup-readiness';
+    renderShell();
+    return;
+  }
+  if (action === 'mark-setup-complete') {
+    markSetupCompleteAndRefresh();
+    return;
+  }
+  if (action === 'setup-reset') {
+    fetch('/api/setup/reset', { method: 'POST' })
+      .then(() => {
+        state.wizard = defaultWizardState();
+        persistWizardState();
+        refreshDashboard({ preserveDynamicContent: false });
+      })
+      .catch(() => {});
+    return;
+  }
+  // WS6 — starter workflow actions
+  if (action === 'select-starter-template') {
+    const id = actionButton.dataset.templateId || '';
+    state.wizard.stepState.workflow = { ...(state.wizard.stepState.workflow || {}), selectedTemplateId: id };
+    persistWizardState();
+    renderCurrentContent();
+    return;
+  }
+  if (action === 'instantiate-starter-template') {
+    const id = state.wizard.stepState.workflow?.selectedTemplateId;
+    if (!id) { return; }
+    fetch(`/api/setup/workflow-templates/${encodeURIComponent(id)}/instantiate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ displayNameOverride: '' })
+    })
+      .then((r) => r.json())
+      .then((result) => {
+        state.wizard.stepState.workflow = { ...(state.wizard.stepState.workflow || {}), lastResult: result };
+        persistWizardState();
+        return refreshDashboard({ preserveDynamicContent: false });
+      })
+      .catch(() => {});
+    return;
+  }
+  // WS6 — readiness "Fix now" buttons
+  if (action === 'readiness-fix-providers') {
+    state.wizard.mode = state.wizard.mode || 'guided';
+    state.wizard.stepIndex = 2;  // providers
+    persistWizardState();
+    state.currentDestination = 'setup';
+    renderShell();
+    return;
+  }
+  if (action === 'readiness-fix-mcp') {
+    state.wizard.mode = state.wizard.mode || 'guided';
+    state.wizard.stepIndex = 3;
+    persistWizardState();
+    state.currentDestination = 'setup';
+    renderShell();
+    return;
+  }
+  if (action === 'readiness-fix-specialist') {
+    state.wizard.mode = state.wizard.mode || 'guided';
+    state.wizard.stepIndex = 4;
+    persistWizardState();
+    state.currentDestination = 'setup';
+    renderShell();
+    return;
+  }
+  if (action === 'readiness-fix-workflow') {
+    state.wizard.mode = state.wizard.mode || 'guided';
+    state.wizard.stepIndex = 5;
+    persistWizardState();
+    state.currentDestination = 'setup';
+    renderShell();
+    return;
+  }
+  // WS4 — dependency install trigger
+  if (action === 'install-dependency') {
+    const id = actionButton.dataset.dependencyId;
+    if (!id) { return; }
+    const entry = state.setupDependencies[id] || {};
+    entry.installState = 'installing';
+    state.setupDependencies[id] = entry;
+    renderCurrentContent();
+    fetch(`/api/setup/dependencies/${encodeURIComponent(id)}/install`, { method: 'POST' })
+      .then((r) => r.json())
+      .then((result) => {
+        entry.installState = result.finalState || 'failed';
+        entry.lastInstallResult = result;
+        if (result.postInstallDetection) {
+          entry.detection = result.postInstallDetection;
+        }
+        return loadSetupDependencies();
+      })
+      .then(() => refreshDashboard({ preserveDynamicContent: false }))
+      .catch(() => {
+        entry.installState = 'failed';
+        entry.lastInstallResult = { summary: 'Install request failed (network or server error).' };
+        renderCurrentContent();
+      });
     return;
   }
   if (action === 'reset-mcp-server-draft') {

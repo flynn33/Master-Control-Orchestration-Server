@@ -418,6 +418,8 @@ struct ShellSnapshot final {
     uint16_t beaconPort = 7301;
     bool beaconEnabled = true;
     bool aiAutonomyEnabled = false;
+    bool advancedMode = false;          // WS5 — parity with browser progressive disclosure
+    bool firstRunCompleted = false;     // WS1 — shell can route to Setup Readiness when false
     bool securityProtocolsEnabled = true;
     bool openLanAccess = true;
     int cpuAllocationPercent = 50;

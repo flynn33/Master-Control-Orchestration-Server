@@ -900,6 +900,134 @@ dialog:focus-visible {
   backdrop-filter: blur(4px);
 }
 
+/* WS2 — Auto-connect progress + manual-fallback banner */
+.auto-connect-progress {
+  border-left: 2px solid rgba(0, 246, 255, 0.45);
+  padding-left: 0.9rem;
+}
+.auto-connect-progress[data-status="failed"] {
+  border-left-color: rgba(255, 80, 90, 0.6);
+}
+.auto-connect-progress[data-status="done"] {
+  border-left-color: rgba(60, 230, 120, 0.6);
+}
+.auto-connect-steps {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.auto-connect-step {
+  font-family: 'Bahnschrift SemiCondensed', 'Segoe UI', sans-serif;
+  font-size: 0.9rem;
+}
+.auto-connect-step.failed { color: rgba(255, 140, 150, 0.95); }
+.auto-connect-step .step-latency { opacity: 0.6; font-size: 0.8rem; }
+.auto-connect-fallback {
+  border-left: 2px solid rgba(255, 200, 60, 0.7);
+  padding-left: 0.9rem;
+}
+
+/* WS3 — Environment hint badges */
+.hint-badge {
+  display: inline-block;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  padding: 0.1em 0.5em;
+  border-radius: 0;
+  margin-left: 0.4em;
+  vertical-align: middle;
+}
+.hint-detected {
+  border: 1px solid rgba(60, 230, 120, 0.55);
+  color: rgba(60, 230, 120, 0.9);
+}
+.hint-needed {
+  border: 1px solid rgba(255, 200, 60, 0.55);
+  color: rgba(255, 200, 60, 0.9);
+}
+.hint-none {
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  color: rgba(170, 170, 170, 0.8);
+}
+
+/* WS1 — First-run / wizard / readiness / setup UI */
+.first-run-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.first-run-entry-card {
+  border: 1px solid rgba(0, 246, 255, 0.3);
+  padding: 1.2rem;
+  background: rgba(5, 20, 40, 0.4);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+.first-run-entry-card:hover,
+.first-run-entry-card:focus-visible {
+  border-color: rgba(0, 246, 255, 0.7);
+  outline: none;
+}
+.wizard-step-rail {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+.wizard-step-rail-item {
+  font-size: 0.8rem;
+  padding: 0.25em 0.7em;
+  border: 1px solid rgba(0, 246, 255, 0.3);
+  opacity: 0.55;
+}
+.wizard-step-rail-item.active { opacity: 1; border-color: rgba(0, 246, 255, 0.9); }
+.wizard-step-rail-item.done { opacity: 0.9; border-color: rgba(60, 230, 120, 0.55); }
+.manual-setup-banner {
+  border: 1px solid rgba(255, 200, 60, 0.6);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+.readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+.readiness-tile {
+  border: 1px solid rgba(0, 246, 255, 0.3);
+  padding: 1rem;
+}
+.readiness-tile[data-state="ready"] { border-color: rgba(60, 230, 120, 0.55); }
+.readiness-tile[data-state="missing"],
+.readiness-tile[data-state="failed"] { border-color: rgba(255, 140, 150, 0.5); }
+.readiness-tile[data-state="needs-attention"] { border-color: rgba(255, 200, 60, 0.55); }
+
+/* WS4 — Dependency install card */
+.dependency-card {
+  border: 1px solid rgba(0, 246, 255, 0.25);
+  padding: 0.9rem;
+  margin: 0.75rem 0;
+}
+.dependency-card[data-preflight="ready"] { border-color: rgba(60, 230, 120, 0.55); }
+.dependency-card[data-preflight="prerequisite-missing"] { border-color: rgba(255, 140, 150, 0.5); }
+.dependency-card[data-preflight="installable"] { border-color: rgba(255, 200, 60, 0.55); }
+.dependency-card pre {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 0.5rem;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 0.8rem;
+}
+
 /* Template endpoint/provider styling */
 .template-row {
   opacity: 0.5;
