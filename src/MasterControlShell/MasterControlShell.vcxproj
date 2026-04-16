@@ -147,6 +147,7 @@
     <ClInclude Include="SettingsSectionControl.xaml.h">
       <DependentUpon>SettingsSectionControl.xaml</DependentUpon>
     </ClInclude>
+    <ClInclude Include="SetupWizardBuilder.h" />
     <ClInclude Include="ShellFormatting.h" />
     <ClInclude Include="ShellRuntime.h" />
     <ClInclude Include="TelemetrySectionControl.xaml.h">
@@ -200,6 +201,7 @@
     <ClCompile Include="SettingsSectionControl.xaml.cpp">
       <DependentUpon>SettingsSectionControl.xaml</DependentUpon>
     </ClCompile>
+    <ClCompile Include="SetupWizardBuilder.cpp" />
     <ClCompile Include="ShellRuntime.cpp" />
     <ClCompile Include="TelemetrySectionControl.xaml.cpp">
       <DependentUpon>TelemetrySectionControl.xaml</DependentUpon>

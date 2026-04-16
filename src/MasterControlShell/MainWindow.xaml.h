@@ -85,6 +85,7 @@ private:
     ::MasterControlShell::ShellRuntime runtime_{};
     ::MasterControlShell::ShellSnapshot currentSnapshot_{};
     std::wstring currentDestination_ = L"overview";
+    bool firstRunWizardDismissed_ = false;
     std::map<std::wstring, Microsoft::UI::Xaml::FrameworkElement> cachedViews_;
     winrt::Windows::Foundation::IAsyncAction PollActivityStreamAsync();
 

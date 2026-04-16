@@ -20,6 +20,7 @@
 #include "RuntimeSectionControl.xaml.h"
 #include "ShellFormatting.h"
 #include "SecuritySectionControl.xaml.h"
+#include "SetupWizardBuilder.h"
 #include "SettingsSectionControl.xaml.h"
 #include "TelemetrySectionControl.xaml.h"
 
@@ -49,6 +50,8 @@ constexpr wchar_t kImportsDestination[] = L"imports";
 constexpr wchar_t kExportsDestination[] = L"exports";
 constexpr wchar_t kSecurityDestination[] = L"security";
 constexpr wchar_t kSettingsDestination[] = L"settings";
+constexpr wchar_t kSetupWizardDestination[] = L"setup-wizard";
+constexpr wchar_t kSetupReadinessDestination[] = L"setup-readiness";
 
 constexpr wchar_t kOverviewView[] = L"OverviewSectionView";
 constexpr wchar_t kTelemetryView[] = L"TelemetrySectionView";
@@ -59,6 +62,8 @@ constexpr wchar_t kImportsView[] = L"ImportsSectionView";
 constexpr wchar_t kExportsView[] = L"ExportsSectionView";
 constexpr wchar_t kSecurityView[] = L"SecuritySectionView";
 constexpr wchar_t kSettingsView[] = L"SettingsSectionView";
+constexpr wchar_t kSetupWizardView[] = L"SetupWizardView";
+constexpr wchar_t kSetupReadinessView[] = L"SetupReadinessView";
 
 static bool isInteractiveFormSection(const std::wstring& viewId) {
     return viewId == kProvidersView
@@ -319,7 +324,9 @@ std::map<std::wstring, std::vector<::MasterControlShell::ShellViewInjection>> bo
         { kImportsDestination, { { L"imports-surface", kImportsDestination, kImportsView, 100 } } },
         { kExportsDestination, { { L"exports-surface", kExportsDestination, kExportsView, 100 } } },
         { kSecurityDestination, { { L"security-surface", kSecurityDestination, kSecurityView, 100 } } },
-        { kSettingsDestination, { { L"settings-surface", kSettingsDestination, kSettingsView, 100 } } }
+        { kSettingsDestination, { { L"settings-surface", kSettingsDestination, kSettingsView, 100 } } },
+        { kSetupWizardDestination, { { L"setup-wizard-surface", kSetupWizardDestination, kSetupWizardView, 100 } } },
+        { kSetupReadinessDestination, { { L"setup-readiness-surface", kSetupReadinessDestination, kSetupReadinessView, 100 } } }
     };
 }
 
@@ -1061,6 +1068,33 @@ FrameworkElement MainWindow::CreateViewForViewId(const std::wstring& viewId, con
         view = winrt::MasterControlShell::SecuritySectionControl();
     } else if (viewId == kSettingsView) {
         view = winrt::MasterControlShell::SettingsSectionControl();
+    } else if (viewId == kSetupWizardView || viewId == kSetupReadinessView) {
+        // Programmatic wizard — no MIDL/IDL registration, no XAML compilation.
+        // Always rebuilt (never cached) so it shows fresh snapshot data.
+        const auto weakThis = get_weak();
+        ::MasterControlShell::SetupWizardCallbacks wizardCallbacks{
+            [weakThis](const std::wstring& dest) {
+                if (const auto self = weakThis.get()) {
+                    self->SetCurrentDestination(dest);
+                }
+            },
+            [weakThis](const std::wstring& workflowId) {
+                if (const auto self = weakThis.get()) {
+                    self->StartGuidedWorkflow(workflowId);
+                }
+            },
+            [weakThis]() {
+                if (const auto self = weakThis.get()) {
+                    self->RefreshAsync();
+                }
+            }
+        };
+        // Return directly — skip caching and interactive-runtime attachment.
+        if (viewId == kSetupWizardView) {
+            return ::MasterControlShell::BuildSetupWizardEntryView(currentSnapshot_, wizardCallbacks);
+        } else {
+            return ::MasterControlShell::BuildSetupReadinessView(currentSnapshot_, wizardCallbacks);
+        }
     }
 
     if (view == nullptr) {
@@ -1121,6 +1155,16 @@ void MainWindow::ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapsh
     ApplySurfaceNavigation(snapshot);
     ApplySurfaceToolbar(snapshot);
     ApplyCachedSectionSnapshots(snapshot);
+
+    // First-run routing: if setup hasn't been completed yet and the user hasn't
+    // navigated away from the default, route to the setup wizard automatically.
+    // This makes the WinUI shell the guided entry point — the user never needs
+    // to open a browser on the host machine.
+    if (!snapshot.firstRunCompleted
+        && currentDestination_ == kOverviewDestination
+        && !firstRunWizardDismissed_) {
+        currentDestination_ = kSetupWizardDestination;
+    }
     SetCurrentDestination(currentDestination_);
 
     ServiceStateText().Text(winrt::hstring(serviceStateLabel(snapshot.serviceState)));

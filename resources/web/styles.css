@@ -1028,6 +1028,23 @@ dialog:focus-visible {
   font-size: 0.8rem;
 }
 
+/* Simplified provider connect form */
+.provider-select-large {
+  font-size: 1.1rem;
+  padding: 0.6rem;
+  width: 100%;
+}
+.oauth-signin-button {
+  font-size: 1rem;
+  padding: 0.6rem 1.5rem;
+  border: 2px solid rgba(0, 246, 255, 0.7);
+  background: rgba(0, 246, 255, 0.12);
+  color: inherit;
+  cursor: pointer;
+  font-family: inherit;
+}
+.oauth-signin-button:hover { background: rgba(0, 246, 255, 0.25); }
+
 /* Template endpoint/provider styling */
 .template-row {
   opacity: 0.5;

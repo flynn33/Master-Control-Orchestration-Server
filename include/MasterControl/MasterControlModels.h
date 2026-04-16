@@ -208,6 +208,13 @@ struct ProviderCapabilityDescriptor final {
     std::vector<std::string> supportedTargets;
     bool supportsSharedMcpAccess = true;
     bool supportsAutonomousControl = true;
+    // OAuth support flag — when true, the UI presents "Sign in with [Provider]"
+    // as the primary auth flow. When false, falls back to API key entry.
+    bool supportsOAuth = false;
+    // OAuth configuration (populated only when supportsOAuth is true).
+    std::string oauthAuthorizeUrl;
+    std::string oauthClientId;
+    std::string oauthScope;
 };
 
 struct ProviderCredentialStatus final {
@@ -1031,7 +1038,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     runtimeRequirements,
     supportedTargets,
     supportsSharedMcpAccess,
-    supportsAutonomousControl)
+    supportsAutonomousControl,
+    supportsOAuth,
+    oauthAuthorizeUrl,
+    oauthClientId,
+    oauthScope)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ProviderCredentialStatus,

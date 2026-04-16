@@ -835,53 +835,43 @@ function renderGuidedWorkflowContent() {
         </div>
 
         <form class="surface-form wizard-form" data-form-kind="guided-provider">
-          <div class="wizard-field-grid">
-            <label>AI Model Connector
-              <select name="capabilityId" data-guided-field="providerCapabilityId">
-                ${capabilityOptions}
-              </select>
-            </label>
-            <label>Route ID
-              <input name="id" value="${escapeHtml(capability?.providerId || '')}" placeholder="codex">
-            </label>
-            <label>Display Name
-              <input name="displayName" value="${escapeHtml(capability?.displayName || capability?.providerId || '')}" placeholder="Codex">
-            </label>
-            <label>Base URL
-              <input name="baseUrl" value="${escapeHtml(capability?.defaultBaseUrl || '')}" placeholder="https://api.openai.com/v1">
-            </label>
-            <label>Recommended Model
-              <input name="modelId" value="${escapeHtml(capability?.recommendedModel || '')}" placeholder="gpt-5.4">
-            </label>
-            <label>Assign This Model To
-              <select name="targetId">
-                ${targetOptions}
-              </select>
-            </label>
-          </div>
-
-          <div class="wizard-toggles">
-            <label class="checkbox-field">
-              <input name="enabled" type="checkbox" checked>
-              <span>Route is enabled for orchestration.</span>
-            </label>
-            <label class="checkbox-field">
-              <input name="allowAutonomousControl" type="checkbox"${checkedAttr(!!capability?.supportsAutonomousControl)}>
-              <span>Allow autonomous control when the global autonomy gate is enabled.</span>
-            </label>
-          </div>
-
+          <!-- Step 1: Select the AI model (if not pre-selected by a quick-connect card) -->
           <article class="wizard-summary-card">
-            <p class="eyebrow">Credentials</p>
-            <h3>Secure Route Setup</h3>
+            <p class="eyebrow">Step 1 — Choose Your AI Model</p>
+            <h3>Which AI model do you want to connect?</h3>
+            <select name="capabilityId" data-guided-field="providerCapabilityId" class="provider-select-large">
+              ${capabilityOptions}
+            </select>
+          </article>
+
+          <!-- Step 2: Authenticate -->
+          <article class="wizard-summary-card">
+            <p class="eyebrow">Step 2 — Sign In</p>
+            <h3>Authenticate with ${escapeHtml(capability?.displayName || 'this provider')}</h3>
+
+            ${capability?.supportsOAuth ? `
+              <!-- OAuth flow (primary) — user clicks, browser redirects, token comes back -->
+              <p class="narrative-copy">Click below to sign in with your ${escapeHtml(capability?.displayName || '')} account. MCOS will handle the rest automatically.</p>
+              <div class="button-row" style="margin-bottom: 1rem;">
+                <button type="button" class="oauth-signin-button" data-action="oauth-signin" data-provider-id="${escapeHtml(capability?.providerId || '')}">
+                  Sign in with ${escapeHtml(capability?.displayName || 'Provider')}
+                </button>
+              </div>
+              <details>
+                <summary>Or enter an API key manually</summary>
+            ` : `
+              <p class="narrative-copy">Enter your API key below. You can get one from your ${escapeHtml(capability?.displayName || 'provider')} account dashboard.</p>
+              <p class="form-help">${escapeHtml(credentialHelpUrl(capability))}</p>
+            `}
+
             ${credentialFields.length ? credentialFields.slice(0, 2).map((field) => {
               const hint = environmentHintStatus(field);
               const badge = hint.hint
                 ? `<span class="hint-badge ${hint.badgeClass}">${escapeHtml(hint.badgeText)}</span>`
                 : '';
               const placeholder = hint.detected
-                ? `Using environment variable ${hint.hint} (type to override)`
-                : (field.placeholder || 'Credential value');
+                ? `Using environment variable ${hint.hint}`
+                : (field.placeholder || 'Paste your key here');
               return `
               <label>${escapeHtml(field.label)} ${badge}
                 <input
@@ -889,22 +879,27 @@ function renderGuidedWorkflowContent() {
                   type="password"
                   placeholder="${escapeHtml(placeholder)}">
               </label>
-              <p class="form-help">${escapeHtml(field.helpText || '')}</p>
               `;
-            }).join('') : '<p class="narrative-copy">This connector does not publish credential requirements. You can still connect the route and add credentials later if needed.</p>'}
+            }).join('') : '<p class="narrative-copy">No credentials required for this connector.</p>'}
+
+            ${capability?.supportsOAuth ? '</details>' : ''}
           </article>
 
-          <article class="wizard-summary-card">
-            <p class="eyebrow">Connector Summary</p>
-            <h3>${escapeHtml(capability?.displayName || 'No connector selected')}</h3>
-            <p class="narrative-copy">${escapeHtml(capability?.description || 'Select a provider module to view its connector guidance.')}</p>
-            <p class="narrative-copy">${escapeHtml(`Supported targets: ${safeArray(capability?.supportedTargets).join(', ') || 'No published targets'}`)}</p>
-          </article>
+          <!-- Hidden fields: populated automatically from capability defaults -->
+          <input type="hidden" name="id" value="${escapeHtml(capability?.providerId || '')}">
+          <input type="hidden" name="displayName" value="${escapeHtml(capability?.displayName || '')}">
+          <input type="hidden" name="baseUrl" value="${escapeHtml(capability?.defaultBaseUrl || '')}">
+          <input type="hidden" name="modelId" value="${escapeHtml(capability?.recommendedModel || '')}">
+          <input type="hidden" name="enabled" value="true">
+          <input type="hidden" name="allowAutonomousControl" value="false">
+          <input type="hidden" name="targetId" value="">
 
           <div class="button-row">
-            <button type="submit">Connect AI Model</button>
+            <button type="submit">Connect ${escapeHtml(capability?.displayName || 'AI Model')}</button>
             <button type="button" class="route-button" data-action="close-guided-workflow">Cancel</button>
           </div>
+
+          <p class="narrative-copy" style="margin-top: 1rem; opacity: 0.6;">After connecting, you can assign roles (planner, architect, coder) and configure autonomy from the Providers section.</p>
         </form>
       </section>
     `;
@@ -1800,6 +1795,22 @@ async function loadSetupDependencies() {
     }
     state.setupDependencies = byId;
   } catch (_) { /* non-fatal */ }
+}
+
+// Provider credential help URL by provider id.
+function credentialHelpUrl(capability) {
+  const id = capability?.providerId || '';
+  switch (id) {
+    case 'codex':
+    case 'chatgpt':
+      return 'Get your API key at https://platform.openai.com/api-keys';
+    case 'claude-code':
+      return 'Get your API key at https://console.anthropic.com/settings/keys';
+    case 'xai-grok':
+      return 'Get your API key at https://console.x.ai/team/api-keys';
+    default:
+      return 'Check your provider account dashboard for API credentials.';
+  }
 }
 
 // WS3 — describe a credential field's detected/needed state from the hint cache.
@@ -3953,17 +3964,23 @@ function renderGuidedWorkflowOverlay() {
 function renderShell(options = {}) {
   const preserveDynamicContent = !!options.preserveDynamicContent;
   syncStateSelections();
-  renderSurfaceNavigation();
-  renderSurfaceToolbar();
-  renderSurfaceSummary();
-  renderViewChrome();
+  // When preserving dynamic content (background refresh), skip re-rendering
+  // chrome elements that cause visual flicker and reset scroll/toggle state.
+  // Full chrome re-render happens only on explicit navigation or save.
   if (!preserveDynamicContent) {
+    renderSurfaceNavigation();
+    renderSurfaceToolbar();
+    renderSurfaceSummary();
+    renderViewChrome();
     renderCurrentContent();
     if (state.guidedWorkflow.id) {
       renderGuidedWorkflowOverlay();
     } else if (state.overlayRouteId) {
       renderOverlayRoute();
     }
+  } else {
+    // Background refresh: update only the summary badge (data-driven, no flicker).
+    renderSurfaceSummary();
   }
 }
 
@@ -4375,13 +4392,19 @@ async function submitGuidedProviderForm(form) {
   }
   const targetId = form.elements.targetId.value || '';
 
+  // Read enabled/autonomy from either checkbox (.checked) or hidden field (.value)
+  const enabledEl = form.elements.enabled;
+  const autonomyEl = form.elements.allowAutonomousControl;
+  const enabled = enabledEl?.type === 'checkbox' ? enabledEl.checked : (enabledEl?.value === 'true');
+  const allowAutonomousControl = autonomyEl?.type === 'checkbox' ? autonomyEl.checked : (autonomyEl?.value === 'true');
+
   const payload = {
     providerId: id,  // providerId IS the canonical identity; runtime resolves kind
     credentials,
     displayNameOverride: displayName,
     baseUrlOverride: baseUrl,
     modelIdOverride: form.elements.modelId.value.trim(),
-    allowAutonomousControl: form.elements.allowAutonomousControl.checked,
+    allowAutonomousControl,
     discoverModels: true,
     assignmentTargetIds: targetId ? [targetId] : []
   };
@@ -5895,6 +5918,16 @@ surfaceOverlayDialog.addEventListener('close', () => {
 
 renderShell();
 refreshDashboard({ preserveDynamicContent: false });
+
+// Refresh only when on views that benefit from live data (overview, telemetry,
+// runtime). Static views like settings, providers (while editing), security,
+// and the setup wizard do NOT need periodic refresh — it causes disruptive
+// re-renders that reset UI state. The user triggers refresh explicitly by
+// navigating or saving.
+const LIVE_DATA_DESTINATIONS = new Set(['overview', 'telemetry', 'runtime']);
 setInterval(() => {
-  refreshDashboard({ preserveDynamicContent: shouldPreserveDynamicContent() });
-}, 5000);
+  if (!LIVE_DATA_DESTINATIONS.has(state.currentDestination)) {
+    return; // Skip refresh for static/editing views.
+  }
+  refreshDashboard({ preserveDynamicContent: true });
+}, 15000); // 15 seconds instead of 5 — less disruptive even on live views.
