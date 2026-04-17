@@ -849,12 +849,23 @@ void MainWindow::ConfigureTimer() {
     }
 
     try {
+        // 2-second telemetry cadence. The tick calls RefreshLiveAsync,
+        // which only updates hero values + the current section's data —
+        // navigation, toolbar, section content host, and scroll position
+        // are deliberately left alone. A full ApplySnapshot (including
+        // nav / toolbar rebuilds) only runs when the user clicks Refresh
+        // or navigates between views.
         refreshTimer_ = dispatcher.CreateTimer();
-        refreshTimer_.Interval(std::chrono::seconds(10));
+        refreshTimer_.Interval(std::chrono::seconds(2));
         const auto weakThis = get_weak();
         refreshTimer_.Tick([weakThis](auto&&, auto&&) {
             if (const auto self = weakThis.get()) {
-                self->RefreshAsync();
+                // Skip the tick while the operator is editing a form so
+                // in-progress text input is never interrupted.
+                if (isInteractiveDestination(self->currentDestination_)) {
+                    return;
+                }
+                self->RefreshLiveAsync();
             }
         });
         refreshTimer_.Start();
@@ -933,69 +944,137 @@ void MainWindow::EnsureBootstrapSurface(::MasterControlShell::ShellSnapshot& sna
 }
 
 void MainWindow::SetCurrentDestination(const std::wstring& destinationId) {
-    currentDestination_ = destinationId.empty() ? std::wstring(kOverviewDestination) : destinationId;
-    const auto view = ResolvePrimaryViewForDestination(currentDestination_, currentSnapshot_);
-    SectionContentHost().Content(view);
-    ApplySectionMetadata(currentSnapshot_);
+    const std::wstring normalized = destinationId.empty() ? std::wstring(kOverviewDestination) : destinationId;
+    const bool destinationChanged = (normalized != currentDestination_);
+    currentDestination_ = normalized;
 
-    // Interactive form sections are excluded from the timed refresh so
-    // they must receive data when the user navigates to them.
-    const auto slotIter = currentSnapshot_.viewInjectionsBySlot.find(currentDestination_);
-    if (slotIter != currentSnapshot_.viewInjectionsBySlot.end() && !slotIter->second.empty()) {
-        const auto& viewId = slotIter->second.front().viewId;
-        if (isInteractiveFormSection(viewId) && view != nullptr) {
-            applySnapshotToView(view, viewId, currentSnapshot_);
-        }
-    }
+    // Only swap SectionContentHost.Content and scroll into view when the
+    // destination actually changed. The timed refresh path used to call
+    // this on every tick — which visibly flashed the section content and
+    // auto-scrolled the page, giving the feel of "the entire page is
+    // refreshing" that the user reported. Text/value updates still happen
+    // via ApplyLiveSnapshotFragment without going through here.
+    if (destinationChanged) {
+        const auto view = ResolvePrimaryViewForDestination(currentDestination_, currentSnapshot_);
+        SectionContentHost().Content(view);
+        ApplySectionMetadata(currentSnapshot_);
 
-    // Bring the section content into view so clicking Connect AI Model /
-    // Assign Responsibility / etc. actually reveals the Providers section
-    // instead of silently updating a ContentPresenter that's below the
-    // fold. On Overview, skip the scroll so the hero stays pinned at the
-    // top as the command deck.
-    if (currentDestination_ != kOverviewDestination) {
-        try {
-            const auto host = SectionContentHost();
-            if (host != nullptr) {
-                host.StartBringIntoView();
+        // Interactive form sections are excluded from the timed refresh so
+        // they must receive data when the user navigates to them.
+        const auto slotIter = currentSnapshot_.viewInjectionsBySlot.find(currentDestination_);
+        if (slotIter != currentSnapshot_.viewInjectionsBySlot.end() && !slotIter->second.empty()) {
+            const auto& viewId = slotIter->second.front().viewId;
+            if (isInteractiveFormSection(viewId) && view != nullptr) {
+                applySnapshotToView(view, viewId, currentSnapshot_);
             }
-        } catch (const winrt::hresult_error&) {
-            // ContentHost may not be realized during early bootstrap;
-            // subsequent SetCurrentDestination calls will retry.
         }
+
+        // Bring the section content into view so clicking Connect AI Model /
+        // Assign Responsibility / etc. actually reveals the Providers section
+        // instead of silently updating a ContentPresenter that's below the
+        // fold. On Overview, skip the scroll so the hero stays pinned at the
+        // top as the command deck.
+        if (currentDestination_ != kOverviewDestination) {
+            try {
+                const auto host = SectionContentHost();
+                if (host != nullptr) {
+                    host.StartBringIntoView();
+                }
+            } catch (const winrt::hresult_error&) {
+                // ContentHost may not be realized during early bootstrap;
+                // subsequent SetCurrentDestination calls will retry.
+            }
+        }
+    } else {
+        // Same destination — just refresh the header chrome labels in case
+        // the snapshot's view titles changed. No content swap, no scroll.
+        ApplySectionMetadata(currentSnapshot_);
     }
 }
 
 void MainWindow::ApplySurfaceNavigation(const ::MasterControlShell::ShellSnapshot& snapshot) {
-    ShellNavigation().MenuItems().Clear();
+    // Signature-cache: only Clear+rebuild the NavigationView MenuItems when
+    // the snapshot's nav pointers actually changed. The refresh timer runs
+    // every 10 seconds and re-invoking Clear/Append on the XAML collection
+    // caused a very visible flicker across the whole shell — which is what
+    // the user was observing as "the entire page is refreshing".
+    std::wstring signature;
+    signature.reserve(snapshot.navigationPointers.size() * 64);
+    for (const auto& pointer : snapshot.navigationPointers) {
+        signature += pointer.destinationId;
+        signature += L'\x1f';
+        signature += pointer.label;
+        signature += L'\x1e';
+    }
 
+    const bool structureChanged = (signature != lastNavigationSignature_);
+    if (structureChanged) {
+        lastNavigationSignature_ = signature;
+        ShellNavigation().MenuItems().Clear();
+
+        for (const auto& pointer : snapshot.navigationPointers) {
+            NavigationViewItem item;
+            item.Content(box_value(hstring(pointer.label.empty() ? labelForDestination(pointer.destinationId) : pointer.label)));
+            item.Tag(box_value(hstring(pointer.destinationId)));
+            ShellNavigation().MenuItems().Append(item);
+        }
+    }
+
+    // Selection management runs every pass (cheap, only flips the current
+    // item) so navigation state stays correct even when we skipped the
+    // structural rebuild above.
     NavigationViewItem selectedItem{ nullptr };
     std::wstring firstDestination;
-    for (const auto& pointer : snapshot.navigationPointers) {
-        NavigationViewItem item;
-        item.Content(box_value(hstring(pointer.label.empty() ? labelForDestination(pointer.destinationId) : pointer.label)));
-        item.Tag(box_value(hstring(pointer.destinationId)));
-        ShellNavigation().MenuItems().Append(item);
-
-        if (firstDestination.empty()) {
-            firstDestination = pointer.destinationId;
-        }
-        if (pointer.destinationId == currentDestination_) {
-            selectedItem = item;
+    const auto menu = ShellNavigation().MenuItems();
+    for (uint32_t index = 0; index < menu.Size(); ++index) {
+        if (auto item = menu.GetAt(index).try_as<NavigationViewItem>()) {
+            const auto tagBox = item.Tag().try_as<hstring>();
+            if (!tagBox.has_value()) {
+                continue;
+            }
+            const std::wstring destinationId = tagBox->c_str();
+            if (firstDestination.empty()) {
+                firstDestination = destinationId;
+            }
+            if (destinationId == currentDestination_) {
+                selectedItem = item;
+            }
         }
     }
 
     if (selectedItem == nullptr && !firstDestination.empty()) {
         currentDestination_ = firstDestination;
-        selectedItem = ShellNavigation().MenuItems().GetAt(0).try_as<NavigationViewItem>();
+        if (menu.Size() > 0) {
+            selectedItem = menu.GetAt(0).try_as<NavigationViewItem>();
+        }
     }
 
-    if (selectedItem != nullptr) {
+    if (selectedItem != nullptr && ShellNavigation().SelectedItem() != selectedItem) {
         ShellNavigation().SelectedItem(selectedItem);
     }
 }
 
 void MainWindow::ApplySurfaceToolbar(const ::MasterControlShell::ShellSnapshot& snapshot) {
+    // Same signature-cache strategy as the nav: skip Children().Clear() +
+    // rebuild when the snapshot's toolbar items are unchanged. This is
+    // called from every RefreshAsync pass, so a bare rebuild caused the
+    // entire toolbar row to flash every 10 seconds.
+    std::wstring signature;
+    signature.reserve(snapshot.toolbarItems.size() * 64);
+    for (const auto& item : snapshot.toolbarItems) {
+        signature += item.id;
+        signature += L'\x1f';
+        signature += item.title;
+        signature += L'\x1f';
+        signature += item.systemImageName;
+        signature += L'\x1e';
+    }
+
+    if (signature == lastToolbarSignature_) {
+        return;
+    }
+    lastToolbarSignature_ = signature;
+
     ForsettiToolbarHost().Children().Clear();
 
     for (const auto& item : snapshot.toolbarItems) {
@@ -1189,6 +1268,42 @@ void MainWindow::ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapsh
     }
     SetCurrentDestination(currentDestination_);
 
+    ApplyHeroSnapshot(snapshot);
+}
+
+// Live fragment: ONLY what should update on the 2-second tick. No nav,
+// no toolbar, no section-view swap, no scroll, no re-apply across dormant
+// cached section views. Just the hero + current section's values.
+void MainWindow::ApplyLiveSnapshotFragment(const ::MasterControlShell::ShellSnapshot& snapshot) {
+    ApplyHeroSnapshot(snapshot);
+    ApplyCurrentSectionSnapshot(snapshot);
+}
+
+// Apply the snapshot to just the currently visible section view. This is
+// safe during the live tick because section controls update their
+// TextBlocks / ProgressBars in place.
+void MainWindow::ApplyCurrentSectionSnapshot(const ::MasterControlShell::ShellSnapshot& snapshot) {
+    const auto slotIter = snapshot.viewInjectionsBySlot.find(currentDestination_);
+    if (slotIter == snapshot.viewInjectionsBySlot.end() || slotIter->second.empty()) {
+        return;
+    }
+    const auto& viewId = slotIter->second.front().viewId;
+    // Interactive forms are intentionally skipped on live ticks so the
+    // operator's edit state is never disturbed.
+    if (isInteractiveFormSection(viewId)) {
+        return;
+    }
+    const auto cached = cachedViews_.find(viewId);
+    if (cached == cachedViews_.end() || cached->second == nullptr) {
+        return;
+    }
+    applySnapshotToView(cached->second, viewId, snapshot);
+}
+
+// Hero + badges + status bar. Broken out of ApplySnapshot so the live
+// fragment can update exactly the same values without pulling in the
+// heavy surface-rebuild cost.
+void MainWindow::ApplyHeroSnapshot(const ::MasterControlShell::ShellSnapshot& snapshot) {
     ServiceStateText().Text(winrt::hstring(serviceStateLabel(snapshot.serviceState)));
     ApiStateText().Text(snapshot.apiHealthy ? L"Reachable" : L"Offline");
     EndpointCountText().Text(winrt::hstring(std::to_wstring(snapshot.endpointCount)));
@@ -1385,6 +1500,43 @@ IAsyncAction MainWindow::RefreshAsync() {
     ApplySnapshot(currentSnapshot_);
     refreshInFlight_ = false;
     RefreshButton().IsEnabled(true);
+}
+
+// Timer-initiated refresh that only updates the "live" fields — telemetry
+// values, counts, badges, and the current section's values. Crucially, it
+// does NOT rebuild the navigation, rebuild the toolbar, swap the section
+// view, or scroll into view. That's the path that was making the shell
+// feel like the whole page was refreshing every 10 seconds.
+IAsyncAction MainWindow::RefreshLiveAsync() {
+    // Skip if the user is in the middle of an explicit full refresh or
+    // another live pass is still running. Overlapping passes are what
+    // caused mid-animation redraws in the previous builds.
+    if (refreshInFlight_.load()) {
+        co_return;
+    }
+    if (liveRefreshInFlight_.exchange(true)) {
+        co_return;
+    }
+
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+
+    ::MasterControlShell::ShellSnapshot snapshot;
+    try {
+        snapshot = runtime_.CaptureSnapshot();
+    } catch (...) {
+        // Silent on live-poll errors — the explicit Refresh button surfaces
+        // permanent failures and will re-run the full path.
+        liveRefreshInFlight_ = false;
+        co_return;
+    }
+
+    EnsureBootstrapSurface(snapshot);
+
+    co_await uiThread;
+    currentSnapshot_ = std::move(snapshot);
+    ApplyLiveSnapshotFragment(currentSnapshot_);
+    liveRefreshInFlight_ = false;
 }
 
 IAsyncAction MainWindow::PollActivityStreamAsync() {

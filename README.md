@@ -1,13 +1,13 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.4.2--rc.2-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--17-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.4.2--rc.3-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--17-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
 
 > Forsetti-compliant Windows orchestration control plane for MCP services, AI provider routing, 
 > CLU governance, sub-agents, platform gateways, telemetry, and browser-based operations — 
 > all delivered as a single Tron-themed product.
 
 - **Repository:** [`master-control-dashboard`](https://github.com/flynn33/Master-Control-Orchestration-Server)
-- **Current release:** `v0.4.2-rc.2` (2026-04-17)
+- **Current release:** `v0.4.2-rc.3` (2026-04-17)
 - **Forsetti modules:** 19
 
 ---
@@ -117,16 +117,17 @@ See [Operations](docs/wiki/Operations.md) for the full deployment matrix, and
 
 ## Current release
 
-**`v0.4.2-rc.2` — 2026-04-17**
+**`v0.4.2-rc.3` — 2026-04-17**
 
-Hotfix: browser admin surface stops doing whole-page re-renders; telemetry cards update live in place; browser dashboard shortcut moved to a Remote Access subfolder so the WinUI shell is the unambiguous host entrypoint.
+WinUI shell: stop the whole-page flicker on every refresh. Nav and toolbar now signature-cached, section content no longer re-swapped on the timer, and live ticks run at 2s through a dedicated ApplyLiveSnapshotFragment path. Shell auto-launches on install by default.
 
-- fix(browser): replace 15s renderShell() refresh with a 2s targeted telemetry poll; the surrounding page no longer visually refreshes
-- fix(browser): telemetry meter cards and signal cards now carry data-live markers; a new updateTelemetryLive() patches only the value, meter width, and tone without touching surrounding DOM
-- fix(browser): live poll skips automatically when the tab is hidden and when the user is on a static view (providers/security/settings/imports/setup)
-- fix(installer): browser dashboard shortcut moved from 'Start Menu > Master Control Orchestration Server > Master Control Orchestration Server Dashboard.url' to 'Start Menu > Master Control Orchestration Server > Remote Access > Browser Dashboard (Remote).url'; the native shell shortcut remains at the top level of the product folder
-- fix(installer): uninstall path cleans up the Remote Access subfolder when it is empty
-- docs(install): START-HERE.txt now explains the desktop shell is the intended host surface and the browser dashboard is for remote clients
+- fix(shell): ApplySurfaceNavigation skips Clear+rebuild when the nav signature is unchanged; selection-only update on the common refresh path
+- fix(shell): ApplySurfaceToolbar skips Clear+rebuild when the toolbar signature is unchanged
+- fix(shell): SetCurrentDestination no-ops the content swap and BringIntoView scroll when the destination hasn't changed
+- feat(shell): new RefreshLiveAsync + ApplyLiveSnapshotFragment path â€” updates only hero values and the currently visible section's data, leaving navigation, toolbar, section-content host, and scroll position untouched
+- feat(shell): refreshTimer_ now ticks every 2 seconds and calls RefreshLiveAsync; full ApplySnapshot only runs on user-initiated Refresh or view change
+- fix(shell): 2s live tick self-suppresses while on Providers/Security/Settings/Imports so in-progress form input is never interrupted
+- fix(installer): setup launcher now auto-launches the desktop shell by default on host; --no-launch-shell still opts out for headless installs
 ---
 
 Repository: https://github.com/flynn33/Master-Control-Orchestration-Server

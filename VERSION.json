@@ -1,11 +1,27 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.2-rc.2",
-  "current_tag": "v0.4.2-rc.2",
+  "current_version": "0.4.2-rc.3",
+  "current_tag": "v0.4.2-rc.3",
   "released_at": "2026-04-17",
-  "last_release_commit": "210153bbb8ece7f7aacaa0c40dad1e8b28302327",
+  "last_release_commit": "61912963ebddb11b850e4d40151f2da9cc3285d3",
   "history": [
+    {
+      "version": "0.4.2-rc.3",
+      "tag": "v0.4.2-rc.3",
+      "released_at": "2026-04-17",
+      "commit": "61912963ebddb11b850e4d40151f2da9cc3285d3",
+      "summary": "WinUI shell: stop the whole-page flicker on every refresh. Nav and toolbar now signature-cached, section content no longer re-swapped on the timer, and live ticks run at 2s through a dedicated ApplyLiveSnapshotFragment path. Shell auto-launches on install by default.",
+      "entries": [
+        "fix(shell): ApplySurfaceNavigation skips Clear+rebuild when the nav signature is unchanged; selection-only update on the common refresh path",
+        "fix(shell): ApplySurfaceToolbar skips Clear+rebuild when the toolbar signature is unchanged",
+        "fix(shell): SetCurrentDestination no-ops the content swap and BringIntoView scroll when the destination hasn't changed",
+        "feat(shell): new RefreshLiveAsync + ApplyLiveSnapshotFragment path — updates only hero values and the currently visible section's data, leaving navigation, toolbar, section-content host, and scroll position untouched",
+        "feat(shell): refreshTimer_ now ticks every 2 seconds and calls RefreshLiveAsync; full ApplySnapshot only runs on user-initiated Refresh or view change",
+        "fix(shell): 2s live tick self-suppresses while on Providers/Security/Settings/Imports so in-progress form input is never interrupted",
+        "fix(installer): setup launcher now auto-launches the desktop shell by default on host; --no-launch-shell still opts out for headless installs"
+      ]
+    },
     {
       "version": "0.4.2-rc.2",
       "tag": "v0.4.2-rc.2",

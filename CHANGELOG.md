@@ -5,6 +5,19 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.2-rc.3] - 2026-04-17
+### Summary
+Second hotfix for the host install experience: the **WinUI shell itself** was rebuilding its navigation, toolbar, and section content every 10 seconds, which is what the user saw as "the entire page refreshing" across all menus. Fixed by signature-caching the chrome, no-op'ing redundant destination swaps, and introducing a live-only 2-second refresh path. The setup launcher now auto-launches the desktop shell on the host by default.
+
+### Included Changes
+- fix(shell): `ApplySurfaceNavigation` skips `Clear()`+rebuild when the navigation signature is unchanged; selection-only update on the common refresh path
+- fix(shell): `ApplySurfaceToolbar` skips `Clear()`+rebuild when the toolbar signature is unchanged
+- fix(shell): `SetCurrentDestination` no-ops the content-host swap and `StartBringIntoView()` scroll when the destination hasn't changed
+- feat(shell): new `RefreshLiveAsync` + `ApplyLiveSnapshotFragment` path — updates only hero values and the currently visible section's data, leaving navigation, toolbar, section-content host, and scroll position untouched
+- feat(shell): `refreshTimer_` now ticks every 2 seconds and calls `RefreshLiveAsync`; full `ApplySnapshot` only runs on user-initiated Refresh or view change
+- fix(shell): the 2-second live tick self-suppresses while on Providers / Security / Settings / Imports so in-progress form input is never interrupted
+- fix(installer): setup launcher now auto-launches the desktop shell by default on the host; `--no-launch-shell` still opts out for headless installs
+
 ## [0.4.2-rc.2] - 2026-04-17
 ### Summary
 Hotfix for the host install experience reported in the field: the browser admin surface was re-rendering the whole page on a 15-second timer (feeling like a page reload) and the Start Menu exposed the browser dashboard shortcut next to the native shell, which was confusing on the host machine itself.

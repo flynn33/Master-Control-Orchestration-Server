@@ -45,10 +45,13 @@ private:
     void EnsureBootstrapSurface(::MasterControlShell::ShellSnapshot& snapshot);
     void SetCurrentDestination(std::wstring const& destinationId);
     void ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void ApplyLiveSnapshotFragment(const ::MasterControlShell::ShellSnapshot& snapshot);
     void ApplySurfaceNavigation(const ::MasterControlShell::ShellSnapshot& snapshot);
     void ApplySurfaceToolbar(const ::MasterControlShell::ShellSnapshot& snapshot);
     void ApplySectionMetadata(const ::MasterControlShell::ShellSnapshot& snapshot);
     void ApplyCachedSectionSnapshots(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void ApplyHeroSnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void ApplyCurrentSectionSnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
     void StartGuidedWorkflow(std::wstring const& workflowId);
     Microsoft::UI::Xaml::FrameworkElement ResolvePrimaryViewForDestination(
         std::wstring const& destinationId,
@@ -60,6 +63,7 @@ private:
     void UpdateStatusBar(winrt::hstring const& message, Microsoft::UI::Xaml::Controls::InfoBarSeverity severity);
 
     winrt::Windows::Foundation::IAsyncAction RefreshAsync();
+    winrt::Windows::Foundation::IAsyncAction RefreshLiveAsync();
     winrt::Windows::Foundation::IAsyncAction RunServiceActionAsync(bool start);
     winrt::Windows::Foundation::IAsyncAction HandleOpenDashboardAsync();
     winrt::Windows::Foundation::IAsyncAction ShowProviderWizardAsync();
@@ -95,6 +99,13 @@ private:
     std::wstring activityStreamCursor_;
     size_t activityStreamCount_ = 0;
     std::atomic_bool refreshInFlight_{ false };
+    std::atomic_bool liveRefreshInFlight_{ false };
+    // Signature caches so the timed refresh doesn't Clear+Rebuild the
+    // navigation or toolbar when nothing actually changed. This is what
+    // made the shell feel like the "entire page" was refreshing every
+    // cycle even though only the telemetry numbers were supposed to.
+    std::wstring lastNavigationSignature_;
+    std::wstring lastToolbarSignature_;
 };
 
 } // namespace winrt::MasterControlShell::implementation

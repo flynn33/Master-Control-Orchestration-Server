@@ -36,7 +36,10 @@ struct LauncherOptions final {
     std::filesystem::path installDirectory;
     bool installDirectoryExplicit = false;
     bool quiet = false;
-    bool autoLaunchShell = false;
+    // The desktop shell is the intended host surface. Default to launching
+    // it automatically after install; users who want the old prompt-based
+    // behavior can pass --no-launch-shell.
+    bool autoLaunchShell = true;
     bool noLaunchShell = false;
     std::vector<std::wstring> bootstrapperArguments;
 };
