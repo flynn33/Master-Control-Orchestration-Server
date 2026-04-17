@@ -36,8 +36,11 @@
                             </StackPanel>
 
                             <StackPanel Grid.Column="1" Spacing="6">
-                                <TextBlock Text="CHATGPT (via Codex CLI)" Style="{StaticResource ShellEyebrowTextStyle}" />
-                                <Button x:Name="SignInWithChatGptButton" Click="SignInWithChatGptButton_Click" Content="Sign in with ChatGPT account" HorizontalAlignment="Stretch" />
+                                <TextBlock Text="CHATGPT + CODEX (via Codex CLI)" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                <TextBlock
+                                    Text="One sign-in unlocks both endpoints: ChatGPT for planning &amp; reasoning, Codex for the coding agent. Assign each to different roles after sign-in."
+                                    Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" />
+                                <Button x:Name="SignInWithChatGptButton" Click="SignInWithChatGptButton_Click" Content="Sign in with OpenAI account" HorizontalAlignment="Stretch" />
                                 <TextBlock x:Name="ChatGptSignInStatusText" Text="Ready." Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" />
                             </StackPanel>
 

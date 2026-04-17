@@ -5,6 +5,17 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.2-rc.7] - 2026-04-17
+### Summary
+**One OpenAI sign-in registers both ChatGPT and Codex.** The `codex` CLI's single OAuth flow authenticates the operator for two logically distinct endpoints: ChatGPT (general reasoning / planning) and Codex (coding agent). rc.5's sign-in wizard only registered one of the two, so assigning `coding-specialists` to Codex after signing in to ChatGPT was awkward. rc.7 registers every capability whose `cliBridgeCommand` matches the bridge that just authenticated, so the operator signs in once and can immediately split planning and coding across the two endpoints.
+
+### Included Changes
+- fix(runtime): `ProviderCliSignInService::registerBridgedProvider` now iterates every capability whose `cliBridgeCommand` matches the bridge that just authenticated, instead of registering only the `providerId` hint — one `codex login` registers both `chatgpt` and `codex` entries; `claude login` still registers only `claude-code` because that's the only capability with `cliBridgeCommand=claude`.
+- feat(shell): `ProvidersSectionControl` ChatGPT card retitled **CHATGPT + CODEX (via Codex CLI)**, button relabeled **Sign in with OpenAI account**, and a sub-line explains the two-endpoint outcome explicitly.
+- feat(browser): `renderSignInCards` shows **Sign in to use ChatGPT + Codex** with **OPENAI ACCOUNT** eyebrow for the `codex` bridge.
+- feat(runtime): on successful codex sign-in the completion message now surfaces *"ChatGPT (planning / reasoning) and Codex (coding agent) are both registered — assign each to roles below"*.
+- docs(capabilities): `cliBridgeAccountLabel` on both ChatGPT and Codex capabilities updated to describe the one-sign-in-two-endpoints model.
+
 ## [0.4.2-rc.6] - 2026-04-17
 ### Summary
 **Grok API-key onboarding card.** xAI does not publish a consumer OAuth flow — confirmed by the deep-research analysis on non-API middleware bridges — so a true no-key path is not available for hosted Grok today. This release adds a dedicated API-key card beside the Claude and ChatGPT sign-in cards: paste the xAI key once, and the existing Auto-Connect pipeline probes the endpoint, discovers models, seals the key with DPAPI, and registers the provider. The copy on both surfaces is explicit about the tradeoff.

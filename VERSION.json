@@ -1,11 +1,25 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.2-rc.6",
-  "current_tag": "v0.4.2-rc.6",
+  "current_version": "0.4.2-rc.7",
+  "current_tag": "v0.4.2-rc.7",
   "released_at": "2026-04-17",
-  "last_release_commit": "f7156b8f56bbb558ec43a9dcfd4bb0001e76a0f5",
+  "last_release_commit": "ff346124fa68cbfd92556952eb2a3ed073b16d3d",
   "history": [
+    {
+      "version": "0.4.2-rc.7",
+      "tag": "v0.4.2-rc.7",
+      "released_at": "2026-04-17",
+      "commit": "ff346124fa68cbfd92556952eb2a3ed073b16d3d",
+      "summary": "One OpenAI sign-in registers BOTH ChatGPT and Codex. A single `codex login` OAuth flow now unlocks ChatGPT (planning / reasoning) and Codex (coding agent) as separately assignable providers, so the operator can route planning to one and coding-specialist work to the other without signing in twice.",
+      "entries": [
+        "fix(runtime): ProviderCliSignInService::registerBridgedProvider now iterates every capability whose cliBridgeCommand matches the bridge that just authenticated, instead of registering only the providerId hint — one codex login registers both chatgpt and codex entries; claude login still registers only claude-code because that is the only capability with cliBridgeCommand=claude",
+        "feat(shell): ProvidersSectionControl ChatGPT card retitled 'CHATGPT + CODEX (via Codex CLI)', button relabeled 'Sign in with OpenAI account', and a sub-line explains the two-endpoint outcome explicitly",
+        "feat(browser): renderSignInCards shows 'Sign in to use ChatGPT + Codex' with 'OPENAI ACCOUNT' eyebrow for the codex bridge; the success path now mentions both endpoints are assignable",
+        "feat(runtime): on successful codex sign-in the completion message surfaces 'ChatGPT (planning / reasoning) and Codex (coding agent) are both registered — assign each to roles below'",
+        "docs(capabilities): cliBridgeAccountLabel on both ChatGPT and Codex capabilities updated to describe the one-sign-in-two-endpoints model"
+      ]
+    },
     {
       "version": "0.4.2-rc.6",
       "tag": "v0.4.2-rc.6",

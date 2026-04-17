@@ -1,13 +1,13 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.4.2--rc.6-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--17-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.4.2--rc.7-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--17-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
 
 > Forsetti-compliant Windows orchestration control plane for MCP services, AI provider routing, 
 > CLU governance, sub-agents, platform gateways, telemetry, and browser-based operations — 
 > all delivered as a single Tron-themed product.
 
 - **Repository:** [`master-control-dashboard`](https://github.com/flynn33/Master-Control-Orchestration-Server)
-- **Current release:** `v0.4.2-rc.6` (2026-04-17)
+- **Current release:** `v0.4.2-rc.7` (2026-04-17)
 - **Forsetti modules:** 19
 
 ---
@@ -117,13 +117,15 @@ See [Operations](docs/wiki/Operations.md) for the full deployment matrix, and
 
 ## Current release
 
-**`v0.4.2-rc.6` — 2026-04-17**
+**`v0.4.2-rc.7` — 2026-04-17**
 
-Grok API-key onboarding card. xAI does not publish a consumer OAuth flow, so the account-only path is not available; the wizard now shows a separate API-key card for providers in that category and drives the existing Auto-Connect pipeline (probe, discover models, DPAPI-seal, register) from one pasted key.
+One OpenAI sign-in registers BOTH ChatGPT and Codex. A single `codex login` OAuth flow now unlocks ChatGPT (planning / reasoning) and Codex (coding agent) as separately assignable providers, so the operator can route planning to one and coding-specialist work to the other without signing in twice.
 
-- feat(shell): new 'Grok (xAI API key)' card next to the Claude and ChatGPT sign-in cards in Providers. PasswordBox + Connect button routes through ShellRuntime::AutoConnectProvider with kind=xai-grok
-- feat(browser): renderSignInCards now also emits API-key cards for capabilities without cliBridgeCommand that declare a required api_key field; one-input form posts to /api/providers/auto-connect
-- docs(wizard): copy on both surfaces is explicit that xAI lacks a consumer OAuth path and that the key is sealed locally with DPAPI and never re-transmitted
+- fix(runtime): ProviderCliSignInService::registerBridgedProvider now iterates every capability whose cliBridgeCommand matches the bridge that just authenticated, instead of registering only the providerId hint â€” one codex login registers both chatgpt and codex entries; claude login still registers only claude-code because that is the only capability with cliBridgeCommand=claude
+- feat(shell): ProvidersSectionControl ChatGPT card retitled 'CHATGPT + CODEX (via Codex CLI)', button relabeled 'Sign in with OpenAI account', and a sub-line explains the two-endpoint outcome explicitly
+- feat(browser): renderSignInCards shows 'Sign in to use ChatGPT + Codex' with 'OPENAI ACCOUNT' eyebrow for the codex bridge; the success path now mentions both endpoints are assignable
+- feat(runtime): on successful codex sign-in the completion message surfaces 'ChatGPT (planning / reasoning) and Codex (coding agent) are both registered â€” assign each to roles below'
+- docs(capabilities): cliBridgeAccountLabel on both ChatGPT and Codex capabilities updated to describe the one-sign-in-two-endpoints model
 ---
 
 Repository: https://github.com/flynn33/Master-Control-Orchestration-Server

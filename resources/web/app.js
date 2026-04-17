@@ -473,10 +473,15 @@ function renderSignInCards() {
 
     const message = session && session.message ? `<p class="status-message" data-tone="${escapeHtml(session.status === 'failed' ? 'error' : session.status === 'complete' ? 'success' : 'info')}">${escapeHtml(session.message)}</p>` : '';
 
+    // For the codex bridge, the card title explicitly mentions both
+    // endpoints so the user understands one sign-in unlocks ChatGPT
+    // (planning) and Codex (coding) as separately assignable providers.
+    const cardDisplayName = bridge === 'codex' ? 'ChatGPT + Codex' : cap.displayName;
+    const cardEyebrow = bridge === 'codex' ? 'OPENAI ACCOUNT' : cap.displayName.toUpperCase();
     return `
       <article class="panel-block sign-in-card">
-        <p class="eyebrow">${escapeHtml(cap.displayName)}</p>
-        <h3>Sign in to use ${escapeHtml(cap.displayName)}</h3>
+        <p class="eyebrow">${escapeHtml(cardEyebrow)}</p>
+        <h3>Sign in to use ${escapeHtml(cardDisplayName)}</h3>
         <p class="narrative-copy">${statusLine}</p>
         ${message}
         <div class="button-row">

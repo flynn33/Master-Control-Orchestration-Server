@@ -693,7 +693,7 @@ ProviderCapabilityDescriptor makeCodexProviderCapability() {
         true
     };
     capability.cliBridgeCommand = "codex";
-    capability.cliBridgeAccountLabel = "ChatGPT account (sign in — no API key required)";
+    capability.cliBridgeAccountLabel = "OpenAI account — one sign-in registers ChatGPT (planning) and Codex (coding) together";
     return capability;
 }
 
@@ -733,7 +733,7 @@ ProviderCapabilityDescriptor makeChatGptProviderCapability() {
         true
     };
     capability.cliBridgeCommand = "codex";
-    capability.cliBridgeAccountLabel = "ChatGPT account (sign in — no API key required)";
+    capability.cliBridgeAccountLabel = "OpenAI account — one sign-in registers ChatGPT (planning) and Codex (coding) together";
     return capability;
 }
 

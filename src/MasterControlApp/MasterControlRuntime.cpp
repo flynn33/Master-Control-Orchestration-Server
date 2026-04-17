@@ -2836,7 +2836,7 @@ public:
         session.message = "Complete the sign-in prompt in the console window or browser.";
         session.accountLabel = bridge == "claude"
             ? "Claude Pro / Max / Team account"
-            : "ChatGPT account";
+            : "OpenAI account (ChatGPT + Codex)";
         session.startedAtUtc = timestampNowUtc();
         session.authFilePath = expectedAuthFilePath(bridge);
 
@@ -2916,8 +2916,12 @@ public:
                     std::filesystem::exists(session.authFilePath);
                 if (exitCode == 0 && authFileExists) {
                     session.status = "complete";
-                    session.message = "Signed in successfully. " + session.accountLabel + " is now available.";
                     registerBridgedProvider(session.bridge, session.providerId);
+                    if (session.bridge == "codex") {
+                        session.message = "Signed in. ChatGPT (planning / reasoning) and Codex (coding agent) are both registered — assign each to roles below.";
+                    } else {
+                        session.message = "Signed in. " + session.accountLabel + " is registered — assign it to a role below.";
+                    }
                 } else if (exitCode == 0) {
                     session.status = "failed";
                     session.message = "Sign-in appeared to exit cleanly, but " + bridgeDisplayName(session.bridge) + " did not create its credential file.";
@@ -2999,41 +3003,39 @@ private:
     }
 
     void registerBridgedProvider(const std::string& bridge, const std::string& providerIdHint) {
-        // Find a capability that matches the requested provider (or any
-        // capability whose bridge matches). We upsert a ProviderConnection
-        // with credentialsConfigured=true, no credentials actually stored
-        // — execution uses the CLI's own tokens.
+        // A single `codex login` authenticates the user's OpenAI account for
+        // BOTH ChatGPT (general reasoning) and Codex (coding agent). We
+        // therefore register every capability whose cliBridgeCommand
+        // matches the bridge that just completed sign-in — the operator
+        // gets each distinct provider entry (chatgpt + codex) available
+        // for role assignment without having to sign in twice.
+        //
+        // For bridges that map 1:1 to a single provider (claude → claude-code)
+        // this still registers exactly one entry because only one capability
+        // declares the "claude" bridge.
+        //
+        // providerIdHint is retained for diagnostics / future routing but
+        // no longer restricts the set of registered providers — the user's
+        // intent in clicking "Sign in with ChatGPT" is to unlock the
+        // account, not to choose one of two logical endpoints.
+        (void)providerIdHint;
         const auto capabilities = providerCatalogService_->listCapabilities();
-        const ProviderCapabilityDescriptor* capability = nullptr;
-        for (const auto& candidate : capabilities) {
-            if (!providerIdHint.empty() && candidate.providerId == providerIdHint) {
-                capability = &candidate;
-                break;
+        for (const auto& capability : capabilities) {
+            if (capability.cliBridgeCommand != bridge) {
+                continue;
             }
+            ProviderConnection provider;
+            provider.id = capability.providerId;
+            provider.kind = capability.kind;
+            provider.displayName = capability.displayName;
+            provider.baseUrl = capability.defaultBaseUrl;
+            provider.modelId = capability.recommendedModel;
+            provider.enabled = true;
+            provider.allowAutonomousControl = false;
+            provider.credentialsConfigured = true; // via CLI's own OAuth store
+            provider.isTemplate = false;
+            (void)providerRegistry_->upsertProvider(provider);
         }
-        if (capability == nullptr) {
-            for (const auto& candidate : capabilities) {
-                if (candidate.cliBridgeCommand == bridge) {
-                    capability = &candidate;
-                    break;
-                }
-            }
-        }
-        if (capability == nullptr) {
-            return;
-        }
-
-        ProviderConnection provider;
-        provider.id = capability->providerId;
-        provider.kind = capability->kind;
-        provider.displayName = capability->displayName;
-        provider.baseUrl = capability->defaultBaseUrl;
-        provider.modelId = capability->recommendedModel;
-        provider.enabled = true;
-        provider.allowAutonomousControl = false;
-        provider.credentialsConfigured = true; // via CLI's own OAuth store
-        provider.isTemplate = false;
-        (void)providerRegistry_->upsertProvider(provider);
     }
 
     mutable std::mutex mutex_;
