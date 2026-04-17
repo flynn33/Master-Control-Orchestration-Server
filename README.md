@@ -1,13 +1,13 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.4.1--rc.1-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--17-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.4.2--rc.1-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--17-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
 
 > Forsetti-compliant Windows orchestration control plane for MCP services, AI provider routing, 
 > CLU governance, sub-agents, platform gateways, telemetry, and browser-based operations — 
 > all delivered as a single Tron-themed product.
 
 - **Repository:** [`master-control-dashboard`](https://github.com/flynn33/Master-Control-Orchestration-Server)
-- **Current release:** `v0.4.1-rc.1` (2026-04-17)
+- **Current release:** `v0.4.2-rc.1` (2026-04-17)
 - **Forsetti modules:** 19
 
 ---
@@ -117,16 +117,27 @@ See [Operations](docs/wiki/Operations.md) for the full deployment matrix, and
 
 ## Current release
 
-**`v0.4.1-rc.1` — 2026-04-17**
+**`v0.4.2-rc.1` — 2026-04-17**
 
-UX simplification: stop settings refresh, simplify AI integration form, add OAuth scaffolding, add native WinUI setup wizard (no MIDL).
+Non-security remediation: runtime correctness, JSON ingress hardening, build hygiene, WinUI claim-parity, regression tests.
 
-- fix(browser): stop 5-second refresh on static views (settings, providers, security); live views refresh at 15s
-- fix(browser): simplify provider connect form to pick-model + authenticate; hide technical fields
-- feat(runtime): add OAuth scaffolding (supportsOAuth, oauthAuthorizeUrl, oauthClientId, oauthScope) to ProviderCapabilityDescriptor
-- feat(shell): add programmatic SetupWizardBuilder (no MIDL/IDL) with Guided/Manual/Import entry and readiness review
-- feat(shell): first-run routing — shell shows setup wizard when !firstRunCompleted instead of overview
-
+- fix(runtime): writeJsonFile returns [[nodiscard]] bool with atomic temp+rename; every call site propagates or (void)-discards
+- fix(runtime): readJsonFile catches nlohmann::json::exception and ios_base::failure; TOCTOU patterns now safe
+- fix(runtime): upsertProvider and upsertMcpServer capability reads moved inside state_->mutex
+- fix(runtime): ScopedThread RAII wrapper guarantees child-process pipe readers join on any unwind
+- fix(runtime): cap WinHTTP response accumulator at 32 MiB with clean handle cleanup
+- feat(runtime): add tryParseJson / tryGet<T> / getOr<T> helpers; wrap config-load and credential-unseal ingress
+- fix(build): vcpkg.json version-string synced to VERSION.json; README badges regenerated
+- feat(build): new scripts/Sync-RepositoryVersionBadges.ps1 with -CheckOnly mode for CI gating
+- fix(build): CMake VCPKG_ROOT unresolved-env guard with clear FATAL_ERROR
+- fix(build): PowerShell find_program FATAL_ERROR on Windows
+- fix(build): MasterControlApp Windows system libs moved PUBLIC -> PRIVATE; service host links advapi32 explicitly
+- fix(scripts): Set-StrictMode -Version Latest + $ErrorActionPreference = 'Stop' across all 12 previously-unset scripts
+- fix(shell): activity-stream 1 Hz tick suppressed while operator is on Providers/Security/Settings/Imports
+- fix(shell): DispatcherQueue null-guard cached once at ConfigureTimer entry
+- feat(shell): Tron-themed focus indicators on Button/TextBox/PasswordBox/ComboBox/ToggleSwitch implicit styles
+- fix(shell): app.manifest extended with Windows 10/11 supportedOS GUIDs and requestedExecutionLevel=asInvoker
+- test: regression tests for malformed config fallback, activity ring cap, concurrent upsertProvider
 ---
 
 Repository: https://github.com/flynn33/Master-Control-Orchestration-Server

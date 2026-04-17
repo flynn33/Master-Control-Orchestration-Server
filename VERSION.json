@@ -1,11 +1,37 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.1-rc.1",
-  "current_tag": "v0.4.1-rc.1",
+  "current_version": "0.4.2-rc.1",
+  "current_tag": "v0.4.2-rc.1",
   "released_at": "2026-04-17",
-  "last_release_commit": "",
+  "last_release_commit": "51baf2213151637635100dafd53dd79212717591",
   "history": [
+    {
+      "version": "0.4.2-rc.1",
+      "tag": "v0.4.2-rc.1",
+      "released_at": "2026-04-17",
+      "commit": "51baf2213151637635100dafd53dd79212717591",
+      "summary": "Non-security remediation: runtime correctness, JSON ingress hardening, build hygiene, WinUI claim-parity, regression tests.",
+      "entries": [
+        "fix(runtime): writeJsonFile returns [[nodiscard]] bool with atomic temp+rename; every call site propagates or (void)-discards",
+        "fix(runtime): readJsonFile catches nlohmann::json::exception and ios_base::failure; TOCTOU patterns now safe",
+        "fix(runtime): upsertProvider and upsertMcpServer capability reads moved inside state_->mutex",
+        "fix(runtime): ScopedThread RAII wrapper guarantees child-process pipe readers join on any unwind",
+        "fix(runtime): cap WinHTTP response accumulator at 32 MiB with clean handle cleanup",
+        "feat(runtime): add tryParseJson / tryGet<T> / getOr<T> helpers; wrap config-load and credential-unseal ingress",
+        "fix(build): vcpkg.json version-string synced to VERSION.json; README badges regenerated",
+        "feat(build): new scripts/Sync-RepositoryVersionBadges.ps1 with -CheckOnly mode for CI gating",
+        "fix(build): CMake VCPKG_ROOT unresolved-env guard with clear FATAL_ERROR",
+        "fix(build): PowerShell find_program FATAL_ERROR on Windows",
+        "fix(build): MasterControlApp Windows system libs moved PUBLIC -> PRIVATE; service host links advapi32 explicitly",
+        "fix(scripts): Set-StrictMode -Version Latest + $ErrorActionPreference = 'Stop' across all 12 previously-unset scripts",
+        "fix(shell): activity-stream 1 Hz tick suppressed while operator is on Providers/Security/Settings/Imports",
+        "fix(shell): DispatcherQueue null-guard cached once at ConfigureTimer entry",
+        "feat(shell): Tron-themed focus indicators on Button/TextBox/PasswordBox/ComboBox/ToggleSwitch implicit styles",
+        "fix(shell): app.manifest extended with Windows 10/11 supportedOS GUIDs and requestedExecutionLevel=asInvoker",
+        "test: regression tests for malformed config fallback, activity ring cap, concurrent upsertProvider"
+      ]
+    },
     {
       "version": "0.4.1-rc.1",
       "tag": "v0.4.1-rc.1",

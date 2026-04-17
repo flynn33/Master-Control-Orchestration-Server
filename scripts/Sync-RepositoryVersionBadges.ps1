@@ -44,27 +44,71 @@ if (-not $current -or -not $released) {
 $badgeVersion = $current -replace '-', '--'
 $badgeReleased = $released -replace '-', '--'
 
-$expectedTopLine = "![version](https://img.shields.io/badge/version-v$badgeVersion-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-$badgeReleased-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)"
+# Build the badge line using [char] escapes for non-ASCII glyphs so this
+# script file itself remains ASCII and stays immune to PowerShell's codepage
+# assumptions when it loads the script source.
+$middleDot = [char]0x00B7
+$emDash = [char]0x2014
+
+$expectedTopLine = "![version](https://img.shields.io/badge/version-v$badgeVersion-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-$badgeReleased-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20${middleDot}%20WinUI%203%20${middleDot}%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)"
 $expectedCurrentLine = "- **Current release:** ``v$current`` ($released)"
 
-$readme = Get-Content $readmePath -Raw
+function Escape-RegexReplacement {
+    param([string]$Text)
+    # In .NET regex replacement strings, $ must be doubled to render literally.
+    return $Text -replace '\$', '$$$$'
+}
+
+# Read and write text as UTF-8 without BOM so we never corrupt non-ASCII glyphs
+# like em dashes or middle dots in the README. [System.IO.File]::ReadAllText
+# auto-detects encoding and returns .NET strings; WriteAllText with
+# UTF8Encoding($false) writes UTF-8 without BOM.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+$readme = [System.IO.File]::ReadAllText($readmePath)
 $readmeUpdated = $readme
 
 $readmeUpdated = [regex]::Replace(
     $readmeUpdated,
     '!\[version\]\(https://img\.shields\.io/badge/version-[^\)]+\)[^\r\n]+',
-    [System.Text.RegularExpressions.Regex]::Escape($expectedTopLine) -replace '\\(.)', '$1'
+    (Escape-RegexReplacement $expectedTopLine)
 )
 
 $readmeUpdated = [regex]::Replace(
     $readmeUpdated,
     '- \*\*Current release:\*\* `v[^`]+` \([0-9\-]+\)',
-    [System.Text.RegularExpressions.Regex]::Escape($expectedCurrentLine) -replace '\\(.)', '$1'
+    (Escape-RegexReplacement $expectedCurrentLine)
+)
+
+# Rewrite the entire "## Current release" block from the latest history entry
+# in VERSION.json. The block runs from the "## Current release" heading up to
+# (but not including) the next "---" horizontal rule.
+$latest = $version.history[0]
+$summary = $latest.summary
+$entries = @($latest.entries)
+
+$entryLines = ($entries | ForEach-Object { "- $_" }) -join "`r`n"
+
+$expectedBlock = @"
+## Current release
+
+**``v$current`` $emDash $released**
+
+$summary
+
+$entryLines
+"@
+
+$readmeUpdated = [regex]::Replace(
+    $readmeUpdated,
+    '## Current release\r?\n.*?(?=\r?\n---)',
+    (Escape-RegexReplacement $expectedBlock),
+    [System.Text.RegularExpressions.RegexOptions]::Singleline
 )
 
 $readmeChanged = ($readmeUpdated -ne $readme)
 
-$vcpkgRaw = Get-Content $vcpkgPath -Raw
+$vcpkgRaw = [System.IO.File]::ReadAllText($vcpkgPath)
 $vcpkg = $vcpkgRaw | ConvertFrom-Json
 $vcpkgVersionDrift = ($vcpkg.'version-string' -ne $current)
 
@@ -73,7 +117,7 @@ if ($vcpkgVersionDrift) {
     $vcpkgUpdated = [regex]::Replace(
         $vcpkgRaw,
         '"version-string"\s*:\s*"[^"]*"',
-        '"version-string": "' + $current + '"'
+        (Escape-RegexReplacement ('"version-string": "' + $current + '"'))
     )
 }
 
@@ -90,11 +134,11 @@ if ($CheckOnly) {
 }
 
 if ($readmeChanged) {
-    Set-Content -Path $readmePath -Value $readmeUpdated -NoNewline:$false -Encoding UTF8
+    [System.IO.File]::WriteAllText($readmePath, $readmeUpdated, $utf8NoBom)
     Write-Host "Updated README.md"
 }
 if ($vcpkgVersionDrift) {
-    Set-Content -Path $vcpkgPath -Value $vcpkgUpdated -NoNewline:$false -Encoding UTF8
+    [System.IO.File]::WriteAllText($vcpkgPath, $vcpkgUpdated, $utf8NoBom)
     Write-Host "Updated vcpkg.json version-string to $current"
 }
 if (-not $readmeChanged -and -not $vcpkgVersionDrift) {

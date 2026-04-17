@@ -5,6 +5,29 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.2-rc.1] - 2026-04-17
+### Summary
+Non-security remediation: runtime correctness, JSON ingress hardening, build hygiene, WinUI claim-parity, regression tests.
+
+### Included Changes
+- fix(runtime): `writeJsonFile` returns `[[nodiscard]] bool` with atomic temp+rename; every call site propagates failure into `OperationResult` or `(void)`-discards in recovery/interface paths
+- fix(runtime): `readJsonFile` catches `nlohmann::json::exception` and `std::ios_base::failure`; TOCTOU `exists()` + read patterns are now safe at every caller
+- fix(runtime): `upsertProvider` and `upsertMcpServer` capability reads moved inside `state_->mutex` (lost-update race closed)
+- fix(runtime): `ScopedThread` RAII wrapper guarantees child-process pipe readers join on any exception unwind
+- fix(runtime): cap WinHTTP response accumulator at 32 MiB with clean handle cleanup
+- feat(runtime): add `tryParseJson` / `tryGet<T>` / `getOr<T>` helpers; wrap config-load and credential-unseal ingress
+- fix(build): `vcpkg.json` version-string synced to `VERSION.json`; README badges regenerated from the same source of truth
+- feat(build): new `scripts/Sync-RepositoryVersionBadges.ps1` with `-CheckOnly` mode for CI gating
+- fix(build): CMake `VCPKG_ROOT` unresolved-env guard with clear `FATAL_ERROR`
+- fix(build): PowerShell `find_program` is now `FATAL_ERROR` on Windows when missing
+- fix(build): `MasterControlApp` Windows system libs moved `PUBLIC` → `PRIVATE`; `MasterControlServiceHost` links `advapi32` explicitly
+- fix(scripts): `Set-StrictMode -Version Latest` and `$ErrorActionPreference = 'Stop'` across all 12 previously-unset PowerShell scripts
+- fix(shell): activity-stream 1 Hz tick suppressed while operator is on Providers / Security / Settings / Imports
+- fix(shell): `DispatcherQueue` null-guard cached once at `ConfigureTimer` entry
+- feat(shell): Tron-themed focus indicators (`ShellAccentBrush` + `ShellGlowBrush`) on `Button` / `TextBox` / `PasswordBox` / `ComboBox` / `ToggleSwitch` implicit styles
+- fix(shell): `app.manifest` extended with Windows 10/11 `<supportedOS>` GUIDs and `requestedExecutionLevel=asInvoker`
+- test: regression tests for malformed-configuration fallback, activity-ring cap under load, and concurrent `upsertProvider`
+
 ## [0.4.1-rc.1] - 2026-04-17
 ### Summary
 UX simplification: stop settings refresh, simplify AI integration form, add OAuth scaffolding, add native WinUI setup wizard.
