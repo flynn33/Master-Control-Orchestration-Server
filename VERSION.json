@@ -1,11 +1,26 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.2-rc.1",
-  "current_tag": "v0.4.2-rc.1",
+  "current_version": "0.4.2-rc.2",
+  "current_tag": "v0.4.2-rc.2",
   "released_at": "2026-04-17",
-  "last_release_commit": "51baf2213151637635100dafd53dd79212717591",
+  "last_release_commit": "210153bbb8ece7f7aacaa0c40dad1e8b28302327",
   "history": [
+    {
+      "version": "0.4.2-rc.2",
+      "tag": "v0.4.2-rc.2",
+      "released_at": "2026-04-17",
+      "commit": "210153bbb8ece7f7aacaa0c40dad1e8b28302327",
+      "summary": "Hotfix: browser admin surface stops doing whole-page re-renders; telemetry cards update live in place; browser dashboard shortcut moved to a Remote Access subfolder so the WinUI shell is the unambiguous host entrypoint.",
+      "entries": [
+        "fix(browser): replace 15s renderShell() refresh with a 2s targeted telemetry poll; the surrounding page no longer visually refreshes",
+        "fix(browser): telemetry meter cards and signal cards now carry data-live markers; a new updateTelemetryLive() patches only the value, meter width, and tone without touching surrounding DOM",
+        "fix(browser): live poll skips automatically when the tab is hidden and when the user is on a static view (providers/security/settings/imports/setup)",
+        "fix(installer): browser dashboard shortcut moved from 'Start Menu > Master Control Orchestration Server > Master Control Orchestration Server Dashboard.url' to 'Start Menu > Master Control Orchestration Server > Remote Access > Browser Dashboard (Remote).url'; the native shell shortcut remains at the top level of the product folder",
+        "fix(installer): uninstall path cleans up the Remote Access subfolder when it is empty",
+        "docs(install): START-HERE.txt now explains the desktop shell is the intended host surface and the browser dashboard is for remote clients"
+      ]
+    },
     {
       "version": "0.4.2-rc.1",
       "tag": "v0.4.2-rc.1",

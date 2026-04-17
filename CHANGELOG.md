@@ -5,6 +5,18 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.2-rc.2] - 2026-04-17
+### Summary
+Hotfix for the host install experience reported in the field: the browser admin surface was re-rendering the whole page on a 15-second timer (feeling like a page reload) and the Start Menu exposed the browser dashboard shortcut next to the native shell, which was confusing on the host machine itself.
+
+### Included Changes
+- fix(browser): replace the 15-second `renderShell()` refresh with a 2-second targeted telemetry poll; the surrounding page no longer visually refreshes
+- fix(browser): telemetry meter cards and signal cards now carry `data-live` markers; a new `updateTelemetryLive()` patches only the value, meter width, and tone without touching surrounding DOM
+- fix(browser): the live poll skips automatically when the browser tab is hidden and when the user is on a static view (providers, security, settings, imports, setup)
+- fix(installer): browser dashboard shortcut moved from *Start Menu > Master Control Orchestration Server > Master Control Orchestration Server Dashboard.url* to *Start Menu > Master Control Orchestration Server > Remote Access > Browser Dashboard (Remote).url*; the native shell shortcut remains at the top of the product folder
+- fix(installer): uninstall path cleans up the Remote Access subfolder when it is empty
+- docs(install): `START-HERE.txt` now explains that the desktop shell is the intended host surface and the browser dashboard is for remote LAN clients
+
 ## [0.4.2-rc.1] - 2026-04-17
 ### Summary
 Non-security remediation: runtime correctness, JSON ingress hardening, build hygiene, WinUI claim-parity, regression tests.

@@ -347,29 +347,31 @@ function telemetryToneForPercent(value) {
   return 'ok';
 }
 
-function telemetryMeterCard(label, value, percent, detail = '', tone = '') {
+function telemetryMeterCard(label, value, percent, detail = '', tone = '', dataLive = '') {
   const normalizedPercent = Math.max(0, Math.min(100, safeNumber(percent, 0)));
   const resolvedTone = tone || telemetryToneForPercent(normalizedPercent);
+  const liveAttr = dataLive ? ` data-live="${escapeHtml(dataLive)}"` : '';
   return `
-    <article class="telemetry-monitor-card" data-tone="${escapeHtml(resolvedTone)}">
+    <article class="telemetry-monitor-card"${liveAttr} data-tone="${escapeHtml(resolvedTone)}">
       <div class="telemetry-monitor-header">
         <div class="card-label">${escapeHtml(label)}</div>
-        <div class="telemetry-monitor-detail">${escapeHtml(detail)}</div>
+        <div class="telemetry-monitor-detail" data-live-detail>${escapeHtml(detail)}</div>
       </div>
-      <div class="telemetry-monitor-value">${escapeHtml(value)}</div>
-      <div class="telemetry-meter"><span style="width:${normalizedPercent}%"></span></div>
+      <div class="telemetry-monitor-value" data-live-value>${escapeHtml(value)}</div>
+      <div class="telemetry-meter"><span data-live-meter style="width:${normalizedPercent}%"></span></div>
     </article>
   `;
 }
 
-function telemetrySignalCard(label, value, detail = '') {
+function telemetrySignalCard(label, value, detail = '', dataLive = '') {
+  const liveAttr = dataLive ? ` data-live="${escapeHtml(dataLive)}"` : '';
   return `
-    <article class="telemetry-monitor-card telemetry-monitor-card--signal">
+    <article class="telemetry-monitor-card telemetry-monitor-card--signal"${liveAttr}>
       <div class="telemetry-monitor-header">
         <div class="card-label">${escapeHtml(label)}</div>
       </div>
-      <div class="telemetry-monitor-value">${escapeHtml(value)}</div>
-      <div class="telemetry-monitor-detail">${escapeHtml(detail)}</div>
+      <div class="telemetry-monitor-value" data-live-value>${escapeHtml(value)}</div>
+      <div class="telemetry-monitor-detail" data-live-detail>${escapeHtml(detail)}</div>
     </article>
   `;
 }
@@ -2756,15 +2758,15 @@ function renderTelemetryView() {
         </div>
       </article>
 
-      <div class="telemetry-monitor-grid">
-        ${telemetryMeterCard('CPU Load', formatPercent(telemetry.cpuPercent || 0), telemetry.cpuPercent || 0, 'live host utilization')}
-        ${telemetryMeterCard('Memory Pressure', formatPercent(telemetry.memoryPercent || 0), telemetry.memoryPercent || 0, 'resident pressure')}
-        ${telemetryMeterCard('Disk Occupancy', formatPercent(telemetry.diskPercent || 0), telemetry.diskPercent || 0, 'storage occupancy')}
-        ${telemetrySignalCard('TX / sec', formatCount(telemetry.bytesSentPerSecond || 0), 'outbound bytes per second')}
-        ${telemetrySignalCard('RX / sec', formatCount(telemetry.bytesReceivedPerSecond || 0), 'inbound bytes per second')}
-        ${telemetrySignalCard('Runtime Lanes', formatCount(snapshot.endpoints.length), 'published service routes')}
-        ${telemetrySignalCard('Providers', formatCount(snapshot.providers.length), 'connected model lanes')}
-        ${telemetrySignalCard('Apple Jobs', formatCount(appleOperations.length), `${formatCount(attentionAppleOperationCount)} attention / ${formatCount(activeAppleOperationCount)} active`)}
+      <div class="telemetry-monitor-grid" data-live-region="telemetry-monitor">
+        ${telemetryMeterCard('CPU Load', formatPercent(telemetry.cpuPercent || 0), telemetry.cpuPercent || 0, 'live host utilization', '', 'cpu')}
+        ${telemetryMeterCard('Memory Pressure', formatPercent(telemetry.memoryPercent || 0), telemetry.memoryPercent || 0, 'resident pressure', '', 'memory')}
+        ${telemetryMeterCard('Disk Occupancy', formatPercent(telemetry.diskPercent || 0), telemetry.diskPercent || 0, 'storage occupancy', '', 'disk')}
+        ${telemetrySignalCard('TX / sec', formatCount(telemetry.bytesSentPerSecond || 0), 'outbound bytes per second', 'tx')}
+        ${telemetrySignalCard('RX / sec', formatCount(telemetry.bytesReceivedPerSecond || 0), 'inbound bytes per second', 'rx')}
+        ${telemetrySignalCard('Runtime Lanes', formatCount(snapshot.endpoints.length), 'published service routes', 'runtime-lanes')}
+        ${telemetrySignalCard('Providers', formatCount(snapshot.providers.length), 'connected model lanes', 'providers')}
+        ${telemetrySignalCard('Apple Jobs', formatCount(appleOperations.length), `${formatCount(attentionAppleOperationCount)} attention / ${formatCount(activeAppleOperationCount)} active`, 'apple-jobs')}
       </div>
 
       <div class="telemetry-command-grid">
@@ -4198,6 +4200,82 @@ async function refreshDashboard(options = {}) {
     setSurfaceNotice(error.message || 'The local admin API did not respond.', 'error');
     setHealthBadge('Error', 'error');
     renderShell({ preserveDynamicContent: false });
+  }
+}
+
+// Live telemetry updater. Patches only the value/meter/detail elements of
+// cards that carry a data-live="<metric>" marker, without rebuilding any
+// surrounding DOM. Called on a 2-second cadence so the telemetry view feels
+// live without causing the rest of the page to re-render.
+function updateTelemetryLive(dashboard, config) {
+  if (!dashboard) { return; }
+  const telemetry = dashboard.telemetry || {};
+  const snapshot = dashboard || {};
+  const governance = dashboard.governance || {};
+  const appleOperations = safeArray(governance.appleOperations);
+  const activeAppleCount = appleOperations.filter(isActiveAppleOperation).length;
+  const attentionAppleCount = appleOperations.filter(isAttentionAppleOperation).length;
+
+  const setCard = (metric, value, { percent = null, detail = null, tone = null } = {}) => {
+    const card = document.querySelector(`[data-live="${metric}"]`);
+    if (!card) { return; }
+    const valueEl = card.querySelector('[data-live-value]');
+    if (valueEl && valueEl.textContent !== value) {
+      valueEl.textContent = value;
+    }
+    if (percent !== null) {
+      const meter = card.querySelector('[data-live-meter]');
+      if (meter) {
+        const pct = Math.max(0, Math.min(100, safeNumber(percent, 0)));
+        meter.style.width = pct + '%';
+      }
+      if (tone === null) {
+        tone = telemetryToneForPercent(Math.max(0, Math.min(100, safeNumber(percent, 0))));
+      }
+      if (tone !== null && card.dataset.tone !== tone) {
+        card.dataset.tone = tone;
+      }
+    }
+    if (detail !== null) {
+      const detailEl = card.querySelector('[data-live-detail]');
+      if (detailEl && detailEl.textContent !== detail) {
+        detailEl.textContent = detail;
+      }
+    }
+  };
+
+  setCard('cpu',    formatPercent(telemetry.cpuPercent || 0),    { percent: telemetry.cpuPercent || 0 });
+  setCard('memory', formatPercent(telemetry.memoryPercent || 0), { percent: telemetry.memoryPercent || 0 });
+  setCard('disk',   formatPercent(telemetry.diskPercent || 0),   { percent: telemetry.diskPercent || 0 });
+  setCard('tx',     formatCount(telemetry.bytesSentPerSecond || 0));
+  setCard('rx',     formatCount(telemetry.bytesReceivedPerSecond || 0));
+  setCard('runtime-lanes', formatCount(safeArray(snapshot.endpoints).length));
+  setCard('providers',     formatCount(safeArray(snapshot.providers).length));
+  setCard('apple-jobs',    formatCount(appleOperations.length), {
+    detail: `${formatCount(attentionAppleCount)} attention / ${formatCount(activeAppleCount)} active`
+  });
+}
+
+// Fetch /api/dashboard + /api/config and patch live telemetry cells only —
+// does not touch any chrome, summary, or form markup. Used by the live
+// timer so the page does not visually "refresh" while data ticks.
+async function refreshTelemetryLive() {
+  try {
+    const [dashboard, config] = await Promise.all([
+      loadJson('/api/dashboard'),
+      loadJson('/api/config')
+    ]);
+    state.dashboard = dashboard;
+    state.config = config;
+    state.surface = ensureBootstrapSurface(dashboard.surface || {});
+    state.lastRefreshLabel = formatTimestamp(new Date());
+    updateTelemetryLive(dashboard, config);
+    setHealthBadge('Live', 'success');
+  } catch (error) {
+    // Silent on live-poll errors — the explicit refresh button surfaces
+    // permanent failures. A transient network blip should not trigger a
+    // visible error state during normal operation.
+    console.debug('live telemetry poll error', error);
   }
 }
 
@@ -5919,15 +5997,19 @@ surfaceOverlayDialog.addEventListener('close', () => {
 renderShell();
 refreshDashboard({ preserveDynamicContent: false });
 
-// Refresh only when on views that benefit from live data (overview, telemetry,
-// runtime). Static views like settings, providers (while editing), security,
-// and the setup wizard do NOT need periodic refresh — it causes disruptive
-// re-renders that reset UI state. The user triggers refresh explicitly by
-// navigating or saving.
-const LIVE_DATA_DESTINATIONS = new Set(['overview', 'telemetry', 'runtime']);
+// Live telemetry cadence: patch only the value/meter/detail elements of
+// cards marked with data-live="<metric>" on a 2-second interval. The rest
+// of the page never re-renders from a timer — the user triggers a full
+// refresh explicitly via the Refresh Surface button. This replaces the
+// prior 15-second renderShell() tick that visibly "refreshed" the whole
+// surface on every cycle.
+const LIVE_TELEMETRY_DESTINATIONS = new Set(['overview', 'telemetry', 'runtime']);
 setInterval(() => {
-  if (!LIVE_DATA_DESTINATIONS.has(state.currentDestination)) {
-    return; // Skip refresh for static/editing views.
+  if (!LIVE_TELEMETRY_DESTINATIONS.has(state.currentDestination)) {
+    return;
   }
-  refreshDashboard({ preserveDynamicContent: true });
-}, 15000); // 15 seconds instead of 5 — less disruptive even on live views.
+  if (document.hidden) {
+    return; // Browser tab is hidden; skip network traffic until it returns.
+  }
+  refreshTelemetryLive();
+}, 2000);

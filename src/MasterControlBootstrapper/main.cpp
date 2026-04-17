@@ -34,7 +34,11 @@ constexpr wchar_t kServiceName[] = L"MasterControlProgram";
 constexpr wchar_t kUninstallRegistryKey[] = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MasterControlProgram";
 constexpr wchar_t kProgramsFolderName[] = L"Master Control Orchestration Server";
 constexpr wchar_t kShellShortcutName[] = L"Master Control Orchestration Server.lnk";
-constexpr wchar_t kDashboardShortcutName[] = L"Master Control Orchestration Server Dashboard.url";
+// The browser dashboard is for remote clients; on the host itself the WinUI
+// shell is the intended surface. Isolate the .url in a subfolder so the
+// default Start Menu click on the host is unambiguously the native shell.
+constexpr wchar_t kRemoteAccessSubfolderName[] = L"Remote Access";
+constexpr wchar_t kDashboardShortcutName[] = L"Browser Dashboard (Remote).url";
 constexpr wchar_t kLegacyProgramsFolderName[] = L"Master Control Program";
 constexpr wchar_t kLegacyShellShortcutName[] = L"Master Control Program.lnk";
 constexpr wchar_t kLegacyDashboardShortcutName[] = L"Master Control Dashboard.url";
@@ -1066,7 +1070,7 @@ InstallationState buildInstallationState(const std::filesystem::path& installDir
     state.bootstrapperBinary = (installDirectory / "MasterControlBootstrapper.exe").string();
     state.shortcutDirectory = shortcutDirectory.string();
     state.shellShortcutPath = (shortcutDirectory / kShellShortcutName).string();
-    state.dashboardShortcutPath = (shortcutDirectory / kDashboardShortcutName).string();
+    state.dashboardShortcutPath = (shortcutDirectory / kRemoteAccessSubfolderName / kDashboardShortcutName).string();
     state.browserUrl = "http://" + browserHostForConfiguration(configuration) + ":" + std::to_string(configuration.browserPort) + "/";
     state.configPath = paths.configurationFile.string();
     state.dataDirectory = paths.dataDirectory.string();
@@ -1309,6 +1313,10 @@ void removeShortcuts(const InstallationState& state) {
 
     removeIfPresent(std::filesystem::path(state.shellShortcutPath));
     removeIfPresent(std::filesystem::path(state.dashboardShortcutPath));
+    // Remove the Remote Access subfolder if the dashboard shortcut was the
+    // only item inside. Then the Master Control Orchestration Server folder
+    // itself if it is now empty.
+    removeDirectoryIfEmpty(std::filesystem::path(state.dashboardShortcutPath).parent_path());
     removeDirectoryIfEmpty(std::filesystem::path(state.shortcutDirectory));
 
     for (const auto& programsRoot : { tryKnownFolder(FOLDERID_CommonPrograms), tryKnownFolder(FOLDERID_Programs) }) {
@@ -1321,6 +1329,8 @@ void removeShortcuts(const InstallationState& state) {
 
         removeIfPresent(currentDirectory / kShellShortcutName);
         removeIfPresent(currentDirectory / kDashboardShortcutName);
+        removeIfPresent(currentDirectory / kRemoteAccessSubfolderName / kDashboardShortcutName);
+        removeDirectoryIfEmpty(currentDirectory / kRemoteAccessSubfolderName);
         removeDirectoryIfEmpty(currentDirectory);
 
         removeIfPresent(legacyDirectory / kLegacyShellShortcutName);

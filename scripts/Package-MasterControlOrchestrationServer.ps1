@@ -406,6 +406,19 @@ If you need a diagnostic fallback that always writes a desktop log:
 
 More details:
 .\INSTALL.txt
+
+USING THE SERVER ON THE HOST MACHINE
+
+The Master Control Orchestration Server runs as a Windows service and ships
+with a native desktop shell (MasterControlShell.exe). On the machine where
+you installed the server, launch the desktop shell — it is the full
+Windows-application surface for operator use and lives in the Start Menu
+under 'Master Control Orchestration Server'.
+
+The browser dashboard is intended for remote clients on the LAN. A
+shortcut to it is installed under 'Start Menu > Master Control
+Orchestration Server > Remote Access > Browser Dashboard (Remote)' so it
+does not compete with the desktop shell on the host itself.
 "@
 Set-Content -Path $startHerePath -Value $startHere -Encoding UTF8
 
