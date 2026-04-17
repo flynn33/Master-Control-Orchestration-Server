@@ -21,18 +21,46 @@ $configuration = if ($Preset -eq "debug") { "Debug" } else { "Release" }
 $binaryDir = Join-Path $repoRoot ("build\" + $Preset)
 . (Join-Path $PSScriptRoot "Resolve-MasterControlToolchain.ps1")
 
+function Enter-McDevShell {
+    # Use VS's own Launch-VsDevShell.ps1 to set up the developer environment
+    # inside the current PowerShell session. This handles vswhere discovery,
+    # MSBuild location, and Windows SDK paths natively.
+    $launchScript = Join-Path (Split-Path -Parent $script:vsDevCmd) 'Launch-VsDevShell.ps1'
+    if (-not (Test-Path $launchScript)) {
+        throw "Could not find Launch-VsDevShell.ps1 near VsDevCmd.bat at $script:vsDevCmd."
+    }
+
+    & $launchScript -Arch amd64 -HostArch amd64 -SkipAutomaticLocation | Out-Null
+
+    # Ensure the Windows 10 SDK bin (containing mdmerge.exe) is on PATH.
+    $sdkBinRoot = 'C:\Program Files (x86)\Windows Kits\10\bin'
+    if (Test-Path $sdkBinRoot) {
+        $sdkBinPath = (Get-ChildItem -Path $sdkBinRoot -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
+            Sort-Object { [Version]$_.Name } -Descending |
+            Select-Object -First 1 -ExpandProperty FullName)
+        if ($sdkBinPath) {
+            $env:PATH = (Join-Path $sdkBinPath 'x64') + ';' + $env:PATH
+        }
+    }
+
+    $env:VCPKG_ROOT = $script:vcpkgRoot
+    Set-Location $script:repoRoot
+}
+
 function Invoke-DevShell {
     param([string[]]$Commands)
 
-    $chain = @(
-        "call `"$script:vsDevCmd`" -host_arch=x64 -arch=x64",
-        "set `"VCPKG_ROOT=$script:vcpkgRoot`"",
-        "cd /d `"$script:repoRoot`""
-    ) + $Commands
+    Enter-McDevShell
 
-    cmd /c ($chain -join " && ")
-    if ($LASTEXITCODE -ne 0) {
-        throw "Command failed with exit code $LASTEXITCODE"
+    foreach ($cmd in $Commands) {
+        # Use cmd /c so shell-style command strings parse the way a developer
+        # prompt would. The child cmd inherits $env:PATH from this
+        # PowerShell session, which Launch-VsDevShell has already populated.
+        cmd /c $cmd
+        if ($LASTEXITCODE -ne 0) {
+            throw "Command failed with exit code $LASTEXITCODE"
+        }
     }
 }
 
