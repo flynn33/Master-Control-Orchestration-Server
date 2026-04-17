@@ -5,6 +5,17 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.1-rc.1] - 2026-04-17
+### Summary
+UX simplification: stop settings refresh, simplify AI integration form, add OAuth scaffolding, add native WinUI setup wizard.
+
+### Included Changes
+- fix(browser): stop 5-second refresh on static views (settings, providers, security); live views refresh at 15s
+- fix(browser): simplify provider connect form to pick-model + authenticate; hide Route ID, Base URL, Model ID
+- feat(runtime): add OAuth scaffolding (`supportsOAuth`, `oauthAuthorizeUrl`, `oauthClientId`, `oauthScope`) to `ProviderCapabilityDescriptor`
+- feat(shell): add programmatic `SetupWizardBuilder` (no MIDL/IDL registration) with Guided / Manual / Import entry cards and readiness review
+- feat(shell): first-run routing — shell shows setup wizard automatically when `!firstRunCompleted`
+
 ## [0.4.0-rc.1] - 2026-04-14
 ### Summary
 Ease-of-use remediation pass: guided setup spine, browser auto-connect refactor, environment hints UI, Claude Code CLI install automation, shell/browser parity, readiness dashboard, starter workflow templates, exports demotion.

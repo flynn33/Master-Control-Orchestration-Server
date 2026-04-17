@@ -1,11 +1,25 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.0-rc.1",
-  "current_tag": "v0.4.0-rc.1",
-  "released_at": "2026-04-14",
+  "current_version": "0.4.1-rc.1",
+  "current_tag": "v0.4.1-rc.1",
+  "released_at": "2026-04-17",
   "last_release_commit": "",
   "history": [
+    {
+      "version": "0.4.1-rc.1",
+      "tag": "v0.4.1-rc.1",
+      "released_at": "2026-04-17",
+      "commit": "",
+      "summary": "UX simplification: stop settings refresh, simplify AI integration form, add OAuth scaffolding, add native WinUI setup wizard (no MIDL).",
+      "entries": [
+        "fix(browser): stop 5-second refresh on static views (settings, providers, security); live views refresh at 15s",
+        "fix(browser): simplify provider connect form to pick-model + authenticate; hide technical fields",
+        "feat(runtime): add OAuth scaffolding (supportsOAuth, oauthAuthorizeUrl, oauthClientId, oauthScope) to ProviderCapabilityDescriptor",
+        "feat(shell): add programmatic SetupWizardBuilder (no MIDL/IDL) with Guided/Manual/Import entry and readiness review",
+        "feat(shell): first-run routing — shell shows setup wizard when !firstRunCompleted instead of overview"
+      ]
+    },
     {
       "version": "0.4.0-rc.1",
       "tag": "v0.4.0-rc.1",
