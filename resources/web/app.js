@@ -410,16 +410,26 @@ function narrativePanel(label, title, body) {
 // /api/providers/signin/status. No API key is ever entered by the user.
 function renderSignInCards() {
   const snapshot = dashboardSnapshot();
-  const capabilities = (snapshot.providerCapabilities || []).filter((cap) => !!cap.cliBridgeCommand);
-  if (capabilities.length === 0) {
+  const allCapabilities = snapshot.providerCapabilities || [];
+  const cliCapabilities = allCapabilities.filter((cap) => !!cap.cliBridgeCommand);
+  // API-key providers that do NOT have an OAuth / CLI sign-in flow but do
+  // have a required credential field — Grok is the canonical example. We
+  // show them next to the sign-in cards with a single password input and
+  // honest copy ("no consumer OAuth available").
+  const apiKeyCapabilities = allCapabilities.filter((cap) => {
+    if (cap.cliBridgeCommand) return false;
+    const fields = cap.credentialFields || [];
+    return fields.some((field) => field.required && field.kind === 'api_key');
+  });
+
+  if (cliCapabilities.length === 0 && apiKeyCapabilities.length === 0) {
     return '';
   }
 
-  // Deduplicate by bridge command (e.g. chatgpt + codex both bridge "codex" —
-  // show one card that covers both).
+  // Deduplicate CLI cards by bridge command.
   const seenBridges = new Set();
   const uniqueCaps = [];
-  for (const cap of capabilities) {
+  for (const cap of cliCapabilities) {
     const bridge = cap.cliBridgeCommand;
     if (seenBridges.has(bridge)) continue;
     seenBridges.add(bridge);
@@ -476,14 +486,64 @@ function renderSignInCards() {
     `;
   }).join('');
 
-  return `
-    <article class="panel-block">
+  // API-key cards for providers that don't expose OAuth (currently Grok).
+  // We're honest about the tradeoff: xAI doesn't publish a consumer OAuth
+  // flow, so the user pastes their key once and we seal it with DPAPI.
+  const apiKeyCardsMarkup = apiKeyCapabilities.map((cap) => {
+    const matchingProvider = (snapshot.providers || []).find((p) => p.id === cap.providerId);
+    const connectState = state.signIn.apiKeyByProvider[cap.providerId] || { status: 'idle', message: '' };
+    const alreadyConnected = matchingProvider && matchingProvider.credentialsConfigured;
+    const statusTone = connectState.status === 'error' ? 'error'
+      : connectState.status === 'success' ? 'success'
+      : 'info';
+    const statusLine = connectState.message
+      ? `<p class="status-message" data-tone="${statusTone}">${escapeHtml(connectState.message)}</p>`
+      : '';
+    const keyField = (cap.credentialFields || []).find((f) => f.required && f.kind === 'api_key');
+    const placeholder = keyField?.placeholder || 'paste your API key';
+    const disabled = connectState.status === 'pending' ? ' disabled' : '';
+    const buttonLabel = alreadyConnected
+      ? 'Re-enter key'
+      : (connectState.status === 'pending' ? 'Connecting…' : 'Connect with API key');
+    return `
+      <article class="panel-block sign-in-card">
+        <p class="eyebrow">${escapeHtml(cap.displayName)}</p>
+        <h3>${escapeHtml(cap.displayName)} — API key</h3>
+        <p class="narrative-copy">${escapeHtml(cap.displayName)} does not publish a consumer OAuth flow. Paste your API key once; it's stored locally with DPAPI encryption and never leaves this host.</p>
+        ${statusLine}
+        <form class="surface-form" data-form-kind="api-key-signin" data-provider-id="${escapeHtml(cap.providerId)}" data-kind="${escapeHtml(cap.providerId)}">
+          <input type="password" name="apiKey" placeholder="${escapeHtml(placeholder)}" autocomplete="off" ${disabled} />
+          <div class="button-row">
+            <button type="submit" class="route-button"${disabled}>${escapeHtml(buttonLabel)}</button>
+          </div>
+        </form>
+      </article>
+    `;
+  }).join('');
+
+  const cliSection = uniqueCaps.length ? `
       <p class="eyebrow">Add AI Model \u2014 Account Sign-In</p>
       <h3>Connect Claude or ChatGPT with just your account</h3>
       <p class="narrative-copy">Click a card to open your provider's built-in sign-in flow. The CLI handles OAuth in your browser and stores its own tokens — you never have to paste an API key or auth token here.</p>
       <div class="sign-in-grid">
         ${cardsMarkup}
       </div>
+  ` : '';
+
+  const apiKeySection = apiKeyCapabilities.length ? `
+      <p class="eyebrow">Add AI Model \u2014 API Key</p>
+      <h3>Providers without a consumer OAuth flow</h3>
+      <p class="narrative-copy">Some vendors (Grok / xAI today) don't publish a consumer sign-in flow. For those, paste your vendor API key once — it's sealed with Windows DPAPI locally and never re-transmitted to us.</p>
+      <div class="sign-in-grid">
+        ${apiKeyCardsMarkup}
+      </div>
+  ` : '';
+
+  return `
+    <article class="panel-block">
+      ${cliSection}
+      ${cliSection && apiKeySection ? '<hr class="surface-divider" />' : ''}
+      ${apiKeySection}
     </article>
   `;
 }
@@ -495,6 +555,67 @@ async function signInDetectInstalled() {
     renderShell();
   } catch (error) {
     console.debug('signIn installed detect error', error);
+  }
+}
+
+async function submitApiKeySignIn(form) {
+  const providerId = form.dataset.providerId;
+  const kind = form.dataset.kind || providerId;
+  const input = form.querySelector('input[name="apiKey"]');
+  const apiKey = (input?.value || '').trim();
+  if (!apiKey) {
+    state.signIn.apiKeyByProvider[providerId] = { status: 'error', message: 'Paste your vendor API key before connecting.' };
+    renderShell();
+    return;
+  }
+
+  state.signIn.apiKeyByProvider[providerId] = { status: 'pending', message: 'Probing the vendor endpoint and sealing your key with DPAPI…' };
+  renderShell();
+
+  // Look up the capability so we know which credential field to fill. The
+  // existing /api/providers/auto-connect endpoint does the probe, discover,
+  // seal, and register in one call — we just need to hand it the kind and
+  // the one key value.
+  const snapshot = dashboardSnapshot();
+  const capability = (snapshot.providerCapabilities || []).find((c) => c.providerId === providerId);
+  const keyField = capability?.credentialFields?.find((f) => f.required && f.kind === 'api_key');
+  const credentials = {};
+  if (keyField) {
+    credentials[keyField.fieldId] = apiKey;
+  } else {
+    credentials[providerId + '_api_key'] = apiKey; // defensive fallback
+  }
+
+  try {
+    const response = await loadJson('/api/providers/auto-connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kind,
+        providerId,
+        credentials,
+        discoverModels: true,
+        allowAutonomousControl: false,
+        assignmentTargetIds: []
+      })
+    });
+    if (response.succeeded) {
+      state.signIn.apiKeyByProvider[providerId] = {
+        status: 'success',
+        message: response.summary || 'Connected. Assign this provider to a role below.'
+      };
+      if (input) input.value = '';
+      await refreshDashboard({ preserveDynamicContent: false });
+    } else {
+      state.signIn.apiKeyByProvider[providerId] = {
+        status: 'error',
+        message: response.errorMessage || response.summary || 'Connection failed.'
+      };
+      renderShell();
+    }
+  } catch (error) {
+    state.signIn.apiKeyByProvider[providerId] = { status: 'error', message: error.message || 'Connection failed.' };
+    renderShell();
   }
 }
 
@@ -1837,7 +1958,10 @@ const state = {
   // sessionsByBridge: per-bridge pending/complete/failed session tracking
   signIn: {
     installed: [],
-    sessionsByBridge: {}
+    sessionsByBridge: {},
+    // Per-provider status for API-key-only onboarding (Grok etc.):
+    //   { [providerId]: { status: 'idle'|'pending'|'success'|'error', message: '...' } }
+    apiKeyByProvider: {}
   },
   surfaceNotice: makeStatus('Browser host waiting for the first Forsetti surface snapshot.', 'info'),
   lastRefreshLabel: 'Pending'
@@ -5994,6 +6118,10 @@ async function handleFormSubmit(event) {
   event.preventDefault();
   const kind = form.dataset.formKind;
 
+  if (kind === 'api-key-signin') {
+    await submitApiKeySignIn(form);
+    return;
+  }
   if (kind === 'settings') {
     await submitSettingsForm(form);
     return;

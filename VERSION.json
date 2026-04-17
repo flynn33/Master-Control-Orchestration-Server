@@ -1,11 +1,23 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.2-rc.5",
-  "current_tag": "v0.4.2-rc.5",
+  "current_version": "0.4.2-rc.6",
+  "current_tag": "v0.4.2-rc.6",
   "released_at": "2026-04-17",
-  "last_release_commit": "8f67e0ac8fb96b5f56222ebd17842bc154d9b0ee",
+  "last_release_commit": "f7156b8f56bbb558ec43a9dcfd4bb0001e76a0f5",
   "history": [
+    {
+      "version": "0.4.2-rc.6",
+      "tag": "v0.4.2-rc.6",
+      "released_at": "2026-04-17",
+      "commit": "f7156b8f56bbb558ec43a9dcfd4bb0001e76a0f5",
+      "summary": "Grok API-key onboarding card. xAI does not publish a consumer OAuth flow, so the account-only path is not available; the wizard now shows a separate API-key card for providers in that category and drives the existing Auto-Connect pipeline (probe, discover models, DPAPI-seal, register) from one pasted key.",
+      "entries": [
+        "feat(shell): new 'Grok (xAI API key)' card next to the Claude and ChatGPT sign-in cards in Providers. PasswordBox + Connect button routes through ShellRuntime::AutoConnectProvider with kind=xai-grok",
+        "feat(browser): renderSignInCards now also emits API-key cards for capabilities without cliBridgeCommand that declare a required api_key field; one-input form posts to /api/providers/auto-connect",
+        "docs(wizard): copy on both surfaces is explicit that xAI lacks a consumer OAuth path and that the key is sealed locally with DPAPI and never re-transmitted"
+      ]
+    },
     {
       "version": "0.4.2-rc.5",
       "tag": "v0.4.2-rc.5",

@@ -1096,3 +1096,9 @@ dialog:focus-visible {
 .sign-in-card .button-row {
   margin-top: auto;
 }
+
+.surface-divider {
+  border: 0;
+  border-top: 1px solid var(--tile-edge, rgba(0, 246, 255, 0.2));
+  margin: 18px 0;
+}

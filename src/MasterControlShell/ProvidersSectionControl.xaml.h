@@ -81,6 +81,8 @@ struct ProvidersSectionControl : ProvidersSectionControlT<ProvidersSectionContro
                                       Microsoft::UI::Xaml::RoutedEventArgs const&);
     void SignInWithChatGptButton_Click(Windows::Foundation::IInspectable const&,
                                        Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void ConnectGrokButton_Click(Windows::Foundation::IInspectable const&,
+                                 Microsoft::UI::Xaml::RoutedEventArgs const&);
 
 private:
     void PopulateProviderEditor(size_t index);
@@ -109,6 +111,7 @@ private:
     winrt::Windows::Foundation::IAsyncAction ExecuteProviderTaskAsync();
     winrt::Windows::Foundation::IAsyncAction SaveAiAutonomyAsync();
     winrt::Windows::Foundation::IAsyncAction RunCliSignInAsync(std::wstring bridge, std::wstring providerId);
+    winrt::Windows::Foundation::IAsyncAction ConnectGrokAsync(std::wstring apiKey);
 
     ::MasterControlShell::ShellRuntime* runtime_ = nullptr;
     std::function<void()> refreshRequested_;

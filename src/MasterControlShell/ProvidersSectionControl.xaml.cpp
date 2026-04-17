@@ -1664,4 +1664,57 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RunCliSignInAs
     primaryButton.IsEnabled(true);
 }
 
+void ProvidersSectionControl::ConnectGrokButton_Click(IInspectable const&, RoutedEventArgs const&) {
+    const auto key = std::wstring(GrokApiKeyBox().Password().c_str());
+    if (key.empty()) {
+        GrokConnectStatusText().Text(winrt::hstring(L"Paste your xAI API key before connecting."));
+        return;
+    }
+    ConnectGrokAsync(key);
+}
+
+// Grok does not have a consumer OAuth flow (per xAI's current public docs),
+// so this is the API-key path. We reuse the existing Auto-Connect pipeline:
+// it probes the endpoint with the pasted key, discovers models, seals the
+// key under DPAPI, and registers the provider — all in one call.
+winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ConnectGrokAsync(std::wstring apiKey) {
+    if (runtime_ == nullptr) {
+        co_return;
+    }
+
+    ConnectGrokButton().IsEnabled(false);
+    GrokConnectStatusText().Text(winrt::hstring(L"Probing xAI endpoint and registering provider..."));
+
+    ::MasterControlShell::ShellAutoConnectProviderRequest request;
+    request.kind = L"xai-grok";
+    request.providerId = L"xai-grok";
+    request.allowAutonomousControl = false;
+    request.discoverModels = true;
+    request.credentials.emplace_back(std::wstring(L"xai_api_key"), apiKey);
+
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+
+    const auto result = runtime_->AutoConnectProvider(request);
+
+    co_await uiThread;
+
+    if (result.succeeded) {
+        GrokConnectStatusText().Text(winrt::hstring(
+            result.summary.empty()
+                ? L"Grok connected. Assign it to a role below."
+                : result.summary));
+        GrokApiKeyBox().Password(L"");
+        if (refreshRequested_) {
+            refreshRequested_();
+        }
+    } else {
+        GrokConnectStatusText().Text(winrt::hstring(
+            result.errorMessage.empty()
+                ? L"Grok connection failed."
+                : result.errorMessage));
+    }
+    ConnectGrokButton().IsEnabled(true);
+}
+
 } // namespace winrt::MasterControlShell::implementation

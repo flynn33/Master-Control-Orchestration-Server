@@ -1,13 +1,13 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.4.2--rc.5-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--17-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.4.2--rc.6-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--17-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
 
 > Forsetti-compliant Windows orchestration control plane for MCP services, AI provider routing, 
 > CLU governance, sub-agents, platform gateways, telemetry, and browser-based operations — 
 > all delivered as a single Tron-themed product.
 
 - **Repository:** [`master-control-dashboard`](https://github.com/flynn33/Master-Control-Orchestration-Server)
-- **Current release:** `v0.4.2-rc.5` (2026-04-17)
+- **Current release:** `v0.4.2-rc.6` (2026-04-17)
 - **Forsetti modules:** 19
 
 ---
@@ -117,19 +117,13 @@ See [Operations](docs/wiki/Operations.md) for the full deployment matrix, and
 
 ## Current release
 
-**`v0.4.2-rc.5` — 2026-04-17**
+**`v0.4.2-rc.6` — 2026-04-17**
 
-Add AI Model — account-only sign-in wizard for Claude and ChatGPT. No API key required: click 'Sign in with Claude' or 'Sign in with ChatGPT' and the provider's own CLI drives OAuth in your browser. The orchestration server never sees tokens — the CLI keeps them in its native store. Execution routes back through the same CLI via a new CodexCli transport.
+Grok API-key onboarding card. xAI does not publish a consumer OAuth flow, so the account-only path is not available; the wizard now shows a separate API-key card for providers in that category and drives the existing Auto-Connect pipeline (probe, discover models, DPAPI-seal, register) from one pasted key.
 
-- feat(models): ProviderCapabilityDescriptor now carries cliBridgeCommand ("claude" | "codex") and cliBridgeAccountLabel so the UI knows which providers support account-only sign-in
-- feat(runtime): ProviderExecutionTransport::CodexCli added alongside ClaudeCodeCli; dispatch bypasses the credential-required check for CLI-bridged transports
-- feat(runtime): ProviderCliSignInService spawns `claude login` / `codex login` in a new console, polls for exit + auth-file presence, registers the provider on success — no API key is ever stored on the server side
-- feat(runtime): new endpoints POST /api/providers/signin/start, GET /api/providers/signin/status?sessionId=, GET /api/providers/signin/installed
-- feat(runtime): executeCodexCli invokes `codex exec <prompt>` with optional OPENAI_API_KEY env forwarding for operators who prefer an API key instead of account sign-in
-- feat(modules): Claude Code, Codex, and ChatGPT capabilities advertise account-sign-in as the primary path; credential fields are now marked optional
-- feat(shell): Providers section gains a top-level 'Add AI Model — Account Sign-In' card with two buttons (Claude, ChatGPT) that drive the end-to-end OAuth flow with live status updates
-- feat(browser): matching sign-in cards at the top of the Providers view, polling /api/providers/signin/status every 2 seconds with live status transitions
-- fix(shell): ShellRuntime gains StartCliSignIn, GetCliSignInStatus, DetectCliSignInInstalled over the admin API
+- feat(shell): new 'Grok (xAI API key)' card next to the Claude and ChatGPT sign-in cards in Providers. PasswordBox + Connect button routes through ShellRuntime::AutoConnectProvider with kind=xai-grok
+- feat(browser): renderSignInCards now also emits API-key cards for capabilities without cliBridgeCommand that declare a required api_key field; one-input form posts to /api/providers/auto-connect
+- docs(wizard): copy on both surfaces is explicit that xAI lacks a consumer OAuth path and that the key is sealed locally with DPAPI and never re-transmitted
 ---
 
 Repository: https://github.com/flynn33/Master-Control-Orchestration-Server

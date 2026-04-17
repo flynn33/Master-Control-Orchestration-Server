@@ -5,6 +5,15 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.2-rc.6] - 2026-04-17
+### Summary
+**Grok API-key onboarding card.** xAI does not publish a consumer OAuth flow — confirmed by the deep-research analysis on non-API middleware bridges — so a true no-key path is not available for hosted Grok today. This release adds a dedicated API-key card beside the Claude and ChatGPT sign-in cards: paste the xAI key once, and the existing Auto-Connect pipeline probes the endpoint, discovers models, seals the key with DPAPI, and registers the provider. The copy on both surfaces is explicit about the tradeoff.
+
+### Included Changes
+- feat(shell): new "Grok (xAI API key)" card in `ProvidersSectionControl` beside the Claude and ChatGPT sign-in cards. `PasswordBox` + `Connect Grok` button routes through `ShellRuntime::AutoConnectProvider` with `kind=xai-grok` and the pasted key; status TextBlock below surfaces probe/discover/register progress.
+- feat(browser): `renderSignInCards` now emits an additional API-key section for capabilities that have no `cliBridgeCommand` but declare a required `api_key` field. A single-input form posts to `/api/providers/auto-connect` and the card flips through idle → pending → success/error states.
+- docs(wizard): copy on both surfaces is explicit that xAI lacks a consumer OAuth path and that the key is sealed locally with Windows DPAPI and never re-transmitted.
+
 ## [0.4.2-rc.5] - 2026-04-17
 ### Summary
 **Add AI Model — account-only sign-in wizard.** The primary goal of this project has always been to get users to productive AI use without making them paste API keys. This release delivers that for Claude (Pro / Max / Team) and ChatGPT: click a button in the Providers section, the matching CLI (`claude login` or `codex login`) opens a console and drives OAuth in your browser, and the orchestration server registers the provider on success. The CLI keeps its own tokens — the server never stores them.
