@@ -10,6 +10,7 @@ param(
     [string]$SummaryPath = ""
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 

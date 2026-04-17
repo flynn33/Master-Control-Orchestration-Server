@@ -8,6 +8,7 @@ param(
     [switch]$Bundle
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 

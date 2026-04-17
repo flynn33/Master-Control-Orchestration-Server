@@ -1,13 +1,13 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.2.12-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--12-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.4.1--rc.1-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--17-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
 
 > Forsetti-compliant Windows orchestration control plane for MCP services, AI provider routing, 
 > CLU governance, sub-agents, platform gateways, telemetry, and browser-based operations — 
 > all delivered as a single Tron-themed product.
 
 - **Repository:** [`master-control-dashboard`](https://github.com/flynn33/Master-Control-Orchestration-Server)
-- **Current release:** `v0.2.12` (2026-04-12)
+- **Current release:** `v0.4.1-rc.1` (2026-04-17)
 - **Forsetti modules:** 19
 
 ---
@@ -117,11 +117,15 @@ See [Operations](docs/wiki/Operations.md) for the full deployment matrix, and
 
 ## Current release
 
-**`v0.2.12` — 2026-04-12**
+**`v0.4.1-rc.1` — 2026-04-17**
 
-Automated patch release for Master Control Orchestration Server.
+UX simplification: stop settings refresh, simplify AI integration form, add OAuth scaffolding, add native WinUI setup wizard (no MIDL).
 
-- fix(shell): exclude interactive forms from background refresh timer (flynn33)
+- fix(browser): stop 5-second refresh on static views (settings, providers, security); live views refresh at 15s
+- fix(browser): simplify provider connect form to pick-model + authenticate; hide technical fields
+- feat(runtime): add OAuth scaffolding (supportsOAuth, oauthAuthorizeUrl, oauthClientId, oauthScope) to ProviderCapabilityDescriptor
+- feat(shell): add programmatic SetupWizardBuilder (no MIDL/IDL) with Guided/Manual/Import entry and readiness review
+- feat(shell): first-run routing — shell shows setup wizard when !firstRunCompleted instead of overview
 
 ---
 

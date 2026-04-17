@@ -17,6 +17,7 @@ param(
     [string]$SummaryPath = ""
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $packageScriptPath = Join-Path $PSScriptRoot "Package-MasterControlOrchestrationServer.ps1"

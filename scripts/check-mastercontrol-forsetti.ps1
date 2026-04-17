@@ -2,6 +2,7 @@
 # Copyright (c) 2026 James Daley. All Rights Reserved.
 # Proprietary and Confidential.
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $violations = @()

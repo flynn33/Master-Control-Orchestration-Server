@@ -14,6 +14,7 @@ param(
     [switch]$KeepStage
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $configuration = if ($Preset -eq "debug") { "Debug" } else { "Release" }

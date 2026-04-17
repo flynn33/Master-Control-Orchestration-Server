@@ -72,6 +72,13 @@ static bool isInteractiveFormSection(const std::wstring& viewId) {
         || viewId == kImportsView;
 }
 
+static bool isInteractiveDestination(const std::wstring& destinationId) {
+    return destinationId == kProvidersDestination
+        || destinationId == kSecurityDestination
+        || destinationId == kSettingsDestination
+        || destinationId == kImportsDestination;
+}
+
 void writeShellLog(const std::wstring& message) {
     try {
         wchar_t buffer[MAX_PATH]{};
@@ -835,8 +842,14 @@ void MainWindow::ConfigureCustomTitleBar() {
 }
 
 void MainWindow::ConfigureTimer() {
+    const auto dispatcher = DispatcherQueue();
+    if (dispatcher == nullptr) {
+        writeShellLog(L"DispatcherQueue unavailable; background timers skipped.");
+        return;
+    }
+
     try {
-        refreshTimer_ = DispatcherQueue().CreateTimer();
+        refreshTimer_ = dispatcher.CreateTimer();
         refreshTimer_.Interval(std::chrono::seconds(10));
         const auto weakThis = get_weak();
         refreshTimer_.Tick([weakThis](auto&&, auto&&) {
@@ -853,12 +866,21 @@ void MainWindow::ConfigureTimer() {
     // Each tick pulls events strictly newer than activityStreamCursor_ and
     // appends them to ActivityStreamListView so the operator sees every
     // incoming command/request in real time.
+    //
+    // Extension of the v0.2.12 fix: the 1Hz tick is also suppressed while the
+    // operator is editing Providers/Security/Settings/Imports, because those
+    // views share the UI thread with our collection mutations. We do still
+    // update the cursor on navigation-away so the operator does not see a
+    // large backlog of pre-edit events when they switch back.
     try {
-        activityStreamTimer_ = DispatcherQueue().CreateTimer();
+        activityStreamTimer_ = dispatcher.CreateTimer();
         activityStreamTimer_.Interval(std::chrono::seconds(1));
         const auto weakThis = get_weak();
         activityStreamTimer_.Tick([weakThis](auto&&, auto&&) {
             if (const auto self = weakThis.get()) {
+                if (isInteractiveDestination(self->currentDestination_)) {
+                    return;
+                }
                 self->PollActivityStreamAsync();
             }
         });
@@ -871,7 +893,7 @@ void MainWindow::ConfigureTimer() {
     // indicator in the title bar. Kept separate from the 10-second refresh timer so
     // the clock stays smooth without dragging RefreshAsync with it.
     try {
-        clockTimer_ = DispatcherQueue().CreateTimer();
+        clockTimer_ = dispatcher.CreateTimer();
         clockTimer_.Interval(std::chrono::seconds(1));
         const auto weakThis = get_weak();
         auto updateClock = [weakThis]() {

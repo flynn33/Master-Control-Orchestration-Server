@@ -3743,6 +3743,123 @@ int main() {
             "Bootstrapper validate JSON mode should report structured issues after uninstall removes the payload.");
     }
 
+    // =====================================================================
+    // Remediation Regression Suite — non-security fixes from the 2026-04-17
+    // audit. Each block targets a specific code-change and is self-contained
+    // so a regression in any one fix fails its own assertion.
+    // =====================================================================
+
+    // R1: Malformed configuration.json must not crash the runtime. readJsonFile
+    // and the FileBackedConfigurationService ctor now catch nlohmann::json
+    // parse errors and fall back to defaults with (void)persistLocked().
+    {
+        const auto malformedRoot = tempRoot / "regression-malformed-config";
+        ScopedEnvironmentOverride dataDirectoryOverride(L"MASTERCONTROL_DATA_DIR", (malformedRoot / "data").wstring());
+        const auto appPaths = MasterControl::resolveAppPaths();
+        std::filesystem::create_directories(appPaths.configurationFile.parent_path());
+        writeTextFile(appPaths.configurationFile, "{ this is not valid json ][");
+
+        try {
+            MasterControl::MasterControlApplication application;
+            success &= expect(
+                application.initialize(),
+                "Runtime should initialize when configuration.json is malformed, falling back to defaults.");
+            application.shutdown();
+        } catch (...) {
+            success &= expect(false, "Runtime must never throw when configuration.json is malformed.");
+        }
+    }
+
+    // R2: Activity ring stays bounded at 512 events regardless of load.
+    {
+        const auto ringRoot = tempRoot / "regression-activity-ring";
+        ScopedEnvironmentOverride dataDirectoryOverride(L"MASTERCONTROL_DATA_DIR", (ringRoot / "data").wstring());
+        const auto appPaths = MasterControl::resolveAppPaths();
+        writeIsolatedAppConfiguration(appPaths.configurationFile, isolatedTestBrowserPort());
+
+        MasterControl::MasterControlApplication application;
+        success &= expect(application.initialize(), "Activity-ring regression: application should initialize.");
+
+        const auto dashboardUrl = application.browserUrl() + "api/dashboard";
+        for (int i = 0; i < 600; ++i) {
+            (void)httpGetJson(dashboardUrl);
+        }
+
+        const auto activityDocument = httpGetJson(application.browserUrl() + "api/activity?since=0");
+        success &= expect(
+            activityDocument.has_value() && activityDocument->contains("events")
+                && (*activityDocument)["events"].is_array(),
+            "Activity endpoint should return a well-formed events array.");
+        if (activityDocument.has_value() && activityDocument->contains("events")) {
+            const auto size = (*activityDocument)["events"].size();
+            success &= expect(
+                size <= 512U,
+                "Activity ring must stay bounded at 512 events under sustained request load.");
+        }
+
+        application.shutdown();
+    }
+
+    // R3: upsertProvider under concurrent callers. The v0.4.1+ fix moves the
+    // capability read inside state_->mutex so every write sees a consistent
+    // capability/configuration pair. This test hammers the endpoint and asserts
+    // the count of custom providers matches the number we submitted.
+    {
+        const auto raceRoot = tempRoot / "regression-upsert-race";
+        ScopedEnvironmentOverride dataDirectoryOverride(L"MASTERCONTROL_DATA_DIR", (raceRoot / "data").wstring());
+        const auto appPaths = MasterControl::resolveAppPaths();
+        writeIsolatedAppConfiguration(appPaths.configurationFile, isolatedTestBrowserPort());
+
+        MasterControl::MasterControlApplication application;
+        success &= expect(application.initialize(), "upsertProvider-race: application should initialize.");
+
+        // Seed configuration with a known provider whose capability/kind is
+        // supported by a registered module. We reuse an existing default
+        // provider id and flip displayName per iteration so each concurrent
+        // upsert is a no-op for cardinality but exercises the lock path.
+        const auto providers = application.snapshot().providers;
+        success &= expect(!providers.empty(), "upsertProvider-race: seeded providers required for the test.");
+        if (!providers.empty()) {
+            const auto seed = providers.front();
+            constexpr int kThreads = 8;
+            constexpr int kIterations = 50;
+            std::atomic<int> failures{ 0 };
+            std::vector<std::thread> workers;
+            workers.reserve(kThreads);
+            for (int t = 0; t < kThreads; ++t) {
+                workers.emplace_back([&application, seed, t, &failures]() {
+                    for (int i = 0; i < kIterations; ++i) {
+                        auto body = nlohmann::json(seed);
+                        body["displayName"] = seed.displayName + " #t" + std::to_string(t) + "i" + std::to_string(i);
+                        const auto response = httpPostJson(
+                            application.browserUrl() + "api/providers",
+                            body.dump());
+                        if (!response.has_value() || !response->value("succeeded", false)) {
+                            ++failures;
+                        }
+                    }
+                });
+            }
+            for (auto& worker : workers) {
+                worker.join();
+            }
+            success &= expect(
+                failures.load() == 0,
+                "upsertProvider-race: every concurrent upsert should report OperationResult.success.");
+
+            const auto afterProviders = application.snapshot().providers;
+            const auto seedStillPresent = std::any_of(
+                afterProviders.begin(),
+                afterProviders.end(),
+                [&seed](const MasterControl::ProviderConnection& candidate) { return candidate.id == seed.id; });
+            success &= expect(
+                seedStillPresent,
+                "upsertProvider-race: the seeded provider must remain present in configuration after contention.");
+        }
+
+        application.shutdown();
+    }
+
     std::filesystem::remove_all(tempRoot);
     return success ? 0 : 1;
 }

@@ -8,6 +8,9 @@ param(
     [string]$Preset = "debug"
 )
 
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "Resolve-MasterControlToolchain.ps1")
 

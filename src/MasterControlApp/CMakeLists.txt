@@ -13,20 +13,22 @@ target_include_directories(MasterControlApp PUBLIC
     ${FORSETTI_VENDOR_DIR}/include
 )
 
-target_link_libraries(MasterControlApp PUBLIC
-    MasterControlModules
-    ForsettiCore
-    ForsettiPlatform
-    nlohmann_json::nlohmann_json
-    ws2_32
-    iphlpapi
-    urlmon
-    advapi32
-    crypt32
-    winhttp
-    dnsapi
-    shlwapi
-    shell32
+target_link_libraries(MasterControlApp
+    PUBLIC
+        MasterControlModules
+        ForsettiCore
+        ForsettiPlatform
+        nlohmann_json::nlohmann_json
+    PRIVATE
+        ws2_32
+        iphlpapi
+        urlmon
+        advapi32
+        crypt32
+        winhttp
+        dnsapi
+        shlwapi
+        shell32
 )
 
 target_compile_definitions(MasterControlApp PUBLIC

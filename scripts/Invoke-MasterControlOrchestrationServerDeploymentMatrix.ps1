@@ -14,6 +14,7 @@ param(
     [string]$Server2022ReportPath = ""
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 

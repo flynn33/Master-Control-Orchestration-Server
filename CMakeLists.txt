@@ -5,6 +5,21 @@
 cmake_minimum_required(VERSION 3.28)
 
 # ---------------------------------------------------------------------------
+# vcpkg toolchain guard: the CMakePresets reference $env{VCPKG_ROOT}. If the
+# env var is empty at configure time, CMake receives the literal path
+# "/scripts/buildsystems/vcpkg.cmake" and produces a confusing "cannot find
+# toolchain file" error. Detect that specific case early and emit a clear
+# message telling the developer to set VCPKG_ROOT before running the preset.
+# ---------------------------------------------------------------------------
+if(CMAKE_TOOLCHAIN_FILE MATCHES "^/scripts/buildsystems/vcpkg\\.cmake$"
+        OR CMAKE_TOOLCHAIN_FILE MATCHES "^\\$\\{?env")
+    message(FATAL_ERROR
+        "VCPKG_ROOT is not set in the current environment. Set it (e.g. "
+        "`$env:VCPKG_ROOT = 'C:\\vcpkg'` on PowerShell) before running "
+        "`cmake --preset debug` or `cmake --preset release`.")
+endif()
+
+# ---------------------------------------------------------------------------
 # Version: single source of truth is VERSION.json
 # ---------------------------------------------------------------------------
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.json" _mc_version_json)
@@ -44,6 +59,12 @@ include(CTest)
 
 find_package(nlohmann_json CONFIG REQUIRED)
 find_program(MASTERCONTROL_POWERSHELL NAMES pwsh.exe pwsh powershell.exe powershell)
+if(WIN32 AND NOT MASTERCONTROL_POWERSHELL)
+    message(FATAL_ERROR
+        "PowerShell was not found on PATH. Install Windows PowerShell 5.1 or "
+        "PowerShell 7+ (pwsh) before configuring. Build, packaging, and "
+        "deployment scripts depend on it.")
+endif()
 find_program(
     MASTERCONTROL_VSTEST_CONSOLE
     NAMES vstest.console.exe

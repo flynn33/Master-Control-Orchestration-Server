@@ -10,6 +10,7 @@ param(
     [string]$SummaryPath
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 function Read-DeploymentReport {

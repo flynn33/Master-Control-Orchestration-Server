@@ -435,12 +435,25 @@
                 <Setter Property="HorizontalContentAlignment" Value="Center" />
                 <Setter Property="VerticalContentAlignment" Value="Center" />
                 <Setter Property="MinHeight" Value="44" />
+                <!-- Tron-themed focus indicator for keyboard navigation. -->
+                <Setter Property="UseSystemFocusVisuals" Value="True" />
+                <Setter Property="FocusVisualPrimaryBrush" Value="{StaticResource ShellAccentBrush}" />
+                <Setter Property="FocusVisualPrimaryThickness" Value="2" />
+                <Setter Property="FocusVisualSecondaryBrush" Value="{StaticResource ShellGlowBrush}" />
+                <Setter Property="FocusVisualSecondaryThickness" Value="1" />
+                <Setter Property="FocusVisualMargin" Value="-2" />
             </Style>
 
             <Style TargetType="ToggleSwitch">
                 <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
                 <Setter Property="OnContent" Value="ON" />
                 <Setter Property="OffContent" Value="OFF" />
+                <Setter Property="UseSystemFocusVisuals" Value="True" />
+                <Setter Property="FocusVisualPrimaryBrush" Value="{StaticResource ShellAccentBrush}" />
+                <Setter Property="FocusVisualPrimaryThickness" Value="2" />
+                <Setter Property="FocusVisualSecondaryBrush" Value="{StaticResource ShellGlowBrush}" />
+                <Setter Property="FocusVisualSecondaryThickness" Value="1" />
+                <Setter Property="FocusVisualMargin" Value="-2" />
             </Style>
 
             <Style TargetType="CheckBox">
@@ -472,6 +485,12 @@
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontSize" Value="13" />
                 <Setter Property="MinHeight" Value="44" />
+                <Setter Property="UseSystemFocusVisuals" Value="True" />
+                <Setter Property="FocusVisualPrimaryBrush" Value="{StaticResource ShellAccentBrush}" />
+                <Setter Property="FocusVisualPrimaryThickness" Value="2" />
+                <Setter Property="FocusVisualSecondaryBrush" Value="{StaticResource ShellGlowBrush}" />
+                <Setter Property="FocusVisualSecondaryThickness" Value="1" />
+                <Setter Property="FocusVisualMargin" Value="-2" />
             </Style>
 
             <Style TargetType="PasswordBox">
@@ -482,6 +501,12 @@
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontSize" Value="13" />
                 <Setter Property="MinHeight" Value="44" />
+                <Setter Property="UseSystemFocusVisuals" Value="True" />
+                <Setter Property="FocusVisualPrimaryBrush" Value="{StaticResource ShellAccentBrush}" />
+                <Setter Property="FocusVisualPrimaryThickness" Value="2" />
+                <Setter Property="FocusVisualSecondaryBrush" Value="{StaticResource ShellGlowBrush}" />
+                <Setter Property="FocusVisualSecondaryThickness" Value="1" />
+                <Setter Property="FocusVisualMargin" Value="-2" />
             </Style>
 
             <Style TargetType="ComboBox">
@@ -492,6 +517,12 @@
                 <Setter Property="FontFamily" Value="Bahnschrift SemiCondensed" />
                 <Setter Property="FontSize" Value="13" />
                 <Setter Property="MinHeight" Value="44" />
+                <Setter Property="UseSystemFocusVisuals" Value="True" />
+                <Setter Property="FocusVisualPrimaryBrush" Value="{StaticResource ShellAccentBrush}" />
+                <Setter Property="FocusVisualPrimaryThickness" Value="2" />
+                <Setter Property="FocusVisualSecondaryBrush" Value="{StaticResource ShellGlowBrush}" />
+                <Setter Property="FocusVisualSecondaryThickness" Value="1" />
+                <Setter Property="FocusVisualMargin" Value="-2" />
             </Style>
 
             <DataTemplate x:Key="ShellListItemTemplate">

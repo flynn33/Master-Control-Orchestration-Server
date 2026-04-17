@@ -54,6 +54,34 @@ namespace MasterControl {
 
 namespace {
 
+// RAII wrapper that guarantees the wrapped std::thread is joined on scope exit
+// even when the enclosing function unwinds through an exception. Used around
+// child-process pipe-reader threads so that captures of on-stack buffers can
+// never outlive the threads writing into them.
+struct ScopedThread {
+    std::thread t;
+
+    ScopedThread() = default;
+    explicit ScopedThread(std::thread&& thread) noexcept : t(std::move(thread)) {}
+    ScopedThread(const ScopedThread&) = delete;
+    ScopedThread& operator=(const ScopedThread&) = delete;
+    ScopedThread(ScopedThread&& other) noexcept : t(std::move(other.t)) {}
+    ScopedThread& operator=(ScopedThread&& other) noexcept {
+        if (this != &other) {
+            if (t.joinable()) {
+                t.join();
+            }
+            t = std::move(other.t);
+        }
+        return *this;
+    }
+    ~ScopedThread() {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+};
+
 std::wstring wideFromUtf8(const std::string& input) {
     if (input.empty()) {
         return {};
@@ -612,11 +640,23 @@ HttpClientResponse sendJsonRequest(const std::string& method,
         WINHTTP_NO_HEADER_INDEX);
     response.statusCode = static_cast<int>(statusCode);
 
+    // Cap accumulated response at 32 MiB. Any upstream provider that legitimately
+    // needs more than this can be revisited; for now, a malformed or runaway
+    // response must not be able to exhaust server memory.
+    constexpr size_t kMaxProviderResponseBytes = 32ull * 1024ull * 1024ull;
     std::string responseBody;
     for (;;) {
         DWORD available = 0;
         if (WinHttpQueryDataAvailable(request, &available) == 0 || available == 0) {
             break;
+        }
+
+        if (responseBody.size() + static_cast<size_t>(available) > kMaxProviderResponseBytes) {
+            response.errorMessage = "Remote provider response exceeded the 32 MiB size limit.";
+            WinHttpCloseHandle(request);
+            WinHttpCloseHandle(connection);
+            WinHttpCloseHandle(session);
+            return response;
         }
 
         std::string chunk(static_cast<size_t>(available), '\0');
@@ -948,14 +988,16 @@ ProcessCaptureResult runProcessCapture(const std::wstring& commandLine,
         return captured;
     };
 
-    // Step 1: Launch concurrent reader threads
+    // Step 1: Launch concurrent reader threads under RAII scope guards so that
+    // any exception between here and the join below cannot leave the threads
+    // writing into the stdoutCapture/stderrCapture locals after they unwind.
     std::string stdoutCapture, stderrCapture;
-    std::thread stdoutThread([&stdoutCapture, stdoutRead, &readPipeBounded]() {
+    ScopedThread stdoutThread(std::thread([&stdoutCapture, stdoutRead, &readPipeBounded]() {
         stdoutCapture = readPipeBounded(stdoutRead);
-    });
-    std::thread stderrThread([&stderrCapture, stderrRead, &readPipeBounded]() {
+    }));
+    ScopedThread stderrThread(std::thread([&stderrCapture, stderrRead, &readPipeBounded]() {
         stderrCapture = readPipeBounded(stderrRead);
-    });
+    }));
 
     // Step 2: Wait for process exit with timeout
     const DWORD timeoutMs = resourcePolicy.enforce ? 300000 : 300000; // 5-minute default
@@ -974,9 +1016,11 @@ ProcessCaptureResult runProcessCapture(const std::wstring& commandLine,
             + std::to_string(timeoutMs / 1000) + "s timeout]";
     }
 
-    // Step 3: Join reader threads (safe — pipes are broken by process exit/kill)
-    stdoutThread.join();
-    stderrThread.join();
+    // Step 3: Join reader threads (safe — pipes are broken by process exit/kill).
+    // The ScopedThread destructors would join on unwind as well; joining explicitly
+    // here ensures the captured strings are complete before we move them below.
+    stdoutThread.t.join();
+    stderrThread.t.join();
     result.stdoutText = std::move(stdoutCapture);
     if (!stderrCapture.empty()) {
         if (!result.stderrText.empty()) {
@@ -1022,15 +1066,98 @@ nlohmann::json readJsonFile(const std::filesystem::path& filePath) {
         return nlohmann::json{};
     }
 
-    nlohmann::json json;
-    stream >> json;
-    return json;
+    try {
+        nlohmann::json json;
+        stream >> json;
+        return json;
+    } catch (const nlohmann::json::exception&) {
+        return nlohmann::json{};
+    } catch (const std::ios_base::failure&) {
+        return nlohmann::json{};
+    }
 }
 
-void writeJsonFile(const std::filesystem::path& filePath, const nlohmann::json& json) {
-    std::filesystem::create_directories(filePath.parent_path());
-    std::ofstream stream(filePath, std::ios::trunc);
-    stream << json.dump(2);
+[[nodiscard]] bool writeJsonFile(const std::filesystem::path& filePath, const nlohmann::json& json) noexcept {
+    try {
+        std::error_code ec;
+        if (filePath.has_parent_path()) {
+            std::filesystem::create_directories(filePath.parent_path(), ec);
+            if (ec) {
+                return false;
+            }
+        }
+
+        auto tempPath = filePath;
+        tempPath += L".tmp";
+
+        {
+            std::ofstream stream(tempPath, std::ios::trunc | std::ios::binary);
+            if (!stream.is_open()) {
+                return false;
+            }
+            stream << json.dump(2);
+            stream.flush();
+            if (!stream.good()) {
+                std::filesystem::remove(tempPath, ec);
+                return false;
+            }
+        }
+
+        std::filesystem::rename(tempPath, filePath, ec);
+        if (ec) {
+            std::filesystem::copy_file(
+                tempPath,
+                filePath,
+                std::filesystem::copy_options::overwrite_existing,
+                ec);
+            std::error_code removeEc;
+            std::filesystem::remove(tempPath, removeEc);
+            if (ec) {
+                return false;
+            }
+        }
+
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
+// Non-throwing JSON helpers. Callers that must not propagate
+// nlohmann::json::exception to network or UI surfaces should route through
+// these rather than calling .at()/.get<T>() directly.
+
+std::optional<nlohmann::json> tryParseJson(std::string_view text) noexcept {
+    try {
+        return nlohmann::json::parse(text);
+    } catch (const nlohmann::json::exception&) {
+        return std::nullopt;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+template <typename T>
+std::optional<T> tryGet(const nlohmann::json& json, std::string_view key) noexcept {
+    try {
+        const auto iterator = json.find(key);
+        if (iterator == json.end() || iterator->is_null()) {
+            return std::nullopt;
+        }
+        return iterator->get<T>();
+    } catch (const nlohmann::json::exception&) {
+        return std::nullopt;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+template <typename T>
+T getOr(const nlohmann::json& json, std::string_view key, T fallback) noexcept {
+    auto value = tryGet<T>(json, key);
+    return value.has_value() ? std::move(*value) : std::move(fallback);
 }
 
 std::string readTextFile(const std::filesystem::path& filePath) {
@@ -1407,7 +1534,7 @@ public:
     }
 
     void saveState(const Forsetti::ActivationState& state) override {
-        writeJsonFile(filePath_, state);
+        (void)writeJsonFile(filePath_, state);
     }
 
 private:
@@ -1504,14 +1631,14 @@ public:
 
         std::sort(moduleIds.begin(), moduleIds.end());
         moduleIds.erase(std::unique(moduleIds.begin(), moduleIds.end()), moduleIds.end());
-        writeJsonFile(filePath_, state);
+        (void)writeJsonFile(filePath_, state);
         refreshEntitlements();
     }
 
 private:
     void ensureStateFile() const {
         if (!std::filesystem::exists(filePath_)) {
-            writeJsonFile(filePath_, defaultState_);
+            (void)writeJsonFile(filePath_, defaultState_);
         }
     }
 
@@ -1555,14 +1682,26 @@ public:
     FileBackedConfigurationService(std::shared_ptr<SharedState> state, std::filesystem::path filePath)
         : state_(std::move(state))
         , filePath_(std::move(filePath)) {
-        if (std::filesystem::exists(filePath_)) {
-            const auto json = readJsonFile(filePath_);
-            if (!json.is_null() && !json.empty()) {
+        // Unified ingress path: readJsonFile now returns {} on missing/malformed
+        // input, and the .get<AppConfiguration>() call is guarded against parser
+        // and type-mismatch exceptions so a corrupt configuration.json falls
+        // back to defaults rather than crashing startup.
+        bool loaded = false;
+        const auto json = readJsonFile(filePath_);
+        if (!json.is_null() && !json.empty()) {
+            try {
                 state_->configuration = json.get<AppConfiguration>();
+                loaded = true;
+            } catch (const nlohmann::json::exception&) {
+                loaded = false;
+            } catch (...) {
+                loaded = false;
             }
-        } else {
+        }
+
+        if (!loaded) {
             state_->configuration = buildDefaultConfiguration();
-            persistLocked();
+            (void)persistLocked();
         }
     }
 
@@ -1581,18 +1720,22 @@ public:
             };
         }
 
+        bool persisted = false;
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
             state_->configuration = configuration;
-            persistLocked();
+            persisted = persistLocked();
         }
 
+        if (!persisted) {
+            return OperationResult{ false, false, "Configuration could not be written to disk." };
+        }
         return OperationResult{ true, false, "Configuration updated." };
     }
 
 private:
-    void persistLocked() const {
-        writeJsonFile(filePath_, state_->configuration);
+    bool persistLocked() const noexcept {
+        return writeJsonFile(filePath_, state_->configuration);
     }
 
     std::shared_ptr<SharedState> state_;
@@ -1624,7 +1767,9 @@ public:
 
         std::lock_guard<std::mutex> lock(state_->mutex);
         state_->configuration.resourceAllocation = profile;
-        writeJsonFile(filePath_, state_->configuration);
+        if (!writeJsonFile(filePath_, state_->configuration)) {
+            return OperationResult{ false, false, "Resource allocation could not be written to disk." };
+        }
         return OperationResult{ true, false, "Resource allocation updated." };
     }
 
@@ -2056,6 +2201,8 @@ public:
         if (provider.baseUrl.empty() || isBlank(provider.baseUrl)) {
             return OperationResult{ false, false, "Provider base URL is required." };
         }
+
+        std::lock_guard<std::mutex> lock(state_->mutex);
         const auto capabilities = providerCatalogService_->listCapabilities();
         const auto capabilityIterator = findCapabilityByProviderId(
             capabilities.begin(), capabilities.end(), provider.id, provider.kind);
@@ -2063,7 +2210,6 @@ public:
             return OperationResult{ false, false, "The selected provider kind is not currently supported by an active provider module." };
         }
 
-        std::lock_guard<std::mutex> lock(state_->mutex);
         auto& providers = state_->configuration.providers;
         ProviderConnection normalizedProvider = provider;
         normalizedProvider.isTemplate = false; // User-saved providers are no longer templates
@@ -2082,7 +2228,9 @@ public:
             *iterator = normalizedProvider;
         }
 
-        writeJsonFile(configurationFile_, state_->configuration);
+        if (!writeJsonFile(configurationFile_, state_->configuration)) {
+            return OperationResult{ false, false, "Provider settings could not be written to disk." };
+        }
         return OperationResult{ true, false, "Provider settings updated." };
     }
 
@@ -2453,7 +2601,7 @@ private:
                                return candidate.id == providerId;
                            }),
             providers.end());
-        writeJsonFile(configurationFile_, state_->configuration);
+        (void)writeJsonFile(configurationFile_, state_->configuration);
     }
 
     std::shared_ptr<SharedState> state_;
@@ -2472,7 +2620,7 @@ public:
         , providerRegistry_(std::move(providerRegistry))
         , providerCatalogService_(std::move(providerCatalogService)) {
         if (!std::filesystem::exists(filePath_)) {
-            writeJsonFile(filePath_, ProviderCredentialsDocument{});
+            (void)writeJsonFile(filePath_, ProviderCredentialsDocument{});
         }
     }
 
@@ -2489,9 +2637,14 @@ public:
             return {};
         }
 
+        const auto payload = tryParseJson(unprotectSecretPayload(iterator->second));
+        if (!payload.has_value()) {
+            return {};
+        }
         try {
-            const auto payload = nlohmann::json::parse(unprotectSecretPayload(iterator->second));
-            return payload.get<std::map<std::string, std::string>>();
+            return payload->get<std::map<std::string, std::string>>();
+        } catch (const nlohmann::json::exception&) {
+            return {};
         } catch (...) {
             return {};
         }
@@ -2563,7 +2716,9 @@ public:
         auto document = loadDocumentLocked();
         document.protectedPayloadsByProviderId[update.providerId] = protectSecretPayload(payload.dump());
         document.updatedAtUtcByProviderId[update.providerId] = timestampNowUtc();
-        writeJsonFile(filePath_, document);
+        if (!writeJsonFile(filePath_, document)) {
+            return OperationResult{ false, false, "Provider credentials could not be written to the local secure store." };
+        }
         return OperationResult{ true, false, "Provider credentials were saved to the local secure store." };
     }
 
@@ -2706,7 +2861,9 @@ public:
                 *endpointIterator = normalized;
             }
 
-            writeJsonFile(configurationFile_, state_->configuration);
+            if (!writeJsonFile(configurationFile_, state_->configuration)) {
+                return OperationResult{ false, false, "Custom sub-agent settings could not be written to disk." };
+            }
         }
         inventoryService_->refreshAsync();
         return OperationResult{ true, false, "Custom sub-agent settings updated." };
@@ -2775,7 +2932,9 @@ public:
                     assignments.end());
             }
 
-            writeJsonFile(configurationFile_, state_->configuration);
+            if (!writeJsonFile(configurationFile_, state_->configuration)) {
+                return OperationResult{ false, false, "Sub-agent removal could not be written to disk." };
+            }
         }
         inventoryService_->refreshAsync();
         return OperationResult{ true, false, "Custom sub-agent removed." };
@@ -2837,9 +2996,6 @@ public:
         normalized.specialization.clear();
         normalized.status = EndpointStatus::Unknown;
         normalized.lastCheckedUtc = timestampNowUtc();
-        if (normalized.host.empty()) {
-            normalized.host = state_->configuration.activeProfile.preferredBindAddress;
-        }
         if (normalized.protocol.empty()) {
             normalized.protocol = "http";
         }
@@ -2849,6 +3005,9 @@ public:
 
         {
             std::lock_guard<std::mutex> lock(state_->mutex);
+            if (normalized.host.empty()) {
+                normalized.host = state_->configuration.activeProfile.preferredBindAddress;
+            }
             auto& endpoints = state_->configuration.activeProfile.seededEndpoints;
             const auto endpointIterator = std::find_if(
                 endpoints.begin(),
@@ -2864,7 +3023,9 @@ public:
                 *endpointIterator = normalized;
             }
 
-            writeJsonFile(configurationFile_, state_->configuration);
+            if (!writeJsonFile(configurationFile_, state_->configuration)) {
+                return OperationResult{ false, false, "Custom MCP server settings could not be written to disk." };
+            }
         }
         inventoryService_->refreshAsync();
         return OperationResult{ true, false, "Custom MCP server settings updated." };
@@ -2892,7 +3053,9 @@ public:
             }
 
             endpoints.erase(iterator);
-            writeJsonFile(configurationFile_, state_->configuration);
+            if (!writeJsonFile(configurationFile_, state_->configuration)) {
+                return OperationResult{ false, false, "MCP server removal could not be written to disk." };
+            }
         }
         inventoryService_->refreshAsync();
         return OperationResult{ true, false, "Custom MCP server removed." };
@@ -2993,7 +3156,9 @@ public:
             [](const SubAgentGroupDefinition& left, const SubAgentGroupDefinition& right) {
                 return std::tie(left.displayName, left.groupId) < std::tie(right.displayName, right.groupId);
             });
-        writeJsonFile(configurationFile_, state_->configuration);
+        if (!writeJsonFile(configurationFile_, state_->configuration)) {
+            return OperationResult{ false, false, "Sub-agent group settings could not be written to disk." };
+        }
         return OperationResult{ true, false, "Sub-agent group settings updated." };
     }
 
@@ -3026,7 +3191,9 @@ public:
                 }),
             assignments.end());
 
-        writeJsonFile(configurationFile_, state_->configuration);
+        if (!writeJsonFile(configurationFile_, state_->configuration)) {
+            return OperationResult{ false, false, "Sub-agent group removal could not be written to disk." };
+        }
         return OperationResult{ true, false, "Sub-agent group removed." };
     }
 
@@ -3201,7 +3368,9 @@ public:
                 }
             }
 
-            writeJsonFile(configurationFile_, state_->configuration);
+            if (!writeJsonFile(configurationFile_, state_->configuration)) {
+                return OperationResult{ false, false, "Provider assignment update could not be written to disk." };
+            }
             const std::string verb = assignment.providerId.empty() ? "Cleared" : "Assigned";
             return OperationResult{
                 true,
@@ -3221,7 +3390,9 @@ public:
             });
         }
 
-        writeJsonFile(configurationFile_, state_->configuration);
+        if (!writeJsonFile(configurationFile_, state_->configuration)) {
+            return OperationResult{ false, false, "Provider ownership update could not be written to disk." };
+        }
         return OperationResult{
             true,
             false,
@@ -3748,7 +3919,12 @@ private:
         std::filesystem::path mcpConfigFile;
         if (request.allowToolAccess && !endpoints.empty()) {
             mcpConfigFile = executionDirectory / "mcp.json";
-            writeJsonFile(mcpConfigFile, buildClaudeMcpConfig(endpoints));
+            if (!writeJsonFile(mcpConfigFile, buildClaudeMcpConfig(endpoints))) {
+                record.status = ProviderExecutionStatus::Failed;
+                record.errorMessage = "Failed to write MCP configuration for Claude execution.";
+                record.completedAtUtc = timestampNowUtc();
+                return record;
+            }
         }
 
         std::vector<std::wstring> arguments{
@@ -4184,7 +4360,7 @@ void InstallerOrchestrator::applyManifestRegistration(const BootstrapManifestCon
         }
     }
 
-    writeJsonFile(paths_.configurationFile, state_->configuration);
+    (void)writeJsonFile(paths_.configurationFile, state_->configuration);
 }
 
 std::filesystem::path InstallerOrchestrator::resolvePackage(const std::string& source, const std::string& localPath) const {
@@ -4282,7 +4458,7 @@ int InstallerOrchestrator::executeCommand(const std::wstring& command, const std
 void InstallerOrchestrator::recordHistory(const InstallProvenance& provenance) {
     std::lock_guard<std::mutex> lock(state_->mutex);
     state_->installHistory.push_back(provenance);
-    writeJsonFile(paths_.installHistoryFile, state_->installHistory);
+    (void)writeJsonFile(paths_.installHistoryFile, state_->installHistory);
 }
 
 class ExportService final : public IExportService {
@@ -5978,7 +6154,7 @@ private:
     }
 
     void persistLocked() const {
-        writeJsonFile(filePath_, state_->configuration);
+        (void)writeJsonFile(filePath_, state_->configuration);
     }
 
     std::shared_ptr<SharedState> state_;
@@ -6747,7 +6923,7 @@ private:
         }
 
         if (changed) {
-            writeJsonFile(paths_.appleOperationHistoryFile, recentAppleOperations_);
+            (void)writeJsonFile(paths_.appleOperationHistoryFile, recentAppleOperations_);
         }
     }
 
@@ -6932,7 +7108,7 @@ private:
         if (recentAppleOperations_.size() > 30) {
             recentAppleOperations_.resize(30);
         }
-        writeJsonFile(paths_.appleOperationHistoryFile, recentAppleOperations_);
+        (void)writeJsonFile(paths_.appleOperationHistoryFile, recentAppleOperations_);
     }
 
     std::filesystem::path resolveTargetRoot(const GovernanceToolRequest& request) const {
@@ -8869,7 +9045,7 @@ void MasterControlApplication::Impl::registerConfigurationDefaults() {
     state_->configuration = currentConfiguration;
     if (state_->configuration.providers.empty()) {
         state_->configuration.providers = buildDefaultProviders();
-        writeJsonFile(paths_.configurationFile, state_->configuration);
+        (void)writeJsonFile(paths_.configurationFile, state_->configuration);
     }
 }
 

@@ -12,6 +12,7 @@ param(
     [string]$SolutionPath = ""
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 

@@ -12,6 +12,7 @@ target_include_directories(MasterControlServiceHost PRIVATE
 
 target_link_libraries(MasterControlServiceHost PRIVATE
     MasterControlApp
+    advapi32
 )
 
 install(TARGETS MasterControlServiceHost RUNTIME DESTINATION .)
