@@ -4259,7 +4259,14 @@ function updateTelemetryLive(dashboard, config) {
 // Fetch /api/dashboard + /api/config and patch live telemetry cells only —
 // does not touch any chrome, summary, or form markup. Used by the live
 // timer so the page does not visually "refresh" while data ticks.
+// Heartbeat counter so the visible "Live #N" badge bumps on every tick and
+// the operator has unmistakable evidence the page is updating, even when
+// the underlying metrics happen to be numerically stable on an idle host.
+let liveTelemetryCounter = 0;
+
 async function refreshTelemetryLive() {
+  ++liveTelemetryCounter;
+  let captured = false;
   try {
     const [dashboard, config] = await Promise.all([
       loadJson('/api/dashboard'),
@@ -4270,12 +4277,18 @@ async function refreshTelemetryLive() {
     state.surface = ensureBootstrapSurface(dashboard.surface || {});
     state.lastRefreshLabel = formatTimestamp(new Date());
     updateTelemetryLive(dashboard, config);
-    setHealthBadge('Live', 'success');
+    captured = true;
   } catch (error) {
-    // Silent on live-poll errors — the explicit refresh button surfaces
-    // permanent failures. A transient network blip should not trigger a
-    // visible error state during normal operation.
+    // Silent on live-poll errors — the heartbeat badge will flip to OFFLINE
+    // so the operator knows the admin API did not respond, distinct from
+    // "stuck UI".
     console.debug('live telemetry poll error', error);
+  }
+
+  if (healthBadge) {
+    const stamp = new Date().toLocaleTimeString();
+    healthBadge.textContent = (captured ? 'Live' : 'Offline') + ' #' + liveTelemetryCounter + ' · ' + stamp;
+    healthBadge.dataset.tone = captured ? 'success' : 'warning';
   }
 }
 
@@ -6012,4 +6025,4 @@ setInterval(() => {
     return; // Browser tab is hidden; skip network traffic until it returns.
   }
   refreshTelemetryLive();
-}, 2000);
+}, 1000);

@@ -1,11 +1,25 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.2-rc.3",
-  "current_tag": "v0.4.2-rc.3",
+  "current_version": "0.4.2-rc.4",
+  "current_tag": "v0.4.2-rc.4",
   "released_at": "2026-04-17",
-  "last_release_commit": "61912963ebddb11b850e4d40151f2da9cc3285d3",
+  "last_release_commit": "1e63ea18ea46ee4660650f68dcdb1ecd212e46ee",
   "history": [
+    {
+      "version": "0.4.2-rc.4",
+      "tag": "v0.4.2-rc.4",
+      "released_at": "2026-04-17",
+      "commit": "1e63ea18ea46ee4660650f68dcdb1ecd212e46ee",
+      "summary": "Telemetry is now unmistakably live: 1-second cadence, hero badge shows LIVE #N + HH:MM:SS that ticks every second, RAII flag guard ensures the live tick can never get stuck, and the badge flips to OFFLINE with amber when the admin API is unreachable so stuck-UI is visually distinct from a dead backend.",
+      "entries": [
+        "feat(shell): live telemetry timer dropped from 2s to 1s cadence",
+        "feat(shell): visible LIVE #N \u00b7 HH:MM:SS badge in the title bar that bumps every tick (including failed ticks), giving unmistakable proof the telemetry pipeline is alive even on idle hosts where CPU/RAM numbers happen to be stable",
+        "feat(shell): badge flips to OFFLINE (amber) when the admin API call fails so a stuck UI is visually distinct from a non-responsive backend",
+        "fix(shell): RefreshLiveAsync now uses a RAII guard so liveRefreshInFlight_ is ALWAYS cleared on every exit path, including exceptions; prevents the tick from silently stopping",
+        "feat(browser): same LIVE #N \u00b7 HH:MM:SS treatment on the health badge; browser poll dropped from 2s to 1s"
+      ]
+    },
     {
       "version": "0.4.2-rc.3",
       "tag": "v0.4.2-rc.3",

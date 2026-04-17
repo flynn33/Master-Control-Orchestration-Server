@@ -5,6 +5,17 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.2-rc.4] - 2026-04-17
+### Summary
+Telemetry is now **unmistakably live**. 1-second cadence, a visible `LIVE #N · HH:MM:SS` badge in the title bar that bumps every tick (even failed ticks), and a RAII flag guard so the tick can never silently stop. When the admin API fails, the badge flips to `OFFLINE` so a stuck UI is visually distinct from a non-responsive backend.
+
+### Included Changes
+- feat(shell): live telemetry timer dropped from 2s to 1s cadence
+- feat(shell): visible `LIVE #N · HH:MM:SS` badge in the title bar that bumps every tick (including failed ticks), giving unmistakable proof the telemetry pipeline is alive even on idle hosts where CPU/RAM numbers happen to be stable
+- feat(shell): badge flips to `OFFLINE` (amber) when the admin API call fails so a stuck UI is visually distinct from a non-responsive backend
+- fix(shell): `RefreshLiveAsync` now uses a RAII guard so `liveRefreshInFlight_` is ALWAYS cleared on every exit path, including exceptions; prevents the tick from silently stopping
+- feat(browser): same `Live #N · HH:MM:SS` treatment on the health badge; browser poll dropped from 2s to 1s
+
 ## [0.4.2-rc.3] - 2026-04-17
 ### Summary
 Second hotfix for the host install experience: the **WinUI shell itself** was rebuilding its navigation, toolbar, and section content every 10 seconds, which is what the user saw as "the entire page refreshing" across all menus. Fixed by signature-caching the chrome, no-op'ing redundant destination swaps, and introducing a live-only 2-second refresh path. The setup launcher now auto-launches the desktop shell on the host by default.

@@ -849,14 +849,14 @@ void MainWindow::ConfigureTimer() {
     }
 
     try {
-        // 2-second telemetry cadence. The tick calls RefreshLiveAsync,
+        // 1-second telemetry cadence. The tick calls RefreshLiveAsync,
         // which only updates hero values + the current section's data —
         // navigation, toolbar, section content host, and scroll position
         // are deliberately left alone. A full ApplySnapshot (including
         // nav / toolbar rebuilds) only runs when the user clicks Refresh
         // or navigates between views.
         refreshTimer_ = dispatcher.CreateTimer();
-        refreshTimer_.Interval(std::chrono::seconds(2));
+        refreshTimer_.Interval(std::chrono::seconds(1));
         const auto weakThis = get_weak();
         refreshTimer_.Tick([weakThis](auto&&, auto&&) {
             if (const auto self = weakThis.get()) {
@@ -869,6 +869,7 @@ void MainWindow::ConfigureTimer() {
             }
         });
         refreshTimer_.Start();
+        writeShellLog(L"Live telemetry timer started (1-second cadence).");
     } catch (const winrt::hresult_error& error) {
         writeShellLog(L"Dispatcher timer fallback activated: " + std::wstring(error.message().c_str()));
     }
@@ -1279,6 +1280,32 @@ void MainWindow::ApplyLiveSnapshotFragment(const ::MasterControlShell::ShellSnap
     ApplyCurrentSectionSnapshot(snapshot);
 }
 
+// Update the visible LIVE indicator in the title bar badge. Bumps a sample
+// counter and a short timestamp on every tick (even failed ones) so the
+// operator can tell at a glance whether the telemetry pipeline is alive.
+// Green label = fresh snapshot captured. Amber label = tick fired but the
+// admin API did not respond.
+void MainWindow::ApplyLiveHeartbeat(std::chrono::system_clock::time_point /*now*/, bool captured) {
+    try {
+        SYSTEMTIME localNow{};
+        GetLocalTime(&localNow);
+        wchar_t clockBuffer[16]{};
+        swprintf_s(clockBuffer, L"%02u:%02u:%02u", localNow.wHour, localNow.wMinute, localNow.wSecond);
+        LiveClockText().Text(winrt::hstring(clockBuffer));
+
+        std::wstring sampleText = L"#" + std::to_wstring(liveSampleCounter_);
+        LiveTelemetrySampleText().Text(winrt::hstring(sampleText));
+
+        // Flip the label to OFFLINE (amber) when the admin API fails so
+        // there is an immediate visual distinction between "stuck UI" and
+        // "service not reachable".
+        LiveTelemetryLabelText().Text(winrt::hstring(captured ? L"LIVE" : L"OFFLINE"));
+    } catch (const winrt::hresult_error&) {
+        // Title bar elements may not be realized during very early bootstrap;
+        // the next tick will retry.
+    }
+}
+
 // Apply the snapshot to just the currently visible section view. This is
 // safe during the live tick because section controls update their
 // TextBlocks / ProgressBars in place.
@@ -1518,25 +1545,44 @@ IAsyncAction MainWindow::RefreshLiveAsync() {
         co_return;
     }
 
+    // RAII guard so liveRefreshInFlight_ is ALWAYS cleared on scope exit,
+    // no matter how the coroutine unwinds. A stuck-true flag would silently
+    // disable live telemetry until the next explicit Refresh, which is the
+    // kind of regression that looks like "telemetry is frozen" from the
+    // operator's side.
+    struct LiveFlagGuard {
+        std::atomic_bool* flag;
+        ~LiveFlagGuard() { if (flag) { flag->store(false); } }
+    };
+    LiveFlagGuard guard{ &liveRefreshInFlight_ };
+
     winrt::apartment_context uiThread;
     co_await winrt::resume_background();
 
     ::MasterControlShell::ShellSnapshot snapshot;
+    bool captured = false;
     try {
         snapshot = runtime_.CaptureSnapshot();
+        captured = true;
     } catch (...) {
-        // Silent on live-poll errors — the explicit Refresh button surfaces
-        // permanent failures and will re-run the full path.
-        liveRefreshInFlight_ = false;
-        co_return;
+        captured = false;
     }
 
     EnsureBootstrapSurface(snapshot);
 
     co_await uiThread;
+    if (!captured) {
+        // Even on capture failure, bump the live tick counter so the
+        // operator can tell the timer itself is alive. The visible "Live"
+        // indicator in the hero distinguishes heartbeat from fresh data.
+        ++liveSampleCounter_;
+        ApplyLiveHeartbeat(std::chrono::system_clock::now(), false);
+        co_return;
+    }
     currentSnapshot_ = std::move(snapshot);
+    ++liveSampleCounter_;
     ApplyLiveSnapshotFragment(currentSnapshot_);
-    liveRefreshInFlight_ = false;
+    ApplyLiveHeartbeat(std::chrono::system_clock::now(), true);
 }
 
 IAsyncAction MainWindow::PollActivityStreamAsync() {

@@ -1,13 +1,13 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.4.2--rc.3-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--17-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.4.2--rc.4-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--17-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
 
 > Forsetti-compliant Windows orchestration control plane for MCP services, AI provider routing, 
 > CLU governance, sub-agents, platform gateways, telemetry, and browser-based operations — 
 > all delivered as a single Tron-themed product.
 
 - **Repository:** [`master-control-dashboard`](https://github.com/flynn33/Master-Control-Orchestration-Server)
-- **Current release:** `v0.4.2-rc.3` (2026-04-17)
+- **Current release:** `v0.4.2-rc.4` (2026-04-17)
 - **Forsetti modules:** 19
 
 ---
@@ -117,17 +117,15 @@ See [Operations](docs/wiki/Operations.md) for the full deployment matrix, and
 
 ## Current release
 
-**`v0.4.2-rc.3` — 2026-04-17**
+**`v0.4.2-rc.4` — 2026-04-17**
 
-WinUI shell: stop the whole-page flicker on every refresh. Nav and toolbar now signature-cached, section content no longer re-swapped on the timer, and live ticks run at 2s through a dedicated ApplyLiveSnapshotFragment path. Shell auto-launches on install by default.
+Telemetry is now unmistakably live: 1-second cadence, hero badge shows LIVE #N + HH:MM:SS that ticks every second, RAII flag guard ensures the live tick can never get stuck, and the badge flips to OFFLINE with amber when the admin API is unreachable so stuck-UI is visually distinct from a dead backend.
 
-- fix(shell): ApplySurfaceNavigation skips Clear+rebuild when the nav signature is unchanged; selection-only update on the common refresh path
-- fix(shell): ApplySurfaceToolbar skips Clear+rebuild when the toolbar signature is unchanged
-- fix(shell): SetCurrentDestination no-ops the content swap and BringIntoView scroll when the destination hasn't changed
-- feat(shell): new RefreshLiveAsync + ApplyLiveSnapshotFragment path â€” updates only hero values and the currently visible section's data, leaving navigation, toolbar, section-content host, and scroll position untouched
-- feat(shell): refreshTimer_ now ticks every 2 seconds and calls RefreshLiveAsync; full ApplySnapshot only runs on user-initiated Refresh or view change
-- fix(shell): 2s live tick self-suppresses while on Providers/Security/Settings/Imports so in-progress form input is never interrupted
-- fix(installer): setup launcher now auto-launches the desktop shell by default on host; --no-launch-shell still opts out for headless installs
+- feat(shell): live telemetry timer dropped from 2s to 1s cadence
+- feat(shell): visible LIVE #N · HH:MM:SS badge in the title bar that bumps every tick (including failed ticks), giving unmistakable proof the telemetry pipeline is alive even on idle hosts where CPU/RAM numbers happen to be stable
+- feat(shell): badge flips to OFFLINE (amber) when the admin API call fails so a stuck UI is visually distinct from a non-responsive backend
+- fix(shell): RefreshLiveAsync now uses a RAII guard so liveRefreshInFlight_ is ALWAYS cleared on every exit path, including exceptions; prevents the tick from silently stopping
+- feat(browser): same LIVE #N · HH:MM:SS treatment on the health badge; browser poll dropped from 2s to 1s
 ---
 
 Repository: https://github.com/flynn33/Master-Control-Orchestration-Server

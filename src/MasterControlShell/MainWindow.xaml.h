@@ -52,6 +52,7 @@ private:
     void ApplyCachedSectionSnapshots(const ::MasterControlShell::ShellSnapshot& snapshot);
     void ApplyHeroSnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
     void ApplyCurrentSectionSnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void ApplyLiveHeartbeat(std::chrono::system_clock::time_point now, bool captured);
     void StartGuidedWorkflow(std::wstring const& workflowId);
     Microsoft::UI::Xaml::FrameworkElement ResolvePrimaryViewForDestination(
         std::wstring const& destinationId,
@@ -100,6 +101,11 @@ private:
     size_t activityStreamCount_ = 0;
     std::atomic_bool refreshInFlight_{ false };
     std::atomic_bool liveRefreshInFlight_{ false };
+    // Monotonically increasing counter — bumped on every live-tick (whether
+    // the snapshot capture succeeded or not) so the hero's visible
+    // "LIVE #N" indicator changes every second, giving unmistakable
+    // feedback that telemetry is updating.
+    uint64_t liveSampleCounter_{ 0 };
     // Signature caches so the timed refresh doesn't Clear+Rebuild the
     // navigation or toolbar when nothing actually changed. This is what
     // made the shell feel like the "entire page" was refreshing every

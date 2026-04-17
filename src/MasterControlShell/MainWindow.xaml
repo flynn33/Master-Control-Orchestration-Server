@@ -47,9 +47,10 @@
                         </StackPanel>
 
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                            <Border Padding="10,4" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
+                            <Border x:Name="LiveTelemetryBadgeBorder" Padding="10,4" Background="#2200DFFF" BorderBrush="{StaticResource ShellAccentBrush}" BorderThickness="1" CornerRadius="0">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <TextBlock Text="LIVE" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                    <TextBlock x:Name="LiveTelemetryLabelText" Text="LIVE" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                    <TextBlock x:Name="LiveTelemetrySampleText" Text="#0" Style="{StaticResource ShellEyebrowTextStyle}" />
                                     <TextBlock x:Name="LiveClockText" Text="--:--:--" Style="{StaticResource ShellLiveClockTextStyle}" />
                                 </StackPanel>
                             </Border>
