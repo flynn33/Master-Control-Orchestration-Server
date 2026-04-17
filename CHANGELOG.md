@@ -5,6 +5,26 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.2-rc.5] - 2026-04-17
+### Summary
+**Add AI Model — account-only sign-in wizard.** The primary goal of this project has always been to get users to productive AI use without making them paste API keys. This release delivers that for Claude (Pro / Max / Team) and ChatGPT: click a button in the Providers section, the matching CLI (`claude login` or `codex login`) opens a console and drives OAuth in your browser, and the orchestration server registers the provider on success. The CLI keeps its own tokens — the server never stores them.
+
+### Included Changes
+- feat(models): `ProviderCapabilityDescriptor` now carries `cliBridgeCommand` (`claude` | `codex`) and `cliBridgeAccountLabel` so the UI knows which providers support account-only sign-in
+- feat(runtime): `ProviderExecutionTransport::CodexCli` added alongside `ClaudeCodeCli`; the execution dispatch bypasses the credential-required check for CLI-bridged transports
+- feat(runtime): `ProviderCliSignInService` spawns `claude login` / `codex login` in a new console window, polls for process exit + auth-file presence, registers the provider on success
+- feat(runtime): new endpoints `POST /api/providers/signin/start`, `GET /api/providers/signin/status?sessionId=`, `GET /api/providers/signin/installed`
+- feat(runtime): `executeCodexCli` invokes `codex exec <prompt>` with optional `OPENAI_API_KEY` env forwarding for operators who prefer an API key instead of account sign-in
+- feat(modules): Claude Code, Codex, and ChatGPT capabilities advertise account-sign-in as the primary path; credential fields are now marked optional
+- feat(shell): Providers section gains a top-level **Add AI Model — Account Sign-In** card with two buttons (Claude, ChatGPT) that drive the end-to-end OAuth flow with live status updates below each button
+- feat(browser): matching **Add AI Model** sign-in cards at the top of the Providers view, polling `/api/providers/signin/status` every 2 seconds with live status transitions
+- fix(shell): `ShellRuntime` gains `StartCliSignIn`, `GetCliSignInStatus`, `DetectCliSignInInstalled` over the admin API
+
+### What's next
+- Gemini CLI sign-in
+- Ollama (local models) detection + registration (no sign-in)
+- First-time dependency install when `claude` / `codex` aren't yet on PATH — currently the wizard reports the CLI as missing; a one-click install is the next step
+
 ## [0.4.2-rc.4] - 2026-04-17
 ### Summary
 Telemetry is now **unmistakably live**. 1-second cadence, a visible `LIVE #N · HH:MM:SS` badge in the title bar that bumps every tick (even failed ticks), and a RAII flag guard so the tick can never silently stop. When the admin API fails, the badge flips to `OFFLINE` so a stuck UI is visually distinct from a non-responsive backend.

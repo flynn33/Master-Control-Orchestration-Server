@@ -2769,6 +2769,279 @@ private:
     mutable std::mutex mutex_;
 };
 
+// CLI-based sign-in service. Spawns `claude login` or `codex login` in a new
+// console window so the operator can complete OAuth in their own browser,
+// then polls for completion (process exit + expected auth file present).
+// On success, registers a ProviderConnection that routes execution through
+// the CLI — no API key is ever stored by us; the CLI keeps its own tokens.
+class ProviderCliSignInService final {
+public:
+    struct SessionState {
+        std::string sessionId;
+        std::string bridge;          // "claude" or "codex"
+        std::string providerId;      // e.g. "claude-code", "codex"
+        std::string status;          // "pending" | "complete" | "failed"
+        std::string message;
+        std::string accountLabel;
+        std::string startedAtUtc;
+        std::string completedAtUtc;
+        HANDLE processHandle = nullptr;
+        HANDLE waitThread = nullptr;
+        std::filesystem::path authFilePath;
+    };
+
+    ProviderCliSignInService(std::shared_ptr<IProviderRegistry> providerRegistry,
+                             std::shared_ptr<IProviderCatalogService> providerCatalogService)
+        : providerRegistry_(std::move(providerRegistry))
+        , providerCatalogService_(std::move(providerCatalogService)) {}
+
+    ~ProviderCliSignInService() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& [_, session] : sessions_) {
+            if (session.processHandle != nullptr) {
+                CloseHandle(session.processHandle);
+            }
+            if (session.waitThread != nullptr) {
+                CloseHandle(session.waitThread);
+            }
+        }
+    }
+
+    nlohmann::json startSession(const std::string& bridge, const std::string& providerId) {
+        nlohmann::json response = nlohmann::json::object();
+
+        if (bridge != "claude" && bridge != "codex") {
+            response["succeeded"] = false;
+            response["message"] = "Unsupported sign-in bridge: " + bridge;
+            return response;
+        }
+
+        // Resolve the CLI binary path. If it isn't installed, tell the UI
+        // explicitly so it can offer an "install" action instead of a
+        // sign-in spinner that never finishes.
+        const auto cliPath = resolveCliPath(bridge);
+        if (!cliPath.has_value()) {
+            response["succeeded"] = false;
+            response["message"] = bridgeDisplayName(bridge) + " is not installed on this host. Install it first (e.g. via the dependency setup) and try again.";
+            response["cliInstalled"] = false;
+            response["bridge"] = bridge;
+            return response;
+        }
+
+        SessionState session;
+        session.sessionId = generateSessionId();
+        session.bridge = bridge;
+        session.providerId = providerId;
+        session.status = "pending";
+        session.message = "Complete the sign-in prompt in the console window or browser.";
+        session.accountLabel = bridge == "claude"
+            ? "Claude Pro / Max / Team account"
+            : "ChatGPT account";
+        session.startedAtUtc = timestampNowUtc();
+        session.authFilePath = expectedAuthFilePath(bridge);
+
+        // Spawn the CLI's login subcommand in a new console window so the
+        // operator can see the OAuth URL / device code prompts. We do NOT
+        // capture stdout/stderr — the CLI owns the interaction.
+        std::wstring commandLine;
+        if (startsWithInsensitive(cliPath->extension().string(), ".cmd") ||
+            startsWithInsensitive(cliPath->extension().string(), ".bat")) {
+            commandLine = L"cmd.exe /d /s /c ";
+            commandLine += quoteWindowsArgument(cliPath->wstring());
+            commandLine += L" login";
+        } else {
+            commandLine = quoteWindowsArgument(cliPath->wstring());
+            commandLine += L" login";
+        }
+
+        STARTUPINFOW startupInfo{};
+        startupInfo.cb = sizeof(startupInfo);
+        PROCESS_INFORMATION processInfo{};
+        std::wstring mutableCommand = commandLine;
+        const BOOL created = CreateProcessW(
+            nullptr,
+            mutableCommand.data(),
+            nullptr,
+            nullptr,
+            FALSE,
+            CREATE_NEW_CONSOLE,
+            nullptr,
+            nullptr,
+            &startupInfo,
+            &processInfo);
+        if (created == 0) {
+            const DWORD lastError = GetLastError();
+            response["succeeded"] = false;
+            response["message"] = "Failed to launch " + bridgeDisplayName(bridge) + " sign-in (error " + std::to_string(lastError) + ").";
+            response["cliInstalled"] = true;
+            return response;
+        }
+        CloseHandle(processInfo.hThread);
+        session.processHandle = processInfo.hProcess;
+
+        const std::string sessionId = session.sessionId;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            sessions_[sessionId] = std::move(session);
+        }
+
+        response["succeeded"] = true;
+        response["sessionId"] = sessionId;
+        response["message"] = "Sign-in console opened. Complete the prompt to finish.";
+        response["bridge"] = bridge;
+        return response;
+    }
+
+    nlohmann::json querySession(const std::string& sessionId) {
+        nlohmann::json response = nlohmann::json::object();
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto iterator = sessions_.find(sessionId);
+        if (iterator == sessions_.end()) {
+            response["succeeded"] = false;
+            response["message"] = "Unknown sign-in session.";
+            return response;
+        }
+
+        auto& session = iterator->second;
+        if (session.status == "pending" && session.processHandle != nullptr) {
+            const DWORD waitResult = WaitForSingleObject(session.processHandle, 0);
+            if (waitResult == WAIT_OBJECT_0) {
+                DWORD exitCode = 0;
+                GetExitCodeProcess(session.processHandle, &exitCode);
+                CloseHandle(session.processHandle);
+                session.processHandle = nullptr;
+                session.completedAtUtc = timestampNowUtc();
+
+                const bool authFileExists = !session.authFilePath.empty() &&
+                    std::filesystem::exists(session.authFilePath);
+                if (exitCode == 0 && authFileExists) {
+                    session.status = "complete";
+                    session.message = "Signed in successfully. " + session.accountLabel + " is now available.";
+                    registerBridgedProvider(session.bridge, session.providerId);
+                } else if (exitCode == 0) {
+                    session.status = "failed";
+                    session.message = "Sign-in appeared to exit cleanly, but " + bridgeDisplayName(session.bridge) + " did not create its credential file.";
+                } else {
+                    session.status = "failed";
+                    session.message = "Sign-in was canceled or failed (exit code " + std::to_string(exitCode) + ").";
+                }
+            }
+        }
+
+        response["succeeded"] = true;
+        response["sessionId"] = session.sessionId;
+        response["status"] = session.status;
+        response["message"] = session.message;
+        response["bridge"] = session.bridge;
+        response["providerId"] = session.providerId;
+        response["accountLabel"] = session.accountLabel;
+        response["startedAtUtc"] = session.startedAtUtc;
+        response["completedAtUtc"] = session.completedAtUtc;
+        return response;
+    }
+
+    nlohmann::json detectInstalled() const {
+        nlohmann::json response = nlohmann::json::array();
+        for (const char* bridge : { "claude", "codex" }) {
+            nlohmann::json entry = nlohmann::json::object();
+            entry["bridge"] = bridge;
+            entry["displayName"] = bridgeDisplayName(bridge);
+            const auto cliPath = resolveCliPath(bridge);
+            entry["installed"] = cliPath.has_value();
+            entry["path"] = cliPath.has_value() ? cliPath->string() : "";
+            const auto authPath = expectedAuthFilePath(bridge);
+            entry["signedIn"] = !authPath.empty() && std::filesystem::exists(authPath);
+            response.push_back(entry);
+        }
+        return response;
+    }
+
+private:
+    static std::string generateSessionId() {
+        static std::atomic<uint64_t> counter{ 0 };
+        const auto now = std::chrono::system_clock::now().time_since_epoch();
+        const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(now).count();
+        return "signin-" + std::to_string(micros) + "-" + std::to_string(counter.fetch_add(1));
+    }
+
+    static std::optional<std::filesystem::path> resolveCliPath(const std::string& bridge) {
+        if (bridge == "claude") {
+            return findCommandOnPath({ L"claude.exe", L"claude.cmd", L"claude.bat", L"claude" });
+        }
+        if (bridge == "codex") {
+            return findCommandOnPath({ L"codex.exe", L"codex.cmd", L"codex.bat", L"codex" });
+        }
+        return std::nullopt;
+    }
+
+    static std::filesystem::path expectedAuthFilePath(const std::string& bridge) {
+        const DWORD required = GetEnvironmentVariableW(L"USERPROFILE", nullptr, 0);
+        if (required == 0) {
+            return {};
+        }
+        std::wstring userProfile(static_cast<size_t>(required - 1), L'\0');
+        GetEnvironmentVariableW(L"USERPROFILE", userProfile.data(), required);
+        std::filesystem::path base(userProfile);
+        if (bridge == "claude") {
+            // Claude Code stores OAuth tokens here as of Claude Code 2.x.
+            return base / L".claude" / L".credentials.json";
+        }
+        if (bridge == "codex") {
+            return base / L".codex" / L"auth.json";
+        }
+        return {};
+    }
+
+    static std::string bridgeDisplayName(const std::string& bridge) {
+        if (bridge == "claude") return "Claude Code CLI";
+        if (bridge == "codex") return "Codex CLI";
+        return bridge;
+    }
+
+    void registerBridgedProvider(const std::string& bridge, const std::string& providerIdHint) {
+        // Find a capability that matches the requested provider (or any
+        // capability whose bridge matches). We upsert a ProviderConnection
+        // with credentialsConfigured=true, no credentials actually stored
+        // — execution uses the CLI's own tokens.
+        const auto capabilities = providerCatalogService_->listCapabilities();
+        const ProviderCapabilityDescriptor* capability = nullptr;
+        for (const auto& candidate : capabilities) {
+            if (!providerIdHint.empty() && candidate.providerId == providerIdHint) {
+                capability = &candidate;
+                break;
+            }
+        }
+        if (capability == nullptr) {
+            for (const auto& candidate : capabilities) {
+                if (candidate.cliBridgeCommand == bridge) {
+                    capability = &candidate;
+                    break;
+                }
+            }
+        }
+        if (capability == nullptr) {
+            return;
+        }
+
+        ProviderConnection provider;
+        provider.id = capability->providerId;
+        provider.kind = capability->kind;
+        provider.displayName = capability->displayName;
+        provider.baseUrl = capability->defaultBaseUrl;
+        provider.modelId = capability->recommendedModel;
+        provider.enabled = true;
+        provider.allowAutonomousControl = false;
+        provider.credentialsConfigured = true; // via CLI's own OAuth store
+        provider.isTemplate = false;
+        (void)providerRegistry_->upsertProvider(provider);
+    }
+
+    mutable std::mutex mutex_;
+    std::map<std::string, SessionState> sessions_;
+    std::shared_ptr<IProviderRegistry> providerRegistry_;
+    std::shared_ptr<IProviderCatalogService> providerCatalogService_;
+};
+
 class SubAgentCatalogService final : public ISubAgentCatalogService {
 public:
     SubAgentCatalogService(std::shared_ptr<SharedState> state,
@@ -3565,7 +3838,14 @@ public:
         }
 
         const auto credentials = providerCredentialStore_->readCredentials(providerIterator->id);
-        if (credentials.empty()) {
+        const bool cliBridgedTransport =
+            registrationIterator->transport == ProviderExecutionTransport::ClaudeCodeCli ||
+            registrationIterator->transport == ProviderExecutionTransport::CodexCli;
+        // CLI-bridged transports get their credentials from the CLI's own OAuth
+        // store (e.g., `claude login`, `codex login`), so an empty credential
+        // bag is the expected path there. OpenAI-compatible direct HTTP still
+        // requires an API key because it does not share the CLI's auth.
+        if (credentials.empty() && !cliBridgedTransport) {
             record.errorMessage = "Provider credentials must be configured before execution can start.";
             record.completedAtUtc = timestampNowUtc();
             persistRecord(record);
@@ -3578,10 +3858,17 @@ public:
         }
 
         record.status = ProviderExecutionStatus::Running;
-        if (registrationIterator->transport == ProviderExecutionTransport::ClaudeCodeCli) {
-            record = executeClaudeCodeCli(*providerIterator, request, accessibleEndpoints, credentials, record);
-        } else {
-            record = executeOpenAICompatibleChat(*providerIterator, request, accessibleEndpoints, credentials, record);
+        switch (registrationIterator->transport) {
+            case ProviderExecutionTransport::ClaudeCodeCli:
+                record = executeClaudeCodeCli(*providerIterator, request, accessibleEndpoints, credentials, record);
+                break;
+            case ProviderExecutionTransport::CodexCli:
+                record = executeCodexCli(*providerIterator, request, accessibleEndpoints, credentials, record);
+                break;
+            case ProviderExecutionTransport::OpenAICompatibleChat:
+            default:
+                record = executeOpenAICompatibleChat(*providerIterator, request, accessibleEndpoints, credentials, record);
+                break;
         }
         if (record.completedAtUtc.empty()) {
             record.completedAtUtc = timestampNowUtc();
@@ -4019,6 +4306,98 @@ private:
         } catch (...) {
             record.outputText = stdoutText;
         }
+        if (record.outputText.empty()) {
+            record.outputText = trimCopy(process.stderrText);
+        }
+        record.status = ProviderExecutionStatus::Succeeded;
+        record.completedAtUtc = timestampNowUtc();
+        return record;
+    }
+
+    // Codex CLI executor. Mirrors executeClaudeCodeCli: finds the `codex`
+    // binary on PATH, invokes `codex exec` with the user's prompt, and
+    // captures stdout. No credentials are passed — the Codex CLI uses its
+    // own OAuth-stored tokens (populated by the in-shell Sign-In wizard).
+    // If the user opted into an API-key fallback, we forward it via env.
+    ProviderExecutionRecord executeCodexCli(const ProviderConnection& provider,
+                                            const ProviderExecutionRequest& request,
+                                            const std::vector<RuntimeEndpoint>& /*endpoints*/,
+                                            const std::map<std::string, std::string>& credentials,
+                                            ProviderExecutionRecord record) const {
+        std::optional<std::filesystem::path> codexCommand;
+        const DWORD configuredCommandLength = GetEnvironmentVariableW(L"MASTERCONTROL_CODEX_COMMAND", nullptr, 0);
+        if (configuredCommandLength > 0) {
+            std::wstring configured(static_cast<size_t>(configuredCommandLength - 1), L'\0');
+            GetEnvironmentVariableW(L"MASTERCONTROL_CODEX_COMMAND", configured.data(), configuredCommandLength);
+            codexCommand = std::filesystem::path(configured);
+        } else {
+            codexCommand = findCommandOnPath({ L"codex.exe", L"codex.cmd", L"codex.bat", L"codex" });
+        }
+        if (!codexCommand.has_value()) {
+            record.status = ProviderExecutionStatus::Failed;
+            record.errorMessage = "Codex CLI was not found on PATH. Run the Sign in to ChatGPT wizard first.";
+            record.completedAtUtc = timestampNowUtc();
+            return record;
+        }
+
+        std::vector<std::wstring> arguments{
+            codexCommand->wstring(),
+            L"exec",
+            wideFromUtf8(request.prompt)
+        };
+        if (!provider.modelId.empty()) {
+            arguments.push_back(L"--model");
+            arguments.push_back(wideFromUtf8(provider.modelId));
+        }
+
+        std::wstring commandLine;
+        if (startsWithInsensitive(codexCommand->extension().string(), ".cmd") ||
+            startsWithInsensitive(codexCommand->extension().string(), ".bat")) {
+            commandLine = L"cmd.exe /d /s /c ";
+            commandLine += quoteWindowsArgument(joinCommandArguments(arguments));
+        } else {
+            commandLine = joinCommandArguments(arguments);
+        }
+
+        std::vector<std::pair<std::wstring, std::wstring>> environmentOverrides;
+        const std::string apiKey = firstCredentialValue(credentials, { "openai_api_key" });
+        if (!apiKey.empty()) {
+            // Users with an OpenAI API key can opt into bypassing ChatGPT
+            // sign-in. When present we forward it; otherwise the Codex CLI
+            // uses its own ~/.codex/auth.json OAuth tokens.
+            environmentOverrides.emplace_back(L"OPENAI_API_KEY", wideFromUtf8(apiKey));
+        }
+
+        const auto workingDirectory = request.workingDirectory.empty()
+            ? std::filesystem::current_path()
+            : std::filesystem::path(wideFromUtf8(request.workingDirectory));
+        const auto process = runProcessCapture(
+            commandLine,
+            workingDirectory,
+            environmentOverrides,
+            currentResourceAllocationProfile(),
+            true);
+        record.rawResponse = process.stdoutText.empty() ? process.stderrText : process.stdoutText;
+        if (!process.launched) {
+            record.status = ProviderExecutionStatus::Failed;
+            record.errorMessage = trimCopy(process.stderrText.empty() ? process.stdoutText : process.stderrText);
+            if (record.errorMessage.empty()) {
+                record.errorMessage = "Codex CLI could not be launched.";
+            }
+            record.completedAtUtc = timestampNowUtc();
+            return record;
+        }
+        if (process.exitCode != 0) {
+            record.status = ProviderExecutionStatus::Failed;
+            record.errorMessage = trimCopy(process.stderrText.empty() ? process.stdoutText : process.stderrText);
+            if (record.errorMessage.empty()) {
+                record.errorMessage = "Codex CLI returned a non-zero exit code.";
+            }
+            record.completedAtUtc = timestampNowUtc();
+            return record;
+        }
+
+        record.outputText = trimCopy(process.stdoutText);
         if (record.outputText.empty()) {
             record.outputText = trimCopy(process.stderrText);
         }
@@ -8877,6 +9256,7 @@ private:
     std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
     std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService_;
     std::shared_ptr<IProviderExecutionService> providerExecutionService_;
+    std::shared_ptr<ProviderCliSignInService> providerCliSignInService_;
     std::shared_ptr<IExportService> exportService_;
     std::shared_ptr<IPlatformGovernanceToolService> platformGovernanceToolService_;
     std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService_;
@@ -8949,6 +9329,7 @@ bool MasterControlApplication::Impl::initialize() {
         inventoryService_,
         providerExecutionCatalogService_,
         commandLogicUnitService_);
+    providerCliSignInService_ = std::make_shared<ProviderCliSignInService>(providerRegistry_, providerCatalogService_);
     controlSurfaceService_ = std::make_shared<ModuleControlSurfaceService>();
     beaconService_ = std::make_shared<BeaconService>(configurationService_, telemetryService_, platformServiceCatalogService_);
     registerConfigurationDefaults();
@@ -9888,6 +10269,79 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "POST" && request.path == "/api/providers/auto-connect") {
             const auto result = adminApiService_->autoConnectProviderJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
+        // Account-only sign-in wizard: spawn `claude login` or `codex login`
+        // in a new console, let the user complete OAuth in their browser,
+        // then poll for completion. On success a ProviderConnection is
+        // registered that routes execution through the CLI — no API key
+        // ever needs to be stored by the server.
+        if (request.method == "POST" && request.path == "/api/providers/signin/start") {
+            if (!providerCliSignInService_) {
+                return jsonResponse(nlohmann::json{
+                    { "succeeded", false },
+                    { "message", "Sign-in service is not ready." }
+                }, 500);
+            }
+            nlohmann::json body = nlohmann::json::object();
+            try {
+                if (!request.body.empty()) {
+                    body = nlohmann::json::parse(request.body);
+                }
+            } catch (...) {
+                return jsonResponse(nlohmann::json{
+                    { "succeeded", false },
+                    { "message", "Invalid JSON body." }
+                }, 400);
+            }
+            const std::string bridge = body.value("bridge", std::string{});
+            const std::string providerId = body.value("providerId", std::string{});
+            const auto result = providerCliSignInService_->startSession(bridge, providerId);
+            const int status = result.value("succeeded", false) ? 200 : 400;
+            return jsonResponse(result, status);
+        }
+        if (request.method == "GET" && startsWith(request.path, "/api/providers/signin/status")) {
+            if (!providerCliSignInService_) {
+                return jsonResponse(nlohmann::json{
+                    { "succeeded", false },
+                    { "message", "Sign-in service is not ready." }
+                }, 500);
+            }
+            // sessionId is passed as a query string parameter: ?sessionId=<id>
+            std::string sessionId;
+            const auto qmark = request.path.find('?');
+            if (qmark != std::string::npos) {
+                const auto query = request.path.substr(qmark + 1);
+                size_t cursor = 0;
+                while (cursor < query.size()) {
+                    const auto amp = query.find('&', cursor);
+                    const auto piece = query.substr(cursor, amp == std::string::npos ? std::string::npos : amp - cursor);
+                    const auto eq = piece.find('=');
+                    if (eq != std::string::npos) {
+                        const auto key = piece.substr(0, eq);
+                        const auto value = piece.substr(eq + 1);
+                        if (key == "sessionId") {
+                            sessionId = value;
+                            break;
+                        }
+                    }
+                    if (amp == std::string::npos) break;
+                    cursor = amp + 1;
+                }
+            }
+            if (sessionId.empty()) {
+                return jsonResponse(nlohmann::json{
+                    { "succeeded", false },
+                    { "message", "Missing sessionId parameter." }
+                }, 400);
+            }
+            const auto result = providerCliSignInService_->querySession(sessionId);
+            return jsonResponse(result, 200);
+        }
+        if (request.method == "GET" && request.path == "/api/providers/signin/installed") {
+            if (!providerCliSignInService_) {
+                return jsonResponse(nlohmann::json::array(), 200);
+            }
+            return jsonResponse(providerCliSignInService_->detectInstalled(), 200);
         }
         if (request.method == "POST" && request.path == "/api/platform-services/apple-hosts") {
             const auto result = adminApiService_->upsertAppleRemoteHostJson(request.body);

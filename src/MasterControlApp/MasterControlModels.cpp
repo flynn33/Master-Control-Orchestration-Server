@@ -102,7 +102,8 @@ std::string to_string(ProviderExecutionStatus value) {
 std::string to_string(ProviderExecutionTransport value) {
     return enumToString(value, {
         { ProviderExecutionTransport::OpenAICompatibleChat, "openai_compatible_chat" },
-        { ProviderExecutionTransport::ClaudeCodeCli, "claude_code_cli" }
+        { ProviderExecutionTransport::ClaudeCodeCli, "claude_code_cli" },
+        { ProviderExecutionTransport::CodexCli, "codex_cli" }
     });
 }
 
@@ -229,7 +230,8 @@ ProviderExecutionStatus providerExecutionStatusFromString(const std::string& val
 ProviderExecutionTransport providerExecutionTransportFromString(const std::string& value) {
     return enumFromString<ProviderExecutionTransport>(value, {
         { ProviderExecutionTransport::OpenAICompatibleChat, "openai_compatible_chat" },
-        { ProviderExecutionTransport::ClaudeCodeCli, "claude_code_cli" }
+        { ProviderExecutionTransport::ClaudeCodeCli, "claude_code_cli" },
+        { ProviderExecutionTransport::CodexCli, "codex_cli" }
     });
 }
 

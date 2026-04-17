@@ -657,7 +657,7 @@ void unregisterGovernanceTools(Forsetti::ForsettiContext& context,
 }
 
 ProviderCapabilityDescriptor makeCodexProviderCapability() {
-    return ProviderCapabilityDescriptor{
+    ProviderCapabilityDescriptor capability{
         "com.mastercontrol.provider-codex",
         "codex",
         ProviderKind::Codex,
@@ -670,16 +670,16 @@ ProviderCapabilityDescriptor makeCodexProviderCapability() {
                 "openai_api_key",
                 "OpenAI API Key",
                 ProviderCredentialFieldKind::ApiKey,
-                "Bearer key used for OpenAI Responses API and Codex-backed control calls.",
+                "Optional — only needed if you prefer to use an API key instead of signing in with your ChatGPT account via the Codex CLI.",
                 "sk-...",
                 "OPENAI_API_KEY",
-                "",
+                "openai_auth",
                 true,
-                true
+                false
             }
         },
         {
-            "OpenAI Responses API access",
+            "OpenAI Responses API access OR Codex CLI sign-in with a ChatGPT account",
             "Codex-compatible model access",
             "Supports shared MCP server and tool access"
         },
@@ -692,10 +692,13 @@ ProviderCapabilityDescriptor makeCodexProviderCapability() {
         true,
         true
     };
+    capability.cliBridgeCommand = "codex";
+    capability.cliBridgeAccountLabel = "ChatGPT account (sign in — no API key required)";
+    return capability;
 }
 
 ProviderCapabilityDescriptor makeChatGptProviderCapability() {
-    return ProviderCapabilityDescriptor{
+    ProviderCapabilityDescriptor capability{
         "com.mastercontrol.provider-codex",
         "chatgpt",
         ProviderKind::Codex,
@@ -708,16 +711,16 @@ ProviderCapabilityDescriptor makeChatGptProviderCapability() {
                 "openai_api_key",
                 "OpenAI API Key",
                 ProviderCredentialFieldKind::ApiKey,
-                "Bearer key used for OpenAI Responses API and ChatGPT-backed orchestration calls.",
+                "Optional — only needed if you prefer to use an API key instead of signing in with your ChatGPT account via the Codex CLI.",
                 "sk-...",
                 "OPENAI_API_KEY",
-                "",
+                "openai_auth",
                 true,
-                true
+                false
             }
         },
         {
-            "OpenAI Responses API access",
+            "OpenAI Responses API access OR Codex CLI sign-in with a ChatGPT account",
             "ChatGPT-compatible model access",
             "Supports shared MCP server and tool access"
         },
@@ -729,6 +732,9 @@ ProviderCapabilityDescriptor makeChatGptProviderCapability() {
         true,
         true
     };
+    capability.cliBridgeCommand = "codex";
+    capability.cliBridgeAccountLabel = "ChatGPT account (sign in — no API key required)";
+    return capability;
 }
 
 ProviderExecutionRegistration makeCodexProviderExecutionRegistration() {
@@ -737,7 +743,11 @@ ProviderExecutionRegistration makeCodexProviderExecutionRegistration() {
         "codex",
         ProviderKind::Codex,
         "Codex",
-        ProviderExecutionTransport::OpenAICompatibleChat,
+        // Route through the Codex CLI so ChatGPT-account sign-in (the primary
+        // no-API-key path) works out of the box. The CLI transparently
+        // forwards an OPENAI_API_KEY env var if the operator opted into the
+        // API-key fallback.
+        ProviderExecutionTransport::CodexCli,
         true,
         false
     };
@@ -749,14 +759,14 @@ ProviderExecutionRegistration makeChatGptProviderExecutionRegistration() {
         "chatgpt",
         ProviderKind::Codex,
         "ChatGPT",
-        ProviderExecutionTransport::OpenAICompatibleChat,
+        ProviderExecutionTransport::CodexCli,
         true,
         false
     };
 }
 
 ProviderCapabilityDescriptor makeClaudeCodeProviderCapability() {
-    return ProviderCapabilityDescriptor{
+    ProviderCapabilityDescriptor capability{
         "com.mastercontrol.provider-claude-code",
         "claude-code",
         ProviderKind::ClaudeCode,
@@ -769,7 +779,7 @@ ProviderCapabilityDescriptor makeClaudeCodeProviderCapability() {
                 "anthropic_api_key",
                 "Anthropic API Key",
                 ProviderCredentialFieldKind::ApiKey,
-                "Use an API key for hosted Claude execution.",
+                "Optional — only needed if you prefer an API key over signing in with your Claude account.",
                 "sk-ant-...",
                 "ANTHROPIC_API_KEY",
                 "anthropic_auth",
@@ -780,7 +790,7 @@ ProviderCapabilityDescriptor makeClaudeCodeProviderCapability() {
                 "anthropic_auth_token",
                 "Claude Auth Token",
                 ProviderCredentialFieldKind::AuthToken,
-                "Alternative Claude Code or Agent SDK token when an API key is not used.",
+                "Optional — alternative Claude Code or Agent SDK token for programmatic execution.",
                 "token...",
                 "ANTHROPIC_AUTH_TOKEN",
                 "anthropic_auth",
@@ -802,6 +812,9 @@ ProviderCapabilityDescriptor makeClaudeCodeProviderCapability() {
         true,
         true
     };
+    capability.cliBridgeCommand = "claude";
+    capability.cliBridgeAccountLabel = "Claude Pro / Max / Team account (sign in — no API key required)";
+    return capability;
 }
 
 ProviderExecutionRegistration makeClaudeCodeProviderExecutionRegistration() {

@@ -77,6 +77,10 @@ struct ProvidersSectionControl : ProvidersSectionControlT<ProvidersSectionContro
                                          Microsoft::UI::Xaml::RoutedEventArgs const&);
     void SaveAiAutonomyButton_Click(Windows::Foundation::IInspectable const&,
                                     Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void SignInWithClaudeButton_Click(Windows::Foundation::IInspectable const&,
+                                      Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void SignInWithChatGptButton_Click(Windows::Foundation::IInspectable const&,
+                                       Microsoft::UI::Xaml::RoutedEventArgs const&);
 
 private:
     void PopulateProviderEditor(size_t index);
@@ -104,6 +108,7 @@ private:
     winrt::Windows::Foundation::IAsyncAction SaveProviderAssignmentAsync();
     winrt::Windows::Foundation::IAsyncAction ExecuteProviderTaskAsync();
     winrt::Windows::Foundation::IAsyncAction SaveAiAutonomyAsync();
+    winrt::Windows::Foundation::IAsyncAction RunCliSignInAsync(std::wstring bridge, std::wstring providerId);
 
     ::MasterControlShell::ShellRuntime* runtime_ = nullptr;
     std::function<void()> refreshRequested_;

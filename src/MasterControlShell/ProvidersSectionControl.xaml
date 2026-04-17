@@ -16,6 +16,35 @@
             <StackPanel Spacing="20">
                 <Border Style="{StaticResource ShellCardStyle}">
                     <StackPanel Spacing="14">
+                        <TextBlock Text="ADD AI MODEL · ACCOUNT SIGN-IN" Style="{StaticResource ShellEyebrowTextStyle}" />
+                        <TextBlock Text="Sign in with your Claude or ChatGPT account" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock
+                            Text="One-click sign-in — no API key required. Click a provider below and complete the sign-in prompt in the console window that opens. The provider's CLI owns its own tokens; the orchestration server never sees them."
+                            Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
+
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Spacing="6">
+                                <TextBlock Text="CLAUDE (Pro / Max / Team)" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                <Button x:Name="SignInWithClaudeButton" Click="SignInWithClaudeButton_Click" Content="Sign in with Claude account" HorizontalAlignment="Stretch" />
+                                <TextBlock x:Name="ClaudeSignInStatusText" Text="Ready." Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Spacing="6">
+                                <TextBlock Text="CHATGPT (via Codex CLI)" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                <Button x:Name="SignInWithChatGptButton" Click="SignInWithChatGptButton_Click" Content="Sign in with ChatGPT account" HorizontalAlignment="Stretch" />
+                                <TextBlock x:Name="ChatGptSignInStatusText" Text="Ready." Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource ShellCardStyle}">
+                    <StackPanel Spacing="14">
                         <TextBlock Text="AUTO-CONNECT · AI MODEL" Style="{StaticResource ShellEyebrowTextStyle}" />
                         <TextBlock Text="Connect an AI Model" Style="{StaticResource ShellSectionTitleTextStyle}" />
                         <TextBlock

@@ -2844,4 +2844,109 @@ std::filesystem::path ShellRuntime::ResolveExportsDirectory() const {
     return ResolveDataDirectory() / "exports";
 }
 
+ShellRuntime::ShellCliSignInStartResult ShellRuntime::StartCliSignIn(
+    const std::wstring& bridge,
+    const std::wstring& providerId) const {
+    ShellCliSignInStartResult result;
+
+    JsonObject payload;
+    payload.SetNamedValue(L"bridge", JsonValue::CreateStringValue(bridge));
+    payload.SetNamedValue(L"providerId", JsonValue::CreateStringValue(providerId));
+
+    std::wstring errorMessage;
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    const auto response = httpRequest(
+        host,
+        port,
+        L"POST",
+        L"/api/providers/signin/start",
+        narrowFromWide(payload.Stringify().c_str()),
+        {},
+        errorMessage);
+    if (!response.has_value()) {
+        result.message = errorMessage.empty() ? L"Unable to reach the admin API." : errorMessage;
+        return result;
+    }
+    const auto body = parseJsonObject(response->body);
+    if (!body.has_value()) {
+        result.message = L"The admin API returned an unreadable response.";
+        return result;
+    }
+    result.succeeded = jsonBoolOr(*body, L"succeeded", false);
+    result.message = wideFromUtf8(jsonStringOr(*body, L"message", ""));
+    result.sessionId = wideFromUtf8(jsonStringOr(*body, L"sessionId", ""));
+    result.bridge = wideFromUtf8(jsonStringOr(*body, L"bridge", narrowFromWide(bridge)));
+    if (body->HasKey(L"cliInstalled")) {
+        result.cliInstalled = jsonBoolOr(*body, L"cliInstalled", true);
+    }
+    return result;
+}
+
+ShellRuntime::ShellCliSignInStatusResult ShellRuntime::GetCliSignInStatus(
+    const std::wstring& sessionId) const {
+    ShellCliSignInStatusResult result;
+    result.succeeded = false;
+    result.status = L"failed";
+
+    if (sessionId.empty()) {
+        result.message = L"Missing session id.";
+        return result;
+    }
+
+    const auto path = L"/api/providers/signin/status?sessionId=" + sessionId;
+    std::wstring errorMessage;
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    const auto response = httpGet(host, port, path, errorMessage);
+    if (!response.has_value()) {
+        result.message = errorMessage.empty() ? L"Unable to reach the admin API." : errorMessage;
+        return result;
+    }
+    const auto body = parseJsonObject(response->body);
+    if (!body.has_value()) {
+        result.message = L"The admin API returned an unreadable response.";
+        return result;
+    }
+    result.succeeded = jsonBoolOr(*body, L"succeeded", false);
+    result.status = wideFromUtf8(jsonStringOr(*body, L"status", "failed"));
+    result.message = wideFromUtf8(jsonStringOr(*body, L"message", ""));
+    result.bridge = wideFromUtf8(jsonStringOr(*body, L"bridge", ""));
+    result.providerId = wideFromUtf8(jsonStringOr(*body, L"providerId", ""));
+    result.accountLabel = wideFromUtf8(jsonStringOr(*body, L"accountLabel", ""));
+    return result;
+}
+
+std::vector<ShellRuntime::ShellCliSignInDetectEntry> ShellRuntime::DetectCliSignInInstalled() const {
+    std::vector<ShellCliSignInDetectEntry> entries;
+
+    std::wstring errorMessage;
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    const auto response = httpGet(host, port, L"/api/providers/signin/installed", errorMessage);
+    if (!response.has_value()) {
+        return entries;
+    }
+    try {
+        const auto jsonText = wideFromUtf8(response->body);
+        const auto parsed = JsonValue::Parse(jsonText);
+        if (parsed.ValueType() != JsonValueType::Array) {
+            return entries;
+        }
+        const auto array = parsed.GetArray();
+        for (const auto& value : array) {
+            if (value.ValueType() != JsonValueType::Object) {
+                continue;
+            }
+            const auto obj = value.GetObject();
+            ShellCliSignInDetectEntry entry;
+            entry.bridge = wideFromUtf8(jsonStringOr(obj, L"bridge", ""));
+            entry.displayName = wideFromUtf8(jsonStringOr(obj, L"displayName", ""));
+            entry.installed = jsonBoolOr(obj, L"installed", false);
+            entry.signedIn = jsonBoolOr(obj, L"signedIn", false);
+            entries.push_back(entry);
+        }
+    } catch (...) {
+        // Return whatever we managed to parse.
+    }
+    return entries;
+}
+
 } // namespace MasterControlShell

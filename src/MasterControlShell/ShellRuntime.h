@@ -516,6 +516,36 @@ public:
     // One-shot automation: pick a kind, hand over credentials, pick roles, done.
     [[nodiscard]] ShellAutoConnectProviderResult AutoConnectProvider(const ShellAutoConnectProviderRequest& request) const;
 
+    // Account-only sign-in wizard: drives the CLI's own OAuth flow so no
+    // API keys are ever entered by the operator. StartCliSignIn spawns
+    // `claude login` / `codex login` on the host; GetCliSignInStatus polls
+    // the resulting session until it reports "complete" or "failed".
+    struct ShellCliSignInStartResult {
+        bool succeeded = false;
+        std::wstring message;
+        std::wstring sessionId;
+        std::wstring bridge;
+        bool cliInstalled = true;
+    };
+    struct ShellCliSignInStatusResult {
+        bool succeeded = false;
+        std::wstring status;   // "pending" | "complete" | "failed"
+        std::wstring message;
+        std::wstring bridge;
+        std::wstring providerId;
+        std::wstring accountLabel;
+    };
+    struct ShellCliSignInDetectEntry {
+        std::wstring bridge;
+        std::wstring displayName;
+        bool installed = false;
+        bool signedIn = false;
+    };
+    [[nodiscard]] ShellCliSignInStartResult StartCliSignIn(const std::wstring& bridge,
+                                                           const std::wstring& providerId) const;
+    [[nodiscard]] ShellCliSignInStatusResult GetCliSignInStatus(const std::wstring& sessionId) const;
+    [[nodiscard]] std::vector<ShellCliSignInDetectEntry> DetectCliSignInInstalled() const;
+
     // Live activity stream: poll the service's ActivityEventRing for events
     // strictly newer than `sinceId`. Pass an empty string on first call to
     // receive the most recent buffer window. Subsequent calls should use

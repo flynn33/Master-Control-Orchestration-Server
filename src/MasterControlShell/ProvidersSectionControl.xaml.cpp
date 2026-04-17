@@ -1580,4 +1580,88 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::SaveAiAutonomy
     UpdateEditorState();
 }
 
+void ProvidersSectionControl::SignInWithClaudeButton_Click(IInspectable const&, RoutedEventArgs const&) {
+    RunCliSignInAsync(L"claude", L"claude-code");
+}
+
+void ProvidersSectionControl::SignInWithChatGptButton_Click(IInspectable const&, RoutedEventArgs const&) {
+    RunCliSignInAsync(L"codex", L"chatgpt");
+}
+
+// Drives the account-only sign-in flow end to end: disables the button,
+// calls StartCliSignIn to spawn the CLI login, then polls status every 2s
+// until complete or failed. Status text below the button surfaces every
+// transition so the operator can tell what is happening.
+winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RunCliSignInAsync(
+    std::wstring bridge,
+    std::wstring providerId) {
+    if (runtime_ == nullptr) {
+        co_return;
+    }
+
+    const auto statusText = (bridge == L"claude")
+        ? ClaudeSignInStatusText()
+        : ChatGptSignInStatusText();
+    const auto primaryButton = (bridge == L"claude")
+        ? SignInWithClaudeButton()
+        : SignInWithChatGptButton();
+
+    primaryButton.IsEnabled(false);
+    statusText.Text(winrt::hstring(L"Opening sign-in console..."));
+
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+
+    const auto startResult = runtime_->StartCliSignIn(bridge, providerId);
+
+    co_await uiThread;
+
+    if (!startResult.succeeded) {
+        statusText.Text(winrt::hstring(startResult.message.empty()
+            ? L"Sign-in could not start."
+            : startResult.message));
+        primaryButton.IsEnabled(true);
+        co_return;
+    }
+
+    statusText.Text(winrt::hstring(
+        startResult.message.empty()
+            ? L"Sign-in console opened. Complete the prompt in that window."
+            : startResult.message));
+
+    const auto sessionId = startResult.sessionId;
+    constexpr int kMaxPollAttempts = 300; // ~10 minutes at 2s cadence
+    for (int attempt = 0; attempt < kMaxPollAttempts; ++attempt) {
+        co_await winrt::resume_after(std::chrono::milliseconds(2000));
+
+        co_await winrt::resume_background();
+        const auto statusResult = runtime_->GetCliSignInStatus(sessionId);
+
+        co_await uiThread;
+        if (statusResult.status == L"complete") {
+            statusText.Text(winrt::hstring(statusResult.message.empty()
+                ? L"Signed in. Assign this provider to a role below."
+                : statusResult.message));
+            primaryButton.IsEnabled(true);
+            if (refreshRequested_) {
+                refreshRequested_();
+            }
+            co_return;
+        }
+        if (statusResult.status == L"failed") {
+            statusText.Text(winrt::hstring(statusResult.message.empty()
+                ? L"Sign-in failed."
+                : statusResult.message));
+            primaryButton.IsEnabled(true);
+            co_return;
+        }
+        if (!statusResult.message.empty()) {
+            statusText.Text(winrt::hstring(statusResult.message));
+        }
+    }
+
+    statusText.Text(winrt::hstring(L"Sign-in timed out. Re-try if needed."));
+    primaryButton.IsEnabled(true);
+}
+
 } // namespace winrt::MasterControlShell::implementation

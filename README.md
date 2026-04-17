@@ -1,13 +1,13 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.4.2--rc.4-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--17-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.4.2--rc.5-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--17-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
 
 > Forsetti-compliant Windows orchestration control plane for MCP services, AI provider routing, 
 > CLU governance, sub-agents, platform gateways, telemetry, and browser-based operations — 
 > all delivered as a single Tron-themed product.
 
 - **Repository:** [`master-control-dashboard`](https://github.com/flynn33/Master-Control-Orchestration-Server)
-- **Current release:** `v0.4.2-rc.4` (2026-04-17)
+- **Current release:** `v0.4.2-rc.5` (2026-04-17)
 - **Forsetti modules:** 19
 
 ---
@@ -117,15 +117,19 @@ See [Operations](docs/wiki/Operations.md) for the full deployment matrix, and
 
 ## Current release
 
-**`v0.4.2-rc.4` — 2026-04-17**
+**`v0.4.2-rc.5` — 2026-04-17**
 
-Telemetry is now unmistakably live: 1-second cadence, hero badge shows LIVE #N + HH:MM:SS that ticks every second, RAII flag guard ensures the live tick can never get stuck, and the badge flips to OFFLINE with amber when the admin API is unreachable so stuck-UI is visually distinct from a dead backend.
+Add AI Model — account-only sign-in wizard for Claude and ChatGPT. No API key required: click 'Sign in with Claude' or 'Sign in with ChatGPT' and the provider's own CLI drives OAuth in your browser. The orchestration server never sees tokens — the CLI keeps them in its native store. Execution routes back through the same CLI via a new CodexCli transport.
 
-- feat(shell): live telemetry timer dropped from 2s to 1s cadence
-- feat(shell): visible LIVE #N · HH:MM:SS badge in the title bar that bumps every tick (including failed ticks), giving unmistakable proof the telemetry pipeline is alive even on idle hosts where CPU/RAM numbers happen to be stable
-- feat(shell): badge flips to OFFLINE (amber) when the admin API call fails so a stuck UI is visually distinct from a non-responsive backend
-- fix(shell): RefreshLiveAsync now uses a RAII guard so liveRefreshInFlight_ is ALWAYS cleared on every exit path, including exceptions; prevents the tick from silently stopping
-- feat(browser): same LIVE #N · HH:MM:SS treatment on the health badge; browser poll dropped from 2s to 1s
+- feat(models): ProviderCapabilityDescriptor now carries cliBridgeCommand ("claude" | "codex") and cliBridgeAccountLabel so the UI knows which providers support account-only sign-in
+- feat(runtime): ProviderExecutionTransport::CodexCli added alongside ClaudeCodeCli; dispatch bypasses the credential-required check for CLI-bridged transports
+- feat(runtime): ProviderCliSignInService spawns `claude login` / `codex login` in a new console, polls for exit + auth-file presence, registers the provider on success — no API key is ever stored on the server side
+- feat(runtime): new endpoints POST /api/providers/signin/start, GET /api/providers/signin/status?sessionId=, GET /api/providers/signin/installed
+- feat(runtime): executeCodexCli invokes `codex exec <prompt>` with optional OPENAI_API_KEY env forwarding for operators who prefer an API key instead of account sign-in
+- feat(modules): Claude Code, Codex, and ChatGPT capabilities advertise account-sign-in as the primary path; credential fields are now marked optional
+- feat(shell): Providers section gains a top-level 'Add AI Model — Account Sign-In' card with two buttons (Claude, ChatGPT) that drive the end-to-end OAuth flow with live status updates
+- feat(browser): matching sign-in cards at the top of the Providers view, polling /api/providers/signin/status every 2 seconds with live status transitions
+- fix(shell): ShellRuntime gains StartCliSignIn, GetCliSignInStatus, DetectCliSignInInstalled over the admin API
 ---
 
 Repository: https://github.com/flynn33/Master-Control-Orchestration-Server

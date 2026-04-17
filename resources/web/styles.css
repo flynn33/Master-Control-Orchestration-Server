@@ -1079,3 +1079,20 @@ dialog:focus-visible {
     animation: none;
   }
 }
+
+/* "Add AI Model" sign-in wizard cards */
+.sign-in-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+.sign-in-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-left: 3px solid var(--accent, #00f6ff);
+}
+.sign-in-card .button-row {
+  margin-top: auto;
+}

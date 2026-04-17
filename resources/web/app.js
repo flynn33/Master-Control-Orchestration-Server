@@ -402,6 +402,152 @@ function narrativePanel(label, title, body) {
   `;
 }
 
+// ---- Account-only sign-in wizard ------------------------------------------
+// Provider capabilities that declare a cliBridgeCommand get a big "Sign in"
+// card at the top of the Providers view. Clicking it POSTs to
+// /api/providers/signin/start which spawns `claude login` / `codex login`
+// in a new console; the server polls for completion and reports back via
+// /api/providers/signin/status. No API key is ever entered by the user.
+function renderSignInCards() {
+  const snapshot = dashboardSnapshot();
+  const capabilities = (snapshot.providerCapabilities || []).filter((cap) => !!cap.cliBridgeCommand);
+  if (capabilities.length === 0) {
+    return '';
+  }
+
+  // Deduplicate by bridge command (e.g. chatgpt + codex both bridge "codex" —
+  // show one card that covers both).
+  const seenBridges = new Set();
+  const uniqueCaps = [];
+  for (const cap of capabilities) {
+    const bridge = cap.cliBridgeCommand;
+    if (seenBridges.has(bridge)) continue;
+    seenBridges.add(bridge);
+    uniqueCaps.push(cap);
+  }
+
+  const installed = state.signIn.installed || [];
+  const installedByBridge = Object.fromEntries(installed.map((entry) => [entry.bridge, entry]));
+  const sessions = state.signIn.sessionsByBridge || {};
+
+  const cardsMarkup = uniqueCaps.map((cap) => {
+    const bridge = cap.cliBridgeCommand;
+    const info = installedByBridge[bridge] || { installed: false, signedIn: false };
+    const session = sessions[bridge];
+    const matchingProvider = (snapshot.providers || []).find((p) => p.id === cap.providerId);
+
+    let statusLine = '';
+    let buttonLabel = 'Sign in with your account';
+    let buttonDisabled = '';
+    let buttonAction = `data-action="signin-start" data-bridge="${escapeHtml(bridge)}" data-provider="${escapeHtml(cap.providerId)}"`;
+
+    if (!info.installed) {
+      statusLine = `${escapeHtml(info.displayName || bridge)} is not installed on this host. Install it (or run the first-run setup) before signing in.`;
+      buttonLabel = 'CLI not installed';
+      buttonDisabled = ' disabled';
+      buttonAction = '';
+    } else if (session && session.status === 'pending') {
+      statusLine = 'A sign-in console window is open. Complete the prompt in that window to finish.';
+      buttonLabel = 'Waiting for sign-in…';
+      buttonDisabled = ' disabled';
+      buttonAction = '';
+    } else if (matchingProvider && matchingProvider.credentialsConfigured) {
+      statusLine = `Signed in. ${escapeHtml(cap.cliBridgeAccountLabel || 'Account is ready')}. Assign this provider to a role below.`;
+      buttonLabel = 'Signed in \u00b7 re-authenticate';
+    } else if (info.signedIn) {
+      statusLine = `${escapeHtml(info.displayName || bridge)} reports a saved session. Click to register it with the orchestration server.`;
+      buttonLabel = 'Add to providers';
+    } else {
+      statusLine = escapeHtml(cap.cliBridgeAccountLabel || 'Sign in opens a console window — complete the prompt in your browser.');
+    }
+
+    const message = session && session.message ? `<p class="status-message" data-tone="${escapeHtml(session.status === 'failed' ? 'error' : session.status === 'complete' ? 'success' : 'info')}">${escapeHtml(session.message)}</p>` : '';
+
+    return `
+      <article class="panel-block sign-in-card">
+        <p class="eyebrow">${escapeHtml(cap.displayName)}</p>
+        <h3>Sign in to use ${escapeHtml(cap.displayName)}</h3>
+        <p class="narrative-copy">${statusLine}</p>
+        ${message}
+        <div class="button-row">
+          <button type="button" class="route-button"${buttonAction}${buttonDisabled}>${escapeHtml(buttonLabel)}</button>
+        </div>
+      </article>
+    `;
+  }).join('');
+
+  return `
+    <article class="panel-block">
+      <p class="eyebrow">Add AI Model \u2014 Account Sign-In</p>
+      <h3>Connect Claude or ChatGPT with just your account</h3>
+      <p class="narrative-copy">Click a card to open your provider's built-in sign-in flow. The CLI handles OAuth in your browser and stores its own tokens — you never have to paste an API key or auth token here.</p>
+      <div class="sign-in-grid">
+        ${cardsMarkup}
+      </div>
+    </article>
+  `;
+}
+
+async function signInDetectInstalled() {
+  try {
+    const installed = await loadJson('/api/providers/signin/installed');
+    state.signIn.installed = Array.isArray(installed) ? installed : [];
+    renderShell();
+  } catch (error) {
+    console.debug('signIn installed detect error', error);
+  }
+}
+
+async function signInStart(bridge, providerId) {
+  state.signIn.sessionsByBridge[bridge] = { status: 'pending', message: 'Opening sign-in console…' };
+  renderShell();
+  try {
+    const response = await loadJson('/api/providers/signin/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bridge, providerId })
+    });
+    if (!response.succeeded) {
+      state.signIn.sessionsByBridge[bridge] = { status: 'failed', message: response.message || 'Sign-in could not start.' };
+      renderShell();
+      return;
+    }
+    state.signIn.sessionsByBridge[bridge] = {
+      status: 'pending',
+      sessionId: response.sessionId,
+      message: response.message || 'Complete the sign-in prompt.'
+    };
+    renderShell();
+    pollSignIn(bridge);
+  } catch (error) {
+    state.signIn.sessionsByBridge[bridge] = { status: 'failed', message: error.message || 'Sign-in could not start.' };
+    renderShell();
+  }
+}
+
+async function pollSignIn(bridge) {
+  const session = state.signIn.sessionsByBridge[bridge];
+  if (!session || !session.sessionId || session.status !== 'pending') return;
+  try {
+    const status = await loadJson('/api/providers/signin/status?sessionId=' + encodeURIComponent(session.sessionId));
+    state.signIn.sessionsByBridge[bridge] = {
+      status: status.status || 'pending',
+      sessionId: session.sessionId,
+      message: status.message || ''
+    };
+    renderShell();
+    if (status.status === 'pending') {
+      setTimeout(() => pollSignIn(bridge), 2000);
+    } else if (status.status === 'complete') {
+      await signInDetectInstalled();
+      await refreshDashboard({ preserveDynamicContent: false });
+    }
+  } catch (error) {
+    console.debug('pollSignIn error', error);
+    setTimeout(() => pollSignIn(bridge), 3000);
+  }
+}
+
 function statusMessage(status) {
   return `
     <p class="status-message" data-tone="${escapeHtml(status.tone || 'info')}">
@@ -1686,6 +1832,13 @@ const state = {
   wizard: defaultWizardState(),
   // WS4 — setup dependency detect/install state per dependency id
   setupDependencies: {},
+  // "Add AI Model" sign-in wizard state.
+  // installed: per-bridge install + signed-in status from /api/providers/signin/installed
+  // sessionsByBridge: per-bridge pending/complete/failed session tracking
+  signIn: {
+    installed: [],
+    sessionsByBridge: {}
+  },
   surfaceNotice: makeStatus('Browser host waiting for the first Forsetti surface snapshot.', 'info'),
   lastRefreshLabel: 'Pending'
 };
@@ -3312,6 +3465,7 @@ function renderProvidersView() {
   const credentialStatus = selectedProviderCredentialStatus();
   const credentialFields = capability?.credentialFields || [];
   const subAgentTargets = snapshot.providerAssignmentTargets.filter((target) => target.kind === 'sub_agent');
+  const signInMarkup = renderSignInCards();
   const providersMarkup = snapshot.providers.length ? `
     <div class="provider-list">
       ${snapshot.providers.map((provider) => `
@@ -3448,6 +3602,8 @@ function renderProvidersView() {
 
   return `
     <section class="section-shell">
+      ${signInMarkup}
+
       <div class="card-grid">
         ${metricCard('Configured Providers', formatCount(snapshot.providers.length), 'service registry')}
         ${metricCard('Enabled Providers', formatCount(snapshot.providers.filter((provider) => provider.enabled).length), 'active routes')}
@@ -5454,6 +5610,14 @@ function handleSurfaceClick(event) {
     }
     return;
   }
+  if (action === 'signin-start') {
+    const bridge = button.getAttribute('data-bridge');
+    const providerId = button.getAttribute('data-provider');
+    if (bridge) {
+      signInStart(bridge, providerId || '');
+    }
+    return;
+  }
   if (action === 'clear-manual-fallback') {
     state.guidedWorkflow.fallback = null;
     state.guidedWorkflow.progress = null;
@@ -6009,6 +6173,7 @@ surfaceOverlayDialog.addEventListener('close', () => {
 
 renderShell();
 refreshDashboard({ preserveDynamicContent: false });
+signInDetectInstalled();
 
 // Live telemetry cadence: patch only the value/meter/detail elements of
 // cards marked with data-live="<metric>" on a 2-second interval. The rest

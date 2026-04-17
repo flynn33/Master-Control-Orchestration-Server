@@ -63,7 +63,8 @@ enum class ProviderExecutionStatus {
 
 enum class ProviderExecutionTransport {
     OpenAICompatibleChat,
-    ClaudeCodeCli
+    ClaudeCodeCli,
+    CodexCli
 };
 
 enum class InstallerKind {
@@ -215,6 +216,17 @@ struct ProviderCapabilityDescriptor final {
     std::string oauthAuthorizeUrl;
     std::string oauthClientId;
     std::string oauthScope;
+    // CLI sign-in bridge. When non-empty, the "Add AI Model" wizard offers
+    // a no-API-key sign-in path by spawning this CLI's `login` subcommand
+    // (e.g., `claude login`, `codex login`). The CLI's own OAuth flow
+    // stores tokens in its native location and execution then routes
+    // through the CLI with no credentials passed by us. Values: "", "claude",
+    // "codex". Empty disables the sign-in button and falls back to API-key
+    // entry.
+    std::string cliBridgeCommand;
+    // Human-readable sub-label shown under the sign-in button (e.g.
+    // "Claude Pro / Max / Team subscription"). Empty = no sub-label.
+    std::string cliBridgeAccountLabel;
 };
 
 struct ProviderCredentialStatus final {
@@ -1042,7 +1054,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     supportsOAuth,
     oauthAuthorizeUrl,
     oauthClientId,
-    oauthScope)
+    oauthScope,
+    cliBridgeCommand,
+    cliBridgeAccountLabel)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ProviderCredentialStatus,

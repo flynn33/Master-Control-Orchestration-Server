@@ -1,11 +1,29 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.2-rc.4",
-  "current_tag": "v0.4.2-rc.4",
+  "current_version": "0.4.2-rc.5",
+  "current_tag": "v0.4.2-rc.5",
   "released_at": "2026-04-17",
-  "last_release_commit": "1e63ea18ea46ee4660650f68dcdb1ecd212e46ee",
+  "last_release_commit": "8f67e0ac8fb96b5f56222ebd17842bc154d9b0ee",
   "history": [
+    {
+      "version": "0.4.2-rc.5",
+      "tag": "v0.4.2-rc.5",
+      "released_at": "2026-04-17",
+      "commit": "8f67e0ac8fb96b5f56222ebd17842bc154d9b0ee",
+      "summary": "Add AI Model \u2014 account-only sign-in wizard for Claude and ChatGPT. No API key required: click 'Sign in with Claude' or 'Sign in with ChatGPT' and the provider's own CLI drives OAuth in your browser. The orchestration server never sees tokens \u2014 the CLI keeps them in its native store. Execution routes back through the same CLI via a new CodexCli transport.",
+      "entries": [
+        "feat(models): ProviderCapabilityDescriptor now carries cliBridgeCommand (\"claude\" | \"codex\") and cliBridgeAccountLabel so the UI knows which providers support account-only sign-in",
+        "feat(runtime): ProviderExecutionTransport::CodexCli added alongside ClaudeCodeCli; dispatch bypasses the credential-required check for CLI-bridged transports",
+        "feat(runtime): ProviderCliSignInService spawns `claude login` / `codex login` in a new console, polls for exit + auth-file presence, registers the provider on success \u2014 no API key is ever stored on the server side",
+        "feat(runtime): new endpoints POST /api/providers/signin/start, GET /api/providers/signin/status?sessionId=, GET /api/providers/signin/installed",
+        "feat(runtime): executeCodexCli invokes `codex exec <prompt>` with optional OPENAI_API_KEY env forwarding for operators who prefer an API key instead of account sign-in",
+        "feat(modules): Claude Code, Codex, and ChatGPT capabilities advertise account-sign-in as the primary path; credential fields are now marked optional",
+        "feat(shell): Providers section gains a top-level 'Add AI Model \u2014 Account Sign-In' card with two buttons (Claude, ChatGPT) that drive the end-to-end OAuth flow with live status updates",
+        "feat(browser): matching sign-in cards at the top of the Providers view, polling /api/providers/signin/status every 2 seconds with live status transitions",
+        "fix(shell): ShellRuntime gains StartCliSignIn, GetCliSignInStatus, DetectCliSignInInstalled over the admin API"
+      ]
+    },
     {
       "version": "0.4.2-rc.4",
       "tag": "v0.4.2-rc.4",
