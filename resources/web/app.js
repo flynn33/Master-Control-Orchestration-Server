@@ -4028,7 +4028,7 @@ function renderSecurityView() {
 
       <article class="panel-block">
         <p class="eyebrow">Guided Security</p>
-        <h3>Harden The Protection Envelope</h3>
+        <h3>Harden Security Settings</h3>
         <p class="narrative-copy">Use the guided workflow when you want the orchestration server to walk you through security posture, LAN access, and trusted-host decisions instead of working directly in the raw control form.</p>
         ${renderGuidedWorkflowLaunchers(['guided-security'])}
       </article>

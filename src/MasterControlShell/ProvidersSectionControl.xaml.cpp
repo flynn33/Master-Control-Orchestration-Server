@@ -1530,6 +1530,7 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ExecuteProvide
     }
 
     ExecuteProviderTaskButton().IsEnabled(false);
+    ProviderExecutionProgressRing().IsActive(true);
     ProviderExecutionStatusText().Text(L"Dispatching provider task through the local admin API...");
     winrt::apartment_context uiThread;
     const auto request = ::MasterControlShell::ShellProviderExecutionRequest{
@@ -1542,6 +1543,7 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ExecuteProvide
     const auto record = runtime_->ExecuteProviderTask(request);
     co_await uiThread;
 
+    ProviderExecutionProgressRing().IsActive(false);
     providerExecutionDirty_ = false;
     ProviderExecutionStatusText().Text(winrt::hstring(
         record.errorMessage.empty()

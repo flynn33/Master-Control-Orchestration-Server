@@ -1,11 +1,25 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.2-rc.7",
-  "current_tag": "v0.4.2-rc.7",
+  "current_version": "0.4.2-rc.8",
+  "current_tag": "v0.4.2-rc.8",
   "released_at": "2026-04-17",
   "last_release_commit": "ff346124fa68cbfd92556952eb2a3ed073b16d3d",
   "history": [
+    {
+      "version": "0.4.2-rc.8",
+      "tag": "v0.4.2-rc.8",
+      "released_at": "2026-04-17",
+      "commit": "",
+      "summary": "UX overhaul: guided AI-model path surfaces first, advanced orchestration config hidden behind Expanders, symmetric button sizes with destructive-tone Remove controls, Run Provider Task shows a live progress ring, and successful installs stop littering the desktop with log receipts (failures still write). Jargon sweep: 'Forsetti Surface Toolbar'\u00a0\u2192\u00a0'Quick Actions', 'Protection Envelope'\u00a0\u2192\u00a0'Security Settings', 'Governed Resource Envelope'\u00a0\u2192\u00a0'Resource Allocation'.",
+      "entries": [
+        "fix(installer): MasterControlBootstrapper and setup launcher no longer write desktop log receipts on successful installs. Failures still land on the desktop; every run persists in %PUBLIC%\\Documents\\Master Control Orchestration Server\\logs\\installer regardless of outcome. MASTERCONTROL_BOOTSTRAPPER_LOG_DIR still forces a desktop log when set",
+        "feat(shell): Providers section now presents a guided primary path (sign-in cards + Auto-Connect + Provider Connections list + Provider Modules). Provider Editor, Credentials, AI Autonomy, Sub-Agent Groups, Ownership Routing, and Execution Console are collapsed behind two Advanced Expanders so first-time operators are no longer overwhelmed",
+        "fix(shell): App.xaml unified button sizing \u2014 implicit Button and ShellCommandButtonStyle both use MinHeight=48 with Padding=12,10 and HorizontalAlignment=Stretch; ShellSecondaryButtonStyle is now visibly recessive. Remove Group now uses ShellDangerButtonStyle. Paired action rows wrapped in equal-width Grids so Save / New / Remove are visually symmetric",
+        "feat(shell): Run Provider Task now shows a live ProgressRing beside the button while the request is in flight",
+        "fix(shell/browser): jargon sweep \u2014 'Forsetti Surface Toolbar' \u2192 'Quick Actions'; 'Protection Envelope' \u2192 'Security Settings'; 'Governed Resource Envelope' \u2192 'Resource Allocation' across MainWindow.xaml, SecuritySectionControl.xaml, SettingsSectionControl.xaml, TelemetrySectionControl.xaml, setup wizard copy, and the browser index.html / app.js harden-security card"
+      ]
+    },
     {
       "version": "0.4.2-rc.7",
       "tag": "v0.4.2-rc.7",

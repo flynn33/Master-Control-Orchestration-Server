@@ -118,7 +118,7 @@
 
                     <Border Style="{StaticResource ShellCardStyle}">
                         <StackPanel Spacing="16">
-                            <TextBlock Text="Governed Resource Envelope" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                            <TextBlock Text="Resource Allocation" Style="{StaticResource ShellSectionTitleTextStyle}" />
                             <Grid ColumnSpacing="14" RowSpacing="14">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />

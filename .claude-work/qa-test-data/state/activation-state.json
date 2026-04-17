@@ -1,0 +1,26 @@
+{
+  "enabledServiceModuleIDs": [
+    "com.mastercontrol.beacon-gateway",
+    "com.mastercontrol.command-logic-unit",
+    "com.mastercontrol.configuration",
+    "com.mastercontrol.environment-discovery",
+    "com.mastercontrol.export",
+    "com.mastercontrol.gateway-ios",
+    "com.mastercontrol.gateway-macos",
+    "com.mastercontrol.gateway-windows",
+    "com.mastercontrol.governance-ios",
+    "com.mastercontrol.governance-macos",
+    "com.mastercontrol.governance-windows",
+    "com.mastercontrol.host-telemetry",
+    "com.mastercontrol.installer-import",
+    "com.mastercontrol.provider-claude-code",
+    "com.mastercontrol.provider-codex",
+    "com.mastercontrol.provider-integration",
+    "com.mastercontrol.provider-xai",
+    "com.mastercontrol.runtime-inventory"
+  ],
+  "enabledUIModuleIDs": [
+    "com.mastercontrol.dashboard-ui"
+  ],
+  "selectedUIModuleID": "com.mastercontrol.dashboard-ui"
+}

@@ -859,7 +859,15 @@ void writeBootstrapperActionLog(const std::wstring& mode,
                 return static_cast<wchar_t>(std::towlower(character));
             });
 
+        // Desktop-local log files are only written on FAILURE so a
+        // successful install does not litter the operator's Desktop with
+        // success receipts. Every run still lands in the persistent log
+        // tree under %PUBLIC%\Documents\...\logs\installer regardless of
+        // outcome. Override with MASTERCONTROL_BOOTSTRAPPER_LOG_DIR when a
+        // script or CI job needs the textual log even on success.
+        const bool hasOverride = readEnvironmentVariable(kBootstrapperLogDirectoryEnv).has_value();
         const auto logDirectory = bootstrapperLogDirectory();
+        const bool writeDesktopLog = !succeeded || hasOverride;
         const auto logPath = logDirectory /
             (L"MasterControlOrchestrationServer-" + action + L"-" + wideFromUtf8(succeeded ? "succeeded" : "failed") +
              L"-" + wideFromUtf8(localTimestampForFileName()) + L".txt");
@@ -894,7 +902,7 @@ void writeBootstrapperActionLog(const std::wstring& mode,
         output << payload.dump(2) << "\r\n";
 
         const auto textLogContents = output.str();
-        const bool wroteTextLog = writeTextFile(logPath, textLogContents);
+        const bool wroteTextLog = writeDesktopLog ? writeTextFile(logPath, textLogContents) : false;
         const bool wroteSessionTextLog =
             MasterControl::InstallerLogSupport::appendTextFile(persistentPaths.bootstrapperSessionLog, textLogContents);
         const auto message = bootstrapperLogMessage(succeeded, payload);

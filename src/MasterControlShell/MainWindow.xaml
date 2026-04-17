@@ -176,7 +176,7 @@
 
                                     <StackPanel Grid.Column="1" Spacing="16">
                                         <StackPanel Spacing="10">
-                                            <TextBlock Text="FORSETTI SURFACE TOOLBAR" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                            <TextBlock Text="QUICK ACTIONS" Style="{StaticResource ShellEyebrowTextStyle}" />
                                             <ScrollViewer HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled" VerticalScrollBarVisibility="Disabled" VerticalScrollMode="Disabled">
                                                 <StackPanel x:Name="ForsettiToolbarHost" Orientation="Horizontal" Spacing="12" />
                                             </ScrollViewer>
@@ -221,8 +221,7 @@
                                                     <ColumnDefinition Width="*" />
                                                 </Grid.ColumnDefinitions>
 
-                                                <Button x:Name="GuidedProviderWizardButton" Click="GuidedProviderWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Connect AI Model" />
-                                                <Button x:Name="GuidedProviderAssignmentWizardButton" Grid.Column="1" Click="GuidedProviderAssignmentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Assign Responsibility" />
+                                                <Button x:Name="GuidedProviderAssignmentWizardButton" Grid.ColumnSpan="2" Click="GuidedProviderAssignmentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Assign Responsibility" />
                                                 <Button x:Name="GuidedMcpWizardButton" Grid.Row="1" Click="GuidedMcpWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New MCP Server" />
                                                 <Button x:Name="GuidedRuntimeMaintenanceWizardButton" Grid.Row="1" Grid.Column="1" Click="GuidedRuntimeMaintenanceWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Runtime Lanes" />
                                                 <Button x:Name="GuidedSubAgentWizardButton" Grid.Row="2" Click="GuidedSubAgentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent" />

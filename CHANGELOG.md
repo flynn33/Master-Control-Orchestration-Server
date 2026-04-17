@@ -5,6 +5,18 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.2-rc.8] - 2026-04-17
+### Summary
+**UX overhaul: guided path first, advanced hidden, clean desktop.** rc.7 made sign-in work, but the Providers view still presented twelve top-level cards at once — overwhelming for first-time setup — and button heights weren't symmetric. rc.8 promotes the guided AI-model path (sign-in + Auto-Connect + Provider Connections list) to the primary surface and hides the direct-edit and orchestration plumbing behind two **Advanced** Expanders. Button geometry is unified across every card, `Remove Group` now uses the destructive tone, and `Run Provider Task` shows a live progress ring. Separately, successful installs no longer leave `MasterControlOrchestrationServer-install-succeeded-*.txt` receipts on the operator's desktop — failures still write, and the persistent log tree under `%PUBLIC%\Documents\Master Control Orchestration Server\logs\installer` still captures every outcome.
+
+### Included Changes
+- fix(installer): `writeBootstrapperActionLog` and the setup launcher's textual-log writer only emit the desktop-local `.txt` receipt on failure now. A new constant `writeDesktopLog = !succeeded || hasOverride` gates the `writeTextFile` call in `MasterControlBootstrapper/main.cpp`; `setup_main.cpp` has the matching guard. `MASTERCONTROL_BOOTSTRAPPER_LOG_DIR` still forces a desktop log when set so CI / scripted flows can keep the old behavior.
+- feat(shell): `ProvidersSectionControl.xaml` collapsed from 12 top-level cards into a guided primary path plus two `<Expander IsExpanded="False">` groupings — `ADVANCED · DIRECT EDIT` (Provider Editor + Credentials + AI Autonomy) and `ADVANCED · ORCHESTRATION` (Sub-Agent Groups + Ownership Routing + Execution Console). First-time operators now see only Sign-In cards, Auto-Connect, Provider Routes, Provider Connections, and Provider Modules.
+- fix(shell): `App.xaml` unified the implicit `Button` style and `ShellCommandButtonStyle` to `MinHeight=48`, `Padding=12,10`, `HorizontalAlignment=Stretch`; `ShellSecondaryButtonStyle` is now visibly recessive with `Background=#55050B12` and `FontWeight=Normal`. Paired `Save / New / Remove` rows are wrapped in equal-width column grids so their widths match.
+- fix(shell): `Remove Group` now uses `ShellDangerButtonStyle` (red) so destructive actions stand apart from `Save` and `New`.
+- feat(shell): `ExecuteProviderTaskAsync` now toggles a new `ProviderExecutionProgressRing` next to `Run Provider Task` while the admin API call is in flight.
+- fix(shell/browser): jargon sweep. `FORSETTI SURFACE TOOLBAR` → `QUICK ACTIONS` in `MainWindow.xaml` and `resources/web/index.html`. `Protection Envelope` → `Security Settings` in `SecuritySectionControl.xaml` and `resources/web/app.js`'s `renderSecurityView`. `Governed Resource Envelope` → `Resource Allocation` in `SettingsSectionControl.xaml`, `TelemetrySectionControl.xaml`, and `MainWindow.xaml.cpp`'s setup-wizard `Step 3` label.
+
 ## [0.4.2-rc.7] - 2026-04-17
 ### Summary
 **One OpenAI sign-in registers both ChatGPT and Codex.** The `codex` CLI's single OAuth flow authenticates the operator for two logically distinct endpoints: ChatGPT (general reasoning / planning) and Codex (coding agent). rc.5's sign-in wizard only registered one of the two, so assigning `coding-specialists` to Codex after signing in to ChatGPT was awkward. rc.7 registers every capability whose `cliBridgeCommand` matches the bridge that just authenticated, so the operator signs in once and can immediately split planning and coding across the two endpoints.

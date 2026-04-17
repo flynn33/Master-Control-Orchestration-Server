@@ -738,7 +738,12 @@ bool writeLauncherLog(const std::filesystem::path& logPath,
         contents << message << L"\r\n";
     }
 
-    {
+    // Desktop-local launcher log is only written on FAILURE. A successful
+    // install should not litter the operator's Desktop with receipts; the
+    // persistent log tree under %PUBLIC%\Documents\...\logs\installer
+    // still captures the complete record either way.
+    const bool setupSucceeded = intendedProcessExitCode == 0;
+    if (!setupSucceeded) {
         std::wofstream output(logPath, std::ios::binary);
         if (output.is_open()) {
             output << contents.str();

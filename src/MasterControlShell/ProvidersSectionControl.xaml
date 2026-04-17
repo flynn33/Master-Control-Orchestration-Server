@@ -131,93 +131,107 @@
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource ShellCardStyle}">
-                    <StackPanel Spacing="14">
-                        <TextBlock Text="Provider Editor" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                        <TextBlock Text="Advanced direct provider editor. Use this when you already know the exact route details you want to change." Style="{StaticResource ShellBodyTextStyle}" />
+                <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="False">
+                    <Expander.Header>
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="ADVANCED · DIRECT EDIT" Style="{StaticResource ShellEyebrowTextStyle}" />
+                            <TextBlock Text="Route editor, credentials, autonomy" Style="{StaticResource ShellBodyTextStyle}" />
+                        </StackPanel>
+                    </Expander.Header>
+                    <StackPanel Spacing="20">
+                        <Border Style="{StaticResource ShellCardStyle}">
+                            <StackPanel Spacing="14">
+                                <TextBlock Text="Provider Editor" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                <TextBlock Text="Edit a provider route directly — only use this when you already know the exact values to change. Most operators should use Auto-Connect above." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
 
-                        <TextBlock Text="Provider" Style="{StaticResource ShellLabelTextStyle}" />
-                        <ComboBox
-                            x:Name="ProviderSelector"
-                            SelectionChanged="ProviderSelector_SelectionChanged"
-                            PlaceholderText="Choose a provider route" />
+                                <TextBlock Text="Provider" Style="{StaticResource ShellLabelTextStyle}" />
+                                <ComboBox
+                                    x:Name="ProviderSelector"
+                                    SelectionChanged="ProviderSelector_SelectionChanged"
+                                    PlaceholderText="Choose a provider route" />
 
-                        <Grid ColumnSpacing="14">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
 
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="Provider ID" Style="{StaticResource ShellLabelTextStyle}" />
-                                <TextBox x:Name="ProviderIdTextBox" TextChanged="ProviderEditor_TextChanged" PlaceholderText="provider-id" />
+                                    <StackPanel Spacing="8">
+                                        <TextBlock Text="Provider ID" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <TextBox x:Name="ProviderIdTextBox" TextChanged="ProviderEditor_TextChanged" PlaceholderText="provider-id" />
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="1" Spacing="8">
+                                        <TextBlock Text="Kind" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <ComboBox x:Name="ProviderKindComboBox" SelectionChanged="ProviderKind_SelectionChanged">
+                                            <ComboBoxItem Content="Codex" Tag="codex" />
+                                            <ComboBoxItem Content="ChatGPT" Tag="codex" />
+                                            <ComboBoxItem Content="Claude Code" Tag="claude_code" />
+                                            <ComboBoxItem Content="Grok" Tag="xai" />
+                                            <ComboBoxItem Content="Generic" Tag="generic" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Text="Display Name" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="ProviderDisplayNameTextBox" TextChanged="ProviderEditor_TextChanged" PlaceholderText="Display name" />
+
+                                <TextBlock Text="Base URL" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="ProviderBaseUrlTextBox" TextChanged="ProviderEditor_TextChanged" PlaceholderText="https://api.example.com/v1" />
+
+                                <TextBlock Text="Model ID" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="ProviderModelIdTextBox" TextChanged="ProviderEditor_TextChanged" PlaceholderText="Provider recommended model or deployment name" />
+
+                                <StackPanel Orientation="Horizontal" Spacing="18">
+                                    <ToggleSwitch x:Name="ProviderEnabledToggle" Header="Enabled" Toggled="ProviderToggle_Toggled" />
+                                    <ToggleSwitch x:Name="ProviderAutonomousToggle" Header="Allow autonomous control" Toggled="ProviderToggle_Toggled" />
+                                </StackPanel>
+
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="SaveProviderButton" Click="SaveProviderButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Provider" HorizontalAlignment="Stretch" />
+                                    <Button x:Name="NewProviderButton" Grid.Column="1" Click="NewProviderButton_Click" Style="{StaticResource ShellSecondaryButtonStyle}" Content="New Provider" HorizontalAlignment="Stretch" />
+                                </Grid>
+
+                                <TextBlock x:Name="ProviderEditorStatusText" Style="{StaticResource ShellDataTextStyle}" Text="Provider changes are saved through the local admin API." />
                             </StackPanel>
+                        </Border>
 
-                            <StackPanel Grid.Column="1" Spacing="8">
-                                <TextBlock Text="Kind" Style="{StaticResource ShellLabelTextStyle}" />
-                                <ComboBox x:Name="ProviderKindComboBox" SelectionChanged="ProviderKind_SelectionChanged">
-                                    <ComboBoxItem Content="Codex" Tag="codex" />
-                                    <ComboBoxItem Content="ChatGPT" Tag="codex" />
-                                    <ComboBoxItem Content="Claude Code" Tag="claude_code" />
-                                    <ComboBoxItem Content="Grok" Tag="xai" />
-                                    <ComboBoxItem Content="Generic" Tag="generic" />
-                                </ComboBox>
+                        <Border Style="{StaticResource ShellCardStyle}">
+                            <StackPanel Spacing="14">
+                                <TextBlock Text="Credentials" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                <TextBlock Text="Credentials for the selected route. Secrets stay in the local DPAPI-sealed store." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
+                                <TextBlock x:Name="ProviderCredentialStatusText" Style="{StaticResource ShellDataTextStyle}" Text="Save a provider route to configure credentials." />
+
+                                <StackPanel x:Name="ProviderCredentialFieldOnePanel" Spacing="8">
+                                    <TextBlock x:Name="ProviderCredentialFieldOneLabel" Text="Credential Field" Style="{StaticResource ShellLabelTextStyle}" />
+                                    <PasswordBox x:Name="ProviderCredentialFieldOneValueBox" PasswordChanged="ProviderCredentialEditor_PasswordChanged" PlaceholderText="Credential value" />
+                                    <TextBlock x:Name="ProviderCredentialFieldOneHint" Style="{StaticResource ShellDataTextStyle}" Text="" TextWrapping="Wrap" />
+                                </StackPanel>
+
+                                <StackPanel x:Name="ProviderCredentialFieldTwoPanel" Spacing="8">
+                                    <TextBlock x:Name="ProviderCredentialFieldTwoLabel" Text="Credential Field" Style="{StaticResource ShellLabelTextStyle}" />
+                                    <PasswordBox x:Name="ProviderCredentialFieldTwoValueBox" PasswordChanged="ProviderCredentialEditor_PasswordChanged" PlaceholderText="Credential value" />
+                                    <TextBlock x:Name="ProviderCredentialFieldTwoHint" Style="{StaticResource ShellDataTextStyle}" Text="" TextWrapping="Wrap" />
+                                </StackPanel>
+
+                                <Button x:Name="SaveProviderCredentialsButton" Click="SaveProviderCredentialsButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Credentials" HorizontalAlignment="Stretch" />
                             </StackPanel>
-                        </Grid>
+                        </Border>
 
-                        <TextBlock Text="Display Name" Style="{StaticResource ShellLabelTextStyle}" />
-                        <TextBox x:Name="ProviderDisplayNameTextBox" TextChanged="ProviderEditor_TextChanged" PlaceholderText="Display name" />
-
-                        <TextBlock Text="Base URL" Style="{StaticResource ShellLabelTextStyle}" />
-                        <TextBox x:Name="ProviderBaseUrlTextBox" TextChanged="ProviderEditor_TextChanged" PlaceholderText="https://api.example.com/v1" />
-
-                        <TextBlock Text="Model ID" Style="{StaticResource ShellLabelTextStyle}" />
-                        <TextBox x:Name="ProviderModelIdTextBox" TextChanged="ProviderEditor_TextChanged" PlaceholderText="Provider recommended model or deployment name" />
-
-                        <StackPanel Orientation="Horizontal" Spacing="18">
-                            <ToggleSwitch x:Name="ProviderEnabledToggle" Header="Enabled" Toggled="ProviderToggle_Toggled" />
-                            <ToggleSwitch x:Name="ProviderAutonomousToggle" Header="Allow autonomous control" Toggled="ProviderToggle_Toggled" />
-                        </StackPanel>
-
-                        <StackPanel Orientation="Horizontal" Spacing="12">
-                            <Button x:Name="SaveProviderButton" Click="SaveProviderButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Provider" />
-                            <Button x:Name="NewProviderButton" Click="NewProviderButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Provider" />
-                        </StackPanel>
-
-                        <TextBlock x:Name="ProviderEditorStatusText" Style="{StaticResource ShellDataTextStyle}" Text="Provider changes are saved through the local admin API." />
+                        <Border Style="{StaticResource ShellCardStyle}">
+                            <StackPanel Spacing="14">
+                                <TextBlock Text="AI Autonomy" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                <TextBlock Text="Enable this only when you want the connected AI to configure the dashboard itself." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
+                                <ToggleSwitch x:Name="AiAutonomyToggle" Header="Allow dashboard self-configuration" Toggled="AiAutonomyToggle_Toggled" />
+                                <Button x:Name="SaveAiAutonomyButton" Click="SaveAiAutonomyButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save AI Autonomy" HorizontalAlignment="Stretch" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource ShellCardStyle}">
-                    <StackPanel Spacing="14">
-                        <TextBlock Text="Credentials" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                        <TextBlock Text="Credential requirements come from the active provider module through the framework. Secrets stay in the local secure store." Style="{StaticResource ShellBodyTextStyle}" />
-                        <TextBlock x:Name="ProviderCredentialStatusText" Style="{StaticResource ShellDataTextStyle}" Text="Save a provider route to configure credentials." />
-
-                        <StackPanel x:Name="ProviderCredentialFieldOnePanel" Spacing="8">
-                            <TextBlock x:Name="ProviderCredentialFieldOneLabel" Text="Credential Field" Style="{StaticResource ShellLabelTextStyle}" />
-                            <PasswordBox x:Name="ProviderCredentialFieldOneValueBox" PasswordChanged="ProviderCredentialEditor_PasswordChanged" PlaceholderText="Credential value" />
-                            <TextBlock x:Name="ProviderCredentialFieldOneHint" Style="{StaticResource ShellDataTextStyle}" Text="" TextWrapping="Wrap" />
-                        </StackPanel>
-
-                        <StackPanel x:Name="ProviderCredentialFieldTwoPanel" Spacing="8">
-                            <TextBlock x:Name="ProviderCredentialFieldTwoLabel" Text="Credential Field" Style="{StaticResource ShellLabelTextStyle}" />
-                            <PasswordBox x:Name="ProviderCredentialFieldTwoValueBox" PasswordChanged="ProviderCredentialEditor_PasswordChanged" PlaceholderText="Credential value" />
-                            <TextBlock x:Name="ProviderCredentialFieldTwoHint" Style="{StaticResource ShellDataTextStyle}" Text="" TextWrapping="Wrap" />
-                        </StackPanel>
-
-                        <Button x:Name="SaveProviderCredentialsButton" Click="SaveProviderCredentialsButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Credentials" />
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource ShellCardStyle}">
-                    <StackPanel Spacing="14">
-                        <TextBlock Text="AI Autonomy" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                        <TextBlock Text="Enable this only when you want the connected AI to configure the dashboard itself." Style="{StaticResource ShellBodyTextStyle}" />
-                        <ToggleSwitch x:Name="AiAutonomyToggle" Header="Allow dashboard self-configuration" Toggled="AiAutonomyToggle_Toggled" />
-                        <Button x:Name="SaveAiAutonomyButton" Click="SaveAiAutonomyButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save AI Autonomy" />
-                    </StackPanel>
-                </Border>
+                </Expander>
             </StackPanel>
 
             <StackPanel Grid.Column="1" Spacing="20">
@@ -254,110 +268,130 @@
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource ShellCardStyle}">
-                    <StackPanel Spacing="14">
-                        <TextBlock Text="Sub-Agent Groups" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                        <TextBlock Text="Create reusable specialist groups so one provider can own a focused lane of sub-agents while other providers control different lanes." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
-
-                        <TextBlock Text="Group" Style="{StaticResource ShellLabelTextStyle}" />
-                        <ComboBox x:Name="SubAgentGroupSelector" SelectionChanged="SubAgentGroupSelector_SelectionChanged" PlaceholderText="Choose a saved group" />
-
-                        <Grid ColumnSpacing="14">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="1.2*" />
-                            </Grid.ColumnDefinitions>
-
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="Group ID" Style="{StaticResource ShellLabelTextStyle}" />
-                                <TextBox x:Name="SubAgentGroupIdTextBox" TextChanged="SubAgentGroupEditor_TextChanged" PlaceholderText="swift-specialists" />
-                            </StackPanel>
-
-                            <StackPanel Grid.Column="1" Spacing="8">
-                                <TextBlock Text="Display Name" Style="{StaticResource ShellLabelTextStyle}" />
-                                <TextBox x:Name="SubAgentGroupDisplayNameTextBox" TextChanged="SubAgentGroupEditor_TextChanged" PlaceholderText="Swift Specialists" />
-                            </StackPanel>
-                        </Grid>
-
-                        <TextBlock Text="Description" Style="{StaticResource ShellLabelTextStyle}" />
-                        <TextBox x:Name="SubAgentGroupDescriptionTextBox" TextChanged="SubAgentGroupEditor_TextChanged" AcceptsReturn="True" Height="72" TextWrapping="Wrap" PlaceholderText="Optional notes about the specialty lane or operating doctrine." />
-
-                        <TextBlock Text="Members" Style="{StaticResource ShellLabelTextStyle}" />
-                        <ListView x:Name="SubAgentGroupMembersListView" SelectionMode="Multiple" SelectionChanged="SubAgentGroupMembersListView_SelectionChanged" MaxHeight="220" Style="{StaticResource ShellListViewStyle}" />
-
-                        <StackPanel Orientation="Horizontal" Spacing="12">
-                            <Button x:Name="SaveSubAgentGroupButton" Click="SaveSubAgentGroupButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Group" />
-                            <Button x:Name="NewSubAgentGroupButton" Click="NewSubAgentGroupButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Group" />
-                            <Button x:Name="RemoveSubAgentGroupButton" Click="RemoveSubAgentGroupButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Remove Group" />
+                <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="False">
+                    <Expander.Header>
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="ADVANCED · ORCHESTRATION" Style="{StaticResource ShellEyebrowTextStyle}" />
+                            <TextBlock Text="Sub-agent groups, ownership routing, run console" Style="{StaticResource ShellBodyTextStyle}" />
                         </StackPanel>
+                    </Expander.Header>
+                    <StackPanel Spacing="20">
+                        <Border Style="{StaticResource ShellCardStyle}">
+                            <StackPanel Spacing="14">
+                                <TextBlock Text="Sub-Agent Groups" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                <TextBlock Text="Create reusable specialist groups so one provider can own a focused lane of sub-agents while other providers control different lanes." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
 
-                        <TextBlock x:Name="SubAgentGroupStatusText" Style="{StaticResource ShellDataTextStyle}" Text="No custom sub-agent groups are staged." TextWrapping="WrapWholeWords" />
-                    </StackPanel>
-                </Border>
+                                <TextBlock Text="Group" Style="{StaticResource ShellLabelTextStyle}" />
+                                <ComboBox x:Name="SubAgentGroupSelector" SelectionChanged="SubAgentGroupSelector_SelectionChanged" PlaceholderText="Choose a saved group" />
 
-                <Border Style="{StaticResource ShellCardStyle}">
-                    <StackPanel Spacing="14">
-                        <TextBlock Text="Ownership Routing" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                        <TextBlock Text="One provider owns each orchestration role or sub-agent at a time. Group assignments fan out to the current specialist pool." Style="{StaticResource ShellBodyTextStyle}" />
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="1.2*" />
+                                    </Grid.ColumnDefinitions>
 
-                        <TextBlock Text="Target" Style="{StaticResource ShellLabelTextStyle}" />
-                        <ComboBox x:Name="ProviderAssignmentTargetSelector" SelectionChanged="ProviderAssignmentTargetSelector_SelectionChanged" PlaceholderText="Choose a role or sub-agent" />
+                                    <StackPanel Spacing="8">
+                                        <TextBlock Text="Group ID" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <TextBox x:Name="SubAgentGroupIdTextBox" TextChanged="SubAgentGroupEditor_TextChanged" PlaceholderText="swift-specialists" />
+                                    </StackPanel>
 
-                        <TextBlock Text="Owner" Style="{StaticResource ShellLabelTextStyle}" />
-                        <ComboBox x:Name="ProviderAssignmentProviderSelector" SelectionChanged="ProviderAssignmentProviderSelector_SelectionChanged" PlaceholderText="Choose the owning provider" />
+                                    <StackPanel Grid.Column="1" Spacing="8">
+                                        <TextBlock Text="Display Name" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <TextBox x:Name="SubAgentGroupDisplayNameTextBox" TextChanged="SubAgentGroupEditor_TextChanged" PlaceholderText="Swift Specialists" />
+                                    </StackPanel>
+                                </Grid>
 
-                        <Button x:Name="SaveProviderAssignmentButton" Click="SaveProviderAssignmentButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Ownership" />
+                                <TextBlock Text="Description" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox x:Name="SubAgentGroupDescriptionTextBox" TextChanged="SubAgentGroupEditor_TextChanged" AcceptsReturn="True" Height="72" TextWrapping="Wrap" PlaceholderText="Optional notes about the specialty lane or operating doctrine." />
 
-                        <TextBlock x:Name="ProviderAssignmentStatusText" Style="{StaticResource ShellDataTextStyle}" Text="No orchestration ownership changes are staged." />
-                        <ListView x:Name="ProviderAssignmentsListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="360" Style="{StaticResource ShellListViewStyle}" />
-                    </StackPanel>
-                </Border>
+                                <TextBlock Text="Members" Style="{StaticResource ShellLabelTextStyle}" />
+                                <ListView x:Name="SubAgentGroupMembersListView" SelectionMode="Multiple" SelectionChanged="SubAgentGroupMembersListView_SelectionChanged" MaxHeight="220" Style="{StaticResource ShellListViewStyle}" />
 
-                <Border Style="{StaticResource ShellCardStyle}">
-                    <StackPanel Spacing="14">
-                        <TextBlock Text="Execution Console" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                        <TextBlock Text="Run a live provider-owned task through the local admin API to validate credentials, ownership routing, and shared MCP access." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="Wrap" />
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="SaveSubAgentGroupButton" Click="SaveSubAgentGroupButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Group" HorizontalAlignment="Stretch" />
+                                    <Button x:Name="NewSubAgentGroupButton" Grid.Column="1" Click="NewSubAgentGroupButton_Click" Style="{StaticResource ShellSecondaryButtonStyle}" Content="New Group" HorizontalAlignment="Stretch" />
+                                    <Button x:Name="RemoveSubAgentGroupButton" Grid.Column="2" Click="RemoveSubAgentGroupButton_Click" Style="{StaticResource ShellDangerButtonStyle}" Content="Remove Group" HorizontalAlignment="Stretch" />
+                                </Grid>
 
-                        <Grid ColumnSpacing="14">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="1.3*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="120" />
-                            </Grid.ColumnDefinitions>
-
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="Execution Target" Style="{StaticResource ShellLabelTextStyle}" />
-                                <ComboBox x:Name="ProviderExecutionTargetSelector" SelectionChanged="ProviderExecutionTargetSelector_SelectionChanged" PlaceholderText="Choose a role or sub-agent" />
+                                <TextBlock x:Name="SubAgentGroupStatusText" Style="{StaticResource ShellDataTextStyle}" Text="No custom sub-agent groups are staged." TextWrapping="WrapWholeWords" />
                             </StackPanel>
+                        </Border>
 
-                            <ToggleSwitch Grid.Column="1" x:Name="ProviderExecutionToolAccessToggle" Header="Shared MCP Access" Toggled="ProviderExecutionEditor_Changed" />
+                        <Border Style="{StaticResource ShellCardStyle}">
+                            <StackPanel Spacing="14">
+                                <TextBlock Text="Ownership Routing" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                <TextBlock Text="One provider owns each orchestration role or sub-agent at a time. Group assignments fan out to the current specialist pool." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
 
-                            <StackPanel Grid.Column="2" Spacing="8">
-                                <TextBlock Text="Max Turns" Style="{StaticResource ShellLabelTextStyle}" />
-                                <TextBox x:Name="ProviderExecutionMaxTurnsTextBox" Text="4" TextChanged="ProviderExecutionEditor_Changed" />
+                                <TextBlock Text="Target" Style="{StaticResource ShellLabelTextStyle}" />
+                                <ComboBox x:Name="ProviderAssignmentTargetSelector" SelectionChanged="ProviderAssignmentTargetSelector_SelectionChanged" PlaceholderText="Choose a role or sub-agent" />
+
+                                <TextBlock Text="Owner" Style="{StaticResource ShellLabelTextStyle}" />
+                                <ComboBox x:Name="ProviderAssignmentProviderSelector" SelectionChanged="ProviderAssignmentProviderSelector_SelectionChanged" PlaceholderText="Choose the owning provider" />
+
+                                <Button x:Name="SaveProviderAssignmentButton" Click="SaveProviderAssignmentButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Save Ownership" HorizontalAlignment="Stretch" />
+
+                                <TextBlock x:Name="ProviderAssignmentStatusText" Style="{StaticResource ShellDataTextStyle}" Text="No orchestration ownership changes are staged." />
+                                <ListView x:Name="ProviderAssignmentsListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="360" Style="{StaticResource ShellListViewStyle}" />
                             </StackPanel>
-                        </Grid>
+                        </Border>
 
-                        <TextBlock Text="Prompt" Style="{StaticResource ShellLabelTextStyle}" />
-                        <TextBox
-                            x:Name="ProviderExecutionPromptTextBox"
-                            AcceptsReturn="True"
-                            Height="120"
-                            TextWrapping="Wrap"
-                            TextChanged="ProviderExecutionEditor_Changed"
-                            PlaceholderText="Ask the assigned provider to act within its orchestration lane." />
+                        <Border Style="{StaticResource ShellCardStyle}">
+                            <StackPanel Spacing="14">
+                                <TextBlock Text="Execution Console" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                <TextBlock Text="Run a live provider-owned task through the local admin API to validate credentials, ownership routing, and shared MCP access." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
 
-                        <StackPanel Orientation="Horizontal" Spacing="12">
-                            <Button x:Name="ExecuteProviderTaskButton" Click="ExecuteProviderTaskButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Run Provider Task" />
-                        </StackPanel>
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="1.3*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="120" />
+                                    </Grid.ColumnDefinitions>
 
-                        <TextBlock x:Name="ProviderExecutionStatusText" Style="{StaticResource ShellDataTextStyle}" Text="No provider task has been executed yet." TextWrapping="Wrap" />
-                        <TextBox x:Name="ProviderExecutionOutputTextBox" IsReadOnly="True" AcceptsReturn="True" Height="140" TextWrapping="Wrap" />
+                                    <StackPanel Spacing="8">
+                                        <TextBlock Text="Execution Target" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <ComboBox x:Name="ProviderExecutionTargetSelector" SelectionChanged="ProviderExecutionTargetSelector_SelectionChanged" PlaceholderText="Choose a role or sub-agent" />
+                                    </StackPanel>
 
-                        <TextBlock Text="Execution History" Style="{StaticResource ShellLabelTextStyle}" />
-                        <ListView x:Name="ProviderExecutionHistoryListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="260" Style="{StaticResource ShellListViewStyle}" />
+                                    <ToggleSwitch Grid.Column="1" x:Name="ProviderExecutionToolAccessToggle" Header="Shared MCP Access" Toggled="ProviderExecutionEditor_Changed" />
+
+                                    <StackPanel Grid.Column="2" Spacing="8">
+                                        <TextBlock Text="Max Turns" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <TextBox x:Name="ProviderExecutionMaxTurnsTextBox" Text="4" TextChanged="ProviderExecutionEditor_Changed" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Text="Prompt" Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBox
+                                    x:Name="ProviderExecutionPromptTextBox"
+                                    AcceptsReturn="True"
+                                    Height="120"
+                                    TextWrapping="Wrap"
+                                    TextChanged="ProviderExecutionEditor_Changed"
+                                    PlaceholderText="Ask the assigned provider to act within its orchestration lane." />
+
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="ExecuteProviderTaskButton" Click="ExecuteProviderTaskButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Run Provider Task" />
+                                    <ProgressRing x:Name="ProviderExecutionProgressRing" Grid.Column="1" Width="22" Height="22" IsActive="False" HorizontalAlignment="Left" VerticalAlignment="Center" />
+                                </Grid>
+
+                                <TextBlock x:Name="ProviderExecutionStatusText" Style="{StaticResource ShellDataTextStyle}" Text="No provider task has been executed yet." TextWrapping="Wrap" />
+                                <TextBox x:Name="ProviderExecutionOutputTextBox" IsReadOnly="True" AcceptsReturn="True" Height="140" TextWrapping="Wrap" />
+
+                                <TextBlock Text="Execution History" Style="{StaticResource ShellLabelTextStyle}" />
+                                <ListView x:Name="ProviderExecutionHistoryListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="260" Style="{StaticResource ShellListViewStyle}" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
-                </Border>
+                </Expander>
             </StackPanel>
         </Grid>
     </ScrollViewer>

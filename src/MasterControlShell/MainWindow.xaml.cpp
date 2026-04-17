@@ -579,10 +579,6 @@ void MainWindow::OpenDataButton_Click(IInspectable const&, RoutedEventArgs const
     runtime_.OpenDataDirectory();
 }
 
-void MainWindow::GuidedProviderWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
-    StartGuidedWorkflow(L"connect-model");
-}
-
 void MainWindow::GuidedMcpWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
     StartGuidedWorkflow(L"new-mcp");
 }
@@ -3842,7 +3838,7 @@ IAsyncAction MainWindow::ShowSettingsWizardAsync() {
         return valueBox;
     };
 
-    addLabel(L"Step 3. Governed Resource Envelope");
+    addLabel(L"Step 3. Resource Allocation");
     TextBox cpuPercentBox = addResourceEditor(0, 0, L"CPU Allocation %", std::to_wstring(currentSnapshot_.cpuAllocationPercent));
     TextBox memoryPercentBox = addResourceEditor(0, 1, L"Memory Allocation %", std::to_wstring(currentSnapshot_.memoryAllocationPercent));
     TextBox bandwidthPercentBox = addResourceEditor(1, 0, L"Bandwidth Allocation %", std::to_wstring(currentSnapshot_.bandwidthAllocationPercent));

@@ -38,7 +38,7 @@
 
                     <ToggleSwitch x:Name="BeaconEnabledToggle" Header="Broadcast LAN beacon and gateway metadata" Toggled="SettingsToggle_Toggled" />
 
-                    <TextBlock Text="Governed Resource Envelope" Style="{StaticResource ShellLabelTextStyle}" />
+                    <TextBlock Text="Resource Allocation" Style="{StaticResource ShellLabelTextStyle}" />
                     <Grid ColumnSpacing="12" RowSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />

@@ -26,7 +26,7 @@
 
                 <Border Style="{StaticResource ShellCardStyle}">
                     <StackPanel Spacing="14">
-                        <TextBlock Text="Protection Envelope" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock Text="Security Settings" Style="{StaticResource ShellSectionTitleTextStyle}" />
                         <TextBlock Text="Advanced direct security editor. These settings are written through the local admin API and persisted in the runtime configuration." Style="{StaticResource ShellBodyTextStyle}" />
 
                         <StackPanel Orientation="Horizontal" Spacing="18">
