@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Master Control Orchestration Server — WiX v5 MSI definition.
+
+  The MSI is the user-facing installer. It:
+    * Copies the staged package payload into the operator-chosen install
+      directory (by default C:\Program Files\Master Control Orchestration Server).
+    * Creates Start Menu and optional Desktop shortcuts using Windows-native
+      shortcut components so they show the Tron-red icon and integrate cleanly
+      with Programs & Features repair / uninstall.
+    * Delegates service registration, firewall rules, module manifest
+      placement, and data-directory bootstrap to the existing
+      MasterControlBootstrapper.exe by invoking it as a deferred custom
+      action with the flags chosen by the operator on the options dialog.
+
+  Shortcut defaults mirror the Microsoft convention: Start Menu checked, Desktop
+  unchecked, operator opts in for Desktop.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="Master Control Orchestration Server"
+           Manufacturer="James Daley"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="7F1C6A13-1C5A-4A62-9A63-6E9B94F4F6F2"
+           Scope="perMachine"
+           Compressed="yes"
+           InstallerVersion="500">
+
+    <SummaryInformation Description="Master Control Orchestration Server setup"
+                        Manufacturer="James Daley"/>
+
+    <!-- Upgrade handling: newer builds replace older ones cleanly. -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Master Control Orchestration Server is already installed."
+                  Schedule="afterInstallInitialize"/>
+
+    <!-- Single compressed cab inside the MSI. -->
+    <MediaTemplate EmbedCab="yes"/>
+
+    <!-- Product icon used by Programs & Features and the MSI file itself. -->
+    <Icon Id="MasterControlIcon.ico" SourceFile="$(var.IconsDir)\master-control-installer.ico"/>
+    <Property Id="ARPPRODUCTICON" Value="MasterControlIcon.ico"/>
+    <Property Id="ARPHELPLINK" Value="https://github.com/flynn33/Master-Control-Orchestration-Server"/>
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/flynn33/Master-Control-Orchestration-Server"/>
+
+    <!-- WiX dialog bitmaps (banner 493x58, dialog 493x312). -->
+    <WixVariable Id="WixUIBannerBmp" Value="$(var.PackagingDir)\banner-493x58.bmp"/>
+    <WixVariable Id="WixUIDialogBmp" Value="$(var.PackagingDir)\dialog-493x312.bmp"/>
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.InstallerDir)\license.rtf"/>
+
+    <!-- Operator choices on the custom Features page. Defaults match the v0.4.2
+         CLI defaults except INSTALL_DESKTOP_SHORTCUT which stays off until the
+         operator explicitly opts in (matches Microsoft convention). -->
+    <Property Id="INSTALL_SERVICE" Value="1" Secure="yes"/>
+    <Property Id="INSTALL_FIREWALL" Value="1" Secure="yes"/>
+    <Property Id="INSTALL_START_MENU_SHORTCUT" Value="1" Secure="yes"/>
+    <Property Id="INSTALL_DESKTOP_SHORTCUT" Value="0" Secure="yes"/>
+    <Property Id="LAUNCH_ON_EXIT" Value="1" Secure="yes"/>
+
+    <!-- Use the full InstallDir dialog sequence and slot the Features page
+         before VerifyReady. -->
+    <ui:WixUI Id="WixUI_InstallDir"/>
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER"/>
+
+    <!-- Install-as exit dialog checkbox: launch Master Control Shell. -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"
+              Value="Launch Master Control Shell"/>
+    <Property Id="WixShellExecTarget" Value="[#MasterControlShellExe]"/>
+    <CustomAction Id="LaunchApplication"
+                  BinaryRef="Wix4UtilCA_X64"
+                  DllEntry="WixShellExec"
+                  Impersonate="yes"/>
+    <UI>
+      <Publish Dialog="ExitDialog"
+               Control="Finish"
+               Event="DoAction"
+               Value="LaunchApplication"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed and LAUNCH_ON_EXIT = 1"/>
+
+      <!-- Insert McosOptionsDlg into the InstallDir sequence. -->
+      <Publish Dialog="InstallDirDlg"
+               Control="Next"
+               Event="NewDialog"
+               Value="McosOptionsDlg"
+               Order="3"
+               Condition="NOT Installed"/>
+      <Publish Dialog="McosOptionsDlg"
+               Control="Back"
+               Event="NewDialog"
+               Value="InstallDirDlg"/>
+      <Publish Dialog="McosOptionsDlg"
+               Control="Next"
+               Event="NewDialog"
+               Value="VerifyReadyDlg"/>
+      <Publish Dialog="VerifyReadyDlg"
+               Control="Back"
+               Event="NewDialog"
+               Value="McosOptionsDlg"
+               Order="3"
+               Condition="NOT Installed"/>
+    </UI>
+
+    <!-- =====================================================================
+         McosOptionsDlg — custom options page with five checkboxes.
+         ===================================================================== -->
+    <UI Id="McosOptionsDlg_UI">
+      <Dialog Id="McosOptionsDlg" Width="370" Height="270" Title="Master Control Orchestration Server Setup">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" Text="!(loc.InstallDirDlgBannerBitmap)" TabSkip="no"/>
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0"/>
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0"/>
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes"
+                 Text="{\WixUI_Font_Title}Setup Options"/>
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes"
+                 Text="Choose which components to install."/>
+
+        <Control Id="ServiceCheck" Type="CheckBox" X="20" Y="60" Width="330" Height="17"
+                 Property="INSTALL_SERVICE" CheckBoxValue="1"
+                 Text="Install the Master Control Orchestration Server Windows service"/>
+        <Control Id="FirewallCheck" Type="CheckBox" X="20" Y="85" Width="330" Height="17"
+                 Property="INSTALL_FIREWALL" CheckBoxValue="1"
+                 Text="Configure Windows Firewall rules for the LAN admin UI"/>
+        <Control Id="StartMenuCheck" Type="CheckBox" X="20" Y="115" Width="330" Height="17"
+                 Property="INSTALL_START_MENU_SHORTCUT" CheckBoxValue="1"
+                 Text="Create Start Menu shortcut"/>
+        <Control Id="DesktopCheck" Type="CheckBox" X="20" Y="140" Width="330" Height="17"
+                 Property="INSTALL_DESKTOP_SHORTCUT" CheckBoxValue="1"
+                 Text="Create Desktop shortcut"/>
+        <Control Id="LaunchCheck" Type="CheckBox" X="20" Y="170" Width="330" Height="17"
+                 Property="LAUNCH_ON_EXIT" CheckBoxValue="1"
+                 Text="Launch Master Control Shell after installation completes"/>
+
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)"/>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)"/>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg"/>
+        </Control>
+      </Dialog>
+    </UI>
+
+    <!-- =====================================================================
+         Directory tree: install root + Start Menu + Desktop.
+         ===================================================================== -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Master Control Orchestration Server"/>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="Master Control Orchestration Server"/>
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder"/>
+
+    <!-- =====================================================================
+         File payload + shortcuts + custom actions live in fragments.
+         ===================================================================== -->
+    <Feature Id="ProductFeature" Title="Master Control Orchestration Server" Level="1">
+      <ComponentGroupRef Id="MasterControlPayload"/>
+      <ComponentGroupRef Id="MasterControlShortcuts"/>
+    </Feature>
+
+    <!-- Always-on integration phase: deferred CAs translate MSI property state
+         into bootstrapper skip flags. -->
+    <InstallExecuteSequence>
+      <Custom Action="RunBootstrapperInstall"
+              Before="InstallFinalize"
+              Condition="NOT Installed AND NOT REMOVE=&quot;ALL&quot;"/>
+      <Custom Action="RunBootstrapperUninstall"
+              Before="RemoveFiles"
+              Condition="REMOVE=&quot;ALL&quot;"/>
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

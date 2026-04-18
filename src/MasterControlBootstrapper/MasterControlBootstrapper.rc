@@ -1,0 +1,4 @@
+// Master Control Orchestration Server — bootstrapper icon resource.
+// Used by both MasterControlBootstrapper.exe (CLI engine) and
+// MasterControlOrchestrationServerSetup.exe (legacy GUI launcher).
+1 ICON "../../resources/icons/master-control.ico"

@@ -4,6 +4,7 @@
 
 add_executable(MasterControlServiceHost
     main.cpp
+    MasterControlServiceHost.rc
 )
 
 target_include_directories(MasterControlServiceHost PRIVATE

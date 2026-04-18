@@ -1,11 +1,26 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.2-rc.8",
-  "current_tag": "v0.4.2-rc.8",
-  "released_at": "2026-04-17",
-  "last_release_commit": "ff346124fa68cbfd92556952eb2a3ed073b16d3d",
+  "current_version": "0.4.3-rc.1",
+  "current_tag": "v0.4.3-rc.1",
+  "released_at": "2026-04-18",
+  "last_release_commit": "768cf617",
   "history": [
+    {
+      "version": "0.4.3-rc.1",
+      "tag": "v0.4.3-rc.1",
+      "released_at": "2026-04-18",
+      "commit": "",
+      "summary": "Polished Windows Installer: WiX v5 MSI with WixUI_InstallDir + custom Options page (service / firewall / Start Menu / Desktop / launch-on-finish), Tron-red product icon embedded in every executable and surfaced on Programs & Features, Start Menu / Desktop shortcuts, services.msc, browser favicon, and the MSI file itself.",
+      "entries": [
+        "feat(installer): new WiX v5 MSI at installer/MasterControlOrchestrationServer.wxs with WixUI_InstallDir dialog sequence + custom FeaturesDlg with checkboxes for service, firewall, Start Menu shortcut, Desktop shortcut, and launch-on-finish",
+        "feat(installer): deferred custom actions invoke the existing MasterControlBootstrapper.exe with --skip-shortcuts --skip-uninstall-registration plus the operator's --skip-service / --skip-firewall choices; MSI owns shortcuts + Programs & Features entry while the bootstrapper continues to own service / firewall / module manifests / data dirs",
+        "feat(installer): Package-MasterControlOrchestrationServer.ps1 now emits an .msi alongside the existing .zip; Build-Msi.ps1 harvests the staged payload into a generated Files.wxs and drives wix build with UI + Util extensions",
+        "feat(icons): Tron-red product icon family staged at resources/icons/ (master + Windows tiles + web favicons); master-control.ico embedded as resource group 1 in MasterControlShell.exe, MasterControlServiceHost.exe, MasterControlBootstrapper.exe, and MasterControlOrchestrationServerSetup.exe via one-line .rc files wired into each CMake / vcxproj target",
+        "feat(icons): web admin UI favicon + PWA icons referenced from resources/web/index.html so the browser tab shows the Tron-red badge",
+        "feat(icons): MSI ARPPRODUCTICON points at master-control-installer.ico so Programs & Features shows the Tron-red icon for the installed product"
+      ]
+    },
     {
       "version": "0.4.2-rc.8",
       "tag": "v0.4.2-rc.8",

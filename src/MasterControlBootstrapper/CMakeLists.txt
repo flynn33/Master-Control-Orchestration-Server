@@ -4,6 +4,7 @@
 
 add_executable(MasterControlBootstrapper
     main.cpp
+    MasterControlBootstrapper.rc
 )
 
 target_link_libraries(MasterControlBootstrapper PRIVATE
@@ -18,6 +19,7 @@ target_compile_definitions(MasterControlBootstrapper PRIVATE
 
 add_executable(MasterControlOrchestrationServerSetup WIN32
     setup_main.cpp
+    MasterControlBootstrapper.rc
 )
 
 set_target_properties(MasterControlOrchestrationServerSetup PROPERTIES

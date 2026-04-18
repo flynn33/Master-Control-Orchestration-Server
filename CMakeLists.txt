@@ -36,7 +36,7 @@ message(STATUS "Master Control version from VERSION.json: ${_mc_current_version}
 project(MasterControlOrchestrationServer
     VERSION ${_mc_ver_major}.${_mc_ver_minor}.${_mc_ver_patch}
     DESCRIPTION "Master Control Orchestration Server - Forsetti-compliant Windows control plane"
-    LANGUAGES CXX
+    LANGUAGES CXX RC
 )
 
 set(CMAKE_CXX_STANDARD 20)
@@ -158,5 +158,13 @@ install(
 
 install(
     DIRECTORY "${CMAKE_SOURCE_DIR}/resources/clu"
+    DESTINATION "share/MasterControlOrchestrationServer"
+)
+
+# Icon assets — shipped into the staged package so the WiX MSI can reference
+# them by fixed relative path, and so the desktop shell's installed layout
+# carries the source-of-truth artwork alongside the executables.
+install(
+    DIRECTORY "${CMAKE_SOURCE_DIR}/resources/icons"
     DESTINATION "share/MasterControlOrchestrationServer"
 )

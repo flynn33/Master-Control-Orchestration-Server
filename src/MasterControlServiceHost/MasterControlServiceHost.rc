@@ -1,0 +1,4 @@
+// Master Control Orchestration Server — service host icon resource.
+// Same Tron-red badge embedded as icon group 1 so services.msc and
+// Task Manager identify the process with the product icon.
+1 ICON "../../resources/icons/master-control.ico"

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Start Menu and Desktop shortcuts. Both point at MasterControlShell.exe and
+  take their icon from the embedded PE resource (group 1) — no external
+  IconIndex needed, because Windows uses the exe's default icon.
+
+  Conditions on the components drive checkbox behavior:
+    * INSTALL_START_MENU_SHORTCUT=1 is the default; operator must uncheck to skip
+    * INSTALL_DESKTOP_SHORTCUT=1 must be explicitly checked by the operator
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <ComponentGroup Id="MasterControlShortcuts">
+
+      <!-- Start Menu shortcut -->
+      <Component Id="StartMenuShortcutComponent"
+                 Guid="A1E8F6F2-3B21-4A18-9C5C-2D3D5F4E6A71"
+                 Directory="ApplicationProgramsFolder"
+                 Condition="INSTALL_START_MENU_SHORTCUT=1">
+        <Shortcut Id="StartMenuShortcut"
+                  Name="Master Control Orchestration Server"
+                  Description="Master Control Orchestration Server administrative shell"
+                  Target="[#MasterControlShellExe]"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="MasterControlIcon.ico"/>
+        <RemoveFolder Id="RemoveApplicationProgramsFolder"
+                      Directory="ApplicationProgramsFolder"
+                      On="uninstall"/>
+        <RegistryValue Root="HKCU"
+                       Key="Software\Master Control Orchestration Server\Shortcuts"
+                       Name="StartMenu"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes"/>
+      </Component>
+
+      <!-- Desktop shortcut -->
+      <Component Id="DesktopShortcutComponent"
+                 Guid="B7D3F5C8-9A12-4B2E-8F3C-4E7B2D8A1F09"
+                 Directory="DesktopFolder"
+                 Condition="INSTALL_DESKTOP_SHORTCUT=1">
+        <Shortcut Id="DesktopShortcut"
+                  Name="Master Control Orchestration Server"
+                  Description="Master Control Orchestration Server administrative shell"
+                  Target="[#MasterControlShellExe]"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="MasterControlIcon.ico"/>
+        <RegistryValue Root="HKCU"
+                       Key="Software\Master Control Orchestration Server\Shortcuts"
+                       Name="Desktop"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes"/>
+      </Component>
+
+    </ComponentGroup>
+  </Fragment>
+</Wix>

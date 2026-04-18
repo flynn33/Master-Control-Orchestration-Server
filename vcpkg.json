@@ -1,6 +1,6 @@
 {
   "name": "master-control-orchestration-server",
-  "version-string": "0.4.2-rc.8",
+  "version-string": "0.4.3-rc.1",
   "description": "Master Control Orchestration Server - Forsetti compliant control plane for MCP servers and sub-agents",
   "builtin-baseline": "4b77da7fed37817f124936239197833469f1b9a8",
   "dependencies": [

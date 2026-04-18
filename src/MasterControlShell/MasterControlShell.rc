@@ -1,0 +1,8 @@
+// Master Control Orchestration Server — desktop shell icon resource.
+//
+// Resource ID 1 ("IDI_APPICON") is the first icon group, which Windows
+// picks up automatically for the taskbar, Alt+Tab, Start search, window
+// title bar, and file explorer. It also resolves the zero-indexed
+// IconLocation=MasterControlShell.exe,0 reference used by the
+// installer-created shortcuts.
+1 ICON "../../resources/icons/master-control.ico"

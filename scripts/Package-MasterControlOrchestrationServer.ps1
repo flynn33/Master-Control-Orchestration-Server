@@ -142,6 +142,7 @@ if ($Preset -ne "release") {
 
 $stageDirectory = Join-Path $OutputRoot $packageName
 $zipPath = Join-Path $OutputRoot ($packageName + ".zip")
+$msiPath = Join-Path $OutputRoot ($packageName + ".msi")
 $validationPath = Join-Path $OutputRoot ($packageName + ".preflight.json")
 $metadataPath = Join-Path $stageDirectory "PACKAGE-METADATA.json"
 $instructionsPath = Join-Path $stageDirectory "INSTALL.txt"
@@ -495,6 +496,33 @@ if (-not [string]::IsNullOrWhiteSpace($AcceptanceReportPath)) {
     $metadata | Add-Member -NotePropertyName readinessJsonPath -NotePropertyValue $stageReadinessJsonPath
     $metadata | Add-Member -NotePropertyName readinessSummaryPath -NotePropertyValue $stageReadinessSummaryPath
     $metadata | ConvertTo-Json -Depth 8 | Set-Content -Path $metadataPath -Encoding UTF8
+}
+
+# ---------------------------------------------------------------------------
+# Build the Windows Installer (MSI). This is the primary user-facing install
+# artifact. Failing to build it is not fatal — the zip still ships for
+# headless / scripted rollouts — but we warn so CI catches the regression.
+# ---------------------------------------------------------------------------
+$msiBuildScript = Join-Path $repoRoot "installer\Build-Msi.ps1"
+$msiBuildResult = $null
+if (Test-Path $msiBuildScript) {
+    try {
+        if (Test-Path $msiPath) { Remove-Item -Path $msiPath -Force }
+        $msiBuildResult = & $msiBuildScript `
+            -StageDirectory $stageDirectory `
+            -Version $normalizedVersion `
+            -OutputMsiPath $msiPath `
+            -IconsDir (Join-Path $repoRoot "resources\icons") `
+            -PackagingDir (Join-Path $repoRoot "resources\icons\packaging") `
+            -InstallerDir (Join-Path $repoRoot "installer")
+        $metadata | Add-Member -NotePropertyName msiPath -NotePropertyValue $msiPath -Force
+        $metadata | Add-Member -NotePropertyName msiVersion -NotePropertyValue $msiBuildResult.MsiVersion -Force
+        $metadata | ConvertTo-Json -Depth 8 | Set-Content -Path $metadataPath -Encoding UTF8
+    } catch {
+        Write-Warning "MSI build failed: $($_.Exception.Message). Continuing with zip-only output."
+    }
+} else {
+    Write-Warning "installer\Build-Msi.ps1 not found. Skipping MSI build."
 }
 
 if (Test-Path $zipPath) {
