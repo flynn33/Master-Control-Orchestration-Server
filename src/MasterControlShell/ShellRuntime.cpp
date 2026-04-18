@@ -2949,31 +2949,17 @@ std::vector<ShellRuntime::ShellCliSignInDetectEntry> ShellRuntime::DetectCliSign
     return entries;
 }
 
-ShellRuntime::ShellCliDependencyInstallResult ShellRuntime::InstallCliDependency(
-    const std::wstring& bridge) const {
-    ShellCliDependencyInstallResult result;
-    result.bridge = bridge;
-
-    // Map bridge id -> dependency catalog id. The backend runs the catalog's
-    // preset install command (npm install -g @anthropic-ai/claude-code or
-    // @openai/codex) and reports detection state before and after.
-    std::wstring dependencyId;
-    if (bridge == L"claude") {
-        dependencyId = L"claude-code-cli";
-    } else if (bridge == L"codex") {
-        dependencyId = L"codex-cli";
-    } else {
-        result.status = L"failed";
-        result.summary = L"Unknown CLI bridge.";
-        result.detail = L"Expected 'claude' or 'codex'.";
-        return result;
-    }
+// Internal: POST /api/setup/dependencies/{id}/install and unpack the
+// structured response. Blocks until the backend finishes running the
+// catalog's install command (up to its preset timeout, currently 300-600s).
+static ShellRuntime::ShellCliDependencyInstallResult postDependencyInstall(
+    const std::string& host,
+    uint16_t port,
+    const std::wstring& dependencyId) {
+    ShellRuntime::ShellCliDependencyInstallResult result;
 
     std::wstring errorMessage;
-    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
     const auto path = L"/api/setup/dependencies/" + dependencyId + L"/install";
-    // An empty JSON body is accepted by the handler; it rereads the catalog
-    // to determine which install command to invoke.
     const auto response = httpRequest(
         host, port, L"POST", path, std::string("{}"), {}, errorMessage);
     if (!response.has_value()) {
@@ -2994,17 +2980,80 @@ ShellRuntime::ShellCliDependencyInstallResult ShellRuntime::InstallCliDependency
     result.summary = wideFromUtf8(jsonStringOr(*body, L"summary", ""));
     result.detail = wideFromUtf8(jsonStringOr(*body, L"detail", ""));
     result.exitCode = static_cast<int>(jsonNumberOr(*body, L"exitCode", -1.0));
-
-    // The post-install detection block, when present, carries the resolved
-    // CLI version string — propagate it so the shell can surface a
-    // reassuring "Claude Code 1.2.3 installed." summary instead of a bare
-    // "ready".
     if (body->HasKey(L"postInstallDetection")) {
         const auto detection = body->GetNamedValue(L"postInstallDetection");
         if (detection.ValueType() == JsonValueType::Object) {
             const auto detectionObj = detection.GetObject();
             result.detectedVersion = wideFromUtf8(
                 jsonStringOr(detectionObj, L"detectedVersion", ""));
+        }
+    }
+    return result;
+}
+
+// Auto-chain install: the user clicks "Install Claude Code CLI", but on a
+// fresh machine npm itself may not be on PATH. Detect that case from the
+// first install attempt's finalState and detail, install Node.js LTS via
+// winget, and retry the original install. This lets the Install button
+// work on a clean Windows install without the operator knowing or caring
+// that npm is a prerequisite.
+ShellRuntime::ShellCliDependencyInstallResult ShellRuntime::InstallCliDependency(
+    const std::wstring& bridge) const {
+    ShellCliDependencyInstallResult result;
+    result.bridge = bridge;
+
+    std::wstring dependencyId;
+    if (bridge == L"claude") {
+        dependencyId = L"claude-code-cli";
+    } else if (bridge == L"codex") {
+        dependencyId = L"codex-cli";
+    } else {
+        result.status = L"failed";
+        result.summary = L"Unknown CLI bridge.";
+        result.detail = L"Expected 'claude' or 'codex'.";
+        return result;
+    }
+
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+
+    // First attempt — the happy path on a machine that already has Node.js.
+    result = postDependencyInstall(host, port, dependencyId);
+    result.bridge = bridge;
+
+    // Prerequisite missing? finalState is "manual-action-required" and the
+    // postInstallDetection.preflight is "prerequisite-missing" with a detail
+    // that mentions Node.js or npm. Install nodejs via the catalog's winget
+    // command, then retry the CLI install.
+    const bool prerequisiteMissing =
+        !result.succeeded &&
+        (result.status == L"manual-action-required" ||
+         result.status == L"failed") &&
+        (result.summary.find(L"Node.js") != std::wstring::npos ||
+         result.summary.find(L"npm") != std::wstring::npos ||
+         result.detail.find(L"Node.js") != std::wstring::npos ||
+         result.detail.find(L"npm") != std::wstring::npos);
+
+    if (prerequisiteMissing) {
+        const auto nodeResult = postDependencyInstall(host, port, L"nodejs");
+        if (!nodeResult.succeeded) {
+            // Could not install Node.js — surface that to the UI instead of
+            // the cryptic "npm not on PATH" from the first attempt. Keep the
+            // bridge and treat the overall install as failed.
+            result = nodeResult;
+            result.bridge = bridge;
+            if (result.summary.empty()) {
+                result.summary = L"Could not install Node.js (required prerequisite).";
+            }
+            return result;
+        }
+        // Node.js installed. Retry the CLI install — this time npm should be
+        // on PATH and `npm install -g` will succeed.
+        result = postDependencyInstall(host, port, dependencyId);
+        result.bridge = bridge;
+        if (result.succeeded && !result.summary.empty()) {
+            // Prepend a note so the operator sees Node.js was installed as
+            // part of this action, not behind their back.
+            result.summary = L"Installed Node.js first, then " + result.summary;
         }
     }
     return result;

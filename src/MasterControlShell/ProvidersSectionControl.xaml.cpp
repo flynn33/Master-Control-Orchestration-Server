@@ -1743,13 +1743,21 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::InstallCliDepe
                    L". Check Node.js/npm are on PATH and retry.")
                 : result.summary));
     }
+    // Re-probe /api/providers/signin/installed so the status chip + which
+    // button is visible reflect the fresh on-disk state. RefreshCliInstallStateAsync
+    // handles all three states (not-installed / installed / signed-in) so
+    // it's safe to call after any outcome.
+    RefreshCliInstallStateAsync();
     co_return;
 }
 
-// Probes `/api/providers/signin/installed` on shell load so the Install /
-// Sign-In buttons reflect reality without waiting for the operator to
-// click anything. When a CLI is missing we reveal the Install button and
-// disable Sign-In; when present we hide Install and enable Sign-In.
+// Probes `/api/providers/signin/installed` on shell load so the card
+// surfaces exactly ONE primary-action button at a time:
+//   * CLI missing            → STEP 1 (Install) visible, Sign-In collapsed
+//   * CLI installed, no auth → STEP 2 (Sign in) visible, Install collapsed
+//   * Fully signed in        → both collapsed, status chip shows "Ready"
+// A coloured status chip above the buttons mirrors this state so the
+// operator always knows exactly which step they're on.
 winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RefreshCliInstallStateAsync() {
     if (runtime_ == nullptr) {
         co_return;
@@ -1765,33 +1773,36 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RefreshCliInst
         if (!isClaude && !isCodex) {
             continue;
         }
-        const auto installButton = isClaude
-            ? InstallClaudeCliButton()
-            : InstallCodexCliButton();
-        const auto signInButton = isClaude
-            ? SignInWithClaudeButton()
-            : SignInWithChatGptButton();
-        const auto statusText = isClaude
-            ? ClaudeSignInStatusText()
-            : ChatGptSignInStatusText();
+        const auto installButton = isClaude ? InstallClaudeCliButton() : InstallCodexCliButton();
+        const auto signInButton = isClaude ? SignInWithClaudeButton() : SignInWithChatGptButton();
+        const auto statusText = isClaude ? ClaudeSignInStatusText() : ChatGptSignInStatusText();
+        const auto chipText = isClaude ? ClaudeStatusChipText() : ChatGptStatusChipText();
+        const auto displayName = std::wstring(isClaude ? L"Claude Code CLI" : L"Codex CLI");
 
-        if (entry.installed) {
-            installButton.Visibility(Visibility::Collapsed);
-            signInButton.IsEnabled(true);
-            if (entry.signedIn) {
-                statusText.Text(winrt::hstring(
-                    isClaude
-                        ? L"Signed in. Ready to route work to Claude."
-                        : L"Signed in. ChatGPT + Codex available for assignment."));
-            } else {
-                statusText.Text(winrt::hstring(L"CLI installed. Click sign-in to continue."));
-            }
-        } else {
+        if (!entry.installed) {
+            // State 1: CLI missing — STEP 1 is the only action.
             installButton.Visibility(Visibility::Visible);
-            signInButton.IsEnabled(false);
+            signInButton.Visibility(Visibility::Collapsed);
+            chipText.Text(winrt::hstring(L"STEP 1 OF 2 — NOT INSTALLED"));
             statusText.Text(winrt::hstring(
-                std::wstring(isClaude ? L"Claude Code CLI" : L"Codex CLI")
-                + L" not found on PATH. Click Install to run npm install -g."));
+                displayName + L" is not installed. Click above to auto-install Node.js + " + displayName + L"."));
+        } else if (!entry.signedIn) {
+            // State 2: installed but no saved session — STEP 2 is the only action.
+            installButton.Visibility(Visibility::Collapsed);
+            signInButton.Visibility(Visibility::Visible);
+            chipText.Text(winrt::hstring(L"STEP 2 OF 2 — INSTALLED, NOT SIGNED IN"));
+            statusText.Text(winrt::hstring(
+                displayName + L" is installed. Click above to sign in with your account."));
+        } else {
+            // State 3: fully ready — hide Install, keep Sign-In as re-auth escape hatch.
+            installButton.Visibility(Visibility::Collapsed);
+            signInButton.Visibility(Visibility::Visible);
+            signInButton.Content(winrt::box_value(winrt::hstring(L"Re-authenticate (if needed)")));
+            chipText.Text(winrt::hstring(L"READY — SIGNED IN"));
+            statusText.Text(winrt::hstring(
+                isClaude
+                    ? L"Claude Code CLI signed in. Ready to route work."
+                    : L"Codex CLI signed in. ChatGPT + Codex available for assignment."));
         }
     }
     co_return;

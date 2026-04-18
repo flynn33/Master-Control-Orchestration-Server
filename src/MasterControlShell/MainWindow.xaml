@@ -87,13 +87,11 @@
                     <NavigationView
                         x:Name="ShellNavigation"
                         Background="Transparent"
-                        CompactPaneLength="0"
                         IsBackButtonVisible="Collapsed"
-                        IsPaneOpen="False"
+                        IsPaneOpen="True"
                         IsPaneToggleButtonVisible="False"
                         IsSettingsVisible="False"
                         IsTitleBarAutoPaddingEnabled="False"
-                        OpenPaneLength="0"
                         PaneDisplayMode="Top"
                         PaneTitle=""
                         SelectionChanged="ShellNavigation_SelectionChanged">

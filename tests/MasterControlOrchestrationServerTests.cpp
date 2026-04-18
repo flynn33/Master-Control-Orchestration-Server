@@ -1507,12 +1507,14 @@ int main() {
                 "/api/setup/dependencies should return a dependencies array.");
             if (deps.has_value() && deps->contains("dependencies") && (*deps)["dependencies"].is_array()) {
                 const auto& arr = (*deps)["dependencies"];
-                // Catalog carries the Claude Code and Codex CLIs — both drive
-                // the account-only sign-in flow so both need an auto-install
-                // button on the Providers surface.
-                success &= expect(arr.size() == 2U,
-                    "Dependency catalog should have two entries (claude-code-cli + codex-cli).");
+                // Catalog now carries three entries: nodejs (the runtime
+                // prerequisite installed via winget) plus the two CLIs that
+                // drive the account-only sign-in flow. The shell chains them
+                // so one click installs Node.js + the chosen CLI.
+                success &= expect(arr.size() == 3U,
+                    "Dependency catalog should have three entries (nodejs + claude-code-cli + codex-cli).");
 
+                bool sawNode = false;
                 bool sawClaude = false;
                 bool sawCodex = false;
                 for (const auto& entry : arr) {
@@ -1521,7 +1523,13 @@ int main() {
                     if (!entry.contains("descriptor")) { continue; }
                     const auto id = entry["descriptor"].value("id", std::string{});
                     const auto installMethod = entry["descriptor"].value("installMethod", std::string{});
-                    if (id == "claude-code-cli") {
+                    if (id == "nodejs") {
+                        sawNode = true;
+                        success &= expect(
+                            installMethod.find("winget") != std::string::npos &&
+                                installMethod.find("OpenJS.NodeJS.LTS") != std::string::npos,
+                            "Node.js installMethod should use winget OpenJS.NodeJS.LTS.");
+                    } else if (id == "claude-code-cli") {
                         sawClaude = true;
                         success &= expect(
                             installMethod == "npm install -g @anthropic-ai/claude-code",
@@ -1540,6 +1548,7 @@ int main() {
                             "Detection preflight must be one of the three documented branches.");
                     }
                 }
+                success &= expect(sawNode, "Catalog should contain nodejs entry.");
                 success &= expect(sawClaude, "Catalog should contain claude-code-cli entry.");
                 success &= expect(sawCodex, "Catalog should contain codex-cli entry.");
             }

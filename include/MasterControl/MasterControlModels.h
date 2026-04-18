@@ -432,6 +432,14 @@ struct SupportedDependency final {
     std::string docsUrl;            // manual-install fallback link
     bool requiresElevation = false; // informational only — runtime never auto-elevates
     int installTimeoutSeconds = 300;
+    // Optional prerequisite probe: if non-empty and exits non-zero, the install
+    // is blocked with preflight="prerequisite-missing". Historically the
+    // handler hardcoded `npm --version` as the prerequisite for every
+    // dependency, which prevented installing the provider of npm itself
+    // (Node.js). Keep empty for dependencies that have no prerequisites
+    // (e.g. nodejs via winget).
+    std::string prerequisiteProbeCommand;
+    std::string prerequisiteName;   // human-readable label used in error messages when prerequisite is missing
 };
 
 struct DependencyDetection final {

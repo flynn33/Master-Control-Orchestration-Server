@@ -31,25 +31,32 @@
 
                             <StackPanel Grid.Column="0" Spacing="6">
                                 <TextBlock Text="CLAUDE (Pro / Max / Team)" Style="{StaticResource ShellEyebrowTextStyle}" />
-                                <!-- Install button shown only when `claude` is missing on PATH; see UpdateCliInstallState() in the code-behind. -->
-                                <Button x:Name="InstallClaudeCliButton" Click="InstallClaudeCliButton_Click" Content="Install Claude Code CLI" HorizontalAlignment="Stretch" Visibility="Collapsed" />
-                                <Button x:Name="SignInWithClaudeButton" Click="SignInWithClaudeButton_Click" Content="Sign in with Claude account" HorizontalAlignment="Stretch" />
+                                <!-- State chip: flipped by RefreshCliInstallStateAsync based on /api/providers/signin/installed. -->
+                                <Border x:Name="ClaudeStatusChip" Background="#22FF4444" BorderBrush="#44FF4444" BorderThickness="1" CornerRadius="0" Padding="8,4" HorizontalAlignment="Stretch">
+                                    <TextBlock x:Name="ClaudeStatusChipText" Text="CHECKING..." Style="{StaticResource ShellLabelTextStyle}" />
+                                </Border>
+                                <!-- Only ONE of these two buttons is ever Visible at a time, based on install state. -->
+                                <Button x:Name="InstallClaudeCliButton" Click="InstallClaudeCliButton_Click" Content="Step 1: Install Claude Code CLI" Style="{StaticResource ShellCommandButtonStyle}" HorizontalAlignment="Stretch" Visibility="Collapsed" />
+                                <Button x:Name="SignInWithClaudeButton" Click="SignInWithClaudeButton_Click" Content="Step 2: Sign in with Claude account" Style="{StaticResource ShellCommandButtonStyle}" HorizontalAlignment="Stretch" Visibility="Collapsed" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <ProgressRing x:Name="ClaudeCliProgressRing" Width="18" Height="18" IsActive="False" VerticalAlignment="Center" />
-                                    <TextBlock x:Name="ClaudeSignInStatusText" Text="Ready." Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="ClaudeSignInStatusText" Text="Checking..." Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" VerticalAlignment="Center" />
                                 </StackPanel>
                             </StackPanel>
 
                             <StackPanel Grid.Column="1" Spacing="6">
                                 <TextBlock Text="CHATGPT + CODEX (via Codex CLI)" Style="{StaticResource ShellEyebrowTextStyle}" />
                                 <TextBlock
-                                    Text="One sign-in unlocks both endpoints: ChatGPT for planning &amp; reasoning, Codex for the coding agent. Assign each to different roles after sign-in."
+                                    Text="One sign-in unlocks both endpoints: ChatGPT for planning &amp; reasoning, Codex for the coding agent."
                                     Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" />
-                                <Button x:Name="InstallCodexCliButton" Click="InstallCodexCliButton_Click" Content="Install Codex CLI" HorizontalAlignment="Stretch" Visibility="Collapsed" />
-                                <Button x:Name="SignInWithChatGptButton" Click="SignInWithChatGptButton_Click" Content="Sign in with OpenAI account" HorizontalAlignment="Stretch" />
+                                <Border x:Name="ChatGptStatusChip" Background="#22FF4444" BorderBrush="#44FF4444" BorderThickness="1" CornerRadius="0" Padding="8,4" HorizontalAlignment="Stretch">
+                                    <TextBlock x:Name="ChatGptStatusChipText" Text="CHECKING..." Style="{StaticResource ShellLabelTextStyle}" />
+                                </Border>
+                                <Button x:Name="InstallCodexCliButton" Click="InstallCodexCliButton_Click" Content="Step 1: Install Codex CLI" Style="{StaticResource ShellCommandButtonStyle}" HorizontalAlignment="Stretch" Visibility="Collapsed" />
+                                <Button x:Name="SignInWithChatGptButton" Click="SignInWithChatGptButton_Click" Content="Step 2: Sign in with OpenAI account" Style="{StaticResource ShellCommandButtonStyle}" HorizontalAlignment="Stretch" Visibility="Collapsed" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <ProgressRing x:Name="ChatGptCliProgressRing" Width="18" Height="18" IsActive="False" VerticalAlignment="Center" />
-                                    <TextBlock x:Name="ChatGptSignInStatusText" Text="Ready." Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="ChatGptSignInStatusText" Text="Checking..." Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" VerticalAlignment="Center" />
                                 </StackPanel>
                             </StackPanel>
 

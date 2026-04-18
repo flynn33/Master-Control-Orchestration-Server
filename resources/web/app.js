@@ -580,14 +580,10 @@ async function signInDetectInstalled() {
   }
 }
 
-// Trigger the backend auto-install. Sets installByBridge[bridge] = pending
-// immediately so the card flips into the "Installing…" state, POSTs to
-// /api/setup/dependencies/{depId}/install, waits for the response (backend
-// enforces a 300-second timeout), then re-detects which CLIs are now on
-// PATH so the card flips into the normal sign-in state on success.
-async function installCliDependency(bridge, depId) {
-  state.signIn.installByBridge[bridge] = { status: 'pending', message: '' };
-  renderShell();
+// POST /api/setup/dependencies/{id}/install and return the parsed body
+// (or null on HTTP / JSON error). The caller decides how to react to
+// prerequisite-missing responses.
+async function postDependencyInstall(depId) {
   try {
     const response = await fetch(`/api/setup/dependencies/${encodeURIComponent(depId)}/install`, {
       method: 'POST',
@@ -595,26 +591,62 @@ async function installCliDependency(bridge, depId) {
       body: '{}'
     });
     const text = await response.text();
-    let body = null;
-    try { body = text ? JSON.parse(text) : null; } catch (_) { /* non-JSON error body */ }
-    if (response.ok && body && body.succeeded && body.finalState === 'ready') {
-      const version = body.postInstallDetection?.detectedVersion || '';
-      state.signIn.installByBridge[bridge] = {
-        status: 'success',
-        message: version ? `Installed ${version}.` : 'Installed.'
-      };
-    } else {
-      const message = body?.summary || body?.detail || `Install failed (HTTP ${response.status}).`;
-      state.signIn.installByBridge[bridge] = { status: 'error', message };
-    }
+    try { return text ? JSON.parse(text) : null; }
+    catch (_) { return { succeeded: false, summary: `Invalid JSON response (HTTP ${response.status}).` }; }
   } catch (error) {
-    state.signIn.installByBridge[bridge] = {
-      status: 'error',
-      message: error?.message || 'Install request failed.'
-    };
+    return { succeeded: false, summary: error?.message || 'Install request failed.' };
   }
-  // Always re-detect — on success the card hides the Install button, on
-  // failure it stays visible with a Retry label.
+}
+
+function isPrerequisiteMissing(body) {
+  if (!body || body.succeeded) return false;
+  const state = body.finalState || '';
+  const msg = (body.summary || '') + ' ' + (body.detail || '')
+    + ' ' + (body.postInstallDetection?.detail || '');
+  if (state !== 'manual-action-required' && state !== 'failed') return false;
+  return /Node\.js|npm/i.test(msg);
+}
+
+// Trigger the backend auto-install. Sets installByBridge[bridge] = pending
+// immediately so the card flips into the "Installing…" state, POSTs to
+// /api/setup/dependencies/{depId}/install, waits for the response, and on
+// prerequisite-missing automatically installs Node.js LTS first and
+// retries the original install — so a click on "Install Claude Code CLI"
+// from a fresh Windows install will install Node.js, then the CLI, then
+// flip the card into the ready-to-sign-in state.
+async function installCliDependency(bridge, depId) {
+  state.signIn.installByBridge[bridge] = { status: 'pending', message: `Installing ${bridge === 'claude' ? 'Claude Code CLI' : 'Codex CLI'} via npm install -g\u2026 This takes 20\u201360 seconds.` };
+  renderShell();
+
+  let body = await postDependencyInstall(depId);
+
+  if (isPrerequisiteMissing(body)) {
+    state.signIn.installByBridge[bridge] = { status: 'pending', message: 'Step 1 of 2: Installing Node.js (LTS) via winget\u2026 This takes 1\u20132 minutes.' };
+    renderShell();
+
+    const nodeBody = await postDependencyInstall('nodejs');
+    if (!nodeBody || !nodeBody.succeeded) {
+      const msg = nodeBody?.summary || nodeBody?.detail || 'Could not install Node.js.';
+      state.signIn.installByBridge[bridge] = { status: 'error', message: `Node.js install failed: ${msg}` };
+      await signInDetectInstalled();
+      return;
+    }
+
+    state.signIn.installByBridge[bridge] = { status: 'pending', message: `Step 2 of 2: Installing ${bridge === 'claude' ? 'Claude Code CLI' : 'Codex CLI'} via npm install -g\u2026` };
+    renderShell();
+    body = await postDependencyInstall(depId);
+  }
+
+  if (body && body.succeeded && body.finalState === 'ready') {
+    const version = body.postInstallDetection?.detectedVersion || '';
+    state.signIn.installByBridge[bridge] = {
+      status: 'success',
+      message: version ? `Installed ${version}. Click sign-in to continue.` : 'Installed. Click sign-in to continue.'
+    };
+  } else {
+    const message = body?.summary || body?.detail || `Install failed.`;
+    state.signIn.installByBridge[bridge] = { status: 'error', message };
+  }
   await signInDetectInstalled();
 }
 

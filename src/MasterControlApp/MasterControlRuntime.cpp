@@ -340,33 +340,49 @@ ReadinessSnapshot computeReadinessSnapshot(const DashboardSnapshot& snapshot,
     return result;
 }
 
-// Supported-dependency catalog (WS4). Currently one entry: Claude Code CLI.
+// Supported-dependency catalog. Ordered by dependency: nodejs has no
+// prerequisite and is the runtime both CLI tools need. Installing nodejs
+// first via winget (OpenJS.NodeJS.LTS) puts `node` and `npm` on PATH, which
+// unblocks the subsequent claude-code-cli / codex-cli npm installs.
 std::vector<SupportedDependency> buildSupportedDependencyCatalog() {
-    return {
-        SupportedDependency{
-            "claude-code-cli",
-            "Claude Code CLI",
-            "CLI runtime for Claude Code provider execution and account sign-in.",
-            "claude --version",
-            "npm install -g @anthropic-ai/claude-code",
-            "https://docs.anthropic.com/claude-code",
-            false,
-            300
-        },
-        // Codex CLI drives the `codex login` OAuth flow that registers both
-        // ChatGPT (planning / reasoning) and Codex (coding agent) providers
-        // from one account sign-in. Distributed on npm as `@openai/codex`.
-        SupportedDependency{
-            "codex-cli",
-            "Codex CLI",
-            "CLI runtime for OpenAI account sign-in (ChatGPT + Codex providers) and Codex provider execution.",
-            "codex --version",
-            "npm install -g @openai/codex",
-            "https://github.com/openai/codex",
-            false,
-            300
-        }
-    };
+    SupportedDependency nodejs;
+    nodejs.id = "nodejs";
+    nodejs.displayName = "Node.js (LTS)";
+    nodejs.description = "JavaScript runtime + npm. Required by the Claude Code and Codex CLIs.";
+    nodejs.detectCommand = "node --version";
+    // --scope machine puts node and npm under %ProgramFiles%\nodejs so the
+    // service account sees them on PATH for subsequent npm calls. Accept all
+    // agreements so the install is fully non-interactive.
+    nodejs.installMethod =
+        "winget install --id OpenJS.NodeJS.LTS -e --source winget --scope machine "
+        "--silent --accept-package-agreements --accept-source-agreements --disable-interactivity";
+    nodejs.docsUrl = "https://nodejs.org/";
+    nodejs.installTimeoutSeconds = 600;
+    // Node.js has no prerequisite — leave prerequisiteProbeCommand empty.
+
+    SupportedDependency claude;
+    claude.id = "claude-code-cli";
+    claude.displayName = "Claude Code CLI";
+    claude.description = "CLI runtime for Claude Code provider execution and account sign-in.";
+    claude.detectCommand = "claude --version";
+    claude.installMethod = "npm install -g @anthropic-ai/claude-code";
+    claude.docsUrl = "https://docs.anthropic.com/claude-code";
+    claude.installTimeoutSeconds = 300;
+    claude.prerequisiteProbeCommand = "npm --version";
+    claude.prerequisiteName = "Node.js (npm)";
+
+    SupportedDependency codex;
+    codex.id = "codex-cli";
+    codex.displayName = "Codex CLI";
+    codex.description = "CLI runtime for OpenAI account sign-in (ChatGPT + Codex providers) and Codex provider execution.";
+    codex.detectCommand = "codex --version";
+    codex.installMethod = "npm install -g @openai/codex";
+    codex.docsUrl = "https://github.com/openai/codex";
+    codex.installTimeoutSeconds = 300;
+    codex.prerequisiteProbeCommand = "npm --version";
+    codex.prerequisiteName = "Node.js (npm)";
+
+    return { nodejs, claude, codex };
 }
 
 // Starter workflow template catalog (WS6).
@@ -9963,18 +9979,29 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                         firstLine += ch;
                     }
                     detection.detectedVersion = firstLine;
+                } else if (descriptor.prerequisiteProbeCommand.empty()) {
+                    // Dependency has no prerequisite (e.g. nodejs itself via
+                    // winget). The install command can run directly.
+                    detection.state = "not-installed";
+                    detection.preflight = "installable";
+                    detection.detail = descriptor.displayName + " not detected. Ready to install.";
                 } else {
-                    // Branch B/C — probe the prerequisite (npm).
-                    const auto npmProbe = runProcessCapture(L"cmd.exe /c npm --version", workDir, {}, std::nullopt, false);
-                    if (npmProbe.launched && npmProbe.exitCode == 0) {
+                    // Probe the declared prerequisite (typically `npm --version`
+                    // for the CLI tools; Node.js is their prerequisite).
+                    const auto prereqCommandLine = std::wstring(L"cmd.exe /c ")
+                        + wideFromUtf8(descriptor.prerequisiteProbeCommand);
+                    const auto prereqProbe = runProcessCapture(prereqCommandLine, workDir, {}, std::nullopt, false);
+                    if (prereqProbe.launched && prereqProbe.exitCode == 0) {
                         detection.state = "not-installed";
                         detection.preflight = "installable";
-                        detection.detail = descriptor.displayName + " not detected. npm available — ready to install.";
+                        detection.detail = descriptor.displayName
+                            + " not detected. " + descriptor.prerequisiteName + " available — ready to install.";
                     } else {
                         detection.state = "manual-action-required";
                         detection.preflight = "prerequisite-missing";
-                        detection.detail = "Node.js/npm is required to install " + descriptor.displayName
-                            + " but was not detected on PATH. Install Node.js 18+ from https://nodejs.org, then restart MCOS and retry.";
+                        detection.detail = descriptor.prerequisiteName
+                            + " is required to install " + descriptor.displayName
+                            + " but was not detected on PATH.";
                     }
                 }
                 array.push_back({
@@ -10021,17 +10048,70 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     descriptor.id, "ready", "ready", firstLine, "", timestampNowUtc()
                 };
             } else {
-                const auto npmProbe = runProcessCapture(L"cmd.exe /c npm --version", workDir, {}, std::nullopt, false);
-                if (!npmProbe.launched || npmProbe.exitCode != 0) {
-                    // Branch C — prerequisite missing. No install attempted.
+                // Refresh the service process's PATH from HKLM/HKCU
+                // Environment keys before probing the prerequisite. winget
+                // installs (especially --scope machine) update HKLM's Path
+                // but the service's own PATH was snapshotted at startup —
+                // without this refresh, an "Install Node.js" click followed
+                // immediately by "Install Claude Code CLI" would fail the
+                // npm prerequisite check even though npm is on disk.
+                auto refreshPathFromRegistry = []() -> std::wstring {
+                    auto readKey = [](HKEY hive, const wchar_t* subkey) -> std::wstring {
+                        HKEY handle = nullptr;
+                        if (RegOpenKeyExW(hive, subkey, 0, KEY_READ, &handle) != ERROR_SUCCESS) return {};
+                        DWORD type = 0, bytes = 0;
+                        RegQueryValueExW(handle, L"Path", nullptr, &type, nullptr, &bytes);
+                        std::wstring value;
+                        if (bytes > 0 && (type == REG_SZ || type == REG_EXPAND_SZ)) {
+                            value.resize(bytes / sizeof(wchar_t));
+                            RegQueryValueExW(handle, L"Path", nullptr, &type,
+                                reinterpret_cast<LPBYTE>(value.data()), &bytes);
+                            while (!value.empty() && value.back() == L'\0') value.pop_back();
+                            if (type == REG_EXPAND_SZ) {
+                                wchar_t expanded[32768];
+                                const auto n = ExpandEnvironmentStringsW(value.c_str(), expanded, 32768);
+                                if (n > 0 && n <= 32768) value.assign(expanded, n - 1);
+                            }
+                        }
+                        RegCloseKey(handle);
+                        return value;
+                    };
+                    const auto machine = readKey(HKEY_LOCAL_MACHINE,
+                        L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment");
+                    const auto user = readKey(HKEY_CURRENT_USER, L"Environment");
+                    std::wstring combined = machine;
+                    if (!user.empty()) {
+                        if (!combined.empty() && combined.back() != L';') combined += L';';
+                        combined += user;
+                    }
+                    if (!combined.empty()) SetEnvironmentVariableW(L"Path", combined.c_str());
+                    return combined;
+                };
+                const auto refreshedPath = refreshPathFromRegistry();
+
+                // Probe the declared prerequisite (if any). Dependencies with
+                // no prerequisite (e.g. nodejs installed via winget) skip this
+                // check entirely and go straight to the install command.
+                bool prerequisiteOk = true;
+                if (!descriptor.prerequisiteProbeCommand.empty()) {
+                    const auto prereqCommandLine = std::wstring(L"cmd.exe /c ")
+                        + wideFromUtf8(descriptor.prerequisiteProbeCommand);
+                    std::vector<std::pair<std::wstring, std::wstring>> preEnv;
+                    if (!refreshedPath.empty()) preEnv.emplace_back(L"Path", refreshedPath);
+                    const auto prereqProbe = runProcessCapture(prereqCommandLine, workDir, preEnv, std::nullopt, false);
+                    prerequisiteOk = prereqProbe.launched && prereqProbe.exitCode == 0;
+                }
+                if (!prerequisiteOk) {
+                    // Prerequisite missing. No install attempted.
                     result.succeeded = false;
                     result.finalState = "manual-action-required";
                     result.exitCode = -1;
-                    result.summary = "Cannot install: Node.js/npm not detected. Install Node.js 18+ from "
+                    result.summary = "Cannot install: " + descriptor.prerequisiteName
+                                   + " not detected. Install it first from "
                                    + descriptor.docsUrl + " and retry.";
                     result.postInstallDetection = DependencyDetection{
                         descriptor.id, "manual-action-required", "prerequisite-missing", "",
-                        "Node.js/npm not on PATH.", timestampNowUtc()
+                        descriptor.prerequisiteName + " not on PATH.", timestampNowUtc()
                     };
                 } else {
                     // Branch B — install.
@@ -10046,7 +10126,21 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     result.stderrTail = tailOf(installProbe.stderrText);
                     result.exitCode = installProbe.exitCode;
 
-                    const auto postDetect = runProcessCapture(detectCommandLine, workDir, {}, std::nullopt, false);
+                    // The install command (winget install --scope machine / npm install -g)
+                    // may have dropped binaries into a new directory. The
+                    // pre-probe already refreshed PATH from the registry and
+                    // populated `refreshedPath`; re-refresh it now so any
+                    // path update that happened DURING the install (e.g.
+                    // winget created C:\Program Files\nodejs and amended
+                    // machine PATH mid-run) is picked up before postDetect.
+                    const auto postInstallRefreshedPath = refreshPathFromRegistry();
+                    std::vector<std::pair<std::wstring, std::wstring>> refreshedEnv;
+                    if (!postInstallRefreshedPath.empty()) {
+                        refreshedEnv.emplace_back(L"Path", postInstallRefreshedPath);
+                    } else if (!refreshedPath.empty()) {
+                        refreshedEnv.emplace_back(L"Path", refreshedPath);
+                    }
+                    const auto postDetect = runProcessCapture(detectCommandLine, workDir, refreshedEnv, std::nullopt, false);
                     std::string postVersion;
                     for (char ch : postDetect.stdoutText) {
                         if (ch == '\r' || ch == '\n') { if (!postVersion.empty()) break; else continue; }
@@ -10079,17 +10173,49 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                             "Elevation required.", timestampNowUtc()
                         };
                     } else {
-                        result.succeeded = false;
-                        result.finalState = "failed";
-                        result.summary = "Install returned exit code " + std::to_string(installProbe.exitCode) + ".";
-                        result.postInstallDetection = DependencyDetection{
-                            descriptor.id,
-                            nowReady ? "ready" : "failed",
-                            "installable",
-                            postVersion,
-                            "Post-install detection did not find " + descriptor.displayName + ".",
-                            timestampNowUtc()
-                        };
+                        // Winget returns APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE
+                        // (0x8A15002B = -1978335189 signed) when the package
+                        // is already installed. Post-detect couldn't confirm it
+                        // (likely because PATH is stale on this process), but
+                        // the tool IS installed — check a well-known fallback
+                        // path before giving up. This avoids the confusing
+                        // "Install returned exit code -1978335189" message when
+                        // the install actually succeeded.
+                        const bool wingetAlreadyInstalled =
+                            installProbe.exitCode == -1978335189 ||
+                            (installProbe.stdoutText.find("already installed") != std::string::npos);
+                        std::string fallbackVersion;
+                        if (wingetAlreadyInstalled && descriptor.id == "nodejs") {
+                            const auto fallbackDetect = runProcessCapture(
+                                L"cmd.exe /c \"\"C:\\Program Files\\nodejs\\node.exe\" --version\"",
+                                workDir, refreshedEnv, std::nullopt, false);
+                            if (fallbackDetect.launched && fallbackDetect.exitCode == 0) {
+                                for (char ch : fallbackDetect.stdoutText) {
+                                    if (ch == '\r' || ch == '\n') { if (!fallbackVersion.empty()) break; else continue; }
+                                    fallbackVersion += ch;
+                                }
+                            }
+                        }
+                        if (!fallbackVersion.empty()) {
+                            result.succeeded = true;
+                            result.finalState = "ready";
+                            result.summary = descriptor.displayName + " already installed (" + fallbackVersion + ").";
+                            result.postInstallDetection = DependencyDetection{
+                                descriptor.id, "ready", "ready", fallbackVersion, "", timestampNowUtc()
+                            };
+                        } else {
+                            result.succeeded = false;
+                            result.finalState = "failed";
+                            result.summary = "Install returned exit code " + std::to_string(installProbe.exitCode) + ".";
+                            result.postInstallDetection = DependencyDetection{
+                                descriptor.id,
+                                nowReady ? "ready" : "failed",
+                                "installable",
+                                postVersion,
+                                "Post-install detection did not find " + descriptor.displayName + ".",
+                                timestampNowUtc()
+                            };
+                        }
                     }
                 }
             }
