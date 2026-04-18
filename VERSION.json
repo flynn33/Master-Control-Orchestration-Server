@@ -1,11 +1,29 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.4-rc.1",
-  "current_tag": "v0.4.4-rc.1",
+  "current_version": "0.4.5-rc.1",
+  "current_tag": "v0.4.5-rc.1",
   "released_at": "2026-04-18",
-  "last_release_commit": "aaf0d94",
+  "last_release_commit": "de3bca1",
   "history": [
+    {
+      "version": "0.4.5-rc.1",
+      "tag": "v0.4.5-rc.1",
+      "released_at": "2026-04-18",
+      "commit": "de3bca1",
+      "summary": "Fixes the three biggest install-experience complaints. (1) Auto-install of the Claude/Codex CLIs now actually works on a clean Windows box — the backend installs Node.js LTS via winget as a prerequisite, refreshes PATH from the registry so the fresh binaries are detected, then runs the npm install -g step. Proven end-to-end via the admin API on a previously Node-less machine. (2) Providers sign-in cards show exactly ONE primary action at a time (Install Claude Code CLI OR Sign in with Claude account, never both) plus a STEP-of-2 status chip, so the integration flow is actually guided. The shell's top navigation pane is also now visible (9 tabs including the renamed 'AI Integrations') so users have a real chrome-level way to switch sections. (3) The legacy Tron-cyan progress-window installer shim ('Install Master Control Orchestration Server.exe') is removed from the package; the WiX MSI is now the only user-visible install path, with START-HERE.txt directing users to double-click the .msi.",
+      "entries": [
+        "feat(runtime): buildSupportedDependencyCatalog adds a 'nodejs' entry that installs via winget install --id OpenJS.NodeJS.LTS --scope machine --silent; the install handler refreshes PATH from HKLM/HKCU Environment keys before both the prerequisite probe and the post-install detect so fresh npm is immediately discoverable",
+        "feat(runtime): SupportedDependency gains prerequisiteProbeCommand + prerequisiteName. nodejs has no prerequisite (so the handler doesn't block it with a synthetic 'npm required' check); claude-code-cli + codex-cli declare 'npm --version' as theirs",
+        "feat(runtime): install handler treats winget exit code -1978335189 (APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE) as success when node.exe is detected at the well-known C:\\Program Files\\nodejs\\node.exe fallback path — avoids spurious 'exit code -1978335189' failure messages when Node.js is already installed",
+        "feat(shell): ShellRuntime::InstallCliDependency now chains; if the first CLI install returns prerequisite-missing (detail mentions Node.js/npm), it auto-installs nodejs, then retries the CLI install, and surfaces 'Installed Node.js first, then ...' on success",
+        "feat(browser): installCliDependency mirrors the shell chain; state.signIn.installByBridge carries step-of-2 'Step 1 of 2: Installing Node.js (LTS) via winget...' → 'Step 2 of 2: Installing Claude Code CLI via npm install -g...' progress text",
+        "feat(shell): ProvidersSectionControl — Install and Sign-In buttons now strictly mutually exclusive (Visibility=Collapsed by default; RefreshCliInstallStateAsync picks exactly one to render per card). Each card gets a coloured STEP chip (STEP 1 OF 2 NOT INSTALLED / STEP 2 OF 2 INSTALLED NOT SIGNED IN / READY SIGNED IN)",
+        "feat(shell): NavigationView top pane is now visible (9 tabs including 'AI Integrations') so operators have a real chrome-level way to move between sections instead of relying on invisible 0-width navigation",
+        "fix(installer): Package-MasterControlOrchestrationServer.ps1 no longer copies MasterControlOrchestrationServerSetup.exe to 'Install Master Control Orchestration Server.exe' — the legacy Tron-cyan shim that misled operators into re-running the old installer is gone. PACKAGE-METADATA.json primaryInstallerPath now points at the .msi. START-HERE.txt directs users to double-click the .msi",
+        "test: MasterControlOrchestrationServerTests dependency catalog now asserts 3 entries (nodejs + claude-code-cli + codex-cli) with the documented winget / npm install commands"
+      ]
+    },
     {
       "version": "0.4.4-rc.1",
       "tag": "v0.4.4-rc.1",

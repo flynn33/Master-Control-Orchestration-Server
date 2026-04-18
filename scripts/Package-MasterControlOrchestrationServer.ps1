@@ -149,7 +149,9 @@ $instructionsPath = Join-Path $stageDirectory "INSTALL.txt"
 $startHerePath = Join-Path $stageDirectory "START-HERE.txt"
 $installLauncherPath = Join-Path $stageDirectory "Install-MasterControlOrchestrationServer.ps1"
 $setupPath = Join-Path $stageDirectory "MasterControlOrchestrationServerSetup.exe"
-$primaryInstallerPath = Join-Path $stageDirectory "Install Master Control Orchestration Server.exe"
+# PrimaryInstallerPath points at the MSI (the user-facing installer). The
+# legacy .exe shim is no longer produced — see the skipped Copy-Item below.
+$primaryInstallerPath = $msiPath
 $validationTarget = Join-Path $OutputRoot ($packageName + ".validation-target")
 
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
@@ -188,9 +190,14 @@ foreach ($vcRuntimeFile in $vcRuntimeFiles) {
     Copy-Item -Path $vcRuntimeFile.FullName -Destination (Join-Path $stageDirectory $vcRuntimeFile.Name) -Force
 }
 
-if (Test-Path $setupPath) {
-    Copy-Item -Path $setupPath -Destination $primaryInstallerPath -Force
-}
+# The user-friendly "Install Master Control Orchestration Server.exe" shim is
+# deliberately NOT produced any more. As of v0.4.3-rc.1 the WiX MSI is the
+# primary install artifact — the legacy Tron-cyan progress-window launcher
+# is kept as MasterControlOrchestrationServerSetup.exe for advanced/CI
+# headless rollouts only, and the MSI drives deferred custom actions against
+# MasterControlBootstrapper.exe directly. Having both installers side-by-side
+# confused operators into double-clicking the old .exe and getting the old
+# experience; removing the shim makes the MSI the only obvious user path.
 
 $installLauncher = @'
 param(
@@ -356,6 +363,7 @@ exit $exitCode
 '@
 Set-Content -Path $installLauncherPath -Value $installLauncher -Encoding UTF8
 
+$msiFileName = Split-Path -Leaf $msiPath
 $instructions = @"
 Master Control Orchestration Server $versionTag
 
@@ -363,34 +371,28 @@ Package root: $packageName
 Build configuration: $configuration
 Commit: $gitCommit
 
-Quick start
-1. Extract this package to a writable local folder.
-2. Keep the bundled VC++ runtime DLL files beside the executables.
-3. Run .\Install Master Control Orchestration Server.exe first for the standard interactive install experience.
-4. Use .\Install-MasterControlOrchestrationServer.ps1 as the diagnostic fallback because it always writes a desktop log and will request elevation for the default managed install path.
-5. Open PowerShell only when you need the bootstrapper or fallback launcher directly.
-6. Run a preflight check before installing.
-7. If included, review RELEASE-READINESS.md before target-host deployment validation.
+Quick start (interactive install)
+Double-click $msiFileName. That opens the Windows Installer with a native
+wizard: Welcome -> License -> Install Location -> Options (service /
+firewall / Start Menu shortcut / Desktop shortcut / launch-on-finish) ->
+Install. No PowerShell needed. UAC will prompt for admin because the
+service host runs at the machine scope.
 
-Fully managed install (requires Administrator)
-.\Install Master Control Orchestration Server.exe
-.\MasterControlOrchestrationServerSetup.exe
-.\Install-MasterControlOrchestrationServer.ps1 -InstallDirectory "C:\Program Files\Master Control Orchestration Server"
+Silent / CI install
+msiexec /i $msiFileName /qn /l*v install.log
+
+Headless (no MSI) install via the CLI bootstrapper
 .\MasterControlBootstrapper.exe preflight "C:\Program Files\Master Control Orchestration Server" --json
 .\MasterControlBootstrapper.exe install "C:\Program Files\Master Control Orchestration Server" --json
 
-Non-admin test install
-.\Install Master Control Orchestration Server.exe --install-directory "$env:LOCALAPPDATA\MasterControlOrchestrationServer" --skip-service --skip-firewall --skip-uninstall-registration --quiet
-.\MasterControlOrchestrationServerSetup.exe --install-directory "$env:LOCALAPPDATA\MasterControlOrchestrationServer" --skip-service --skip-firewall --skip-uninstall-registration --quiet
-.\Install-MasterControlOrchestrationServer.ps1 -InstallDirectory "$env:LOCALAPPDATA\MasterControlOrchestrationServer" -SkipService -SkipFirewall -SkipUninstallRegistration
-.\MasterControlBootstrapper.exe preflight "$env:LOCALAPPDATA\MasterControlOrchestrationServer" --skip-service --skip-firewall --skip-uninstall-registration --json
+Per-user install (non-admin test, no service/firewall changes)
 .\MasterControlBootstrapper.exe install "$env:LOCALAPPDATA\MasterControlOrchestrationServer" --skip-service --skip-firewall --skip-uninstall-registration --json
 
 Validation
 .\MasterControlBootstrapper.exe validate "C:\Program Files\Master Control Orchestration Server" --json
 
-Uninstall
-.\MasterControlBootstrapper.exe uninstall "C:\Program Files\Master Control Orchestration Server" --json
+Uninstall (MSI-installed)
+msiexec /x $msiFileName /qn
 "@
 Set-Content -Path $instructionsPath -Value $instructions -Encoding UTF8
 
@@ -399,14 +401,15 @@ MASTER CONTROL ORCHESTRATION SERVER
 
 START HERE
 
-Run this file first:
-.\Install Master Control Orchestration Server.exe
+Double-click $msiFileName.
 
-If you need a diagnostic fallback that always writes a desktop log:
-.\Install-MasterControlOrchestrationServer.ps1
+That opens the Windows Installer wizard (Welcome -> License ->
+Install Location -> Options -> Install). UAC will prompt for admin
+because the service host runs machine-scope. No PowerShell needed.
 
-More details:
-.\INSTALL.txt
+Advanced (CI / headless / power users):
+.\INSTALL.txt has the full msiexec and MasterControlBootstrapper.exe
+command-line options.
 
 USING THE SERVER ON THE HOST MACHINE
 
