@@ -135,6 +135,12 @@ void ProvidersSectionControl::AttachRuntime(::MasterControlShell::ShellRuntime* 
     RefreshAssignmentSelectors();
     RefreshExecutionTargetSelector();
     UpdateEditorState();
+    // Fire-and-forget CLI-detection probe so the Install / Sign-In buttons
+    // reflect reality the moment the shell hits Providers. Harmless if the
+    // admin API is not yet responding — the buttons just stay in their
+    // default (Install hidden, Sign-In enabled) state until the operator
+    // clicks something.
+    RefreshCliInstallStateAsync();
 }
 
 void ProvidersSectionControl::GuidedProviderActionButton_Click(
@@ -1590,6 +1596,14 @@ void ProvidersSectionControl::SignInWithChatGptButton_Click(IInspectable const&,
     RunCliSignInAsync(L"codex", L"chatgpt");
 }
 
+void ProvidersSectionControl::InstallClaudeCliButton_Click(IInspectable const&, RoutedEventArgs const&) {
+    InstallCliDependencyAsync(L"claude");
+}
+
+void ProvidersSectionControl::InstallCodexCliButton_Click(IInspectable const&, RoutedEventArgs const&) {
+    InstallCliDependencyAsync(L"codex");
+}
+
 // Drives the account-only sign-in flow end to end: disables the button,
 // calls StartCliSignIn to spawn the CLI login, then polls status every 2s
 // until complete or failed. Status text below the button surfaces every
@@ -1664,6 +1678,123 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RunCliSignInAs
 
     statusText.Text(winrt::hstring(L"Sign-in timed out. Re-try if needed."));
     primaryButton.IsEnabled(true);
+}
+
+// One-click CLI install. Fires when the operator clicks the Install button
+// that appears above each sign-in button when the matching CLI is missing
+// on PATH. Disables both the Install and Sign-In buttons for that bridge,
+// shows the ProgressRing, POSTs to /api/setup/dependencies/{id}/install,
+// waits for the backend to finish the npm install -g command (the backend
+// enforces its own 300-second timeout), and on success re-hides the
+// Install button and enables the Sign-In button.
+winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::InstallCliDependencyAsync(
+    std::wstring bridge) {
+    if (runtime_ == nullptr) {
+        co_return;
+    }
+
+    const auto statusText = (bridge == L"claude")
+        ? ClaudeSignInStatusText()
+        : ChatGptSignInStatusText();
+    const auto installButton = (bridge == L"claude")
+        ? InstallClaudeCliButton()
+        : InstallCodexCliButton();
+    const auto signInButton = (bridge == L"claude")
+        ? SignInWithClaudeButton()
+        : SignInWithChatGptButton();
+    const auto progressRing = (bridge == L"claude")
+        ? ClaudeCliProgressRing()
+        : ChatGptCliProgressRing();
+    const auto displayName = (bridge == L"claude")
+        ? std::wstring(L"Claude Code CLI")
+        : std::wstring(L"Codex CLI");
+
+    installButton.IsEnabled(false);
+    signInButton.IsEnabled(false);
+    progressRing.IsActive(true);
+    statusText.Text(winrt::hstring(
+        L"Installing " + displayName +
+        L" via npm. This takes 20-60s depending on network speed..."));
+
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+    const auto result = runtime_->InstallCliDependency(bridge);
+    co_await uiThread;
+
+    progressRing.IsActive(false);
+
+    if (result.succeeded && result.status == L"ready") {
+        installButton.Visibility(Visibility::Collapsed);
+        installButton.IsEnabled(true);
+        signInButton.IsEnabled(true);
+        if (!result.detectedVersion.empty()) {
+            statusText.Text(winrt::hstring(
+                displayName + L" " + result.detectedVersion
+                + L" installed. Click sign-in to continue."));
+        } else {
+            statusText.Text(winrt::hstring(
+                displayName + L" installed. Click sign-in to continue."));
+        }
+    } else {
+        installButton.IsEnabled(true);
+        statusText.Text(winrt::hstring(
+            result.summary.empty()
+                ? (L"Could not install " + displayName +
+                   L". Check Node.js/npm are on PATH and retry.")
+                : result.summary));
+    }
+    co_return;
+}
+
+// Probes `/api/providers/signin/installed` on shell load so the Install /
+// Sign-In buttons reflect reality without waiting for the operator to
+// click anything. When a CLI is missing we reveal the Install button and
+// disable Sign-In; when present we hide Install and enable Sign-In.
+winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RefreshCliInstallStateAsync() {
+    if (runtime_ == nullptr) {
+        co_return;
+    }
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+    const auto entries = runtime_->DetectCliSignInInstalled();
+    co_await uiThread;
+
+    for (const auto& entry : entries) {
+        const bool isClaude = (entry.bridge == L"claude");
+        const bool isCodex = (entry.bridge == L"codex");
+        if (!isClaude && !isCodex) {
+            continue;
+        }
+        const auto installButton = isClaude
+            ? InstallClaudeCliButton()
+            : InstallCodexCliButton();
+        const auto signInButton = isClaude
+            ? SignInWithClaudeButton()
+            : SignInWithChatGptButton();
+        const auto statusText = isClaude
+            ? ClaudeSignInStatusText()
+            : ChatGptSignInStatusText();
+
+        if (entry.installed) {
+            installButton.Visibility(Visibility::Collapsed);
+            signInButton.IsEnabled(true);
+            if (entry.signedIn) {
+                statusText.Text(winrt::hstring(
+                    isClaude
+                        ? L"Signed in. Ready to route work to Claude."
+                        : L"Signed in. ChatGPT + Codex available for assignment."));
+            } else {
+                statusText.Text(winrt::hstring(L"CLI installed. Click sign-in to continue."));
+            }
+        } else {
+            installButton.Visibility(Visibility::Visible);
+            signInButton.IsEnabled(false);
+            statusText.Text(winrt::hstring(
+                std::wstring(isClaude ? L"Claude Code CLI" : L"Codex CLI")
+                + L" not found on PATH. Click Install to run npm install -g."));
+        }
+    }
+    co_return;
 }
 
 void ProvidersSectionControl::ConnectGrokButton_Click(IInspectable const&, RoutedEventArgs const&) {

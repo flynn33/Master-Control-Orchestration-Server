@@ -2949,4 +2949,65 @@ std::vector<ShellRuntime::ShellCliSignInDetectEntry> ShellRuntime::DetectCliSign
     return entries;
 }
 
+ShellRuntime::ShellCliDependencyInstallResult ShellRuntime::InstallCliDependency(
+    const std::wstring& bridge) const {
+    ShellCliDependencyInstallResult result;
+    result.bridge = bridge;
+
+    // Map bridge id -> dependency catalog id. The backend runs the catalog's
+    // preset install command (npm install -g @anthropic-ai/claude-code or
+    // @openai/codex) and reports detection state before and after.
+    std::wstring dependencyId;
+    if (bridge == L"claude") {
+        dependencyId = L"claude-code-cli";
+    } else if (bridge == L"codex") {
+        dependencyId = L"codex-cli";
+    } else {
+        result.status = L"failed";
+        result.summary = L"Unknown CLI bridge.";
+        result.detail = L"Expected 'claude' or 'codex'.";
+        return result;
+    }
+
+    std::wstring errorMessage;
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    const auto path = L"/api/setup/dependencies/" + dependencyId + L"/install";
+    // An empty JSON body is accepted by the handler; it rereads the catalog
+    // to determine which install command to invoke.
+    const auto response = httpRequest(
+        host, port, L"POST", path, std::string("{}"), {}, errorMessage);
+    if (!response.has_value()) {
+        result.status = L"failed";
+        result.summary = errorMessage.empty()
+            ? L"Unable to reach the admin API."
+            : errorMessage;
+        return result;
+    }
+    const auto body = parseJsonObject(response->body);
+    if (!body.has_value()) {
+        result.status = L"failed";
+        result.summary = L"The admin API returned an unreadable install response.";
+        return result;
+    }
+    result.succeeded = jsonBoolOr(*body, L"succeeded", false);
+    result.status = wideFromUtf8(jsonStringOr(*body, L"finalState", "failed"));
+    result.summary = wideFromUtf8(jsonStringOr(*body, L"summary", ""));
+    result.detail = wideFromUtf8(jsonStringOr(*body, L"detail", ""));
+    result.exitCode = static_cast<int>(jsonNumberOr(*body, L"exitCode", -1.0));
+
+    // The post-install detection block, when present, carries the resolved
+    // CLI version string — propagate it so the shell can surface a
+    // reassuring "Claude Code 1.2.3 installed." summary instead of a bare
+    // "ready".
+    if (body->HasKey(L"postInstallDetection")) {
+        const auto detection = body->GetNamedValue(L"postInstallDetection");
+        if (detection.ValueType() == JsonValueType::Object) {
+            const auto detectionObj = detection.GetObject();
+            result.detectedVersion = wideFromUtf8(
+                jsonStringOr(detectionObj, L"detectedVersion", ""));
+        }
+    }
+    return result;
+}
+
 } // namespace MasterControlShell

@@ -1,13 +1,13 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.4.3--rc.1-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--18-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.4.4--rc.1-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--18-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
 
 > Forsetti-compliant Windows orchestration control plane for MCP services, AI provider routing, 
 > CLU governance, sub-agents, platform gateways, telemetry, and browser-based operations — 
 > all delivered as a single Tron-themed product.
 
 - **Repository:** [`master-control-dashboard`](https://github.com/flynn33/Master-Control-Orchestration-Server)
-- **Current release:** `v0.4.3-rc.1` (2026-04-18)
+- **Current release:** `v0.4.4-rc.1` (2026-04-18)
 - **Forsetti modules:** 19
 
 ---
@@ -117,9 +117,9 @@ See [Operations](docs/wiki/Operations.md) for the full deployment matrix, and
 
 ## Current release
 
-**`v0.4.3-rc.1` — 2026-04-18**
+**`v0.4.4-rc.1` — 2026-04-18**
 
-Polished Windows Installer. New WiX v5 MSI ships as the primary install artifact, with `WixUI_InstallDir` (Browse-capable install-directory picker) plus a custom Options page with checkboxes for the service, firewall, Start Menu shortcut, Desktop shortcut, and launch-on-finish. The Tron-red product icon is embedded in every executable and surfaces on Programs & Features, shortcuts, services.msc, the browser favicon, and the MSI file itself. The existing `MasterControlBootstrapper.exe` remains the workhorse — the MSI invokes it as deferred custom actions with operator-chosen `--skip-*` flags — so CI scripted installs continue to work unchanged.
+One-click CLI install from the shell. The Providers sign-in cards now detect missing CLIs on load and surface an **Install Claude Code CLI** / **Install Codex CLI** button that runs the preset `npm install -g` command through the admin API. A progress ring ticks while npm is installing; on completion the Install button hides and the Sign-In button enables, so the operator goes straight from a fresh Windows box to a working OAuth sign-in without touching a terminal.
 
 - fix(installer): MasterControlBootstrapper and setup launcher no longer write desktop log receipts on successful installs. Failures still land on the desktop; every run persists in %PUBLIC%\Documents\Master Control Orchestration Server\logs\installer regardless of outcome.
 - feat(shell): Providers section now presents a guided primary path (sign-in cards + Auto-Connect + Provider Connections list + Provider Modules). Provider Editor, Credentials, AI Autonomy, Sub-Agent Groups, Ownership Routing, and Execution Console are collapsed behind two Advanced Expanders so first-time operators are no longer overwhelmed.

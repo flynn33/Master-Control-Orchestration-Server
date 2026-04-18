@@ -451,11 +451,28 @@ function renderSignInCards() {
     let buttonDisabled = '';
     let buttonAction = `data-action="signin-start" data-bridge="${escapeHtml(bridge)}" data-provider="${escapeHtml(cap.providerId)}"`;
 
+    const installState = state.signIn.installByBridge?.[bridge] || { status: 'idle' };
     if (!info.installed) {
-      statusLine = `${escapeHtml(info.displayName || bridge)} is not installed on this host. Install it (or run the first-run setup) before signing in.`;
-      buttonLabel = 'CLI not installed';
-      buttonDisabled = ' disabled';
-      buttonAction = '';
+      // CLI is missing on PATH. Replace the "Sign in" button with an active
+      // "Install" button that POSTs to /api/setup/dependencies/{id}/install.
+      // The backend runs the preset `npm install -g` command and re-detects
+      // the CLI before returning — once it lands, a refresh will flip this
+      // card into the normal sign-in state.
+      const depId = bridge === 'claude' ? 'claude-code-cli' : 'codex-cli';
+      if (installState.status === 'pending') {
+        statusLine = `Installing ${escapeHtml(info.displayName || bridge)} via <code>npm install -g</code>. This takes 20\u201360s depending on network speed.`;
+        buttonLabel = 'Installing\u2026';
+        buttonDisabled = ' disabled';
+        buttonAction = '';
+      } else if (installState.status === 'error') {
+        statusLine = `${escapeHtml(installState.message || ('Could not install ' + (info.displayName || bridge)))}. Verify Node.js/npm are on PATH and retry.`;
+        buttonLabel = `Retry install ${escapeHtml(info.displayName || bridge)}`;
+        buttonAction = `data-action="install-cli" data-bridge="${escapeHtml(bridge)}" data-dep-id="${escapeHtml(depId)}"`;
+      } else {
+        statusLine = `${escapeHtml(info.displayName || bridge)} is not installed on this host. Click Install to run <code>npm install -g</code> and then sign in.`;
+        buttonLabel = `Install ${escapeHtml(info.displayName || bridge)}`;
+        buttonAction = `data-action="install-cli" data-bridge="${escapeHtml(bridge)}" data-dep-id="${escapeHtml(depId)}"`;
+      }
     } else if (session && session.status === 'pending') {
       statusLine = 'A sign-in console window is open. Complete the prompt in that window to finish.';
       buttonLabel = 'Waiting for sign-in…';
@@ -561,6 +578,44 @@ async function signInDetectInstalled() {
   } catch (error) {
     console.debug('signIn installed detect error', error);
   }
+}
+
+// Trigger the backend auto-install. Sets installByBridge[bridge] = pending
+// immediately so the card flips into the "Installing…" state, POSTs to
+// /api/setup/dependencies/{depId}/install, waits for the response (backend
+// enforces a 300-second timeout), then re-detects which CLIs are now on
+// PATH so the card flips into the normal sign-in state on success.
+async function installCliDependency(bridge, depId) {
+  state.signIn.installByBridge[bridge] = { status: 'pending', message: '' };
+  renderShell();
+  try {
+    const response = await fetch(`/api/setup/dependencies/${encodeURIComponent(depId)}/install`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+    const text = await response.text();
+    let body = null;
+    try { body = text ? JSON.parse(text) : null; } catch (_) { /* non-JSON error body */ }
+    if (response.ok && body && body.succeeded && body.finalState === 'ready') {
+      const version = body.postInstallDetection?.detectedVersion || '';
+      state.signIn.installByBridge[bridge] = {
+        status: 'success',
+        message: version ? `Installed ${version}.` : 'Installed.'
+      };
+    } else {
+      const message = body?.summary || body?.detail || `Install failed (HTTP ${response.status}).`;
+      state.signIn.installByBridge[bridge] = { status: 'error', message };
+    }
+  } catch (error) {
+    state.signIn.installByBridge[bridge] = {
+      status: 'error',
+      message: error?.message || 'Install request failed.'
+    };
+  }
+  // Always re-detect — on success the card hides the Install button, on
+  // failure it stays visible with a Retry label.
+  await signInDetectInstalled();
 }
 
 async function submitApiKeySignIn(form) {
@@ -1966,7 +2021,12 @@ const state = {
     sessionsByBridge: {},
     // Per-provider status for API-key-only onboarding (Grok etc.):
     //   { [providerId]: { status: 'idle'|'pending'|'success'|'error', message: '...' } }
-    apiKeyByProvider: {}
+    apiKeyByProvider: {},
+    // Per-bridge CLI auto-install status:
+    //   { [bridge]: { status: 'idle'|'pending'|'success'|'error', message: '...' } }
+    // Mirrors the shell's ProgressRing state for the Install Claude / Install
+    // Codex buttons that appear when the corresponding CLI is missing on PATH.
+    installByBridge: {}
   },
   surfaceNotice: makeStatus('Browser host waiting for the first Forsetti surface snapshot.', 'info'),
   lastRefreshLabel: 'Pending'
@@ -5744,6 +5804,14 @@ function handleSurfaceClick(event) {
     const providerId = button.getAttribute('data-provider');
     if (bridge) {
       signInStart(bridge, providerId || '');
+    }
+    return;
+  }
+  if (action === 'install-cli') {
+    const bridge = button.getAttribute('data-bridge');
+    const depId = button.getAttribute('data-dep-id');
+    if (bridge && depId) {
+      installCliDependency(bridge, depId);
     }
     return;
   }

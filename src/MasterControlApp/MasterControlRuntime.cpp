@@ -346,10 +346,23 @@ std::vector<SupportedDependency> buildSupportedDependencyCatalog() {
         SupportedDependency{
             "claude-code-cli",
             "Claude Code CLI",
-            "CLI runtime for Claude Code provider execution.",
+            "CLI runtime for Claude Code provider execution and account sign-in.",
             "claude --version",
             "npm install -g @anthropic-ai/claude-code",
             "https://docs.anthropic.com/claude-code",
+            false,
+            300
+        },
+        // Codex CLI drives the `codex login` OAuth flow that registers both
+        // ChatGPT (planning / reasoning) and Codex (coding agent) providers
+        // from one account sign-in. Distributed on npm as `@openai/codex`.
+        SupportedDependency{
+            "codex-cli",
+            "Codex CLI",
+            "CLI runtime for OpenAI account sign-in (ChatGPT + Codex providers) and Codex provider execution.",
+            "codex --version",
+            "npm install -g @openai/codex",
+            "https://github.com/openai/codex",
             false,
             300
         }

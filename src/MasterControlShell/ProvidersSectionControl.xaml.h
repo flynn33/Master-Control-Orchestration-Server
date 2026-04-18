@@ -81,6 +81,10 @@ struct ProvidersSectionControl : ProvidersSectionControlT<ProvidersSectionContro
                                       Microsoft::UI::Xaml::RoutedEventArgs const&);
     void SignInWithChatGptButton_Click(Windows::Foundation::IInspectable const&,
                                        Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void InstallClaudeCliButton_Click(Windows::Foundation::IInspectable const&,
+                                      Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void InstallCodexCliButton_Click(Windows::Foundation::IInspectable const&,
+                                     Microsoft::UI::Xaml::RoutedEventArgs const&);
     void ConnectGrokButton_Click(Windows::Foundation::IInspectable const&,
                                  Microsoft::UI::Xaml::RoutedEventArgs const&);
 
@@ -111,6 +115,8 @@ private:
     winrt::Windows::Foundation::IAsyncAction ExecuteProviderTaskAsync();
     winrt::Windows::Foundation::IAsyncAction SaveAiAutonomyAsync();
     winrt::Windows::Foundation::IAsyncAction RunCliSignInAsync(std::wstring bridge, std::wstring providerId);
+    winrt::Windows::Foundation::IAsyncAction InstallCliDependencyAsync(std::wstring bridge);
+    winrt::Windows::Foundation::IAsyncAction RefreshCliInstallStateAsync();
     winrt::Windows::Foundation::IAsyncAction ConnectGrokAsync(std::wstring apiKey);
 
     ::MasterControlShell::ShellRuntime* runtime_ = nullptr;

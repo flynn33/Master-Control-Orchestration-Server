@@ -1507,20 +1507,30 @@ int main() {
                 "/api/setup/dependencies should return a dependencies array.");
             if (deps.has_value() && deps->contains("dependencies") && (*deps)["dependencies"].is_array()) {
                 const auto& arr = (*deps)["dependencies"];
-                success &= expect(arr.size() == 1U,
-                    "Dependency catalog should have exactly one entry for this pass.");
-                if (!arr.empty()) {
-                    const auto& entry = arr[0];
+                // Catalog carries the Claude Code and Codex CLIs — both drive
+                // the account-only sign-in flow so both need an auto-install
+                // button on the Providers surface.
+                success &= expect(arr.size() == 2U,
+                    "Dependency catalog should have two entries (claude-code-cli + codex-cli).");
+
+                bool sawClaude = false;
+                bool sawCodex = false;
+                for (const auto& entry : arr) {
                     success &= expect(entry.contains("descriptor") && entry.contains("detection"),
                         "Dependency entry should have descriptor and detection objects.");
-                    if (entry.contains("descriptor")) {
+                    if (!entry.contains("descriptor")) { continue; }
+                    const auto id = entry["descriptor"].value("id", std::string{});
+                    const auto installMethod = entry["descriptor"].value("installMethod", std::string{});
+                    if (id == "claude-code-cli") {
+                        sawClaude = true;
                         success &= expect(
-                            entry["descriptor"].value("id", std::string{}) == "claude-code-cli",
-                            "Dependency id should be 'claude-code-cli'.");
+                            installMethod == "npm install -g @anthropic-ai/claude-code",
+                            "Claude Code CLI installMethod should be the documented npm command.");
+                    } else if (id == "codex-cli") {
+                        sawCodex = true;
                         success &= expect(
-                            entry["descriptor"].value("installMethod", std::string{})
-                                == "npm install -g @anthropic-ai/claude-code",
-                            "installMethod should be the documented npm command.");
+                            installMethod == "npm install -g @openai/codex",
+                            "Codex CLI installMethod should be the documented npm command.");
                     }
                     if (entry.contains("detection")) {
                         const auto preflight = entry["detection"].value("preflight", std::string{});
@@ -1530,6 +1540,8 @@ int main() {
                             "Detection preflight must be one of the three documented branches.");
                     }
                 }
+                success &= expect(sawClaude, "Catalog should contain claude-code-cli entry.");
+                success &= expect(sawCodex, "Catalog should contain codex-cli entry.");
             }
             // 404 path for unknown dependency id.
             const auto notFound = httpPostJson(

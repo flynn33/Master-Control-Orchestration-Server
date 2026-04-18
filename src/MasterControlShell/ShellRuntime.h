@@ -546,6 +546,23 @@ public:
     [[nodiscard]] ShellCliSignInStatusResult GetCliSignInStatus(const std::wstring& sessionId) const;
     [[nodiscard]] std::vector<ShellCliSignInDetectEntry> DetectCliSignInInstalled() const;
 
+    // Install one of the provider CLIs on demand. `bridge` is the bridge id
+    // (`claude` or `codex`); we translate it into the matching dependency-
+    // catalog id and POST to /api/setup/dependencies/{id}/install, which
+    // invokes the catalog's preset `npm install -g` command. Blocks until
+    // the install finishes or errors; callers should dispatch on a
+    // background apartment to keep the UI responsive.
+    struct ShellCliDependencyInstallResult {
+        bool succeeded = false;
+        std::wstring status;         // "ready" | "installable" | "failed"
+        std::wstring summary;
+        std::wstring detail;
+        std::wstring detectedVersion;
+        std::wstring bridge;
+        int exitCode = -1;
+    };
+    [[nodiscard]] ShellCliDependencyInstallResult InstallCliDependency(const std::wstring& bridge) const;
+
     // Live activity stream: poll the service's ActivityEventRing for events
     // strictly newer than `sinceId`. Pass an empty string on first call to
     // receive the most recent buffer window. Subsequent calls should use

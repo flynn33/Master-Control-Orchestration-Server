@@ -1,11 +1,25 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.3-rc.1",
-  "current_tag": "v0.4.3-rc.1",
+  "current_version": "0.4.4-rc.1",
+  "current_tag": "v0.4.4-rc.1",
   "released_at": "2026-04-18",
-  "last_release_commit": "768cf617",
+  "last_release_commit": "aaf0d94",
   "history": [
+    {
+      "version": "0.4.4-rc.1",
+      "tag": "v0.4.4-rc.1",
+      "released_at": "2026-04-18",
+      "commit": "",
+      "summary": "One-click CLI install from the shell. The Providers sign-in cards now detect missing CLIs on load and surface an 'Install Claude Code CLI' / 'Install Codex CLI' button that runs the preset `npm install -g` command through the admin API. A progress ring ticks while npm is installing; on completion the Install button hides and the Sign-In button enables, so the operator goes straight from a fresh Windows box to a working OAuth sign-in without touching a terminal.",
+      "entries": [
+        "feat(runtime): dependency catalog extended to include codex-cli (`npm install -g @openai/codex`) alongside claude-code-cli, so both account-sign-in flows have a one-click install path",
+        "feat(shell): ShellRuntime::InstallCliDependency(bridge) POSTs to /api/setup/dependencies/{id}/install and returns the post-install detection version; Providers section now calls DetectCliSignInInstalled on attach and toggles per-card Install / Sign-In button visibility automatically",
+        "feat(shell): ProvidersSectionControl adds InstallClaudeCliButton + InstallCodexCliButton with matching ProgressRings next to the sign-in status text. The install click disables both buttons, starts the ring, waits for the backend to finish npm install -g, and on success flips the card into the ready-to-sign-in state",
+        "feat(browser): renderSignInCards emits an active 'Install <DisplayName>' button (instead of a disabled 'CLI not installed' label) when the CLI is missing; install-cli action POSTs to /api/setup/dependencies/{id}/install, tracks per-bridge install status, and re-detects on completion",
+        "test: tests/MasterControlOrchestrationServerTests.cpp updated — the dependency-catalog test now asserts both claude-code-cli and codex-cli are present with the documented install commands"
+      ]
+    },
     {
       "version": "0.4.3-rc.1",
       "tag": "v0.4.3-rc.1",
