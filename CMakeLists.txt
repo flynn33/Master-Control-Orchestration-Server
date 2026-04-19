@@ -44,7 +44,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
-    add_compile_options(/W4 /WX /permissive- /EHsc)
+    # /utf-8: treat source + execution character sets as UTF-8. Without it
+    # MSVC falls back to the system code page (Windows-1252 on US-English
+    # systems), which makes any em-dash, curly quote, or non-ASCII char
+    # in a wide-string literal render as mojibake at runtime (observed:
+    # "STEP 2 OF 2 \u2014 INSTALLED" was showing as "STEP 2 OF 2 â€" INSTALLED"
+    # in the shell's AI Integrations chip because the UTF-8 bytes for \u2014
+    # were being read as three separate Win-1252 chars).
+    add_compile_options(/W4 /WX /permissive- /EHsc /utf-8)
 endif()
 
 # Generate MasterControlVersion.h from VERSION.json at configure time

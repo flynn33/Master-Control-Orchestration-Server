@@ -265,9 +265,18 @@ std::optional<HttpResponse> httpRequest(const std::string& host,
                                         const std::string& requestBody,
                                         const std::vector<std::pair<std::wstring, std::wstring>>& headers,
                                         std::wstring& errorMessage) {
+    // NO_PROXY: this is exclusively localhost traffic on 127.0.0.1 (or the
+    // configured LAN bind address). AUTOMATIC_PROXY was forcing WinHttp to
+    // run WPAD/PAC detection on every request and — on a machine whose
+    // corp-managed proxy config lists localhost as *not* bypassed, or where
+    // the proxy service is transiently slow — the dashboard probe was
+    // dropping through the 4s receive timeout, leaving providerCapabilities_
+    // empty (observed: dropdown blank, "Assign Roles" empty, "API OFFLINE"
+    // chip shown even though service is running and /api/health returns
+    // HTTP 200 to curl). Going direct fixes both.
     HINTERNET session = WinHttpOpen(
         L"MasterControlShell/2.0",
-        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+        WINHTTP_ACCESS_TYPE_NO_PROXY,
         WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS,
         0);
@@ -277,12 +286,13 @@ std::optional<HttpResponse> httpRequest(const std::string& host,
     }
 
     // Fail fast on DNS/connect when the service is dead (500ms is plenty
-    // for localhost). Keep a longer receive timeout because /api/dashboard
-    // on a busy box can legitimately take 1-2 seconds to serialize the
-    // full snapshot (measured 2134ms on a real machine with 30+ providers
-    // + Apple operations + governance state). Values tuned for
+    // for localhost). Bumped the receive timeout from 4s -> 10s because
+    // /api/dashboard on a real box with governance state + Apple operations
+    // + execution history + Forsetti module catalog can legitimately take
+    // 3-5 seconds to serialize — the old 4s ceiling was clipping snapshots
+    // mid-flight and emptying providerCapabilities_. Values tuned for
     // "fail fast on dead, patient on slow-but-alive".
-    WinHttpSetTimeouts(session, 500, 500, 500, 4000);
+    WinHttpSetTimeouts(session, 500, 500, 500, 10000);
 
     HINTERNET connection = WinHttpConnect(session, wideFromUtf8(host).c_str(), port, 0);
     if (connection == nullptr) {

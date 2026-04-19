@@ -60,12 +60,11 @@ packages/
 # User-specific CMake presets
 CMakeUserPresets.json
 
-# Claude autonomous session runtime artifacts (keep tooling scripts, ignore output)
-.claude-work/logs/
-.claude-work/artifacts/
-.claude-work/smoke-install-dest/
-.claude-work/visual-install-dest/
-.claude-work/*.pid
+# Historical autonomous-session workspace — kept untracked entirely so no
+# AI-scratch artifacts can slip into the repo. If you need a throwaway work
+# area on your clone, this directory is still honored locally but nothing
+# inside it is ever committed.
+.claude-work/
 /src/MasterControlShell/Directory.Build.props
 /src/MasterControlShell/Directory.Build.targets
 

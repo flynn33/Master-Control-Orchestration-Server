@@ -1783,26 +1783,30 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RefreshCliInst
             // State 1: CLI missing — STEP 1 is the only action.
             installButton.Visibility(Visibility::Visible);
             signInButton.Visibility(Visibility::Collapsed);
-            chipText.Text(winrt::hstring(L"STEP 1 OF 2 — NOT INSTALLED"));
-            statusText.Text(winrt::hstring(
-                displayName + L" is not installed. Click above to auto-install Node.js + " + displayName + L"."));
+            // Use the \u2014 escape for the em-dash instead of the literal
+            // glyph — the source file is UTF-8 but MSVC without /utf-8 reads
+            // it as Windows-1252, so the three UTF-8 bytes E2 80 94 end up as
+            // three wide chars and render in the chip as "â€"".
+            chipText.Text(winrt::hstring(L"STEP 1 OF 2 \u2014 NOT INSTALLED"));
+            // Short footer text — it sits under a narrow card column (~165px)
+            // and won't wrap cleanly because its parent is a horizontal
+            // StackPanel (ProgressRing + TextBlock) which feeds infinite
+            // available width into the TextBlock measure pass. Keep it under
+            // ~24 chars so it never needs to truncate.
+            statusText.Text(winrt::hstring(L"Not installed yet."));
         } else if (!entry.signedIn) {
             // State 2: installed but no saved session — STEP 2 is the only action.
             installButton.Visibility(Visibility::Collapsed);
             signInButton.Visibility(Visibility::Visible);
-            chipText.Text(winrt::hstring(L"STEP 2 OF 2 — INSTALLED, NOT SIGNED IN"));
-            statusText.Text(winrt::hstring(
-                displayName + L" is installed. Click above to sign in with your account."));
+            chipText.Text(winrt::hstring(L"STEP 2 OF 2 \u2014 INSTALLED, NOT SIGNED IN"));
+            statusText.Text(winrt::hstring(L"Installed. Sign-in next."));
         } else {
             // State 3: fully ready — hide Install, keep Sign-In as re-auth escape hatch.
             installButton.Visibility(Visibility::Collapsed);
             signInButton.Visibility(Visibility::Visible);
-            signInButton.Content(winrt::box_value(winrt::hstring(L"Re-authenticate (if needed)")));
-            chipText.Text(winrt::hstring(L"READY — SIGNED IN"));
-            statusText.Text(winrt::hstring(
-                isClaude
-                    ? L"Claude Code CLI signed in. Ready to route work."
-                    : L"Codex CLI signed in. ChatGPT + Codex available for assignment."));
+            signInButton.Content(winrt::box_value(winrt::hstring(L"Re-authenticate")));
+            chipText.Text(winrt::hstring(L"READY \u2014 SIGNED IN"));
+            statusText.Text(winrt::hstring(L"Signed in. Ready."));
         }
     }
     co_return;
