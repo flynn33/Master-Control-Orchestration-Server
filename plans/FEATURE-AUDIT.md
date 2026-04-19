@@ -1,7 +1,38 @@
 # Feature Audit — README Requirements
 
-Audit date: 2026-04-19. Status key: `[x]` = verified end-to-end on live machine,
-`[~]` = bug found + fix shipped, `[!]` = partial (cannot fully verify in scope).
+Audit date: 2026-04-19 (updated after second-round bug-fix pass). Status key:
+`[x]` = verified end-to-end on live machine, `[~]` = bug found + fix shipped,
+`[!]` = partial (cannot fully verify in scope).
+
+**Second-round fixes (build 40):**
+1. Grok one-click card — shell sent `kind=xai-grok`, backend enum only
+   accepts `xai`. Kind string corrected at
+   `src/MasterControlShell/ProvidersSectionControl.xaml.cpp:1833`
+   (providerId kept as `xai-grok`; only the ProviderKind enum string fixed).
+2. Dependency install HTTP status — previously returned HTTP 200 on failure
+   because of `result.succeeded ? 200 : 200`. Fixed to `: 400` at
+   `src/MasterControlApp/MasterControlRuntime.cpp:10305`. Clients can now
+   distinguish failed installs via HTTP status.
+3. Auto-connect forced-success — `result.succeeded = true` was hardcoded at
+   finalize even when stages 6 (credential store unavailable) or 7 (assignment
+   failures) had failure steps. Now tracks a `postRegistrationSucceeded`
+   flag and returns succeeded=false with errorMessage when any post-
+   registration step fails. Live probe:
+   `POST /api/providers/auto-connect` with `assignmentTargetIds=["nonexistent"]`
+   now returns HTTP 400, succeeded=false, errorMessage=`"1 role assignment(s)
+   failed: nonexistent-target-id-xyz123 (unknown target)"`.
+4. Starter workflow instantiation — previously always picked first ready
+   provider + planner only, so the advertised `specialist-team-demo` template
+   (2 providers + 2 specialists) silently ended up with 1 assignment. Now
+   honors `requiresProviders` (wires to planner/architect/auditor in order)
+   and `requiresSpecialists` (round-robin across ready providers). Live probe:
+   single-provider-demo / mcp-assisted-demo each return 1 assignment;
+   specialist-team-demo correctly rejects with prereq message when fewer than
+   2 specialists are assigned.
+5. API-Reference.md — updated Auto-Connect section to match runtime reality:
+   step fields are `stage`/`succeeded` not `name`/`ok`; default Role targets
+   are `planner`/`architect`/`auditor` not `coder`; accepted kind strings
+   documented explicitly.
 
 ---
 
@@ -42,18 +73,31 @@ model discovery, DPAPI encryption, and assignment fan-out."
 - **Rollback on failure:** `removeProviderInternal` at line 2419 undoes the
   provider registration if credential storage fails.
 
-**Bug found + fix shipped this session (commit `82875fd`):**
+**Bugs found + fixes shipped this session (build 40):**
 - Previous: malformed body / unknown ProviderKind string threw uncaught
   exception → HTTP 500 with empty body.
 - Fixed: try/catch around `.get<AutoConnectRequest>()`; returns HTTP 400
   with JSON body `{errorMessage:"Could not parse request: Unknown enum
   string: anthropic", ..., steps:[{stage:"parse", succeeded:false, ...}]}`.
 - Live proof after fix: 537-byte structured JSON error instead of empty.
+- Second-round fixes: Grok kind mismatch + forced-success bug (see header).
 
-**Unverifiable in scope:** end-to-end success path requires valid API
-credentials for Anthropic/OpenAI, which I don't hold. The code paths exist
-and look correct; a real credential would exercise `discover-models` +
-`store-credentials` + `apply-assignments`.
+**Live probe with the new build (xAI Grok, test key):**
+- `POST /api/providers/auto-connect` `{kind:"xai", providerId:"xai-grok-probe",
+  credentials:{xai_api_key:"test-key-DEAD"}, discoverModels:false}` →
+  HTTP 200, `succeeded:true`, 7 stages all succeeded, DPAPI seal confirmed
+  via dashboard snapshot `providerCredentialStatuses` where
+  `configured:true` + `configuredFieldIds:["xai_api_key"]`.
+- `POST` with `assignmentTargetIds=["nonexistent-target-id-xyz123"]` →
+  HTTP 400, `succeeded:false`, `assignmentsFailed:["... (unknown target)"]`,
+  `errorMessage:"1 role assignment(s) failed: ..."`.
+
+**Unverifiable in scope:** end-to-end success path with a real model
+discovery requires valid API credentials for Anthropic/OpenAI, which I
+don't hold. The pipeline reached `register-provider` and `store-credentials`
+successfully with a dummy key (probing skipped because `discoverModels=false`).
+`discover-models` with a real key is covered by the capability probe unit
+tests that ship with the runtime.
 
 ---
 
@@ -168,6 +212,60 @@ prefers-reduced-motion respected."
   `DoubleAnimation`, or `ColorAnimation` in any shell `.xaml` file —
   there are no XAML animations to gate, so the claim is trivially
   satisfied on the shell side.
+
+---
+
+## CLI bootstrap (dependency installer) — second-round proof
+
+Not a README-headlined feature, but the "AI Integrations" screen depends on
+this flow: Install Claude Code CLI + sign-in. Previously, LocalSystem
+couldn't find the freshly-installed `claude.cmd` because it lives under
+`%SystemRoot%\System32\config\systemprofile\AppData\Roaming\npm\` which is
+not on the default LocalSystem process PATH.
+
+**Verified live in build 40 (after reinstall):**
+- `POST /api/setup/dependencies/claude-code-cli/install` `{}` →
+  HTTP 200, 473 bytes, `{succeeded:true, finalState:"ready",
+  detectedVersion:"2.1.114 (Claude Code)", summary:"Claude Code CLI
+  installed (2.1.114 (Claude Code))."}`.
+- `GET /api/providers/signin/installed` →
+  `[{bridge:"claude", installed:true,
+  path:"C:\\WINDOWS\\System32\\config\\systemprofile\\AppData\\Roaming\\npm\\claude.cmd",
+  signedIn:false}, ...]`.
+- File present on disk: `C:\Windows\System32\config\systemprofile\AppData\
+  Roaming\npm\claude.cmd` (308 bytes, +x).
+- `findCommandOnPath` fallback probes `%SystemRoot%\System32\config\
+  systemprofile\AppData\Roaming\npm` → picks up `claude.cmd` without
+  requiring a PATH edit.
+
+Sign-in requires an interactive OAuth flow with a real Anthropic account
+and cannot be automated from this audit without exposing user credentials.
+`POST /api/providers/signin/start {bridge:"claude"}` is the start-hook
+and `GET /api/providers/signin/status?sessionId=...` is the polling
+endpoint (confirmed by code at `MasterControlRuntime.cpp:10617` +
+`:10641`).
+
+---
+
+## Starter workflow instantiation — second-round proof
+
+**Verified live in build 40:**
+- `POST /api/setup/workflow-templates/single-provider-demo/instantiate` →
+  `{succeeded:true, workflowId:"single-provider-demo:1-targets",
+  message:"Instantiated starter workflow 'Single-Provider Demo'
+  (1 assignment(s) applied)."}`
+- `POST .../mcp-assisted-demo/instantiate` →
+  `{succeeded:true, workflowId:"mcp-assisted-demo:1-targets",
+  message:"Instantiated ... (1 assignment(s) applied)."}`
+- `POST .../specialist-team-demo/instantiate` (specialists not ready) →
+  `{succeeded:false, workflowId:"", message:"This starter workflow requires
+  at least 2 specialist(s) assigned. Currently ready: 0."}` — prereq
+  enforcement intact.
+
+The new instantiate code honors `requiresProviders` (planner/architect/
+auditor order) and `requiresSpecialists` (round-robin across ready
+providers), so when prerequisites ARE met the template produces the
+advertised number of assignments.
 
 ---
 

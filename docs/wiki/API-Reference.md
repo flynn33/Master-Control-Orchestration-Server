@@ -57,37 +57,63 @@ increasing IDs. The shell polls every two seconds while focused.
 
 **Request body:**
 
+`kind` must be one of the `ProviderKind` strings: `codex`, `claude_code`, `openai`,
+`xai`, or `generic` (see `providerKindFromString` in `MasterControlModels.cpp`).
+For Grok specifically the shell sends `kind=xai` with `providerId=xai-grok`.
+
+`credentials` is a map of `{ fieldName: value }` — the field names depend on
+the capability module (e.g. OpenAI uses `api_key`; xAI uses `xai_api_key`).
+
+`assignmentTargetIds` entries must match active `ProviderAssignmentTarget::targetId`
+values. The built-in Role targets are `planner`, `architect`, and `auditor`.
+Specialist (SubAgent) target ids are discovered at runtime from
+`GET /api/provider-assignment-targets`.
+
 ```json
 {
   "kind": "openai",
+  "providerId": "openai-primary",
   "credentials": { "api_key": "sk-..." },
-  "assignmentTargetIds": ["planner", "coder"],
+  "assignmentTargetIds": ["planner"],
   "discoverModels": true
 }
 ```
 
 **Response body** (`AutoConnectResult`):
 
+The pipeline emits one `AutoConnectStep` per stage; each step has fields
+`stage` (string), `succeeded` (bool), `message` (string), and `latencyMs`
+(int). The stage names used by the current runtime are:
+`parse` → `resolve-capability` → `derive-shape` → `validate-credentials` →
+`probe` → `discover-models` → `register-provider` → `store-credentials` →
+`apply-assignments`.
+
 ```json
 {
   "succeeded": true,
-  "providerId": "openai-7f3a",
-  "summary": "Auto-Connect completed in 184 ms",
+  "providerId": "openai-primary-20260419-113200",
+  "summary": "Connected 'OpenAI (Primary)' in 184ms (4 model(s), 1 role(s))",
   "totalLatencyMs": 184,
   "steps": [
-    { "name": "Resolve capability", "ok": true, "latencyMs": 1 },
-    { "name": "Generate provider id", "ok": true, "latencyMs": 0 },
-    { "name": "Probe remote endpoint", "ok": true, "latencyMs": 142 },
-    { "name": "Discover models", "ok": true, "latencyMs": 36 },
-    { "name": "Persist credentials (DPAPI)", "ok": true, "latencyMs": 2 },
-    { "name": "Register provider", "ok": true, "latencyMs": 1 },
-    { "name": "Apply role assignments", "ok": true, "latencyMs": 2 }
+    { "stage": "resolve-capability", "succeeded": true, "message": "Matched 'OpenAI' module (openai)", "latencyMs": 1 },
+    { "stage": "derive-shape",       "succeeded": true, "message": "Generated id 'openai-primary-...'",  "latencyMs": 0 },
+    { "stage": "validate-credentials","succeeded": true, "message": "All required credential fields supplied", "latencyMs": 0 },
+    { "stage": "discover-models",    "succeeded": true, "message": "Discovered 4 models",                "latencyMs": 142 },
+    { "stage": "register-provider",  "succeeded": true, "message": "Provider registered in configuration", "latencyMs": 1 },
+    { "stage": "store-credentials",  "succeeded": true, "message": "Credentials encrypted with DPAPI and stored", "latencyMs": 2 },
+    { "stage": "apply-assignments",  "succeeded": true, "message": "Applied 1 role assignment(s)",       "latencyMs": 2 }
   ],
+  "assignmentsApplied": ["Planner"],
+  "assignmentsFailed": [],
   "discoveredModels": [
     { "id": "gpt-4o", "displayName": "GPT-4o", "selected": true }
   ]
 }
 ```
+
+On a failed request (e.g. unknown `kind` string), the runtime returns HTTP
+400 with a structured body containing the same shape and a `parse` stage
+whose `succeeded=false`.
 
 See [Auto-Connect AI](Auto-Connect-AI) for the full pipeline walkthrough.
 

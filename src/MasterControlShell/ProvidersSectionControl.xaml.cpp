@@ -1830,7 +1830,12 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ConnectGrokAsy
     GrokConnectStatusText().Text(winrt::hstring(L"Probing xAI endpoint and registering provider..."));
 
     ::MasterControlShell::ShellAutoConnectProviderRequest request;
-    request.kind = L"xai-grok";
+    // Backend ProviderKind enum accepts "xai" (see MasterControlModels.cpp
+    // providerKindFromString). The provider-id stays as "xai-grok" so the
+    // instance gets a Grok-flavored identifier, but the kind string must
+    // match the enum or auto-connect rejects the request with
+    // "Unknown enum string: xai-grok" at the parse stage.
+    request.kind = L"xai";
     request.providerId = L"xai-grok";
     request.allowAutonomousControl = false;
     request.discoverModels = true;

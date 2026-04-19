@@ -23,6 +23,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <Windows.h>
+#include <ShlObj.h>    // SHGetFolderPathW + CSIDL_APPDATA — used by findCommandOnPath
+                       // to locate npm-global binaries under %APPDATA%\npm.
 #include <iphlpapi.h>
 #include <urlmon.h>
 #include <wincrypt.h>
@@ -525,11 +527,41 @@ std::wstring joinCommandArguments(const std::vector<std::wstring>& arguments) {
 }
 
 std::optional<std::filesystem::path> findCommandOnPath(const std::vector<std::wstring>& fileNames) {
+    // 1. Standard SearchPathW which honours the process %PATH%. This misses
+    //    binaries installed into the service account's npm-global location,
+    //    but catches anything on the real PATH.
     for (const auto& fileName : fileNames) {
         std::array<wchar_t, 4096> buffer{};
         const DWORD length = SearchPathW(nullptr, fileName.c_str(), nullptr, static_cast<DWORD>(buffer.size()), buffer.data(), nullptr);
         if (length > 0 && length < buffer.size()) {
             return std::filesystem::path(buffer.data());
+        }
+    }
+    // 2. Explicit well-known npm-global bin directories. When the service
+    //    runs as LocalSystem, `npm install -g` drops binaries into
+    //    %SystemRoot%\System32\config\systemprofile\AppData\Roaming\npm
+    //    which isn't on the process PATH. When it runs as the current user,
+    //    %APPDATA%\npm is the target. Also probe the nodejs install dir
+    //    in case npm wrote a binary alongside node itself.
+    std::vector<std::filesystem::path> fallbackDirs;
+    wchar_t systemRoot[MAX_PATH] = {};
+    const auto systemRootLen = GetEnvironmentVariableW(L"SystemRoot", systemRoot, MAX_PATH);
+    if (systemRootLen > 0 && systemRootLen < MAX_PATH) {
+        fallbackDirs.emplace_back(
+            std::filesystem::path(systemRoot) / L"System32" / L"config" / L"systemprofile" / L"AppData" / L"Roaming" / L"npm");
+    }
+    wchar_t appDataBuf[MAX_PATH] = {};
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataBuf))) {
+        fallbackDirs.emplace_back(std::filesystem::path(appDataBuf) / L"npm");
+    }
+    fallbackDirs.emplace_back(L"C:\\Program Files\\nodejs");
+    for (const auto& fallbackDir : fallbackDirs) {
+        for (const auto& fileName : fileNames) {
+            std::filesystem::path candidate = fallbackDir / fileName;
+            std::error_code ec;
+            if (std::filesystem::exists(candidate, ec)) {
+                return candidate;
+            }
         }
     }
     return std::nullopt;
@@ -2405,6 +2437,12 @@ public:
         }
         recordStep("register-provider", true, "Provider registered in configuration");
 
+        // Track overall success across stages 6-7. Previously we hard-coded
+        // result.succeeded = true at finalize even when stage 6 or 7 had
+        // recorded a failure step — so an unrouted credential store or a
+        // rejected assignment came back as a green success to the caller.
+        bool postRegistrationSucceeded = true;
+
         // -- Stage 6: Persist credentials via DPAPI -----------------------------
         if (auto store = credentialStore_.lock()) {
             ProviderCredentialUpdate update;
@@ -2422,8 +2460,15 @@ public:
             }
             recordStep("store-credentials", true, "Credentials encrypted with DPAPI and stored");
         } else {
+            // Credential store not wired: credentials were NOT persisted.
+            // This is a runtime-wiring failure but we don't roll back the
+            // provider registration — the operator can re-enter credentials
+            // via the direct API. Surface it as a failed overall result so
+            // the caller knows credentials are missing.
             recordStep("store-credentials", false,
                        "Credential store unavailable (runtime wiring incomplete)");
+            result.errorMessage = "Credential store unavailable; credentials were not persisted.";
+            postRegistrationSucceeded = false;
         }
 
         // -- Stage 7: Apply requested role assignments -------------------------
@@ -2457,17 +2502,40 @@ public:
             if (!result.assignmentsFailed.empty()) {
                 summary += ", " + std::to_string(result.assignmentsFailed.size()) + " failed";
             }
-            recordStep("apply-assignments", result.assignmentsFailed.empty(), summary);
+            const bool allAssignmentsApplied = result.assignmentsFailed.empty();
+            recordStep("apply-assignments", allAssignmentsApplied, summary);
+            if (!allAssignmentsApplied) {
+                postRegistrationSucceeded = false;
+                if (result.errorMessage.empty()) {
+                    result.errorMessage = std::to_string(result.assignmentsFailed.size())
+                        + " role assignment(s) failed: " + result.assignmentsFailed.front();
+                }
+            }
         } else if (!request.assignmentTargetIds.empty()) {
             recordStep("apply-assignments", false,
                        "Assignment service unavailable (runtime wiring incomplete)");
+            for (const auto& targetId : request.assignmentTargetIds) {
+                result.assignmentsFailed.push_back(targetId + " (assignment service unavailable)");
+            }
+            if (result.errorMessage.empty()) {
+                result.errorMessage = "Assignment service unavailable; requested role assignments were not applied.";
+            }
+            postRegistrationSucceeded = false;
         }
 
         // -- Finalize ----------------------------------------------------------
         result.totalLatencyMs = static_cast<int>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - totalStart).count());
-        result.succeeded = true;
+        result.succeeded = postRegistrationSucceeded;
+        if (!postRegistrationSucceeded) {
+            if (result.summary.empty()) {
+                result.summary = result.errorMessage.empty()
+                    ? "Auto-connect completed with one or more failures."
+                    : result.errorMessage;
+            }
+            return result;
+        }
         result.summary = "Connected '" + connection.displayName + "' in "
             + std::to_string(result.totalLatencyMs) + "ms ("
             + std::to_string(result.discoveredModels.size()) + " model(s), "
@@ -10162,11 +10230,31 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     // winget created C:\Program Files\nodejs and amended
                     // machine PATH mid-run) is picked up before postDetect.
                     const auto postInstallRefreshedPath = refreshPathFromRegistry();
+                    // Post-install PATH must include every plausible npm-global
+                    // bin directory so `npm install -g <pkg>` results are
+                    // visible regardless of whether the service runs as the
+                    // current user, LocalSystem, or a different service
+                    // account. LocalSystem's npm global lives under
+                    // %SystemRoot%\System32\config\systemprofile\AppData\Roaming\npm
+                    // which isn't on any default PATH.
+                    std::wstring extendedPath = postInstallRefreshedPath.empty()
+                        ? refreshedPath
+                        : postInstallRefreshedPath;
+                    auto appendIfPresent = [&extendedPath](const std::wstring& dir) {
+                        if (!dir.empty()) {
+                            if (!extendedPath.empty() && extendedPath.back() != L';') extendedPath += L';';
+                            extendedPath += dir;
+                        }
+                    };
+                    appendIfPresent(L"C:\\Windows\\System32\\config\\systemprofile\\AppData\\Roaming\\npm");
+                    appendIfPresent(L"C:\\Program Files\\nodejs");
+                    wchar_t userProfileBuf[MAX_PATH] = {};
+                    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, userProfileBuf))) {
+                        appendIfPresent(std::wstring(userProfileBuf) + L"\\npm");
+                    }
                     std::vector<std::pair<std::wstring, std::wstring>> refreshedEnv;
-                    if (!postInstallRefreshedPath.empty()) {
-                        refreshedEnv.emplace_back(L"Path", postInstallRefreshedPath);
-                    } else if (!refreshedPath.empty()) {
-                        refreshedEnv.emplace_back(L"Path", refreshedPath);
+                    if (!extendedPath.empty()) {
+                        refreshedEnv.emplace_back(L"Path", extendedPath);
                     }
                     const auto postDetect = runProcessCapture(detectCommandLine, workDir, refreshedEnv, std::nullopt, false);
                     std::string postVersion;
@@ -10250,7 +10338,12 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const auto installEnd = std::chrono::steady_clock::now();
             result.totalLatencyMs = static_cast<int>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(installEnd - installStart).count());
-            return jsonResponse(result, result.succeeded ? 200 : 200);
+            // Return HTTP 400 on failure so clients (curl, fetch) see a real
+            // error status instead of having to inspect the JSON body. The
+            // previous `: 200 : 200` short-circuit masked every install
+            // failure as a 200, which broke client-side .ok checks and
+            // silently promoted a failed install to a green lane in the UI.
+            return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         // -------------------------------------------------------------------
         // WS6 — Starter workflow templates
@@ -10304,32 +10397,109 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     + std::to_string(readiness.specialistsReadyCount) + ".";
                 return jsonResponse(fail);
             }
-            // Pick the first ready provider and route an assignment to a
-            // default role target ("planner"). This produces a minimal but
-            // real workflow: one provider wired to one role. If the template
-            // requires more, pick additional ready providers/specialists in
-            // order. The result is immediately observable via /api/readiness.
+            // Build the actual assignment plan:
+            //   - Always wire provider #1 to the "planner" role.
+            //   - If the template requires N providers (N > 1), wire provider
+            //     #2 to "architect" and, if N >= 3, provider #3 to "auditor"
+            //     (the three default Role targets — see listTargets()).
+            //   - If the template requires specialists, find SubAgent targets
+            //     and fan them across the ready providers round-robin, up to
+            //     requiresSpecialists.
+            // Previously this code always created one assignment (provider #1
+            // → planner), so a template advertising "2 providers + 2
+            // specialists" (like specialist-team-demo) silently ended up with
+            // exactly one assignment — the template's prerequisites were
+            // already validated above, but the instantiation wasn't honoring
+            // them.
             std::vector<std::string> readyProviderIds;
             for (const auto& provider : snap.providers) {
                 if (provider.credentialsConfigured && provider.enabled && !provider.isTemplate) {
                     readyProviderIds.push_back(provider.id);
                 }
             }
-            const auto primaryProviderId = readyProviderIds.front();
-            // Create or overwrite a role assignment for "planner".
-            ProviderAssignment assignment;
-            assignment.providerId = primaryProviderId;
-            assignment.targetId = "planner";
-            assignment.kind = ProviderAssignmentTargetKind::Role;
-            assignment.updatedAtUtc = timestampNowUtc();
-            const auto assignResult = providerAssignmentService_->upsertAssignment(assignment);
-            StarterWorkflowInstantiateResult success;
-            success.succeeded = assignResult.succeeded;
-            success.workflowId = templateIt->id + ":" + primaryProviderId + ":planner";
-            success.message = assignResult.succeeded
-                ? "Instantiated starter workflow '" + templateIt->displayName + "'."
-                : assignResult.message;
-            return jsonResponse(success);
+            // Enumerate all assignment targets so we can pick specialist
+            // (SubAgent-kind) ones for the team template.
+            const auto allTargets = providerAssignmentService_->listTargets();
+            std::vector<std::string> specialistTargetIds;
+            for (const auto& target : allTargets) {
+                if (target.kind == ProviderAssignmentTargetKind::SubAgent) {
+                    specialistTargetIds.push_back(target.targetId);
+                }
+            }
+
+            struct PlannedAssignment {
+                std::string targetId;
+                ProviderAssignmentTargetKind kind;
+                std::string providerId;
+            };
+            std::vector<PlannedAssignment> plan;
+
+            // Default Role targets in listTargets() order: planner, architect, auditor.
+            // NOTE: parens around std::max/std::min are deliberate — Windows
+            // headers can define max/min as macros, so we follow the
+            // codebase convention (see MasterControlRuntime.cpp:4145 etc.).
+            static constexpr const char* kDefaultRoleTargets[] = { "planner", "architect", "auditor" };
+            const int providerCount = (std::max)(1, templateIt->requiresProviders);
+            for (int i = 0; i < providerCount && i < 3; ++i) {
+                const size_t providerIdx = (std::min)(
+                    static_cast<size_t>(i),
+                    readyProviderIds.size() - 1);
+                const auto& providerId = readyProviderIds[providerIdx];
+                plan.push_back({
+                    std::string(kDefaultRoleTargets[i]),
+                    ProviderAssignmentTargetKind::Role,
+                    providerId
+                });
+            }
+
+            // Specialist assignments: round-robin across ready providers.
+            for (int i = 0;
+                 i < templateIt->requiresSpecialists
+                 && static_cast<size_t>(i) < specialistTargetIds.size();
+                 ++i) {
+                const auto& providerId = readyProviderIds[
+                    static_cast<size_t>(i) % readyProviderIds.size()];
+                plan.push_back({
+                    specialistTargetIds[i],
+                    ProviderAssignmentTargetKind::SubAgent,
+                    providerId
+                });
+            }
+
+            std::vector<std::string> appliedTargetIds;
+            std::vector<std::string> failedTargets;
+            for (const auto& planned : plan) {
+                ProviderAssignment assignment;
+                assignment.providerId = planned.providerId;
+                assignment.targetId = planned.targetId;
+                assignment.kind = planned.kind;
+                assignment.updatedAtUtc = timestampNowUtc();
+                const auto assignResult = providerAssignmentService_->upsertAssignment(assignment);
+                if (assignResult.succeeded) {
+                    appliedTargetIds.push_back(planned.targetId);
+                } else {
+                    failedTargets.push_back(planned.targetId + ": " + assignResult.message);
+                }
+            }
+
+            StarterWorkflowInstantiateResult response;
+            response.succeeded = !appliedTargetIds.empty() && failedTargets.empty();
+            response.workflowId = templateIt->id + ":"
+                + std::to_string(appliedTargetIds.size()) + "-targets";
+            if (response.succeeded) {
+                response.message = "Instantiated starter workflow '" + templateIt->displayName
+                    + "' (" + std::to_string(appliedTargetIds.size()) + " assignment(s) applied).";
+            } else if (!appliedTargetIds.empty()) {
+                response.message = "Partial instantiation: "
+                    + std::to_string(appliedTargetIds.size()) + " applied, "
+                    + std::to_string(failedTargets.size()) + " failed ("
+                    + failedTargets.front() + ").";
+            } else {
+                response.message = failedTargets.empty()
+                    ? "No assignments could be applied for this template."
+                    : failedTargets.front();
+            }
+            return jsonResponse(response);
         }
         if (request.method == "GET" && request.path == "/api/platform-services") {
             return jsonResponse(nlohmann::json{
