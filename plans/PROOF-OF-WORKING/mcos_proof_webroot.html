@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0F1016">
+  <title>Master Control Orchestration Server</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="grid-backdrop"></div>
+
+  <header class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">TRON Operations Surface</p>
+      <h1>Master Control Orchestration Server</h1>
+      <p class="subtitle">
+        Forsetti-native browser host for MCP servers, sub-agents, imports, exports, provider routing, and live LAN telemetry.
+      </p>
+    </div>
+
+    <div class="hero-status">
+      <button id="refreshButton" type="button">Refresh Surface</button>
+      <span id="healthBadge" class="badge" data-tone="info">Connecting</span>
+    </div>
+  </header>
+
+  <section class="hero-toolbar-band">
+    <div>
+      <p class="eyebrow">Quick Actions</p>
+      <p class="toolbar-caption">Module-defined actions. Host-defined actions appear alongside them.</p>
+    </div>
+    <div id="surfaceToolbar" class="surface-toolbar"></div>
+  </section>
+
+  <main class="surface-shell">
+    <aside class="panel surface-nav-panel">
+      <div class="panel-heading">
+        <p class="eyebrow">Forsetti Navigation</p>
+        <h2>Grid Index</h2>
+      </div>
+      <div id="surfaceNavigation" class="surface-navigation"></div>
+      <div id="surfaceSummary" class="surface-summary"></div>
+    </aside>
+
+    <section class="panel surface-content-panel">
+      <div class="surface-heading">
+        <p id="currentViewEyebrow" class="eyebrow">OVERVIEW</p>
+        <h2 id="currentViewTitle">Command Deck</h2>
+        <p id="currentViewDescription" class="subtitle">
+          Move across the browser control plane using Forsetti surface descriptors instead of a fixed dashboard layout.
+        </p>
+      </div>
+      <div id="surfaceContentHost" class="surface-content-host"></div>
+    </section>
+  </main>
+
+  <dialog id="surfaceOverlayDialog" class="surface-overlay-dialog">
+    <div class="overlay-shell">
+      <div class="overlay-header">
+        <div>
+          <p id="overlayEyebrow" class="eyebrow">FORSETTI OVERLAY</p>
+          <h3 id="overlayTitle">Overlay</h3>
+          <p id="overlayDescription" class="subtitle">Overlay content is hosted from Forsetti route descriptors.</p>
+        </div>
+        <menu class="dialog-actions">
+          <button id="overlayCloseButton" type="button">Close</button>
+          <button id="overlayWorkspaceButton" type="button">Open In Workspace</button>
+        </menu>
+      </div>
+      <div id="surfaceOverlayContent" class="overlay-content"></div>
+    </div>
+  </dialog>
+
+  <dialog id="dangerDialog">
+    <form method="dialog" class="stack dialog-body">
+      <h3>Disable Security Protocols?</h3>
+      <p>This enables troubleshooting mode and weakens the safety posture of the dashboard on your LAN.</p>
+      <menu class="dialog-actions">
+        <button value="cancel" type="submit">Cancel</button>
+        <button value="confirm" type="submit" class="danger">Disable Security</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="/app.js"></script>
+</body>
+</html>
+
+HTTP=200 bytes=3655

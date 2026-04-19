@@ -1,0 +1,9 @@
+:root {
+  --bg: #071018;
+  --panel: rgba(7, 22, 34, 0.86);
+  --panel-border: rgba(0, 242, 255, 0.28);
+  --text: #d9fbff;
+  --muted: #75c5cf;
+  --accent: #00f2ff;
+  --accent-soft: rgba(0, 242, 2
+HTTP=200 bytes=23656
