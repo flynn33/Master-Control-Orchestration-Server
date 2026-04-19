@@ -108,9 +108,38 @@ inline std::wstring formatSecurityNarrative(const ShellSnapshot& snapshot) {
 
 inline void populateListView(const winrt::Microsoft::UI::Xaml::Controls::ListView& listView,
                              const std::vector<std::wstring>& rows) {
-    listView.Items().Clear();
+    // Diffed update: if the existing items already match `rows` one-for-one,
+    // skip the Clear/Append storm entirely. ListView.Items().Clear()+Append
+    // on a 30-row list at 1Hz was the single biggest cause of the shell
+    // "feeling sluggish" — each mutation drops virtualization state, dirties
+    // layout, and schedules another render pass. Short-circuiting when
+    // nothing changed makes the timed refresh near-free for static sections.
+    const auto items = listView.Items();
+    bool identical = (items.Size() == rows.size());
+    if (identical) {
+        for (uint32_t i = 0; i < items.Size(); ++i) {
+            if (const auto existing = items.GetAt(i).try_as<winrt::hstring>();
+                existing.has_value()) {
+                if (std::wstring(existing->c_str()) != rows[i]) { identical = false; break; }
+            } else {
+                identical = false; break;
+            }
+        }
+    }
+    if (identical) { return; }
+
+    // Prefer in-place updates over Clear+Append when the lengths match
+    // (common when one row's text changed but nothing was added/removed).
+    if (items.Size() == rows.size()) {
+        for (uint32_t i = 0; i < items.Size(); ++i) {
+            items.SetAt(i, winrt::box_value(rows[i]));
+        }
+        return;
+    }
+
+    items.Clear();
     for (const auto& row : rows) {
-        listView.Items().Append(winrt::box_value(row));
+        items.Append(winrt::box_value(row));
     }
 }
 

@@ -852,7 +852,14 @@ void MainWindow::ConfigureTimer() {
         // nav / toolbar rebuilds) only runs when the user clicks Refresh
         // or navigates between views.
         refreshTimer_ = dispatcher.CreateTimer();
-        refreshTimer_.Interval(std::chrono::seconds(1));
+        // 3-second cadence for the full snapshot pull. Before this was 1Hz,
+        // which on a busy machine (where /api/dashboard takes ~2s to
+        // serialize a full state snapshot) caused overlapping ticks to
+        // queue in the background thread and made the shell feel sluggish.
+        // Telemetry still feels live because clockTimer_ below bumps the
+        // title-bar LIVE #N indicator at 1Hz — that's what the operator
+        // sees for "heartbeat" without needing the expensive snapshot.
+        refreshTimer_.Interval(std::chrono::seconds(3));
         const auto weakThis = get_weak();
         refreshTimer_.Tick([weakThis](auto&&, auto&&) {
             if (const auto self = weakThis.get()) {
@@ -865,7 +872,7 @@ void MainWindow::ConfigureTimer() {
             }
         });
         refreshTimer_.Start();
-        writeShellLog(L"Live telemetry timer started (1-second cadence).");
+        writeShellLog(L"Live telemetry timer started (3-second cadence; clock heartbeat stays at 1Hz).");
     } catch (const winrt::hresult_error& error) {
         writeShellLog(L"Dispatcher timer fallback activated: " + std::wstring(error.message().c_str()));
     }
@@ -882,7 +889,12 @@ void MainWindow::ConfigureTimer() {
     // large backlog of pre-edit events when they switch back.
     try {
         activityStreamTimer_ = dispatcher.CreateTimer();
-        activityStreamTimer_.Interval(std::chrono::seconds(1));
+        // 2-second cadence: /api/activity can take 2+ seconds to return on
+        // a busy machine (100KB+ payload when the activity log has grown),
+        // and 1Hz polling caused overlapping requests to queue. The
+        // title-bar clock is the operator's "live heartbeat" cue so the
+        // activity list doesn't need sub-2-second updates.
+        activityStreamTimer_.Interval(std::chrono::seconds(2));
         const auto weakThis = get_weak();
         activityStreamTimer_.Tick([weakThis](auto&&, auto&&) {
             if (const auto self = weakThis.get()) {

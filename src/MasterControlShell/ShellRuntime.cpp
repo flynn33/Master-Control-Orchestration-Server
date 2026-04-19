@@ -276,7 +276,13 @@ std::optional<HttpResponse> httpRequest(const std::string& host,
         return std::nullopt;
     }
 
-    WinHttpSetTimeouts(session, 2000, 2000, 2000, 3000);
+    // Fail fast on DNS/connect when the service is dead (500ms is plenty
+    // for localhost). Keep a longer receive timeout because /api/dashboard
+    // on a busy box can legitimately take 1-2 seconds to serialize the
+    // full snapshot (measured 2134ms on a real machine with 30+ providers
+    // + Apple operations + governance state). Values tuned for
+    // "fail fast on dead, patient on slow-but-alive".
+    WinHttpSetTimeouts(session, 500, 500, 500, 4000);
 
     HINTERNET connection = WinHttpConnect(session, wideFromUtf8(host).c_str(), port, 0);
     if (connection == nullptr) {
