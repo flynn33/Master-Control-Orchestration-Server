@@ -5758,11 +5758,34 @@ private:
         const auto instanceName = wideFromUtf8(descriptor.instanceLabel + "." + descriptor.serviceType);
         const auto hostName = wideFromUtf8(descriptor.hostName);
 
+        // Parse the descriptor's IP as either IPv4 or IPv6. DnsServiceConstructInstance
+        // accepts one or both; at least one must be non-null or the call returns NULL
+        // and we flip to "registration_failed" with no DNS activity. Previously only
+        // AF_INET was tried, which silently broke gateway advertisement on
+        // IPv6-only hosts or hosts where SharedTelemetry::readPrimaryNetworkIdentity
+        // picked the IPv6 ULA as the primary address (observed: all three
+        // Windows/macOS/iOS gateway lanes stuck at "registration_failed" on a
+        // machine with a working IPv6 primary interface).
         IP4_ADDRESS ipv4Address = 0;
         PIP4_ADDRESS ipv4Pointer = nullptr;
-        IN_ADDR parsedAddress{};
-        if (InetPtonW(AF_INET, wideFromUtf8(descriptor.ipAddress).c_str(), &parsedAddress) == 1) {
-            ipv4Address = parsedAddress.S_un.S_addr;
+        IN_ADDR parsedV4{};
+        IP6_ADDRESS ipv6Address{};
+        PIP6_ADDRESS ipv6Pointer = nullptr;
+        IN6_ADDR parsedV6{};
+        const auto wideIp = wideFromUtf8(descriptor.ipAddress);
+        if (InetPtonW(AF_INET, wideIp.c_str(), &parsedV4) == 1) {
+            ipv4Address = parsedV4.S_un.S_addr;
+            ipv4Pointer = &ipv4Address;
+        } else if (InetPtonW(AF_INET6, wideIp.c_str(), &parsedV6) == 1) {
+            // DNS_SERVICE_INSTANCE IP6_ADDRESS is a struct containing a 16-byte array
+            // IP6Dword[4] that maps 1:1 onto in6_addr's 16 bytes.
+            std::memcpy(&ipv6Address, &parsedV6, sizeof(ipv6Address));
+            ipv6Pointer = &ipv6Address;
+        } else {
+            // Descriptor address neither v4 nor v6; try a loopback fallback so we
+            // still advertise on local interfaces rather than silently failing.
+            parsedV4.S_un.S_addr = htonl(INADDR_LOOPBACK);
+            ipv4Address = parsedV4.S_un.S_addr;
             ipv4Pointer = &ipv4Address;
         }
 
@@ -5770,7 +5793,7 @@ private:
             instanceName.c_str(),
             hostName.c_str(),
             ipv4Pointer,
-            nullptr,
+            ipv6Pointer,
             descriptor.port,
             0,
             0,
@@ -5795,7 +5818,19 @@ private:
         const auto status = DnsServiceRegister(&request, nullptr);
         registration.request = request;
         registration.registered = status == ERROR_SUCCESS;
-        registration.descriptor.status = registration.registered ? "advertised" : "registration_failed";
+        if (registration.registered) {
+            registration.descriptor.status = "advertised";
+        } else {
+            // Capture the specific DnsServiceRegister error code in properties
+            // so operators can diagnose why mDNS failed — otherwise a generic
+            // "registration_failed" gives no clue whether the prereq is
+            // elevation, missing Bonjour/Dnscache, bad service type, etc.
+            registration.descriptor.status = "registration_failed";
+            char errBuf[32]{};
+            std::snprintf(errBuf, sizeof(errBuf), "0x%08X", static_cast<unsigned>(status));
+            registration.descriptor.properties["last_register_error"] = errBuf;
+            registration.descriptor.properties["last_register_error_decimal"] = std::to_string(status);
+        }
     }
 
     void deregisterGatewayLocked(GatewayRegistration& registration) {

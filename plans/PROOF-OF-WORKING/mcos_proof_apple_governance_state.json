@@ -1,0 +1,62 @@
+[
+  {
+    "displayName": "Windows Governance MCP Server",
+    "gatewayServiceId": "windows-gateway",
+    "moduleId": "com.mastercontrol.governance-windows",
+    "platform": "windows",
+    "requiresRemoteToolchain": false,
+    "routePath": "/mcp/governance/windows",
+    "serviceId": "windows-governance",
+    "status": "online",
+    "toolIds": [
+      "forsetti.windows.manifest.validate",
+      "forsetti.windows.architecture.validate",
+      "forsetti.windows.module-boundary.inspect",
+      "forsetti.windows.package.validate"
+    ]
+  },
+  {
+    "displayName": "Mac Governance MCP Server",
+    "gatewayServiceId": "mac-gateway",
+    "moduleId": "com.mastercontrol.governance-macos",
+    "platform": "macos",
+    "requiresRemoteToolchain": true,
+    "routePath": "/mcp/governance/macos",
+    "serviceId": "mac-governance",
+    "status": "online",
+    "toolIds": [
+      "forsetti.macos.manifest.validate",
+      "forsetti.macos.project-layout.inspect",
+      "forsetti.macos.toolchain.route",
+      "forsetti.macos.remote-build.validate",
+      "forsetti.macos.build",
+      "forsetti.macos.test",
+      "forsetti.macos.archive",
+      "forsetti.macos.sign",
+      "forsetti.macos.notarize",
+      "forsetti.macos.staple"
+    ]
+  },
+  {
+    "displayName": "iOS Governance MCP Server",
+    "gatewayServiceId": "ios-gateway",
+    "moduleId": "com.mastercontrol.governance-ios",
+    "platform": "ios",
+    "requiresRemoteToolchain": true,
+    "routePath": "/mcp/governance/ios",
+    "serviceId": "ios-governance",
+    "status": "online",
+    "toolIds": [
+      "forsetti.ios.manifest.validate",
+      "forsetti.ios.project-layout.inspect",
+      "forsetti.ios.signing.route",
+      "forsetti.ios.remote-build.validate",
+      "forsetti.ios.simulator.list",
+      "forsetti.ios.build",
+      "forsetti.ios.test",
+      "forsetti.ios.archive",
+      "forsetti.ios.export",
+      "forsetti.ios.device.install"
+    ]
+  }
+]

@@ -1,0 +1,28 @@
+=== Windows OpenSSH Server state check (2026-04-19) ===
+--- Get-Service sshd ---
+sshd service NOT installed on this host.
+--- Get-Service ssh-agent ---
+
+Name       Status StartType
+----       ------ ---------
+ssh-agent Stopped  Disabled
+
+
+
+--- Port 22 reachability on 127.0.0.1 ---
+
+
+ComputerName     : 127.0.0.1
+RemotePort       : 22
+TcpTestSucceeded : False
+
+
+
+
+--- Get-WindowsCapability (requires elevation) ---
+Could not check Windows capability (non-elevated shell): The requested operation requires elevation.
+
+--- CONCLUSION ---
+Local sshd is NOT listening on 127.0.0.1:22 ƒ?" localhost SSH probe NOT exercisable.
+SSH server not available on this host ƒ?" real connection probe not exercisable without a macOS/Linux SSH target on the LAN.
+Registering MCOS to attempt a connection to an unreachable host is still useful for proving the connection-failure diagnostic path works.

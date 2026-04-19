@@ -22,11 +22,45 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Fragment>
 
+    <!--
+         WiX canonicalizes directory paths with a trailing backslash, so
+         `[INSTALLFOLDER]` expands to `C:\Program Files\Master Control
+         Orchestration Server\`. Quoting that produces `"...Server\"` which
+         the CRT `CommandLineToArgvW` parser reads as an escaped quote —
+         the install-dir argument then swallows the next token and
+         `WixQuietExec64` sees a single merged argv entry like
+         `.../Server" --skip-shortcuts` which the bootstrapper can't parse.
+         `WixQuietExec64` rolls back the MSI with error 1603.
+
+         Fix: strip the trailing backslash into a dedicated
+         `INSTALLFOLDER_CLEAN` property immediately before composing the
+         command line, and reference that instead of `[INSTALLFOLDER]`.
+     -->
+    <SetProperty Id="INSTALLFOLDER_CLEAN"
+                 Value="[INSTALLFOLDER]"
+                 Before="RunBootstrapperInstall"
+                 Sequence="execute"/>
+    <CustomAction Id="TrimInstallFolderTrailingSlash"
+                  Script="vbscript"
+                  Execute="immediate"
+                  Return="check">
+      <![CDATA[
+        Dim v : v = Session.Property("INSTALLFOLDER_CLEAN")
+        If Len(v) > 0 Then
+          If Right(v, 1) = "\" Then v = Left(v, Len(v) - 1)
+          Session.Property("INSTALLFOLDER_CLEAN") = v
+        End If
+      ]]>
+    </CustomAction>
+    <InstallExecuteSequence>
+      <Custom Action="TrimInstallFolderTrailingSlash" Before="RunBootstrapperInstall" />
+    </InstallExecuteSequence>
+
     <!-- ================================================================
          Install: compose the command line, then run it deferred/elevated.
          ================================================================ -->
     <SetProperty Id="RunBootstrapperInstall"
-                 Value="&quot;[#MasterControlBootstrapperExe]&quot; install &quot;[INSTALLFOLDER]&quot; --skip-shortcuts --skip-uninstall-registration[ServiceFlag][FirewallFlag]"
+                 Value="&quot;[#MasterControlBootstrapperExe]&quot; install &quot;[INSTALLFOLDER_CLEAN]&quot; --skip-shortcuts --skip-uninstall-registration[ServiceFlag][FirewallFlag]"
                  Before="RunBootstrapperInstall"
                  Sequence="execute"/>
 
@@ -39,9 +73,11 @@
 
     <!-- ================================================================
          Uninstall: short, static command — no conditional flags.
+         Uses the same trimmed INSTALLFOLDER_CLEAN to avoid the same
+         trailing-backslash CommandLineToArgvW quoting hazard.
          ================================================================ -->
     <SetProperty Id="RunBootstrapperUninstall"
-                 Value="&quot;[#MasterControlBootstrapperExe]&quot; uninstall &quot;[INSTALLFOLDER]&quot; --skip-shortcuts --skip-uninstall-registration"
+                 Value="&quot;[#MasterControlBootstrapperExe]&quot; uninstall &quot;[INSTALLFOLDER_CLEAN]&quot; --skip-shortcuts --skip-uninstall-registration"
                  Before="RunBootstrapperUninstall"
                  Sequence="execute"/>
 

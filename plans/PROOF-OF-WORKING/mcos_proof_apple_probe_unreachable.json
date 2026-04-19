@@ -1,0 +1,166 @@
+{
+  "agentConfigurations": [
+    {
+      "credentialFields": [
+        "OPENAI_API_KEY"
+      ],
+      "mcp": {
+        "name": "mac-gateway",
+        "transport": "http",
+        "url": "http://fde3:c02c:3afa:4572:6687:be77:e9f1:32c8:7300/mcp/gateway/macos"
+      },
+      "provider": "codex",
+      "recommendedModel": "gpt-5.4"
+    },
+    {
+      "credentialFields": [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN"
+      ],
+      "mcp": {
+        "mcpServers": {
+          "mac-gateway": {
+            "type": "http",
+            "url": "http://fde3:c02c:3afa:4572:6687:be77:e9f1:32c8:7300/mcp/gateway/macos"
+          }
+        }
+      },
+      "provider": "claude-code"
+    },
+    {
+      "credentialFields": [
+        "XAI_API_KEY"
+      ],
+      "mcp": {
+        "gateway": "http://fde3:c02c:3afa:4572:6687:be77:e9f1:32c8:7300/mcp/gateway/macos",
+        "provider": "xai",
+        "recommendedModel": "grok-code-fast-1"
+      },
+      "provider": "xai",
+      "recommendedModel": "grok-code-fast-1"
+    }
+  ],
+  "appleHosts": [
+    {
+      "address": "10.0.0.99",
+      "companionExecutePath": "/execute",
+      "companionHealthPath": "/healthz",
+      "credentialProfileSummary": "",
+      "defaultNotaryKeychainProfile": "",
+      "defaultNotaryTeamId": "",
+      "defaultSigningIdentity": "",
+      "displayName": "Probe Unreachable",
+      "enabled": true,
+      "hostId": "probe-unreachable-01",
+      "platforms": [
+        "macos"
+      ],
+      "port": 22,
+      "preferredDeveloperDirectory": "",
+      "readinessIssues": [],
+      "serviceBaseUrl": "",
+      "signing": {
+        "availableTeams": [],
+        "developmentSigningReady": false,
+        "distributionSigningReady": false,
+        "message": "",
+        "signingReady": false,
+        "status": "unknown"
+      },
+      "toolchain": {
+        "checkedAtUtc": "",
+        "developerDirectory": "",
+        "deviceControlAvailable": false,
+        "iosSdkAvailable": false,
+        "macosSdkAvailable": false,
+        "message": "",
+        "reachable": false,
+        "simulatorControlAvailable": false,
+        "simulatorRuntimes": [],
+        "status": "unknown",
+        "xcodeInstalled": false,
+        "xcodeVersion": ""
+      },
+      "transport": "ssh",
+      "transportSummary": "",
+      "username": "probe"
+    }
+  ],
+  "browserUrl": "http://127.0.0.1:7300/",
+  "clientSelectionRule": "Clients should discover and connect to the service that matches their platform OS.",
+  "configUrl": "http://fde3:c02c:3afa:4572:6687:be77:e9f1:32c8:7300/api/platform-services/config/macos",
+  "displayName": "Mac Gateway",
+  "gatewayUrl": "http://fde3:c02c:3afa:4572:6687:be77:e9f1:32c8:7300/mcp/gateway/macos",
+  "governanceTools": [
+    "forsetti.macos.manifest.validate",
+    "forsetti.macos.project-layout.inspect",
+    "forsetti.macos.toolchain.route",
+    "forsetti.macos.remote-build.validate",
+    "forsetti.macos.build",
+    "forsetti.macos.test",
+    "forsetti.macos.archive",
+    "forsetti.macos.sign",
+    "forsetti.macos.notarize",
+    "forsetti.macos.staple"
+  ],
+  "governanceUrl": "http://fde3:c02c:3afa:4572:6687:be77:e9f1:32c8:7300/mcp/governance/macos",
+  "lanServiceDiscovery": {
+    "hostName": "PC-GAMING-R7-58.local",
+    "instanceLabel": "Master Control Mac Gateway",
+    "mode": "dns-sd",
+    "port": 7300,
+    "serviceType": "_mastercontrol-macos._tcp.local"
+  },
+  "platform": "macos",
+  "routeable": false,
+  "selectedAppleHost": {
+    "address": "10.0.0.99",
+    "companionExecutePath": "/execute",
+    "companionHealthPath": "/healthz",
+    "credentialProfileSummary": "No host distribution defaults configured.",
+    "defaultNotaryKeychainProfile": "",
+    "defaultNotaryTeamId": "",
+    "defaultSigningIdentity": "",
+    "displayName": "Probe Unreachable",
+    "enabled": true,
+    "hostId": "probe-unreachable-01",
+    "platforms": [
+      "macos"
+    ],
+    "port": 22,
+    "preferredDeveloperDirectory": "",
+    "readinessIssues": [
+      "Remote host is unreachable.",
+      "Xcode is unavailable.",
+      "macOS SDK route is unavailable."
+    ],
+    "serviceBaseUrl": "",
+    "signing": {
+      "availableTeams": [],
+      "developmentSigningReady": false,
+      "distributionSigningReady": false,
+      "message": "No usable code-signing identities were detected on the selected Apple host.",
+      "signingReady": false,
+      "status": "not_ready"
+    },
+    "toolchain": {
+      "checkedAtUtc": "2026-04-19T15:38:49Z",
+      "developerDirectory": "",
+      "deviceControlAvailable": false,
+      "iosSdkAvailable": false,
+      "macosSdkAvailable": false,
+      "message": "The remote Mac did not respond to xcode-select. The macOS SDK is not available on the selected host.",
+      "reachable": false,
+      "simulatorControlAvailable": false,
+      "simulatorRuntimes": [],
+      "status": "offline",
+      "xcodeInstalled": false,
+      "xcodeVersion": ""
+    },
+    "transport": "ssh",
+    "transportSummary": "SSH to probe@10.0.0.99:22",
+    "username": "probe"
+  },
+  "serviceId": "mac-gateway",
+  "serviceType": "_mastercontrol-macos._tcp.local"
+}

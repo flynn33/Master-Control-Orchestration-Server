@@ -1,0 +1,4 @@
+{
+  "skipped": true,
+  "reason": "Local OpenSSH Server (sshd) is not installed on this Windows host. Test-NetConnection to 127.0.0.1:22 returned TcpTestSucceeded=False. See mcos_proof_apple_sshd_state.txt. Step 7 (localhost SSH probe) is not exercisable in this environment."
+}
