@@ -13,6 +13,7 @@ All notable changes to this repository are tracked here by the repository agents
 - feat(runtime): dependency install flow now handles Node.js as the prerequisite for Claude Code / Codex CLI install on clean Windows hosts, refreshes PATH after install, and keeps the provider onboarding path guided instead of dead-ending on missing npm.
 - fix(shell): the desktop shell now owns CLI sign-in launch and auth-file detection for host usage, then hands successful provider registration back to the backend. Host users finally see the authentication prompt in their own session.
 - test: `tests/MasterControlOrchestrationServerTests.cpp` now covers the CLI sign-in registration handoff so invalid bridge payloads fail and a successful Codex handoff registers the expected providers.
+- fix(installer): the trailing-backslash trim custom action now lives in `TrimInstallFolder.vbs`, and `CustomActions.wxs` no longer contains WiX-invalid XML comment text that prevented MSI generation in clean release builds.
 - fix(packaging): staged end-user payloads no longer include `*.pdb` symbol files, and the MSI metadata handoff now records the built `.msi` and `msiVersion` correctly in `PACKAGE-METADATA.json`.
 
 ## [0.4.4-rc.1] - 2026-04-18
