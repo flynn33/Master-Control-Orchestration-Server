@@ -518,13 +518,22 @@ $msiBuildResult = $null
 if (Test-Path $msiBuildScript) {
     try {
         if (Test-Path $msiPath) { Remove-Item -Path $msiPath -Force }
-        $msiBuildResult = & $msiBuildScript `
+        $rawMsiBuildResult = & $msiBuildScript `
             -StageDirectory $stageDirectory `
             -Version $normalizedVersion `
             -OutputMsiPath $msiPath `
             -IconsDir (Join-Path $repoRoot "resources\icons") `
             -PackagingDir (Join-Path $repoRoot "resources\icons\packaging") `
             -InstallerDir (Join-Path $repoRoot "installer")
+        $msiBuildResult = @($rawMsiBuildResult) |
+            Where-Object {
+                $_ -is [psobject] -and
+                $_.PSObject.Properties.Name -contains "MsiVersion"
+            } |
+            Select-Object -Last 1
+        if ($null -eq $msiBuildResult) {
+            throw "Build-Msi.ps1 did not return MSI metadata."
+        }
         $metadata | Add-Member -NotePropertyName msiPath -NotePropertyValue $msiPath -Force
         $metadata | Add-Member -NotePropertyName msiVersion -NotePropertyValue $msiBuildResult.MsiVersion -Force
         $metadata | ConvertTo-Json -Depth 8 | Set-Content -Path $metadataPath -Encoding UTF8

@@ -58,7 +58,7 @@ Write-Host "    PackagingDir:   $PackagingDir"
 
 $wix = (Get-Command wix -ErrorAction Stop).Source
 Write-Host "    wix:            $wix"
-$wixVersion = & $wix --version
+$wixVersion = (& $wix --version | Select-Object -Last 1)
 Write-Host "    wix version:    $wixVersion"
 
 # ---------------------------------------------------------------------------
@@ -277,7 +277,7 @@ $wixArgs = @(
 ) + $wxsSources
 
 Write-Host "==> wix $($wixArgs -join ' ')"
-& $wix @wixArgs
+& $wix @wixArgs | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "wix build failed with exit code $LASTEXITCODE" }
 
 $msiItem = Get-Item $OutputMsiPath
