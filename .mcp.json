@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "memory": {
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js",
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ],
+      "env": {
+        "MEMORY_FILE_PATH": "G:\\Claude\\Master-Control-Orchastration-Server\\master-control-dashboard-main\\.remember\\memory.jsonl",
+        "PATH": "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows"
+      }
+    }
+  }
+}

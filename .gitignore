@@ -65,6 +65,10 @@ CMakeUserPresets.json
 # area on your clone, this directory is still honored locally but nothing
 # inside it is ever committed.
 .claude-work/
+
+# Operator-local memory store fed by the project-scoped memory MCP server
+# (see .mcp.json). The data file is per-developer scratch, never shipped.
+.remember/
 /src/MasterControlShell/Directory.Build.props
 /src/MasterControlShell/Directory.Build.targets
 
