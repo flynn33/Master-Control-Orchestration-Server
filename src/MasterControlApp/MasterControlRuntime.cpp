@@ -3012,11 +3012,18 @@ public:
                 const bool authFileExists = !session.authFilePath.empty() &&
                     std::filesystem::exists(session.authFilePath);
                 if (exitCode == 0 && authFileExists) {
-                    session.status = "complete";
-                    registerBridgedProvider(session.bridge, session.providerId);
-                    if (session.bridge == "codex") {
-                        session.message = "Signed in. ChatGPT (planning / reasoning) and Codex (coding agent) are both registered — assign each to roles below.";
+                    const auto registerResult = registerBridgedProvider(session.bridge, session.providerId);
+                    if (registerResult.succeeded) {
+                        session.status = "complete";
                     } else {
+                        session.status = "failed";
+                        session.message = registerResult.message.empty()
+                            ? "Sign-in finished, but provider registration failed."
+                            : registerResult.message;
+                    }
+                    if (registerResult.succeeded && session.bridge == "codex") {
+                        session.message = "Signed in. ChatGPT (planning / reasoning) and Codex (coding agent) are both registered — assign each to roles below.";
+                    } else if (registerResult.succeeded) {
                         session.message = "Signed in. " + session.accountLabel + " is registered — assign it to a role below.";
                     }
                 } else if (exitCode == 0) {
@@ -3055,6 +3062,18 @@ public:
             response.push_back(entry);
         }
         return response;
+    }
+
+    OperationResult registerAuthenticatedProvider(const std::string& bridge,
+                                                  const std::string& providerIdHint) {
+        if (bridge != "claude" && bridge != "codex") {
+            return OperationResult{
+                false,
+                false,
+                "Unsupported sign-in bridge: " + bridge
+            };
+        }
+        return registerBridgedProvider(bridge, providerIdHint);
     }
 
 private:
@@ -3099,7 +3118,7 @@ private:
         return bridge;
     }
 
-    void registerBridgedProvider(const std::string& bridge, const std::string& providerIdHint) {
+    OperationResult registerBridgedProvider(const std::string& bridge, const std::string& providerIdHint) {
         // A single `codex login` authenticates the user's OpenAI account for
         // BOTH ChatGPT (general reasoning) and Codex (coding agent). We
         // therefore register every capability whose cliBridgeCommand
@@ -3117,10 +3136,13 @@ private:
         // account, not to choose one of two logical endpoints.
         (void)providerIdHint;
         const auto capabilities = providerCatalogService_->listCapabilities();
+        size_t matchedCapabilityCount = 0;
+        std::vector<std::string> failures;
         for (const auto& capability : capabilities) {
             if (capability.cliBridgeCommand != bridge) {
                 continue;
             }
+            ++matchedCapabilityCount;
             ProviderConnection provider;
             provider.id = capability.providerId;
             provider.kind = capability.kind;
@@ -3131,8 +3153,47 @@ private:
             provider.allowAutonomousControl = false;
             provider.credentialsConfigured = true; // via CLI's own OAuth store
             provider.isTemplate = false;
-            (void)providerRegistry_->upsertProvider(provider);
+            const auto upsertResult = providerRegistry_->upsertProvider(provider);
+            if (!upsertResult.succeeded) {
+                failures.push_back(
+                    capability.providerId + ": " +
+                    (upsertResult.message.empty() ? std::string("provider registration failed") : upsertResult.message));
+            }
         }
+
+        if (matchedCapabilityCount == 0) {
+            return OperationResult{
+                false,
+                false,
+                "No provider capabilities are registered for CLI bridge '" + bridge + "'."
+            };
+        }
+
+        if (!failures.empty()) {
+            std::ostringstream message;
+            message << "Signed in, but provider registration failed: ";
+            for (size_t index = 0; index < failures.size(); ++index) {
+                if (index > 0) {
+                    message << "; ";
+                }
+                message << failures[index];
+            }
+            return OperationResult{ false, false, message.str() };
+        }
+
+        if (bridge == "codex") {
+            return OperationResult{
+                true,
+                false,
+                "Signed in. ChatGPT (planning / reasoning) and Codex (coding agent) are both registered - assign each to roles below."
+            };
+        }
+
+        return OperationResult{
+            true,
+            false,
+            "Signed in. " + bridgeDisplayName(bridge) + " is registered - assign it to a role below."
+        };
     }
 
     mutable std::mutex mutex_;
@@ -10642,6 +10703,29 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "POST" && request.path == "/api/providers/auto-connect") {
             const auto result = adminApiService_->autoConnectProviderJson(request.body);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
+        if (request.method == "POST" && request.path == "/api/providers/signin/register") {
+            if (!providerCliSignInService_) {
+                return jsonResponse(nlohmann::json{
+                    { "succeeded", false },
+                    { "message", "Sign-in service is not ready." }
+                }, 500);
+            }
+            nlohmann::json body = nlohmann::json::object();
+            try {
+                if (!request.body.empty()) {
+                    body = nlohmann::json::parse(request.body);
+                }
+            } catch (...) {
+                return jsonResponse(nlohmann::json{
+                    { "succeeded", false },
+                    { "message", "Invalid JSON body." }
+                }, 400);
+            }
+            const std::string bridge = body.value("bridge", std::string{});
+            const std::string providerId = body.value("providerId", std::string{});
+            const auto result = providerCliSignInService_->registerAuthenticatedProvider(bridge, providerId);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         // Account-only sign-in wizard: spawn `claude login` or `codex login`

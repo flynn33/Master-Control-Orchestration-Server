@@ -185,6 +185,13 @@ Invoke-DevShell -Commands @(
     "`"$cmake`" --install `"$binaryDir`" --config $configuration --prefix `"$stageDirectory`""
 )
 
+# End-user packages should not carry debug symbols. Keep the stage lean so
+# the zip/MSI contain only runtime artifacts; publish symbols separately in CI.
+$symbolFiles = @(Get-ChildItem -Path $stageDirectory -Recurse -Filter *.pdb -File)
+foreach ($symbolFile in $symbolFiles) {
+    Remove-Item -LiteralPath $symbolFile.FullName -Force
+}
+
 $vcRuntimeFiles = @(Get-ChildItem -Path $vcRuntimeDirectory -Filter *.dll -File | Sort-Object Name)
 foreach ($vcRuntimeFile in $vcRuntimeFiles) {
     Copy-Item -Path $vcRuntimeFile.FullName -Destination (Join-Path $stageDirectory $vcRuntimeFile.Name) -Force

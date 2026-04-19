@@ -1563,6 +1563,45 @@ int main() {
         // =====================================================================
         // WS8 Section F — Readiness Dashboard / Starter Workflow
         // =====================================================================
+        // WS8 Section F - CLI Sign-In Registration (shell-auth handoff)
+        {
+            const auto invalidRegister = httpPostJson(
+                application.browserUrl() + "api/providers/signin/register",
+                R"({"bridge":"unsupported","providerId":"test-provider"})");
+            success &= expect(
+                invalidRegister.has_value() && !invalidRegister->value("succeeded", true),
+                "POST /api/providers/signin/register should reject unsupported bridges.");
+
+            const auto registerCodex = httpPostJson(
+                application.browserUrl() + "api/providers/signin/register",
+                R"({"bridge":"codex","providerId":"chatgpt"})");
+            success &= expect(
+                registerCodex.has_value() && registerCodex->value("succeeded", false),
+                "POST /api/providers/signin/register should register Codex-backed providers after shell auth succeeds.");
+
+            const auto dashboardAfterRegister = httpGetJson(application.browserUrl() + "api/dashboard");
+            bool sawChatGpt = false;
+            bool sawCodex = false;
+            if (dashboardAfterRegister.has_value() &&
+                dashboardAfterRegister->contains("providers") &&
+                (*dashboardAfterRegister)["providers"].is_array()) {
+                for (const auto& provider : (*dashboardAfterRegister)["providers"]) {
+                    const auto providerId = provider.value("id", std::string{});
+                    if (providerId == "chatgpt") {
+                        sawChatGpt = true;
+                    } else if (providerId == "codex") {
+                        sawCodex = true;
+                    }
+                }
+            }
+            success &= expect(
+                sawChatGpt && sawCodex,
+                "Codex sign-in registration should publish both chatgpt and codex providers for role assignment.");
+        }
+
+        // =====================================================================
+        // WS8 Section G - Readiness Dashboard / Starter Workflow
+        // =====================================================================
         {
             const auto templates = httpGetJson(
                 application.browserUrl() + "api/setup/workflow-templates");
@@ -1574,7 +1613,7 @@ int main() {
         }
 
         // =====================================================================
-        // WS8 Section G — Non-Guided User Journey (Manual workflow readiness)
+        // WS8 Section H - Non-Guided User Journey (Manual workflow readiness)
         // =====================================================================
         // Fix-3 critical test: a manually created workflow (provider assignment
         // pointing to a ready provider) must satisfy workflow-ready regardless

@@ -7,6 +7,7 @@
 #include "ShellRuntime.h"
 
 #include <ShlObj.h>
+#include <mutex>
 
 namespace MasterControlShell {
 
@@ -193,6 +194,170 @@ std::optional<std::string> readFileUtf8(const std::filesystem::path& filePath) {
     }
 
     return content;
+}
+
+struct LocalCliSignInSession final {
+    std::wstring sessionId;
+    std::wstring bridge;
+    std::wstring providerId;
+    std::wstring status = L"pending";
+    std::wstring message;
+    std::wstring accountLabel;
+    std::filesystem::path authFilePath;
+    HANDLE processHandle = nullptr;
+    bool registrationInProgress = false;
+};
+
+std::mutex gCliSignInMutex;
+std::map<std::wstring, LocalCliSignInSession> gCliSignInSessions;
+std::atomic<uint64_t> gCliSignInCounter{ 0 };
+
+std::wstring quoteWindowsArgument(const std::wstring& argument) {
+    if (argument.empty()) {
+        return L"\"\"";
+    }
+
+    const bool requiresQuotes = argument.find_first_of(L" \t\n\v\"") != std::wstring::npos;
+    if (!requiresQuotes) {
+        return argument;
+    }
+
+    std::wstring quoted = L"\"";
+    size_t backslashCount = 0;
+    for (const wchar_t character : argument) {
+        if (character == L'\\') {
+            ++backslashCount;
+            continue;
+        }
+        if (character == L'"') {
+            quoted.append(backslashCount * 2 + 1, L'\\');
+            quoted.push_back(L'"');
+            backslashCount = 0;
+            continue;
+        }
+        if (backslashCount > 0) {
+            quoted.append(backslashCount, L'\\');
+            backslashCount = 0;
+        }
+        quoted.push_back(character);
+    }
+    if (backslashCount > 0) {
+        quoted.append(backslashCount * 2, L'\\');
+    }
+    quoted.push_back(L'"');
+    return quoted;
+}
+
+std::optional<std::filesystem::path> findCommandOnPath(const std::vector<std::wstring>& fileNames) {
+    for (const auto& fileName : fileNames) {
+        std::array<wchar_t, 4096> buffer{};
+        const DWORD length = SearchPathW(nullptr, fileName.c_str(), nullptr, static_cast<DWORD>(buffer.size()), buffer.data(), nullptr);
+        if (length > 0 && length < buffer.size()) {
+            return std::filesystem::path(buffer.data());
+        }
+    }
+
+    std::vector<std::filesystem::path> fallbackDirectories;
+    wchar_t systemRoot[MAX_PATH] = {};
+    const auto systemRootLength = GetEnvironmentVariableW(L"SystemRoot", systemRoot, MAX_PATH);
+    if (systemRootLength > 0 && systemRootLength < MAX_PATH) {
+        fallbackDirectories.emplace_back(
+            std::filesystem::path(systemRoot) / L"System32" / L"config" / L"systemprofile" / L"AppData" / L"Roaming" / L"npm");
+    }
+
+    wchar_t appDataBuffer[MAX_PATH] = {};
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataBuffer))) {
+        fallbackDirectories.emplace_back(std::filesystem::path(appDataBuffer) / L"npm");
+    }
+
+    fallbackDirectories.emplace_back(L"C:\\Program Files\\nodejs");
+    for (const auto& directory : fallbackDirectories) {
+        for (const auto& fileName : fileNames) {
+            const auto candidate = directory / fileName;
+            std::error_code error;
+            if (std::filesystem::exists(candidate, error)) {
+                return candidate;
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path> resolveCliPath(const std::wstring& bridge) {
+    if (bridge == L"claude") {
+        return findCommandOnPath({ L"claude.exe", L"claude.cmd", L"claude.bat", L"claude" });
+    }
+    if (bridge == L"codex") {
+        return findCommandOnPath({ L"codex.exe", L"codex.cmd", L"codex.bat", L"codex" });
+    }
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path> currentUserProfileDirectory() {
+    if (const auto userProfile = wideEnvironmentVariable(L"USERPROFILE"); userProfile.has_value() && !userProfile->empty()) {
+        return std::filesystem::path(*userProfile);
+    }
+
+    PWSTR profilePath = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Profile, KF_FLAG_DEFAULT, nullptr, &profilePath)) &&
+        profilePath != nullptr) {
+        std::filesystem::path profile(profilePath);
+        CoTaskMemFree(profilePath);
+        return profile;
+    }
+
+    if (profilePath != nullptr) {
+        CoTaskMemFree(profilePath);
+    }
+    return std::nullopt;
+}
+
+std::filesystem::path expectedCliAuthFilePath(const std::wstring& bridge) {
+    const auto profileDirectory = currentUserProfileDirectory();
+    if (!profileDirectory.has_value()) {
+        return {};
+    }
+
+    if (bridge == L"claude") {
+        return *profileDirectory / L".claude" / L".credentials.json";
+    }
+    if (bridge == L"codex") {
+        return *profileDirectory / L".codex" / L"auth.json";
+    }
+    return {};
+}
+
+std::wstring cliBridgeDisplayName(const std::wstring& bridge) {
+    if (bridge == L"claude") {
+        return L"Claude Code CLI";
+    }
+    if (bridge == L"codex") {
+        return L"Codex CLI";
+    }
+    return bridge;
+}
+
+std::wstring cliBridgeAccountLabel(const std::wstring& bridge) {
+    if (bridge == L"claude") {
+        return L"Claude Pro / Max / Team account";
+    }
+    if (bridge == L"codex") {
+        return L"OpenAI account (ChatGPT + Codex)";
+    }
+    return bridge;
+}
+
+bool usesCmdShim(const std::filesystem::path& executablePath) {
+    const auto extension = executablePath.extension().wstring();
+    return _wcsicmp(extension.c_str(), L".cmd") == 0 ||
+        _wcsicmp(extension.c_str(), L".bat") == 0;
+}
+
+std::wstring generateCliSignInSessionId() {
+    const auto now = std::chrono::system_clock::now().time_since_epoch();
+    const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(now).count();
+    return L"signin-" + std::to_wstring(micros) + L"-" + std::to_wstring(gCliSignInCounter.fetch_add(1));
 }
 
 std::wstring serviceStateLabel(const ServiceState state) {
@@ -2865,36 +3030,70 @@ ShellRuntime::ShellCliSignInStartResult ShellRuntime::StartCliSignIn(
     const std::wstring& providerId) const {
     ShellCliSignInStartResult result;
 
-    JsonObject payload;
-    payload.SetNamedValue(L"bridge", JsonValue::CreateStringValue(bridge));
-    payload.SetNamedValue(L"providerId", JsonValue::CreateStringValue(providerId));
+    const auto cliPath = resolveCliPath(bridge);
+    if (!cliPath.has_value()) {
+        result.message = cliBridgeDisplayName(bridge) +
+            L" is not installed for this Windows user session. Install it first and try again.";
+        result.bridge = bridge;
+        result.cliInstalled = false;
+        return result;
+    }
 
-    std::wstring errorMessage;
-    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
-    const auto response = httpRequest(
-        host,
-        port,
-        L"POST",
-        L"/api/providers/signin/start",
-        narrowFromWide(payload.Stringify().c_str()),
-        {},
-        errorMessage);
-    if (!response.has_value()) {
-        result.message = errorMessage.empty() ? L"Unable to reach the admin API." : errorMessage;
+    std::wstring commandLine;
+    if (usesCmdShim(*cliPath)) {
+        commandLine = L"cmd.exe /d /s /c ";
+        commandLine += quoteWindowsArgument(cliPath->wstring());
+        commandLine += L" login";
+    } else {
+        commandLine = quoteWindowsArgument(cliPath->wstring());
+        commandLine += L" login";
+    }
+
+    STARTUPINFOW startupInfo{};
+    startupInfo.cb = sizeof(startupInfo);
+    PROCESS_INFORMATION processInfo{};
+    std::wstring mutableCommand = commandLine;
+    const BOOL created = CreateProcessW(
+        nullptr,
+        mutableCommand.data(),
+        nullptr,
+        nullptr,
+        FALSE,
+        CREATE_NEW_CONSOLE,
+        nullptr,
+        nullptr,
+        &startupInfo,
+        &processInfo);
+    if (created == 0) {
+        const DWORD lastError = GetLastError();
+        result.message = L"Failed to launch " + cliBridgeDisplayName(bridge) +
+            L" sign-in (error " + std::to_wstring(lastError) + L").";
+        result.bridge = bridge;
+        result.cliInstalled = true;
         return result;
     }
-    const auto body = parseJsonObject(response->body);
-    if (!body.has_value()) {
-        result.message = L"The admin API returned an unreadable response.";
-        return result;
+
+    CloseHandle(processInfo.hThread);
+
+    LocalCliSignInSession session;
+    session.sessionId = generateCliSignInSessionId();
+    session.bridge = bridge;
+    session.providerId = providerId;
+    session.message = L"Complete the sign-in prompt in the console window or browser.";
+    session.accountLabel = cliBridgeAccountLabel(bridge);
+    session.authFilePath = expectedCliAuthFilePath(bridge);
+    session.processHandle = processInfo.hProcess;
+
+    {
+        std::lock_guard<std::mutex> lock(gCliSignInMutex);
+        gCliSignInSessions[session.sessionId] = session;
     }
-    result.succeeded = jsonBoolOr(*body, L"succeeded", false);
-    result.message = wideFromUtf8(jsonStringOr(*body, L"message", ""));
-    result.sessionId = wideFromUtf8(jsonStringOr(*body, L"sessionId", ""));
-    result.bridge = wideFromUtf8(jsonStringOr(*body, L"bridge", narrowFromWide(bridge)));
-    if (body->HasKey(L"cliInstalled")) {
-        result.cliInstalled = jsonBoolOr(*body, L"cliInstalled", true);
-    }
+
+    result.succeeded = true;
+    result.message = L"Sign-in console opened. Complete the prompt to finish.";
+    result.sessionId = session.sessionId;
+    result.bridge = bridge;
+    result.cliInstalled = true;
     return result;
 }
 
@@ -2909,58 +3108,107 @@ ShellRuntime::ShellCliSignInStatusResult ShellRuntime::GetCliSignInStatus(
         return result;
     }
 
-    const auto path = L"/api/providers/signin/status?sessionId=" + sessionId;
-    std::wstring errorMessage;
-    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
-    const auto response = httpGet(host, port, path, errorMessage);
-    if (!response.has_value()) {
-        result.message = errorMessage.empty() ? L"Unable to reach the admin API." : errorMessage;
+    std::optional<std::pair<std::wstring, std::wstring>> registrationRequest;
+    {
+        std::lock_guard<std::mutex> lock(gCliSignInMutex);
+        const auto iterator = gCliSignInSessions.find(sessionId);
+        if (iterator == gCliSignInSessions.end()) {
+            result.message = L"Unknown sign-in session.";
+            return result;
+        }
+
+        auto& session = iterator->second;
+        if (session.status == L"pending" && session.processHandle != nullptr) {
+            const DWORD waitResult = WaitForSingleObject(session.processHandle, 0);
+            if (waitResult == WAIT_OBJECT_0) {
+                DWORD exitCode = 0;
+                GetExitCodeProcess(session.processHandle, &exitCode);
+                CloseHandle(session.processHandle);
+                session.processHandle = nullptr;
+
+                const bool authFileExists = !session.authFilePath.empty() &&
+                    std::filesystem::exists(session.authFilePath);
+                if (exitCode == 0 && authFileExists) {
+                    if (!session.registrationInProgress) {
+                        session.registrationInProgress = true;
+                        session.message = L"Finishing sign-in and registering the provider...";
+                        registrationRequest = std::make_pair(session.bridge, session.providerId);
+                    }
+                } else if (exitCode == 0) {
+                    session.status = L"failed";
+                    session.message = L"Sign-in exited cleanly, but " + cliBridgeDisplayName(session.bridge) +
+                        L" did not create its credential file for this Windows user.";
+                } else {
+                    session.status = L"failed";
+                    session.message = L"Sign-in was canceled or failed (exit code " +
+                        std::to_wstring(exitCode) + L").";
+                }
+            }
+        }
+    }
+
+    if (registrationRequest.has_value()) {
+        JsonObject payload;
+        payload.SetNamedValue(L"bridge", JsonValue::CreateStringValue(registrationRequest->first));
+        payload.SetNamedValue(L"providerId", JsonValue::CreateStringValue(registrationRequest->second));
+        const auto registerResult = postJsonObjectToAdminApi(
+            ResolveConfigurationFile(),
+            L"/api/providers/signin/register",
+            payload,
+            L"Unable to register the signed-in provider through the local admin API.");
+
+        std::lock_guard<std::mutex> lock(gCliSignInMutex);
+        const auto iterator = gCliSignInSessions.find(sessionId);
+        if (iterator != gCliSignInSessions.end()) {
+            auto& session = iterator->second;
+            session.registrationInProgress = false;
+            if (registerResult.succeeded) {
+                session.status = L"complete";
+                const auto successMessage = session.bridge == L"codex"
+                    ? std::wstring(L"Signed in. ChatGPT (planning / reasoning) and Codex (coding agent) are both registered - assign each to roles below.")
+                    : std::wstring(L"Signed in. ") + session.accountLabel + L" is registered - assign it to a role below.";
+                if (session.bridge == L"codex") {
+                    session.message = L"Signed in. ChatGPT (planning / reasoning) and Codex (coding agent) are both registered — assign each to roles below.";
+                } else {
+                    session.message = L"Signed in. " + session.accountLabel + L" is registered — assign it to a role below.";
+                }
+                session.message = successMessage;
+            } else {
+                session.status = L"failed";
+                session.message = registerResult.message.empty()
+                    ? L"Sign-in finished, but provider registration failed."
+                    : registerResult.message;
+            }
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(gCliSignInMutex);
+    const auto iterator = gCliSignInSessions.find(sessionId);
+    if (iterator == gCliSignInSessions.end()) {
+        result.message = L"Unknown sign-in session.";
         return result;
     }
-    const auto body = parseJsonObject(response->body);
-    if (!body.has_value()) {
-        result.message = L"The admin API returned an unreadable response.";
-        return result;
-    }
-    result.succeeded = jsonBoolOr(*body, L"succeeded", false);
-    result.status = wideFromUtf8(jsonStringOr(*body, L"status", "failed"));
-    result.message = wideFromUtf8(jsonStringOr(*body, L"message", ""));
-    result.bridge = wideFromUtf8(jsonStringOr(*body, L"bridge", ""));
-    result.providerId = wideFromUtf8(jsonStringOr(*body, L"providerId", ""));
-    result.accountLabel = wideFromUtf8(jsonStringOr(*body, L"accountLabel", ""));
+
+    result.succeeded = true;
+    result.status = iterator->second.status;
+    result.message = iterator->second.message;
+    result.bridge = iterator->second.bridge;
+    result.providerId = iterator->second.providerId;
+    result.accountLabel = iterator->second.accountLabel;
     return result;
 }
 
 std::vector<ShellRuntime::ShellCliSignInDetectEntry> ShellRuntime::DetectCliSignInInstalled() const {
     std::vector<ShellCliSignInDetectEntry> entries;
 
-    std::wstring errorMessage;
-    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
-    const auto response = httpGet(host, port, L"/api/providers/signin/installed", errorMessage);
-    if (!response.has_value()) {
-        return entries;
-    }
-    try {
-        const auto jsonText = wideFromUtf8(response->body);
-        const auto parsed = JsonValue::Parse(jsonText);
-        if (parsed.ValueType() != JsonValueType::Array) {
-            return entries;
-        }
-        const auto array = parsed.GetArray();
-        for (const auto& value : array) {
-            if (value.ValueType() != JsonValueType::Object) {
-                continue;
-            }
-            const auto obj = value.GetObject();
-            ShellCliSignInDetectEntry entry;
-            entry.bridge = wideFromUtf8(jsonStringOr(obj, L"bridge", ""));
-            entry.displayName = wideFromUtf8(jsonStringOr(obj, L"displayName", ""));
-            entry.installed = jsonBoolOr(obj, L"installed", false);
-            entry.signedIn = jsonBoolOr(obj, L"signedIn", false);
-            entries.push_back(entry);
-        }
-    } catch (...) {
-        // Return whatever we managed to parse.
+    for (const auto& bridge : { std::wstring(L"claude"), std::wstring(L"codex") }) {
+        ShellCliSignInDetectEntry entry;
+        entry.bridge = bridge;
+        entry.displayName = cliBridgeDisplayName(bridge);
+        entry.installed = resolveCliPath(bridge).has_value();
+        const auto authPath = expectedCliAuthFilePath(bridge);
+        entry.signedIn = !authPath.empty() && std::filesystem::exists(authPath);
+        entries.push_back(entry);
     }
     return entries;
 }
