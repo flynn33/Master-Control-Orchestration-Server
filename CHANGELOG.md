@@ -5,6 +5,16 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.5-rc.1] - 2026-04-19
+### Summary
+**Release candidate for the Windows host experience.** This candidate rolls up the guided CLI-install flow, the host-session AI sign-in fix so `claude login` / `codex login` open for the interactive Windows user instead of the service account, and the packaging cleanup needed to ship a clean MSI + ZIP pair from the latest commits.
+
+### Included Changes
+- feat(runtime): dependency install flow now handles Node.js as the prerequisite for Claude Code / Codex CLI install on clean Windows hosts, refreshes PATH after install, and keeps the provider onboarding path guided instead of dead-ending on missing npm.
+- fix(shell): the desktop shell now owns CLI sign-in launch and auth-file detection for host usage, then hands successful provider registration back to the backend. Host users finally see the authentication prompt in their own session.
+- test: `tests/MasterControlOrchestrationServerTests.cpp` now covers the CLI sign-in registration handoff so invalid bridge payloads fail and a successful Codex handoff registers the expected providers.
+- fix(packaging): staged end-user payloads no longer include `*.pdb` symbol files, and the MSI metadata handoff now records the built `.msi` and `msiVersion` correctly in `PACKAGE-METADATA.json`.
+
 ## [0.4.4-rc.1] - 2026-04-18
 ### Summary
 **Auto-install the CLIs from the shell.** The sign-in cards have worked since rc.5, but they silently failed when the underlying CLI (`claude` or `codex`) wasn't on PATH. The browser UI showed a grayed-out "CLI not installed" button and the shell just errored on click. rc.1 closes that gap: the Providers surface now detects on load whether each CLI is installed, and when either is missing it surfaces an active **Install Claude Code CLI** / **Install Codex CLI** button that runs the preset `npm install -g` command through the admin API. A `ProgressRing` ticks while npm is installing; on completion the Install button hides, the Sign-In button enables, and the operator can keep going without opening a terminal.
