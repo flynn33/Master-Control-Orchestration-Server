@@ -947,8 +947,23 @@ void MainWindow::EnsureBootstrapSurface(::MasterControlShell::ShellSnapshot& sna
     if (snapshot.overlayRoutes.empty()) {
         snapshot.overlayRoutes = bootstrapOverlayRoutes();
     }
-    if (snapshot.viewInjectionsBySlot.empty()) {
-        snapshot.viewInjectionsBySlot = bootstrapViewInjectionsBySlot();
+    // Per-slot merge (not all-or-nothing replace). The server's
+    // composeDashboardSurface populates every slot, but if the
+    // Forsetti module activation order ever means DashboardUIModule
+    // publishes the surface before every view-injection descriptor
+    // has registered (observed: Imports/Exports/Security/Settings/CLU
+    // sometimes missing), the previous all-or-nothing guard
+    // `if (map.empty())` would skip the bootstrap fallback entirely
+    // because SOME slots had arrived. Result: clicking those nav
+    // tabs resolved to CreateUnavailableView and the SectionContentHost
+    // never swapped. Iterate the bootstrap map instead and insert
+    // each slot only if it's still missing so nav clicks always
+    // resolve to a real view.
+    const auto bootstrap = bootstrapViewInjectionsBySlot();
+    for (const auto& [slot, injections] : bootstrap) {
+        if (snapshot.viewInjectionsBySlot.find(slot) == snapshot.viewInjectionsBySlot.end()) {
+            snapshot.viewInjectionsBySlot[slot] = injections;
+        }
     }
 }
 
