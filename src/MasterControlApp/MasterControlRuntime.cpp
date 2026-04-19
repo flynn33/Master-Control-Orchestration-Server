@@ -8741,7 +8741,35 @@ public:
     }
 
     AutoConnectResult autoConnectProviderJson(const std::string& requestBody) override {
-        const auto request = nlohmann::json::parse(requestBody).get<AutoConnectRequest>();
+        AutoConnectRequest request;
+        try {
+            if (requestBody.empty()) {
+                AutoConnectResult err;
+                err.errorMessage = "Request body is empty. Provide JSON with kind + credentials.";
+                err.summary = err.errorMessage;
+                AutoConnectStep step;
+                step.stage = "parse";
+                step.succeeded = false;
+                step.message = err.errorMessage;
+                err.steps.push_back(std::move(step));
+                return err;
+            }
+            request = nlohmann::json::parse(requestBody).get<AutoConnectRequest>();
+        } catch (const std::exception& parseErr) {
+            // Previously this path threw uncaught, which surfaced to the HTTP
+            // layer as HTTP 500 with an empty body — operator saw a dead
+            // connection without any clue what was wrong. Return a structured
+            // failure with the parse reason instead.
+            AutoConnectResult err;
+            err.errorMessage = std::string("Could not parse request: ") + parseErr.what();
+            err.summary = err.errorMessage;
+            AutoConnectStep step;
+            step.stage = "parse";
+            step.succeeded = false;
+            step.message = err.errorMessage;
+            err.steps.push_back(std::move(step));
+            return err;
+        }
         // Autonomy enforcement is applied to the derived provider id inside
         // autoConnectProvider's register-provider stage, so we do not need a
         // pre-check here — the registry will emit a step error if the CLU
