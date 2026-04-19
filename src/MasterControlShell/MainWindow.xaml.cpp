@@ -191,7 +191,7 @@ std::wstring labelForDestination(const std::wstring& destinationId) {
         return L"Command Logic Unit";
     }
     if (destinationId == kProvidersDestination) {
-        return L"Providers";
+        return L"AI Integrations";
     }
     if (destinationId == kImportsDestination) {
         return L"Imports";
@@ -292,7 +292,7 @@ std::vector<::MasterControlShell::ShellNavigationPointer> bootstrapNavigationPoi
         { L"telemetry-nav", L"Telemetry", kTelemetryDestination },
         { L"runtime-nav", L"Runtime", kRuntimeDestination },
         { L"clu-nav", L"CLU", kCluDestination },
-        { L"providers-nav", L"Providers", kProvidersDestination },
+        { L"providers-nav", L"AI Integrations", kProvidersDestination },
         { L"imports-nav", L"Imports", kImportsDestination },
         { L"exports-nav", L"Exports", kExportsDestination },
         { L"security-nav", L"Security", kSecurityDestination },
@@ -1262,14 +1262,31 @@ FrameworkElement MainWindow::CreateUnavailableView(
 }
 
 void MainWindow::ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot) {
+    // Mirror the snapshot into currentSnapshot_ so SetCurrentDestination
+    // below sees the freshly-populated viewInjectionsBySlot map. Without
+    // this, the first-paint flip below would call SetCurrentDestination,
+    // which in turn calls ResolvePrimaryViewForDestination against a stale
+    // currentSnapshot_ and falls back to CreateUnavailableView — whose
+    // style lookup throws if Application.Resources isn't fully loaded yet.
+    currentSnapshot_ = snapshot;
+
     ApplySurfaceNavigation(snapshot);
     ApplySurfaceToolbar(snapshot);
     ApplyCachedSectionSnapshots(snapshot);
 
-    // First-run routing: if setup hasn't been completed yet and the user hasn't
-    // navigated away from the default, route to the setup wizard automatically.
-    // This makes the WinUI shell the guided entry point — the user never needs
-    // to open a browser on the host machine.
+    // NOTE: Auto-navigating to AI Integrations on startup was attempted
+    // multiple ways (direct SetCurrentDestination, deferred
+    // SetCurrentDestination via TryEnqueue, SelectedItem assignment) and
+    // all three paths threw E_NOINTERFACE during first-paint tree
+    // materialization on this WinUI 3 SDK version. The operator reaches
+    // AI Integrations by clicking the "AI Integrations" tab at the top
+    // (now labeled per MainWindow.xaml.cpp:295); once there, the
+    // ProvidersSectionControl renders Install + Sign-In cards as normal.
+
+    // Fallback first-run routing: if setup hasn't been completed yet and
+    // the user hasn't navigated away from the default, route to the setup
+    // wizard automatically. Runs when the providers slot isn't registered
+    // yet (typical when the service hasn't finished its first health pass).
     if (!snapshot.firstRunCompleted
         && currentDestination_ == kOverviewDestination
         && !firstRunWizardDismissed_) {

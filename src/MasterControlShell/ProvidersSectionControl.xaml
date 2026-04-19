@@ -36,8 +36,8 @@
                                     <TextBlock x:Name="ClaudeStatusChipText" Text="CHECKING..." Style="{StaticResource ShellLabelTextStyle}" />
                                 </Border>
                                 <!-- Only ONE of these two buttons is ever Visible at a time, based on install state. -->
-                                <Button x:Name="InstallClaudeCliButton" Click="InstallClaudeCliButton_Click" Content="Step 1: Install Claude Code CLI" Style="{StaticResource ShellCommandButtonStyle}" HorizontalAlignment="Stretch" Visibility="Collapsed" />
-                                <Button x:Name="SignInWithClaudeButton" Click="SignInWithClaudeButton_Click" Content="Step 2: Sign in with Claude account" Style="{StaticResource ShellCommandButtonStyle}" HorizontalAlignment="Stretch" Visibility="Collapsed" />
+                                <Button x:Name="InstallClaudeCliButton" Click="InstallClaudeCliButton_Click" Content="Step 1: Install Claude Code CLI" Style="{StaticResource ShellCommandButtonStyle}" HorizontalAlignment="Stretch" />
+                                <Button x:Name="SignInWithClaudeButton" Click="SignInWithClaudeButton_Click" Content="Step 2: Sign in with Claude account" Style="{StaticResource ShellCommandButtonStyle}" HorizontalAlignment="Stretch" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <ProgressRing x:Name="ClaudeCliProgressRing" Width="18" Height="18" IsActive="False" VerticalAlignment="Center" />
                                     <TextBlock x:Name="ClaudeSignInStatusText" Text="Checking..." Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" VerticalAlignment="Center" />
@@ -52,8 +52,8 @@
                                 <Border x:Name="ChatGptStatusChip" Background="#22FF4444" BorderBrush="#44FF4444" BorderThickness="1" CornerRadius="0" Padding="8,4" HorizontalAlignment="Stretch">
                                     <TextBlock x:Name="ChatGptStatusChipText" Text="CHECKING..." Style="{StaticResource ShellLabelTextStyle}" />
                                 </Border>
-                                <Button x:Name="InstallCodexCliButton" Click="InstallCodexCliButton_Click" Content="Step 1: Install Codex CLI" Style="{StaticResource ShellCommandButtonStyle}" HorizontalAlignment="Stretch" Visibility="Collapsed" />
-                                <Button x:Name="SignInWithChatGptButton" Click="SignInWithChatGptButton_Click" Content="Step 2: Sign in with OpenAI account" Style="{StaticResource ShellCommandButtonStyle}" HorizontalAlignment="Stretch" Visibility="Collapsed" />
+                                <Button x:Name="InstallCodexCliButton" Click="InstallCodexCliButton_Click" Content="Step 1: Install Codex CLI" Style="{StaticResource ShellCommandButtonStyle}" HorizontalAlignment="Stretch" />
+                                <Button x:Name="SignInWithChatGptButton" Click="SignInWithChatGptButton_Click" Content="Step 2: Sign in with OpenAI account" Style="{StaticResource ShellCommandButtonStyle}" HorizontalAlignment="Stretch" />
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <ProgressRing x:Name="ChatGptCliProgressRing" Width="18" Height="18" IsActive="False" VerticalAlignment="Center" />
                                     <TextBlock x:Name="ChatGptSignInStatusText" Text="Checking..." Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" VerticalAlignment="Center" />
