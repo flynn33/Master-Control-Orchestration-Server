@@ -545,6 +545,8 @@ public:
                                                            const std::wstring& providerId) const;
     [[nodiscard]] ShellCliSignInStatusResult GetCliSignInStatus(const std::wstring& sessionId) const;
     [[nodiscard]] std::vector<ShellCliSignInDetectEntry> DetectCliSignInInstalled() const;
+    [[nodiscard]] ShellOperationResult RegisterCliSignedInProvider(const std::wstring& bridge,
+                                                                   const std::wstring& providerId) const;
 
     // Install one of the provider CLIs on demand. `bridge` is the bridge id
     // (`claude` or `codex`); we translate it into the matching dependency-

@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <UserControl
     x:Class="MasterControlShell.ProvidersSectionControl"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -17,9 +17,9 @@
                 <Border Style="{StaticResource ShellCardStyle}">
                     <StackPanel Spacing="14">
                         <TextBlock Text="ADD AI MODEL · ACCOUNT SIGN-IN" Style="{StaticResource ShellEyebrowTextStyle}" />
-                        <TextBlock Text="Sign in with your Claude or ChatGPT account" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                        <TextBlock Text="Use the Windows app to add Claude or ChatGPT" Style="{StaticResource ShellSectionTitleTextStyle}" />
                         <TextBlock
-                            Text="One-click sign-in — no API key required. Click a provider below and complete the sign-in prompt in the console window that opens. The provider's CLI owns its own tokens; the orchestration server never sees them."
+                            Text="Use this Windows app on the host machine for account sign-in. If the CLI is already signed in, the button below finishes provider registration; otherwise it opens the CLI sign-in prompt. The provider's CLI owns its own tokens, so the orchestration server never sees them."
                             Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
 
                         <!--
@@ -31,15 +31,15 @@
                           the header/description above them happen to wrap to.
                           Previously each column was an independent StackPanel
                           flowing top-down, which let buttons land at whatever
-                          Y the narrative text stopped at — producing the
+                          Y the narrative text stopped at â€” producing the
                           mis-aligned look that the operator rightly flagged.
 
                           Row budget:
                             Row 0 (Auto): Eyebrow header
                             Row 1 (Auto): Description paragraph (tallest wins)
                             Row 2 (Auto): Status chip or primary input
-                            Row 3 (Auto): Primary button(s) — always aligned
-                            Row 4 (Auto): Footer status line — always aligned
+                            Row 3 (Auto): Primary button(s) â€” always aligned
+                            Row 4 (Auto): Footer status line â€” always aligned
                         -->
                         <Grid ColumnSpacing="14" RowSpacing="6">
                             <Grid.ColumnDefinitions>
@@ -59,7 +59,7 @@
                             <TextBlock Grid.Row="0" Grid.Column="0"
                                 Text="CLAUDE (Pro / Max / Team)" Style="{StaticResource ShellEyebrowTextStyle}" />
                             <TextBlock Grid.Row="1" Grid.Column="0"
-                                Text="Anthropic's coding agent. OAuth sign-in via the Claude Code CLI — no API key stored server-side."
+                                Text="Anthropic's coding agent. OAuth sign-in via the Claude Code CLI â€” no API key stored server-side."
                                 Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" VerticalAlignment="Top" />
                             <!-- State chip: flipped by RefreshCliInstallStateAsync based on /api/providers/signin/installed. -->
                             <Border Grid.Row="2" Grid.Column="0"
@@ -115,10 +115,10 @@
 
                 <Border Style="{StaticResource ShellCardStyle}">
                     <StackPanel Spacing="14">
-                        <TextBlock Text="AUTO-CONNECT · AI MODEL" Style="{StaticResource ShellEyebrowTextStyle}" />
+                        <TextBlock Text="AUTO-CONNECT Â· AI MODEL" Style="{StaticResource ShellEyebrowTextStyle}" />
                         <TextBlock Text="Connect an AI Model" Style="{StaticResource ShellSectionTitleTextStyle}" />
                         <TextBlock
-                            Text="Pick a provider and enter your account credentials. The runtime probes the remote endpoint, discovers available models, selects the best match, encrypts credentials with DPAPI, registers the provider, and applies every role you check — all in one operation. No base URL, model ID, or route wiring required."
+                            Text="Pick a provider and enter your account credentials. The runtime probes the remote endpoint, discovers available models, selects the best match, encrypts credentials with DPAPI, registers the provider, and applies every role you check â€” all in one operation. No base URL, model ID, or route wiring required."
                             Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
 
                         <TextBlock Text="Provider" Style="{StaticResource ShellLabelTextStyle}" />
@@ -131,7 +131,7 @@
                             <TextBlock
                                 x:Name="QuickConnectSummaryText"
                                 Style="{StaticResource ShellBodyTextStyle}"
-                                Text="Select a provider to preview its default endpoint and recommended model. Everything is automated — you only enter credentials and pick roles."
+                                Text="Select a provider to preview its default endpoint and recommended model. Everything is automated â€” you only enter credentials and pick roles."
                                 TextWrapping="WrapWholeWords" />
                         </Border>
 
@@ -162,7 +162,7 @@
 
                         <TextBlock Text="ASSIGN ROLES" Style="{StaticResource ShellEyebrowTextStyle}" />
                         <TextBlock
-                            Text="Check every role or sub-agent target this model should handle. You can assign the same provider to multiple roles at once — the runtime fans the assignments out atomically."
+                            Text="Check every role or sub-agent target this model should handle. You can assign the same provider to multiple roles at once â€” the runtime fans the assignments out atomically."
                             Style="{StaticResource ShellLabelTextStyle}"
                             TextWrapping="WrapWholeWords" />
                         <ListView
@@ -190,7 +190,7 @@
                 <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="False">
                     <Expander.Header>
                         <StackPanel Spacing="2">
-                            <TextBlock Text="ADVANCED · DIRECT EDIT" Style="{StaticResource ShellEyebrowTextStyle}" />
+                            <TextBlock Text="ADVANCED Â· DIRECT EDIT" Style="{StaticResource ShellEyebrowTextStyle}" />
                             <TextBlock Text="Route editor, credentials, autonomy" Style="{StaticResource ShellBodyTextStyle}" />
                         </StackPanel>
                     </Expander.Header>
@@ -198,7 +198,7 @@
                         <Border Style="{StaticResource ShellCardStyle}">
                             <StackPanel Spacing="14">
                                 <TextBlock Text="Provider Editor" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                                <TextBlock Text="Edit a provider route directly — only use this when you already know the exact values to change. Most operators should use Auto-Connect above." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
+                                <TextBlock Text="Edit a provider route directly â€” only use this when you already know the exact values to change. Most operators should use Auto-Connect above." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />
 
                                 <TextBlock Text="Provider" Style="{StaticResource ShellLabelTextStyle}" />
                                 <ComboBox
@@ -327,7 +327,7 @@
                 <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="False">
                     <Expander.Header>
                         <StackPanel Spacing="2">
-                            <TextBlock Text="ADVANCED · ORCHESTRATION" Style="{StaticResource ShellEyebrowTextStyle}" />
+                            <TextBlock Text="ADVANCED Â· ORCHESTRATION" Style="{StaticResource ShellEyebrowTextStyle}" />
                             <TextBlock Text="Sub-agent groups, ownership routing, run console" Style="{StaticResource ShellBodyTextStyle}" />
                         </StackPanel>
                     </Expander.Header>
@@ -452,3 +452,4 @@
         </Grid>
     </ScrollViewer>
 </UserControl>
+

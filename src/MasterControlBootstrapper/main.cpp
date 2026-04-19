@@ -2419,8 +2419,15 @@ bool installLike(const std::wstring& mode,
         return failInstall(L"Failed to create shortcuts.");
     }
 
-    if (options.manageUninstallRegistration && !registerUninstallEntry(*stagedState)) {
-        return failInstall(L"Failed to register the uninstall entry.");
+    if (options.manageUninstallRegistration) {
+        if (!registerUninstallEntry(*stagedState)) {
+            return failInstall(L"Failed to register the uninstall entry.");
+        }
+    } else {
+        // MSI installs own the Programs & Features entry. Remove the legacy
+        // bootstrapper registration so upgraded machines stop advertising the
+        // stale EXE-based uninstall path after a successful MSI deployment.
+        unregisterUninstallEntry();
     }
 
     if (options.manageService) {
@@ -2547,9 +2554,10 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
         removeShortcuts(*state);
     }
 
-    if (options.manageUninstallRegistration) {
-        unregisterUninstallEntry();
-    }
+    // Always remove the legacy bootstrapper uninstall key during teardown.
+    // Bootstrapper-managed installs recreate it on the next install; MSI
+    // installs rely on Windows Installer's own registration instead.
+    unregisterUninstallEntry();
 
     std::error_code error;
     std::filesystem::remove(installStatePath(installDirectory), error);

@@ -294,6 +294,28 @@ std::optional<std::filesystem::path> resolveCliPath(const std::wstring& bridge) 
     return std::nullopt;
 }
 
+std::optional<std::filesystem::path> resolveCommandProcessorPath() {
+    if (const auto comSpec = wideEnvironmentVariable(L"ComSpec"); comSpec.has_value() && !comSpec->empty()) {
+        std::filesystem::path candidate(*comSpec);
+        std::error_code error;
+        if (std::filesystem::exists(candidate, error)) {
+            return candidate;
+        }
+    }
+
+    wchar_t systemRoot[MAX_PATH] = {};
+    const auto systemRootLength = GetEnvironmentVariableW(L"SystemRoot", systemRoot, MAX_PATH);
+    if (systemRootLength > 0 && systemRootLength < MAX_PATH) {
+        const auto candidate = std::filesystem::path(systemRoot) / L"System32" / L"cmd.exe";
+        std::error_code error;
+        if (std::filesystem::exists(candidate, error)) {
+            return candidate;
+        }
+    }
+
+    return findCommandOnPath({ L"cmd.exe", L"cmd" });
+}
+
 std::optional<std::filesystem::path> currentUserProfileDirectory() {
     if (const auto userProfile = wideEnvironmentVariable(L"USERPROFILE"); userProfile.has_value() && !userProfile->empty()) {
         return std::filesystem::path(*userProfile);
@@ -3039,13 +3061,26 @@ ShellRuntime::ShellCliSignInStartResult ShellRuntime::StartCliSignIn(
         return result;
     }
 
+    const auto executablePath = *cliPath;
+    std::wstring applicationName = executablePath.wstring();
     std::wstring commandLine;
     if (usesCmdShim(*cliPath)) {
-        commandLine = L"cmd.exe /d /s /c ";
-        commandLine += quoteWindowsArgument(cliPath->wstring());
+        const auto commandProcessor = resolveCommandProcessorPath();
+        if (!commandProcessor.has_value()) {
+            result.message = L"Windows could not locate cmd.exe to launch " +
+                cliBridgeDisplayName(bridge) + L" sign-in.";
+            result.bridge = bridge;
+            result.cliInstalled = true;
+            return result;
+        }
+
+        applicationName = commandProcessor->wstring();
+        commandLine = quoteWindowsArgument(commandProcessor->wstring());
+        commandLine += L" /d /s /c ";
+        commandLine += quoteWindowsArgument(executablePath.wstring());
         commandLine += L" login";
     } else {
-        commandLine = quoteWindowsArgument(cliPath->wstring());
+        commandLine = quoteWindowsArgument(executablePath.wstring());
         commandLine += L" login";
     }
 
@@ -3053,15 +3088,19 @@ ShellRuntime::ShellCliSignInStartResult ShellRuntime::StartCliSignIn(
     startupInfo.cb = sizeof(startupInfo);
     PROCESS_INFORMATION processInfo{};
     std::wstring mutableCommand = commandLine;
+    const auto workingDirectory = currentUserProfileDirectory().value_or(executablePath.parent_path());
+    const std::wstring workingDirectoryText = workingDirectory.empty()
+        ? std::wstring()
+        : workingDirectory.wstring();
     const BOOL created = CreateProcessW(
-        nullptr,
+        applicationName.empty() ? nullptr : applicationName.c_str(),
         mutableCommand.data(),
         nullptr,
         nullptr,
         FALSE,
-        CREATE_NEW_CONSOLE,
+        CREATE_NEW_CONSOLE | CREATE_UNICODE_ENVIRONMENT,
         nullptr,
-        nullptr,
+        workingDirectoryText.empty() ? nullptr : workingDirectoryText.c_str(),
         &startupInfo,
         &processInfo);
     if (created == 0) {
@@ -3211,6 +3250,46 @@ std::vector<ShellRuntime::ShellCliSignInDetectEntry> ShellRuntime::DetectCliSign
         entries.push_back(entry);
     }
     return entries;
+}
+
+ShellOperationResult ShellRuntime::RegisterCliSignedInProvider(
+    const std::wstring& bridge,
+    const std::wstring& providerId) const {
+    if (bridge != L"claude" && bridge != L"codex") {
+        return ShellOperationResult{
+            false,
+            false,
+            L"Unsupported CLI bridge."
+        };
+    }
+
+    if (!resolveCliPath(bridge).has_value()) {
+        return ShellOperationResult{
+            false,
+            false,
+            cliBridgeDisplayName(bridge) +
+                L" is not installed for this Windows user session. Install it first and try again."
+        };
+    }
+
+    const auto authPath = expectedCliAuthFilePath(bridge);
+    if (authPath.empty() || !std::filesystem::exists(authPath)) {
+        return ShellOperationResult{
+            false,
+            false,
+            L"No saved " + cliBridgeDisplayName(bridge) +
+                L" sign-in was found for this Windows user. Complete sign-in first."
+        };
+    }
+
+    JsonObject payload;
+    payload.SetNamedValue(L"bridge", JsonValue::CreateStringValue(bridge));
+    payload.SetNamedValue(L"providerId", JsonValue::CreateStringValue(providerId));
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/providers/signin/register",
+        payload,
+        L"Unable to register the signed-in provider through the local admin API.");
 }
 
 // Internal: POST /api/setup/dependencies/{id}/install and unpack the

@@ -2285,7 +2285,9 @@ public:
         if (iterator == providers.end()) {
             providers.push_back(normalizedProvider);
         } else {
-            normalizedProvider.credentialsConfigured = iterator->credentialsConfigured;
+            if (!normalizedProvider.credentialsConfigured) {
+                normalizedProvider.credentialsConfigured = iterator->credentialsConfigured;
+            }
             *iterator = normalizedProvider;
         }
 
@@ -8808,8 +8810,9 @@ public:
                 snapshot.providerCredentialStatuses.begin(),
                 snapshot.providerCredentialStatuses.end(),
                 [&provider](const ProviderCredentialStatus& status) { return status.providerId == provider.id; });
-            provider.credentialsConfigured = statusIterator != snapshot.providerCredentialStatuses.end() &&
+            const bool storeConfigured = statusIterator != snapshot.providerCredentialStatuses.end() &&
                 statusIterator->configured;
+            provider.credentialsConfigured = provider.credentialsConfigured || storeConfigured;
         }
         snapshot.installHistory = installerOrchestrator_->history();
         snapshot.exports = exportService_->generateExports();

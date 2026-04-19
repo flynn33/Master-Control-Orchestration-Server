@@ -114,6 +114,67 @@ std::wstring joinValues(const std::vector<std::wstring>& values, const wchar_t* 
     return result;
 }
 
+struct CliBridgeRegistrationState final {
+    size_t capabilityCount = 0;
+    size_t registeredCount = 0;
+
+    [[nodiscard]] bool fullyRegistered() const {
+        return capabilityCount > 0 && registeredCount >= capabilityCount;
+    }
+
+    [[nodiscard]] bool partiallyRegistered() const {
+        return registeredCount > 0 && registeredCount < capabilityCount;
+    }
+};
+
+bool bridgeOwnsProviderId(std::wstring_view bridge, std::wstring_view providerId) {
+    if (bridge == L"claude") {
+        return providerId == L"claude-code";
+    }
+    if (bridge == L"codex") {
+        return providerId == L"chatgpt" || providerId == L"codex";
+    }
+    return false;
+}
+
+CliBridgeRegistrationState registrationStateForBridge(
+    const std::vector<::MasterControlShell::ShellProviderCapability>& capabilities,
+    const std::vector<::MasterControlShell::ShellProviderConnection>& providers,
+    std::wstring_view bridge) {
+    CliBridgeRegistrationState state;
+    for (const auto& capability : capabilities) {
+        if (!bridgeOwnsProviderId(bridge, capability.providerId)) {
+            continue;
+        }
+
+        ++state.capabilityCount;
+        const auto providerIterator = std::find_if(
+            providers.begin(),
+            providers.end(),
+            [&capability](const auto& provider) {
+                return provider.id == capability.providerId && provider.credentialsConfigured;
+            });
+        if (providerIterator != providers.end()) {
+            ++state.registeredCount;
+        }
+    }
+    return state;
+}
+
+std::wstring addProviderButtonLabel(std::wstring_view bridge) {
+    if (bridge == L"codex") {
+        return L"Add ChatGPT + Codex";
+    }
+    return L"Add Claude provider";
+}
+
+std::wstring signInButtonLabel(std::wstring_view bridge) {
+    if (bridge == L"codex") {
+        return L"Sign in with OpenAI";
+    }
+    return L"Sign in with Claude";
+}
+
 } // namespace
 
 ProvidersSectionControl::ProvidersSectionControl() {
@@ -316,6 +377,7 @@ void ProvidersSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
         ProviderExecutionOutputTextBox().Text(L"");
         ProviderExecutionStatusText().Text(L"No provider task has been executed yet.");
     }
+    RefreshCliInstallStateAsync();
     UpdateEditorState();
 }
 
@@ -1604,10 +1666,10 @@ void ProvidersSectionControl::InstallCodexCliButton_Click(IInspectable const&, R
     InstallCliDependencyAsync(L"codex");
 }
 
-// Drives the account-only sign-in flow end to end: disables the button,
-// calls StartCliSignIn to spawn the CLI login, then polls status every 2s
-// until complete or failed. Status text below the button surfaces every
-// transition so the operator can tell what is happening.
+// Drives the host-only sign-in flow end to end. If this Windows user already
+// has a saved CLI session, we skip opening another login prompt and register
+// the provider immediately. Otherwise we launch the CLI login and poll until
+// the shell runtime reports complete or failed.
 winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RunCliSignInAsync(
     std::wstring bridge,
     std::wstring providerId) {
@@ -1621,12 +1683,39 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RunCliSignInAs
     const auto primaryButton = (bridge == L"claude")
         ? SignInWithClaudeButton()
         : SignInWithChatGptButton();
+    const auto registrationState = registrationStateForBridge(providerCapabilities_, providers_, bridge);
 
     primaryButton.IsEnabled(false);
-    statusText.Text(winrt::hstring(L"Opening sign-in console..."));
+    statusText.Text(winrt::hstring(L"Checking host sign-in state..."));
 
     winrt::apartment_context uiThread;
     co_await winrt::resume_background();
+
+    const auto entries = runtime_->DetectCliSignInInstalled();
+    const auto detectIterator = std::find_if(
+        entries.begin(),
+        entries.end(),
+        [&bridge](const auto& entry) { return entry.bridge == bridge; });
+    const bool hasSavedSession = detectIterator != entries.end() &&
+        detectIterator->installed &&
+        detectIterator->signedIn;
+
+    if (hasSavedSession && !registrationState.fullyRegistered()) {
+        const auto registerResult = runtime_->RegisterCliSignedInProvider(bridge, providerId);
+
+        co_await uiThread;
+
+        statusText.Text(winrt::hstring(
+            registerResult.message.empty()
+                ? L"Provider registration finished."
+                : registerResult.message));
+        primaryButton.IsEnabled(true);
+        RefreshCliInstallStateAsync();
+        if (registerResult.succeeded && refreshRequested_) {
+            refreshRequested_();
+        }
+        co_return;
+    }
 
     const auto startResult = runtime_->StartCliSignIn(bridge, providerId);
 
@@ -1659,6 +1748,7 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RunCliSignInAs
                 ? L"Signed in. Assign this provider to a role below."
                 : statusResult.message));
             primaryButton.IsEnabled(true);
+            RefreshCliInstallStateAsync();
             if (refreshRequested_) {
                 refreshRequested_();
             }
@@ -1669,6 +1759,7 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RunCliSignInAs
                 ? L"Sign-in failed."
                 : statusResult.message));
             primaryButton.IsEnabled(true);
+            RefreshCliInstallStateAsync();
             co_return;
         }
         if (!statusResult.message.empty()) {
@@ -1678,6 +1769,7 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RunCliSignInAs
 
     statusText.Text(winrt::hstring(L"Sign-in timed out. Re-try if needed."));
     primaryButton.IsEnabled(true);
+    RefreshCliInstallStateAsync();
 }
 
 // One-click CLI install. Fires when the operator clicks the Install button
@@ -1777,36 +1869,50 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RefreshCliInst
         const auto signInButton = isClaude ? SignInWithClaudeButton() : SignInWithChatGptButton();
         const auto statusText = isClaude ? ClaudeSignInStatusText() : ChatGptSignInStatusText();
         const auto chipText = isClaude ? ClaudeStatusChipText() : ChatGptStatusChipText();
-        const auto displayName = std::wstring(isClaude ? L"Claude Code CLI" : L"Codex CLI");
+        const auto registrationState = registrationStateForBridge(providerCapabilities_, providers_, entry.bridge);
 
         if (!entry.installed) {
             // State 1: CLI missing — STEP 1 is the only action.
             installButton.Visibility(Visibility::Visible);
             signInButton.Visibility(Visibility::Collapsed);
+            signInButton.Content(winrt::box_value(winrt::hstring(signInButtonLabel(entry.bridge))));
             // Use the \u2014 escape for the em-dash instead of the literal
             // glyph — the source file is UTF-8 but MSVC without /utf-8 reads
             // it as Windows-1252, so the three UTF-8 bytes E2 80 94 end up as
             // three wide chars and render in the chip as "â€"".
-            chipText.Text(winrt::hstring(L"STEP 1 OF 2 \u2014 NOT INSTALLED"));
+            chipText.Text(winrt::hstring(L"STEP 1 OF 3 - INSTALL CLI"));
             // Short footer text — it sits under a narrow card column (~165px)
             // and won't wrap cleanly because its parent is a horizontal
             // StackPanel (ProgressRing + TextBlock) which feeds infinite
             // available width into the TextBlock measure pass. Keep it under
             // ~24 chars so it never needs to truncate.
             statusText.Text(winrt::hstring(L"Not installed yet."));
+        } else if (entry.signedIn && !registrationState.fullyRegistered()) {
+            installButton.Visibility(Visibility::Collapsed);
+            signInButton.Visibility(Visibility::Visible);
+            signInButton.Content(winrt::box_value(winrt::hstring(addProviderButtonLabel(entry.bridge))));
+            chipText.Text(winrt::hstring(
+                registrationState.partiallyRegistered()
+                    ? L"STEP 3 OF 3 - FINISH SETUP"
+                    : L"STEP 3 OF 3 - ADD PROVIDER"));
+            statusText.Text(winrt::hstring(
+                registrationState.partiallyRegistered()
+                    ? L"Saved sign-in found. Add remaining provider."
+                    : L"Saved sign-in found. Add provider."));
         } else if (!entry.signedIn) {
             // State 2: installed but no saved session — STEP 2 is the only action.
             installButton.Visibility(Visibility::Collapsed);
             signInButton.Visibility(Visibility::Visible);
-            chipText.Text(winrt::hstring(L"STEP 2 OF 2 \u2014 INSTALLED, NOT SIGNED IN"));
+            signInButton.Content(winrt::box_value(winrt::hstring(signInButtonLabel(entry.bridge))));
+            chipText.Text(winrt::hstring(L"STEP 2 OF 3 - SIGN IN"));
             statusText.Text(winrt::hstring(L"Installed. Sign-in next."));
         } else {
             // State 3: fully ready — hide Install, keep Sign-In as re-auth escape hatch.
             installButton.Visibility(Visibility::Collapsed);
             signInButton.Visibility(Visibility::Visible);
             signInButton.Content(winrt::box_value(winrt::hstring(L"Re-authenticate")));
-            chipText.Text(winrt::hstring(L"READY \u2014 SIGNED IN"));
-            statusText.Text(winrt::hstring(L"Signed in. Ready."));
+            chipText.Text(winrt::hstring(L"READY - SIGNED IN"));
+            statusText.Text(winrt::hstring(L"Signed in and registered. Ready."));
         }
     }
     co_return;

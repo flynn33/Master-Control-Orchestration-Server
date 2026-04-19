@@ -83,6 +83,7 @@ $excludeFileNames = @(
     'PACKAGE-METADATA.json',
     'Install-MasterControlOrchestrationServer.ps1',
     'Install Master Control Orchestration Server.exe',
+    'MasterControlOrchestrationServerSetup.exe',
     'MasterControlOrchestrationServer-v*.preflight.json',
     'preflight.log',
     '*.pdb',

@@ -1565,6 +1565,47 @@ int main() {
         // =====================================================================
         // WS8 Section F - CLI Sign-In Registration (shell-auth handoff)
         {
+            const auto seedChatGpt = application.upsertProviderJson(nlohmann::json{
+                { "id", "chatgpt" },
+                { "kind", "codex" },
+                { "displayName", "ChatGPT" },
+                { "baseUrl", "https://api.openai.com/v1" },
+                { "modelId", "gpt-5.4" },
+                { "enabled", true },
+                { "allowAutonomousControl", false },
+                { "credentialsConfigured", false }
+            }.dump());
+            success &= expect(
+                seedChatGpt.succeeded,
+                "Pre-seeding an unsigned ChatGPT provider should succeed.");
+
+            const auto seedCodex = application.upsertProviderJson(nlohmann::json{
+                { "id", "codex" },
+                { "kind", "codex" },
+                { "displayName", "Codex" },
+                { "baseUrl", "https://api.openai.com/v1" },
+                { "modelId", "gpt-5.4" },
+                { "enabled", true },
+                { "allowAutonomousControl", false },
+                { "credentialsConfigured", false }
+            }.dump());
+            success &= expect(
+                seedCodex.succeeded,
+                "Pre-seeding an unsigned Codex provider should succeed.");
+
+            const auto seedClaude = application.upsertProviderJson(nlohmann::json{
+                { "id", "claude-code" },
+                { "kind", "claude_code" },
+                { "displayName", "Claude Code" },
+                { "baseUrl", "https://api.anthropic.com" },
+                { "enabled", true },
+                { "allowAutonomousControl", false },
+                { "credentialsConfigured", false }
+            }.dump());
+            success &= expect(
+                seedClaude.succeeded,
+                "Pre-seeding an unsigned Claude Code provider should succeed.");
+
             const auto invalidRegister = httpPostJson(
                 application.browserUrl() + "api/providers/signin/register",
                 R"({"bridge":"unsupported","providerId":"test-provider"})");
@@ -1579,9 +1620,20 @@ int main() {
                 registerCodex.has_value() && registerCodex->value("succeeded", false),
                 "POST /api/providers/signin/register should register Codex-backed providers after shell auth succeeds.");
 
+            const auto registerClaude = httpPostJson(
+                application.browserUrl() + "api/providers/signin/register",
+                R"({"bridge":"claude","providerId":"claude-code"})");
+            success &= expect(
+                registerClaude.has_value() && registerClaude->value("succeeded", false),
+                "POST /api/providers/signin/register should register Claude-backed providers after shell auth succeeds.");
+
             const auto dashboardAfterRegister = httpGetJson(application.browserUrl() + "api/dashboard");
             bool sawChatGpt = false;
             bool sawCodex = false;
+            bool sawClaude = false;
+            bool chatGptConfigured = false;
+            bool codexConfigured = false;
+            bool claudeConfigured = false;
             if (dashboardAfterRegister.has_value() &&
                 dashboardAfterRegister->contains("providers") &&
                 (*dashboardAfterRegister)["providers"].is_array()) {
@@ -1589,14 +1641,25 @@ int main() {
                     const auto providerId = provider.value("id", std::string{});
                     if (providerId == "chatgpt") {
                         sawChatGpt = true;
+                        chatGptConfigured = provider.value("credentialsConfigured", false);
                     } else if (providerId == "codex") {
                         sawCodex = true;
+                        codexConfigured = provider.value("credentialsConfigured", false);
+                    } else if (providerId == "claude-code") {
+                        sawClaude = true;
+                        claudeConfigured = provider.value("credentialsConfigured", false);
                     }
                 }
             }
             success &= expect(
                 sawChatGpt && sawCodex,
                 "Codex sign-in registration should publish both chatgpt and codex providers for role assignment.");
+            success &= expect(
+                chatGptConfigured && codexConfigured,
+                "Codex sign-in registration should mark both existing OpenAI-backed providers as credentialsConfigured.");
+            success &= expect(
+                sawClaude && claudeConfigured,
+                "Claude sign-in registration should mark an existing Claude Code provider as credentialsConfigured.");
         }
 
         // =====================================================================

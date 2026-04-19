@@ -140,27 +140,36 @@ if ($Preset -ne "release") {
     $packageName += "-$Preset"
 }
 
-$stageDirectory = Join-Path $OutputRoot $packageName
+$payloadRoot = Join-Path $OutputRoot "_payload"
+$stageDirectory = Join-Path $payloadRoot $packageName
+$bundleDirectory = Join-Path $OutputRoot $packageName
 $zipPath = Join-Path $OutputRoot ($packageName + ".zip")
 $msiPath = Join-Path $OutputRoot ($packageName + ".msi")
 $validationPath = Join-Path $OutputRoot ($packageName + ".preflight.json")
-$metadataPath = Join-Path $stageDirectory "PACKAGE-METADATA.json"
-$instructionsPath = Join-Path $stageDirectory "INSTALL.txt"
-$startHerePath = Join-Path $stageDirectory "START-HERE.txt"
-$installLauncherPath = Join-Path $stageDirectory "Install-MasterControlOrchestrationServer.ps1"
-$setupPath = Join-Path $stageDirectory "MasterControlOrchestrationServerSetup.exe"
+$bundleValidationPath = Join-Path $bundleDirectory (Split-Path -Leaf $validationPath)
+$metadataPath = Join-Path $bundleDirectory "PACKAGE-METADATA.json"
+$instructionsPath = Join-Path $bundleDirectory "INSTALL.txt"
+$startHerePath = Join-Path $bundleDirectory "START-HERE.txt"
+$installLauncherPath = ""
+$setupPath = ""
+$bundleMsiPath = Join-Path $bundleDirectory (Split-Path -Leaf $msiPath)
 # PrimaryInstallerPath points at the MSI (the user-facing installer). The
 # legacy .exe shim is no longer produced — see the skipped Copy-Item below.
-$primaryInstallerPath = $msiPath
+$primaryInstallerPath = $bundleMsiPath
 $validationTarget = Join-Path $OutputRoot ($packageName + ".validation-target")
 
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
 if ((Test-Path $stageDirectory) -and -not $KeepStage) {
     Remove-Item -Path $stageDirectory -Recurse -Force
+}
+if (Test-Path $bundleDirectory) {
+    Remove-Item -Path $bundleDirectory -Recurse -Force
 }
 if (Test-Path $validationTarget) {
     Remove-Item -Path $validationTarget -Recurse -Force
 }
+New-Item -ItemType Directory -Force -Path $bundleDirectory | Out-Null
 
 if (-not $SkipBuild) {
     Invoke-DevShell -Commands @(
@@ -197,206 +206,36 @@ foreach ($vcRuntimeFile in $vcRuntimeFiles) {
     Copy-Item -Path $vcRuntimeFile.FullName -Destination (Join-Path $stageDirectory $vcRuntimeFile.Name) -Force
 }
 
-# The user-friendly "Install Master Control Orchestration Server.exe" shim is
-# deliberately NOT produced any more. As of v0.4.3-rc.1 the WiX MSI is the
-# primary install artifact — the legacy Tron-cyan progress-window launcher
-# is kept as MasterControlOrchestrationServerSetup.exe for advanced/CI
-# headless rollouts only, and the MSI drives deferred custom actions against
-# MasterControlBootstrapper.exe directly. Having both installers side-by-side
-# confused operators into double-clicking the old .exe and getting the old
-# experience; removing the shim makes the MSI the only obvious user path.
-
-$installLauncher = @'
-param(
-    [string]$InstallDirectory = "C:\Program Files\Master Control Orchestration Server",
-    [switch]$SkipService,
-    [switch]$SkipFirewall,
-    [switch]$SkipShortcuts,
-    [switch]$SkipUninstallRegistration,
-    [switch]$ElevatedRelay
-)
-
-$ErrorActionPreference = "Continue"
-$desktopDirectory = if (-not [string]::IsNullOrWhiteSpace($env:MASTERCONTROL_BOOTSTRAPPER_LOG_DIR)) {
-    $env:MASTERCONTROL_BOOTSTRAPPER_LOG_DIR
-} else {
-    [Environment]::GetFolderPath("Desktop")
-}
-$timestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
-$logPath = Join-Path $desktopDirectory ("MasterControlOrchestrationServer-install-launcher-" + $timestamp + ".txt")
-$bootstrapperPath = Join-Path $PSScriptRoot "MasterControlBootstrapper.exe"
-$arguments = @("install", $InstallDirectory, "--json")
-if ($SkipService) { $arguments += "--skip-service" }
-if ($SkipFirewall) { $arguments += "--skip-firewall" }
-if ($SkipShortcuts) { $arguments += "--skip-shortcuts" }
-if ($SkipUninstallRegistration) { $arguments += "--skip-uninstall-registration" }
-
-function Test-IsAdministrator {
-    try {
-        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-        $principal = [Security.Principal.WindowsPrincipal]::new($identity)
-        return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    } catch {
-        return $false
-    }
-}
-
-function Test-PathRequiresElevation {
-    param([string]$Path)
-
-    try {
-        $candidate = [System.IO.Path]::GetFullPath($Path)
-    } catch {
-        $candidate = $Path
-    }
-
-    $roots = @(
-        [Environment]::GetFolderPath("ProgramFiles"),
-        [Environment]::GetFolderPath("ProgramFilesX86"),
-        $env:ProgramW6432,
-        $env:ProgramFiles,
-        [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
-    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
-
-    foreach ($root in $roots) {
-        try {
-            $normalizedRoot = [System.IO.Path]::GetFullPath($root).TrimEnd('\') + '\'
-            $normalizedCandidate = $candidate.TrimEnd('\') + '\'
-            if ($normalizedCandidate.StartsWith($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-                return $true
-            }
-        } catch {
-        }
-    }
-
-    return $false
-}
-
-function ConvertTo-PowerShellLiteralArgument {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Value
-    )
-
-    return "'" + ($Value -replace "'", "''") + "'"
-}
-
-function Write-LauncherLog {
-    param(
-        [string]$Result,
-        [int]$ExitCode,
-        [bool]$IsAdministrator,
-        [bool]$RequiresElevation,
-        [bool]$ElevationAttempted,
-        [bool]$ProgramFilesProtectedTarget,
-        [bool]$ManagedIntegrationsRequested
-    )
-
-    New-Item -ItemType Directory -Force -Path $desktopDirectory | Out-Null
-    @(
-        "Master Control Orchestration Server Install Launcher",
-        "",
-        "GeneratedAt: $(Get-Date -Format o)",
-        "BootstrapperPath: $bootstrapperPath",
-        "InstallDirectory: $InstallDirectory",
-        "IsAdministrator: $IsAdministrator",
-        "RequiresElevation: $RequiresElevation",
-        "ElevationAttempted: $ElevationAttempted",
-        "ManagedIntegrationsRequested: $ManagedIntegrationsRequested",
-        "ProgramFilesProtectedTarget: $ProgramFilesProtectedTarget",
-        "ElevatedRelay: $ElevatedRelay",
-        "ExitCode: $ExitCode",
-        "",
-        "Output",
-        "------",
-        ($Result.TrimEnd())
-    ) | Set-Content -Path $logPath -Encoding UTF8
-}
-
-$isAdministrator = Test-IsAdministrator
-$programFilesProtectedTarget = Test-PathRequiresElevation -Path $InstallDirectory
-$managedIntegrationsRequested = (-not $SkipService) -or (-not $SkipFirewall) -or (-not $SkipUninstallRegistration)
-$requiresElevation = $programFilesProtectedTarget -or $managedIntegrationsRequested
-$elevationAttempted = $false
-
-try {
-    if ($requiresElevation -and -not $isAdministrator -and -not $ElevatedRelay) {
-        $elevationAttempted = $true
-        $relayCommand = @(
-            "&",
-            (ConvertTo-PowerShellLiteralArgument -Value $PSCommandPath),
-            "-InstallDirectory",
-            (ConvertTo-PowerShellLiteralArgument -Value $InstallDirectory),
-            "-ElevatedRelay"
-        )
-
-        if ($SkipService) { $relayCommand += "-SkipService" }
-        if ($SkipFirewall) { $relayCommand += "-SkipFirewall" }
-        if ($SkipShortcuts) { $relayCommand += "-SkipShortcuts" }
-        if ($SkipUninstallRegistration) { $relayCommand += "-SkipUninstallRegistration" }
-
-        $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(($relayCommand -join " ")))
-        $process = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) -Verb RunAs -Wait -PassThru
-        $exitCode = $process.ExitCode
-        $result = @"
-Launcher detected that this install requires elevation and delegated to an elevated PowerShell process.
-ChildExitCode: $exitCode
-If the elevated process wrote its own launcher/bootstrapper log, check the desktop for the newer file.
-"@
-    } else {
-        $result = & $bootstrapperPath @arguments 2>&1 | Out-String
-        $exitCode = $LASTEXITCODE
-    }
-} catch {
-    $result = if ($null -ne $_.Exception) { $_.Exception.ToString() } else { $_.ToString() }
-    $exitCode = 1
-}
-
-Write-LauncherLog `
-    -Result $result `
-    -ExitCode $exitCode `
-    -IsAdministrator $isAdministrator `
-    -RequiresElevation $requiresElevation `
-    -ElevationAttempted $elevationAttempted `
-    -ProgramFilesProtectedTarget $programFilesProtectedTarget `
-    -ManagedIntegrationsRequested $managedIntegrationsRequested
-
-Write-Host "Install launcher log written to $logPath"
-if (-not [string]::IsNullOrWhiteSpace($result)) {
-    Write-Output $result.TrimEnd()
-}
-
-exit $exitCode
-'@
-Set-Content -Path $installLauncherPath -Value $installLauncher -Encoding UTF8
+# The MSI is the only supported interactive installer shipped to operators.
+# Keep the legacy bootstrapper payload internal to the stage directory for MSI
+# custom actions and validation only; do not generate or advertise an
+# additional end-user launcher script/exe.
 
 $msiFileName = Split-Path -Leaf $msiPath
 $instructions = @"
 Master Control Orchestration Server $versionTag
 
-Package root: $packageName
+Bundle root: $packageName
 Build configuration: $configuration
 Commit: $gitCommit
 
-Quick start (interactive install)
-Double-click $msiFileName. That opens the Windows Installer with a native
-wizard: Welcome -> License -> Install Location -> Options (service /
-firewall / Start Menu shortcut / Desktop shortcut / launch-on-finish) ->
-Install. No PowerShell needed. UAC will prompt for admin because the
-service host runs at the machine scope.
+Interactive install
+Double-click $msiFileName. This is the supported end-user installer.
+It opens the native Windows Installer wizard with install location plus
+service, firewall, Start Menu shortcut, Desktop shortcut, and
+launch-on-finish options. No PowerShell is required.
 
 Silent / CI install
 msiexec /i $msiFileName /qn /l*v install.log
 
-Headless (no MSI) install via the CLI bootstrapper
-.\MasterControlBootstrapper.exe preflight "C:\Program Files\Master Control Orchestration Server" --json
-.\MasterControlBootstrapper.exe install "C:\Program Files\Master Control Orchestration Server" --json
-
-Per-user install (non-admin test, no service/firewall changes)
-.\MasterControlBootstrapper.exe install "$env:LOCALAPPDATA\MasterControlOrchestrationServer" --skip-service --skip-firewall --skip-uninstall-registration --json
+Host machine use
+On the machine where the server is installed, launch MasterControlShell.exe
+from the Start Menu or Desktop shortcut. The Windows shell is the primary
+operator surface on the host machine. The browser dashboard is for remote
+access from other clients on the LAN.
 
 Validation
-.\MasterControlBootstrapper.exe validate "C:\Program Files\Master Control Orchestration Server" --json
+$(Split-Path -Leaf $bundleValidationPath)
 
 Uninstall (MSI-installed)
 msiexec /x $msiFileName /qn
@@ -411,12 +250,13 @@ START HERE
 Double-click $msiFileName.
 
 That opens the Windows Installer wizard (Welcome -> License ->
-Install Location -> Options -> Install). UAC will prompt for admin
-because the service host runs machine-scope. No PowerShell needed.
+Install Location -> Options -> Install). No PowerShell needed.
 
-Advanced (CI / headless / power users):
-.\INSTALL.txt has the full msiexec and MasterControlBootstrapper.exe
-command-line options.
+The MSI is the supported installer for operators. Use it if you want the
+normal Windows setup flow with Start Menu / Desktop shortcut options.
+
+Advanced / CI:
+.\INSTALL.txt has the full msiexec command-line options.
 
 USING THE SERVER ON THE HOST MACHINE
 
@@ -450,6 +290,7 @@ $preflightJson = $null
 if (-not [string]::IsNullOrWhiteSpace($preflightResult.stdout)) {
     $preflightJson = $preflightResult.stdout | ConvertFrom-Json
     $preflightResult.stdout | Set-Content -Path $validationPath -Encoding UTF8
+    Copy-Item -Path $validationPath -Destination $bundleValidationPath -Force
 }
 
 $stageFiles = @(Get-ChildItem -Path $stageDirectory -Recurse -File)
@@ -464,8 +305,9 @@ $metadata = [pscustomobject][ordered]@{
     preset = $Preset
     configuration = $configuration
     stageDirectory = $stageDirectory
+    bundleDirectory = $bundleDirectory
     zipPath = $zipPath
-    validationPath = $validationPath
+    validationPath = $bundleValidationPath
     bootstrapperPath = (Join-Path $stageDirectory "MasterControlBootstrapper.exe")
     primaryInstallerPath = $primaryInstallerPath
     setupPath = $setupPath
@@ -486,8 +328,8 @@ $metadata | ConvertTo-Json -Depth 8 | Set-Content -Path $metadataPath -Encoding 
 
 if (-not [string]::IsNullOrWhiteSpace($AcceptanceReportPath)) {
     $readinessScriptPath = Join-Path $PSScriptRoot "Get-MasterControlOrchestrationServerReleaseReadiness.ps1"
-    $stageReadinessJsonPath = Join-Path $stageDirectory "RELEASE-READINESS.json"
-    $stageReadinessSummaryPath = Join-Path $stageDirectory "RELEASE-READINESS.md"
+    $stageReadinessJsonPath = Join-Path $bundleDirectory "RELEASE-READINESS.json"
+    $stageReadinessSummaryPath = Join-Path $bundleDirectory "RELEASE-READINESS.md"
 
     $readinessResult = Invoke-CapturedProcess -FilePath "powershell.exe" -Arguments @(
         "-NoProfile",
@@ -534,7 +376,8 @@ if (Test-Path $msiBuildScript) {
         if ($null -eq $msiBuildResult) {
             throw "Build-Msi.ps1 did not return MSI metadata."
         }
-        $metadata | Add-Member -NotePropertyName msiPath -NotePropertyValue $msiPath -Force
+        Copy-Item -Path $msiPath -Destination $bundleMsiPath -Force
+        $metadata | Add-Member -NotePropertyName msiPath -NotePropertyValue $bundleMsiPath -Force
         $metadata | Add-Member -NotePropertyName msiVersion -NotePropertyValue $msiBuildResult.MsiVersion -Force
         $metadata | ConvertTo-Json -Depth 8 | Set-Content -Path $metadataPath -Encoding UTF8
     } catch {
@@ -547,15 +390,16 @@ if (Test-Path $msiBuildScript) {
 if (Test-Path $zipPath) {
     Remove-Item -Path $zipPath -Force
 }
-Compress-Archive -Path $stageDirectory -DestinationPath $zipPath -Force
+Compress-Archive -Path $bundleDirectory -DestinationPath $zipPath -Force
 
 [pscustomobject][ordered]@{
     packageName = $packageName
     version = $normalizedVersion
     commit = $gitCommit
     stageDirectory = $stageDirectory
+    bundleDirectory = $bundleDirectory
     zipPath = $zipPath
-    validationPath = $validationPath
+    validationPath = $bundleValidationPath
     bootstrapperPath = (Join-Path $stageDirectory "MasterControlBootstrapper.exe")
     primaryInstallerPath = $primaryInstallerPath
     setupPath = $setupPath

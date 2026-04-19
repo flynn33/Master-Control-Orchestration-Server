@@ -402,19 +402,19 @@ function narrativePanel(label, title, body) {
   `;
 }
 
-// ---- Account-only sign-in wizard ------------------------------------------
-// Provider capabilities that declare a cliBridgeCommand get a big "Sign in"
-// card at the top of the Providers view. Clicking it POSTs to
-// /api/providers/signin/start which spawns `claude login` / `codex login`
-// in a new console; the server polls for completion and reports back via
-// /api/providers/signin/status. No API key is ever entered by the user.
+// ---- Account-only sign-in status -------------------------------------------
+// The browser dashboard is the remote surface. Interactive CLI sign-in belongs
+// to the Windows shell on the host machine, where the user completes
+// `claude login` / `codex login` in their own desktop session. This view only
+// reflects host-machine status and points the operator back to the shell when
+// a local sign-in step is required.
 function renderSignInCards() {
   const snapshot = dashboardSnapshot();
   const allCapabilities = snapshot.providerCapabilities || [];
   const cliCapabilities = allCapabilities.filter((cap) => !!cap.cliBridgeCommand);
   // API-key providers that do NOT have an OAuth / CLI sign-in flow but do
   // have a required credential field — Grok is the canonical example. We
-  // show them next to the sign-in cards with a single password input and
+  // show them next to the host-sign-in cards with a single password input and
   // honest copy ("no consumer OAuth available").
   const apiKeyCapabilities = allCapabilities.filter((cap) => {
     if (cap.cliBridgeCommand) return false;
@@ -436,56 +436,39 @@ function renderSignInCards() {
     uniqueCaps.push(cap);
   }
 
-  const installed = state.signIn.installed || [];
-  const installedByBridge = Object.fromEntries(installed.map((entry) => [entry.bridge, entry]));
   const sessions = state.signIn.sessionsByBridge || {};
 
   const cardsMarkup = uniqueCaps.map((cap) => {
     const bridge = cap.cliBridgeCommand;
-    const info = installedByBridge[bridge] || { installed: false, signedIn: false };
+    const info = { installed: true, signedIn: true, displayName: cap.displayName };
     const session = sessions[bridge];
     const matchingProvider = (snapshot.providers || []).find((p) => p.id === cap.providerId);
 
-    let statusLine = '';
-    let buttonLabel = 'Sign in with your account';
-    let buttonDisabled = '';
-    let buttonAction = `data-action="signin-start" data-bridge="${escapeHtml(bridge)}" data-provider="${escapeHtml(cap.providerId)}"`;
+    let statusLine = 'Use MasterControlShell.exe on the host machine to install, sign in, and register this provider. The browser dashboard is for remote access only.';
+    let buttonLabel = 'Use Windows app on host';
+    let buttonDisabled = ' disabled';
 
-    const installState = state.signIn.installByBridge?.[bridge] || { status: 'idle' };
-    if (!info.installed) {
+    if (session && session.status === 'pending') {
       // CLI is missing on PATH. Replace the "Sign in" button with an active
       // "Install" button that POSTs to /api/setup/dependencies/{id}/install.
       // The backend runs the preset `npm install -g` command and re-detects
       // the CLI before returning — once it lands, a refresh will flip this
       // card into the normal sign-in state.
-      const depId = bridge === 'claude' ? 'claude-code-cli' : 'codex-cli';
-      if (installState.status === 'pending') {
-        statusLine = `Installing ${escapeHtml(info.displayName || bridge)} via <code>npm install -g</code>. This takes 20\u201360s depending on network speed.`;
-        buttonLabel = 'Installing\u2026';
-        buttonDisabled = ' disabled';
-        buttonAction = '';
-      } else if (installState.status === 'error') {
-        statusLine = `${escapeHtml(installState.message || ('Could not install ' + (info.displayName || bridge)))}. Verify Node.js/npm are on PATH and retry.`;
-        buttonLabel = `Retry install ${escapeHtml(info.displayName || bridge)}`;
-        buttonAction = `data-action="install-cli" data-bridge="${escapeHtml(bridge)}" data-dep-id="${escapeHtml(depId)}"`;
-      } else {
-        statusLine = `${escapeHtml(info.displayName || bridge)} is not installed on this host. Click Install to run <code>npm install -g</code> and then sign in.`;
-        buttonLabel = `Install ${escapeHtml(info.displayName || bridge)}`;
-        buttonAction = `data-action="install-cli" data-bridge="${escapeHtml(bridge)}" data-dep-id="${escapeHtml(depId)}"`;
-      }
-    } else if (session && session.status === 'pending') {
-      statusLine = 'A sign-in console window is open. Complete the prompt in that window to finish.';
+      statusLine = 'The host Windows app is already finishing sign-in or provider registration.';
+      buttonLabel = 'Waiting on host';
+      buttonDisabled = ' disabled';
+    } else if (session && session.status === 'legacy-browser-flow') {
+      statusLine = 'A host-machine sign-in is already in progress. Complete the prompt in the Windows shell or sign-in console on the host.';
       buttonLabel = 'Waiting for sign-in…';
       buttonDisabled = ' disabled';
-      buttonAction = '';
     } else if (matchingProvider && matchingProvider.credentialsConfigured) {
-      statusLine = `Signed in. ${escapeHtml(cap.cliBridgeAccountLabel || 'Account is ready')}. Assign this provider to a role below.`;
-      buttonLabel = 'Signed in \u00b7 re-authenticate';
+      statusLine = `Signed in. ${escapeHtml(cap.cliBridgeAccountLabel || 'Account is ready')}. This provider is ready for remote monitoring and role assignment.`;
+      buttonLabel = 'Ready on host';
     } else if (info.signedIn) {
-      statusLine = `${escapeHtml(info.displayName || bridge)} reports a saved session. Click to register it with the orchestration server.`;
-      buttonLabel = 'Add to providers';
+      statusLine = 'Use MasterControlShell.exe on the host machine to finish registration or re-authenticate this provider. The browser dashboard is for remote access only.';
+      buttonLabel = 'Finish in Windows app';
     } else {
-      statusLine = escapeHtml(cap.cliBridgeAccountLabel || 'Sign in opens a console window — complete the prompt in your browser.');
+      statusLine = 'Use MasterControlShell.exe on the host machine to start sign-in for this provider. Interactive account sign-in does not start from the remote browser.';
     }
 
     const message = session && session.message ? `<p class="status-message" data-tone="${escapeHtml(session.status === 'failed' ? 'error' : session.status === 'complete' ? 'success' : 'info')}">${escapeHtml(session.message)}</p>` : '';
@@ -498,11 +481,11 @@ function renderSignInCards() {
     return `
       <article class="panel-block sign-in-card">
         <p class="eyebrow">${escapeHtml(cardEyebrow)}</p>
-        <h3>Sign in to use ${escapeHtml(cardDisplayName)}</h3>
+        <h3>Host sign-in for ${escapeHtml(cardDisplayName)}</h3>
         <p class="narrative-copy">${statusLine}</p>
         ${message}
         <div class="button-row">
-          <button type="button" class="route-button"${buttonAction}${buttonDisabled}>${escapeHtml(buttonLabel)}</button>
+          <button type="button" class="route-button"${buttonDisabled}>${escapeHtml(buttonLabel)}</button>
         </div>
       </article>
     `;
@@ -545,8 +528,9 @@ function renderSignInCards() {
 
   const cliSection = uniqueCaps.length ? `
       <p class="eyebrow">Add AI Model \u2014 Account Sign-In</p>
-      <h3>Connect Claude or ChatGPT with just your account</h3>
-      <p class="narrative-copy">Click a card to open your provider's built-in sign-in flow. The CLI handles OAuth in your browser and stores its own tokens — you never have to paste an API key or auth token here.</p>
+      <h3>Complete account sign-in from the host Windows app</h3>
+      <p class="narrative-copy">Use MasterControlShell.exe on the host machine for interactive account sign-in. This browser view is status-only for remote access.</p>
+      <p class="narrative-copy">Open MasterControlShell.exe on the host machine to start or finish sign-in. This browser view is status-only for remote access and role assignment.</p>
       <div class="sign-in-grid">
         ${cardsMarkup}
       </div>
@@ -6424,3 +6408,4 @@ setInterval(() => {
   }
   refreshTelemetryLive();
 }, 1000);
+

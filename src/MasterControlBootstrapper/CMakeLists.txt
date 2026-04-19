@@ -36,4 +36,3 @@ target_link_libraries(MasterControlOrchestrationServerSetup PRIVATE
 )
 
 install(TARGETS MasterControlBootstrapper RUNTIME DESTINATION .)
-install(TARGETS MasterControlOrchestrationServerSetup RUNTIME DESTINATION .)
