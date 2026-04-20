@@ -654,7 +654,7 @@ void MainWindow::StartGuidedWorkflow(std::wstring const& workflowId) {
         return;
     } else if (workflowId == L"new-subagent-group") {
         navigateToDestination(kProvidersDestination);
-        GuidedWorkflowStatusText().Text(L"New Sub-Agent Group now opens on the Providers surface so you can select members and ownership lanes in the main shell.");
+        GuidedWorkflowStatusText().Text(L"New Sub-Agent Group now opens on the Providers surface so you can select members and ownership lanes in the main app window.");
         UpdateStatusBar(L"Use the Providers surface to create and maintain sub-agent groups.", InfoBarSeverity::Informational);
         return;
     } else if (workflowId == L"new-apple-host") {
@@ -664,7 +664,7 @@ void MainWindow::StartGuidedWorkflow(std::wstring const& workflowId) {
         return;
     } else if (workflowId == L"assign-responsibility") {
         navigateToDestination(kProvidersDestination);
-        GuidedWorkflowStatusText().Text(L"Assign Responsibility now opens directly on the Providers surface so you can route planner, coder, and auditor ownership in the main shell.");
+        GuidedWorkflowStatusText().Text(L"Assign Responsibility now opens directly on the Providers surface so you can route planner, coder, and auditor ownership in the main app window.");
         UpdateStatusBar(L"Use the Providers surface to assign orchestration ownership directly.", InfoBarSeverity::Informational);
         return;
     } else if (workflowId == L"manage-forsetti-modules") {
@@ -674,12 +674,12 @@ void MainWindow::StartGuidedWorkflow(std::wstring const& workflowId) {
         return;
     } else if (workflowId == L"guided-import") {
         navigateToDestination(kImportsDestination);
-        GuidedWorkflowStatusText().Text(L"Guided Import now opens on the Imports surface so you can review source material and onboarding status in the full shell.");
+        GuidedWorkflowStatusText().Text(L"Guided Import now opens on the Imports surface so you can review source material and onboarding status in the full app window.");
         UpdateStatusBar(L"Use the Imports surface for guided software onboarding.", InfoBarSeverity::Informational);
         return;
     } else if (workflowId == L"guided-security") {
         navigateToDestination(kSecurityDestination);
-        GuidedWorkflowStatusText().Text(L"Security Hardening now opens directly on the Security surface so the shell can stay full-size while you work.");
+        GuidedWorkflowStatusText().Text(L"Security Hardening now opens directly on the Security surface so the Windows app can stay full-size while you work.");
         UpdateStatusBar(L"Use the Security surface to apply security settings directly.", InfoBarSeverity::Informational);
         return;
     } else if (workflowId == L"guided-settings") {
@@ -689,7 +689,7 @@ void MainWindow::StartGuidedWorkflow(std::wstring const& workflowId) {
         return;
     } else if (workflowId == L"guided-provider-execution") {
         navigateToDestination(kProvidersDestination);
-        GuidedWorkflowStatusText().Text(L"Validate Provider Routing now opens on the Providers surface so you can run and inspect provider tasks in the main shell.");
+        GuidedWorkflowStatusText().Text(L"Validate Provider Routing now opens on the Providers surface so you can run and inspect provider tasks in the main app window.");
         UpdateStatusBar(L"Use the Providers surface to validate provider routing directly.", InfoBarSeverity::Informational);
         return;
     } else if (workflowId == L"guided-runtime-maintenance") {

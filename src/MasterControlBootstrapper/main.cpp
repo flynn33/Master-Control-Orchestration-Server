@@ -1270,7 +1270,7 @@ bool createShellShortcut(const InstallationState& state) {
         L"$shortcut.TargetPath = '" + escapePowerShellLiteral(std::filesystem::path(state.shellBinary).wstring()) + L"'; " \
         L"$shortcut.WorkingDirectory = '" + escapePowerShellLiteral(std::filesystem::path(state.installDirectory).wstring()) + L"'; " \
         L"$shortcut.IconLocation = '" + escapePowerShellLiteral(std::filesystem::path(state.shellBinary).wstring()) + L",0'; " \
-        L"$shortcut.Description = '" + std::wstring(kProductDisplayName) + L" administrative shell'; " \
+        L"$shortcut.Description = '" + std::wstring(kProductDisplayName) + L" Windows application'; " \
         L"$shortcut.Save()";
 
     const auto command = L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"" + script + L"\"";

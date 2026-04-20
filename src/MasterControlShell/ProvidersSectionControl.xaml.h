@@ -89,6 +89,9 @@ struct ProvidersSectionControl : ProvidersSectionControlT<ProvidersSectionContro
                                  Microsoft::UI::Xaml::RoutedEventArgs const&);
 
 private:
+    void SelectProviderById(const std::wstring& providerId, bool preselectAssignmentOwner);
+    void OpenProviderManagementSurface(const std::wstring& workflowId);
+    void RevealConnectedProvider(const std::wstring& providerId, const std::wstring& guidanceMessage);
     void PopulateProviderEditor(size_t index);
     void ClearProviderEditor();
     void RefreshProviderSelector();

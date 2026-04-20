@@ -42,7 +42,7 @@
 
                             <StackPanel Spacing="4">
                                 <TextBlock Text="MASTER CONTROL ORCHESTRATION SERVER" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                                <TextBlock Text="Windows command shell for guided setup, telemetry, MCP orchestration, provider routing, governance, and runtime control." Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBlock Text="Windows application for guided setup, telemetry, MCP orchestration, provider routing, governance, and runtime control." Style="{StaticResource ShellLabelTextStyle}" />
                             </StackPanel>
                         </StackPanel>
 

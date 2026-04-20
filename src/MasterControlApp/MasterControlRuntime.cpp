@@ -3940,6 +3940,7 @@ public:
             return record;
         }
         record.targetDisplayName = targetIterator->displayName;
+        const auto activeTarget = *targetIterator;
 
         if (commandLogicUnitService_) {
             const auto decision = commandLogicUnitService_->enforceAction(GovernanceEnforcementRequest{
@@ -4022,14 +4023,14 @@ public:
         record.status = ProviderExecutionStatus::Running;
         switch (registrationIterator->transport) {
             case ProviderExecutionTransport::ClaudeCodeCli:
-                record = executeClaudeCodeCli(*providerIterator, request, accessibleEndpoints, credentials, record);
+                record = executeClaudeCodeCli(*providerIterator, request, activeTarget, accessibleEndpoints, credentials, record);
                 break;
             case ProviderExecutionTransport::CodexCli:
-                record = executeCodexCli(*providerIterator, request, accessibleEndpoints, credentials, record);
+                record = executeCodexCli(*providerIterator, request, activeTarget, accessibleEndpoints, credentials, record);
                 break;
             case ProviderExecutionTransport::OpenAICompatibleChat:
             default:
-                record = executeOpenAICompatibleChat(*providerIterator, request, accessibleEndpoints, credentials, record);
+                record = executeOpenAICompatibleChat(*providerIterator, request, activeTarget, accessibleEndpoints, credentials, record);
                 break;
         }
         if (record.completedAtUtc.empty()) {
@@ -4108,14 +4109,84 @@ private:
         return trimCopy(stream.str());
     }
 
+    std::string buildOwnershipSummary(const ProviderConnection& provider,
+                                      const ProviderAssignmentTarget& activeTarget) const {
+        const auto targets = providerAssignmentService_->listTargets();
+        const auto assignments = providerAssignmentService_->listAssignments();
+        std::set<std::string> renderedTargetIds;
+        std::ostringstream stream;
+        stream << "Current ownership across this server:\n";
+
+        auto appendTargetLine = [&](const ProviderAssignmentTarget& target,
+                                    const std::string& sourceGroupId) {
+            if (!renderedTargetIds.insert(target.targetId).second) {
+                return;
+            }
+
+            stream << "- " << (target.displayName.empty() ? target.targetId : target.displayName)
+                   << " (" << target.targetId << ")";
+            if (!target.description.empty()) {
+                stream << " - " << target.description;
+            }
+            if (!sourceGroupId.empty()) {
+                const auto sourceIterator = std::find_if(
+                    targets.begin(),
+                    targets.end(),
+                    [&sourceGroupId](const ProviderAssignmentTarget& candidate) {
+                        return candidate.targetId == sourceGroupId;
+                    });
+                if (sourceIterator != targets.end()) {
+                    stream << " [delegated via "
+                           << (sourceIterator->displayName.empty() ? sourceIterator->targetId : sourceIterator->displayName)
+                           << "]";
+                }
+            }
+            stream << "\n";
+        };
+
+        appendTargetLine(activeTarget, "");
+        for (const auto& assignment : assignments) {
+            if (assignment.providerId != provider.id) {
+                continue;
+            }
+
+            const auto targetIterator = std::find_if(
+                targets.begin(),
+                targets.end(),
+                [&assignment](const ProviderAssignmentTarget& candidate) {
+                    return candidate.targetId == assignment.targetId;
+                });
+            if (targetIterator == targets.end()) {
+                continue;
+            }
+
+            appendTargetLine(*targetIterator, assignment.sourceGroupId);
+        }
+
+        return stream.str();
+    }
+
     std::string buildExecutionSystemPrompt(const ProviderConnection& provider,
                                            const ProviderExecutionRequest& request,
+                                           const ProviderAssignmentTarget& activeTarget,
                                            const std::vector<RuntimeEndpoint>& endpoints,
                                            const bool useJsonRpcTools) const {
         std::ostringstream prompt;
-        prompt << "You are operating inside Master Control Orchestration Server as the provider assigned to target '" << request.targetId << "'.\n"
-               << "Stay within the requested orchestration lane and do not assume ownership of other roles or sub-agents.\n"
-               << "Assigned provider route: " << provider.displayName << " (" << provider.id << ").\n";
+        prompt << "You are connected to Master Control Orchestration Server as a governed provider route.\n"
+               << "Assigned provider route: " << provider.displayName << " (" << provider.id << ").\n"
+               << "Current execution lane: "
+               << (activeTarget.displayName.empty() ? activeTarget.targetId : activeTarget.displayName)
+               << " (" << request.targetId << ").\n";
+        if (!activeTarget.description.empty()) {
+            prompt << "Lane scope: " << activeTarget.description << "\n";
+        }
+        prompt << buildOwnershipSummary(provider, activeTarget)
+               << "Autonomous control posture: "
+               << (provider.allowAutonomousControl
+                       ? "This provider may help configure the server only when global AI autonomy is enabled and the task explicitly calls for it."
+                       : "Do not change server configuration unless the user explicitly directs it and autonomy has been enabled.")
+               << "\n"
+               << "Stay within the requested orchestration lane and do not assume ownership of other roles or sub-agents.\n";
         if (!request.workingDirectory.empty()) {
             prompt << "Preferred working directory: " << request.workingDirectory << "\n";
         }
@@ -4148,6 +4219,7 @@ private:
 
     ProviderExecutionRecord executeOpenAICompatibleChat(const ProviderConnection& provider,
                                                         const ProviderExecutionRequest& request,
+                                                        const ProviderAssignmentTarget& activeTarget,
                                                         const std::vector<RuntimeEndpoint>& endpoints,
                                                         const std::map<std::string, std::string>& credentials,
                                                         ProviderExecutionRecord record) const {
@@ -4162,7 +4234,7 @@ private:
         nlohmann::json messages = nlohmann::json::array({
             {
                 { "role", "system" },
-                { "content", buildExecutionSystemPrompt(provider, request, endpoints, true) }
+                { "content", buildExecutionSystemPrompt(provider, request, activeTarget, endpoints, true) }
             },
             {
                 { "role", "user" },
@@ -4338,6 +4410,7 @@ private:
 
     ProviderExecutionRecord executeClaudeCodeCli(const ProviderConnection& provider,
                                                  const ProviderExecutionRequest& request,
+                                                 const ProviderAssignmentTarget& activeTarget,
                                                  const std::vector<RuntimeEndpoint>& endpoints,
                                                  const std::map<std::string, std::string>& credentials,
                                                  ProviderExecutionRecord record) const {
@@ -4362,7 +4435,7 @@ private:
         const auto systemPromptFile = executionDirectory / "system-prompt.txt";
         {
             std::ofstream stream(systemPromptFile, std::ios::trunc);
-            stream << buildExecutionSystemPrompt(provider, request, endpoints, false);
+            stream << buildExecutionSystemPrompt(provider, request, activeTarget, endpoints, false);
         }
 
         std::filesystem::path mcpConfigFile;
@@ -4483,7 +4556,8 @@ private:
     // If the user opted into an API-key fallback, we forward it via env.
     ProviderExecutionRecord executeCodexCli(const ProviderConnection& provider,
                                             const ProviderExecutionRequest& request,
-                                            const std::vector<RuntimeEndpoint>& /*endpoints*/,
+                                            const ProviderAssignmentTarget& activeTarget,
+                                            const std::vector<RuntimeEndpoint>& endpoints,
                                             const std::map<std::string, std::string>& credentials,
                                             ProviderExecutionRecord record) const {
         std::optional<std::filesystem::path> codexCommand;
@@ -4502,10 +4576,26 @@ private:
             return record;
         }
 
+        const auto systemPrompt = buildExecutionSystemPrompt(provider, request, activeTarget, endpoints, false);
+        const auto flattenForCli = [](std::string value) {
+            for (char& character : value) {
+                if (character == '\r' || character == '\n' || character == '\t') {
+                    character = ' ';
+                }
+            }
+            return trimCopy(value);
+        };
+        const std::string combinedPrompt =
+            flattenForCli(
+                systemPrompt +
+                "\nUser task:\n" +
+                request.prompt +
+                "\nReturn your answer for the assigned orchestration lane only.");
+
         std::vector<std::wstring> arguments{
             codexCommand->wstring(),
             L"exec",
-            wideFromUtf8(request.prompt)
+            wideFromUtf8(combinedPrompt)
         };
         if (!provider.modelId.empty()) {
             arguments.push_back(L"--model");

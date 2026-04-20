@@ -2981,6 +2981,30 @@ int main() {
                 const auto firstPayload = nlohmann::json::parse(providerRequests[0].body);
                 success &= expect(firstPayload.contains("tools"), "OpenAI-compatible execution should publish shared MCP tools to the provider.");
                 success &= expect(firstPayload.value("model", "") == "grok-code-fast-1", "OpenAI-compatible execution should send the selected model.");
+                success &= expect(
+                    firstPayload.contains("messages") &&
+                        firstPayload.at("messages").is_array() &&
+                        !firstPayload.at("messages").empty() &&
+                        firstPayload.at("messages")[0].value("role", "") == "system",
+                    "OpenAI-compatible execution should prepend a system briefing for orchestration context.");
+                if (firstPayload.contains("messages") &&
+                    firstPayload.at("messages").is_array() &&
+                    !firstPayload.at("messages").empty() &&
+                    firstPayload.at("messages")[0].is_object()) {
+                    const auto systemPrompt = firstPayload.at("messages")[0].value("content", std::string{});
+                    success &= expect(
+                        systemPrompt.find("Master Control Orchestration Server") != std::string::npos,
+                        "OpenAI-compatible execution should tell the provider it is running inside the orchestration server.");
+                    success &= expect(
+                        systemPrompt.find("Planner") != std::string::npos,
+                        "OpenAI-compatible execution should identify the assigned role by display name.");
+                    success &= expect(
+                        systemPrompt.find("global planning and delivery sequencing") != std::string::npos,
+                        "OpenAI-compatible execution should include the assigned role's control scope.");
+                    success &= expect(
+                        systemPrompt.find("Current ownership across this server") != std::string::npos,
+                        "OpenAI-compatible execution should include the provider's current orchestration ownership summary.");
+                }
 
                 const auto secondPayload = nlohmann::json::parse(providerRequests[1].body);
                 success &= expect(secondPayload.contains("messages"), "Tool-followup requests should include the full message transcript.");
@@ -3135,6 +3159,76 @@ int main() {
                 !snapshot.providerExecutionHistory.empty() &&
                     snapshot.providerExecutionHistory.front().executionId == claudeExecution.executionId,
                 "Claude execution should be persisted to runtime history.");
+        }
+
+        {
+            const auto fakeCodexCommand = tempRoot / "fake-codex.cmd";
+            const auto fakeCodexArgs = tempRoot / "fake-codex-args.txt";
+            writeTextFile(
+                fakeCodexCommand,
+                "@echo off\r\n"
+                "setlocal\r\n"
+                "set \"ARGS_FILE=" + utf8FromWide(fakeCodexArgs.wstring()) + "\"\r\n"
+                "echo %* > \"%ARGS_FILE%\"\r\n"
+                "echo Codex execution ok.\r\n"
+                "exit /b 0\r\n");
+
+            ScopedEnvironmentOverride codexCommandOverride(L"MASTERCONTROL_CODEX_COMMAND", fakeCodexCommand.wstring());
+
+            const auto codexProviderResult = application.upsertProviderJson(nlohmann::json{
+                { "id", "local-codex-provider" },
+                { "kind", "codex" },
+                { "displayName", "Local Codex Provider" },
+                { "baseUrl", "https://api.openai.com/v1" },
+                { "modelId", "gpt-5-codex" },
+                { "enabled", true },
+                { "allowAutonomousControl", false }
+            }.dump());
+            success &= expect(codexProviderResult.succeeded, "Local Codex provider route should save successfully.");
+
+            const auto auditorOwnershipResult = application.upsertProviderAssignmentJson(nlohmann::json{
+                { "targetId", "auditor" },
+                { "kind", "role" },
+                { "providerId", "local-codex-provider" }
+            }.dump());
+            success &= expect(auditorOwnershipResult.succeeded, "Auditor ownership should be assigned to the local Codex provider.");
+
+            const auto codexExecution = application.executeProviderTaskJson(nlohmann::json{
+                { "targetId", "auditor" },
+                { "prompt", "Summarize the active audit obligations." },
+                { "allowToolAccess", false },
+                { "maxTurns", 1 }
+            }.dump());
+            success &= expect(
+                codexExecution.status == MasterControl::ProviderExecutionStatus::Succeeded,
+                "Codex execution should succeed against the local CLI shim.");
+            success &= expect(
+                codexExecution.providerId == "local-codex-provider",
+                "Codex execution should route to the assigned provider.");
+            success &= expect(
+                codexExecution.outputText == "Codex execution ok.",
+                "Codex execution should capture the CLI stdout payload.");
+            success &= expect(
+                std::filesystem::exists(fakeCodexArgs),
+                "Codex execution should invoke the configured CLI shim.");
+            if (std::filesystem::exists(fakeCodexArgs)) {
+                const auto argsFile = readFileUtf8(fakeCodexArgs);
+                success &= expect(
+                    argsFile.has_value() && argsFile->find("exec") != std::string::npos,
+                    "Codex execution should run through the exec subcommand.");
+                success &= expect(
+                    argsFile.has_value() && argsFile->find("Summarize the active audit obligations.") != std::string::npos,
+                    "Codex execution should preserve the requested task prompt.");
+                success &= expect(
+                    argsFile.has_value() && argsFile->find("Master Control Orchestration Server") != std::string::npos,
+                    "Codex execution should prepend orchestration-server context to the CLI prompt.");
+                success &= expect(
+                    argsFile.has_value() && argsFile->find("Auditor") != std::string::npos,
+                    "Codex execution should identify the assigned role by display name.");
+                success &= expect(
+                    argsFile.has_value() && argsFile->find("review, verification, and compliance-oriented delivery checks") != std::string::npos,
+                    "Codex execution should include the assigned role's control scope.");
+            }
         }
 
         if (powerShellExists()) {

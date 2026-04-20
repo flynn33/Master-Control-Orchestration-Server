@@ -204,6 +204,85 @@ void ProvidersSectionControl::AttachRuntime(::MasterControlShell::ShellRuntime* 
     RefreshCliInstallStateAsync();
 }
 
+void ProvidersSectionControl::SelectProviderById(const std::wstring& providerId, const bool preselectAssignmentOwner) {
+    if (providerId.empty()) {
+        return;
+    }
+
+    const auto providerIterator = std::find_if(
+        providers_.begin(),
+        providers_.end(),
+        [&providerId](const auto& provider) { return provider.id == providerId; });
+    if (providerIterator == providers_.end()) {
+        selectedProviderId_ = providerId;
+        return;
+    }
+
+    const auto index = static_cast<int>(std::distance(providers_.begin(), providerIterator));
+    selectedProviderIndex_ = index;
+    selectedProviderId_ = providerId;
+
+    suspendDirtyTracking_ = true;
+    ProviderSelector().SelectedIndex(index);
+    if (preselectAssignmentOwner &&
+        ProviderAssignmentProviderSelector().Items().Size() > static_cast<uint32_t>(index + 1)) {
+        ProviderAssignmentProviderSelector().SelectedIndex(index + 1);
+    }
+    suspendDirtyTracking_ = false;
+
+    PopulateProviderEditor(static_cast<size_t>(index));
+    ApplyCredentialFields();
+    if (preselectAssignmentOwner) {
+        providerAssignmentDirty_ = true;
+    }
+    UpdateEditorState();
+}
+
+void ProvidersSectionControl::OpenProviderManagementSurface(const std::wstring& workflowId) {
+    ProviderControlsExpander().IsExpanded(true);
+    OrchestrationControlsExpander().IsExpanded(true);
+
+    if (workflowId == L"assign-responsibility") {
+        if (!selectedProviderId_.empty()) {
+            SelectProviderById(selectedProviderId_, true);
+        }
+        ProviderAssignmentStatusText().Text(
+            L"Choose a role or sub-agent, confirm the owning provider, then click Save Ownership.");
+        SetStatus(L"Role ownership controls are open below in this Windows app.");
+        ProviderAssignmentTargetSelector().StartBringIntoView();
+    } else if (workflowId == L"guided-provider-execution") {
+        ProviderExecutionStatusText().Text(
+            L"Enter a prompt below and run a provider task to validate the current role assignment.");
+        SetStatus(L"Provider routing validation is open below in this Windows app.");
+        ProviderExecutionPromptTextBox().StartBringIntoView();
+    } else if (workflowId == L"configure-autonomy") {
+        if (!selectedProviderId_.empty()) {
+            SelectProviderById(selectedProviderId_, false);
+        }
+        SetStatus(L"AI autonomy controls are open below in this Windows app.");
+        AiAutonomyToggle().StartBringIntoView();
+    }
+
+    UpdateEditorState();
+}
+
+void ProvidersSectionControl::RevealConnectedProvider(const std::wstring& providerId,
+                                                      const std::wstring& guidanceMessage) {
+    ProviderControlsExpander().IsExpanded(true);
+    OrchestrationControlsExpander().IsExpanded(true);
+    SelectProviderById(providerId, true);
+
+    const auto message = guidanceMessage.empty()
+        ? std::wstring(L"Provider connection is saved locally. Assign ownership or adjust autonomy below.")
+        : guidanceMessage;
+    ProviderAssignmentStatusText().Text(winrt::hstring(message));
+    ProviderExecutionStatusText().Text(
+        L"Provider execution is ready. Use Validate Routing below to confirm the assigned lane.");
+    SetStatus(winrt::hstring(message));
+    ProviderAssignmentProviderSelector().StartBringIntoView();
+    UpdateEditorState();
+}
+
 void ProvidersSectionControl::GuidedProviderActionButton_Click(
     Windows::Foundation::IInspectable const& sender,
     Microsoft::UI::Xaml::RoutedEventArgs const&) {
@@ -219,6 +298,13 @@ void ProvidersSectionControl::GuidedProviderActionButton_Click(
     const auto workflowId = std::wstring(winrt::unbox_value_or<winrt::hstring>(button.Tag(), winrt::hstring()).c_str());
     if (workflowId.empty()) {
         SetStatus(L"Providers could not resolve the requested guided workflow.");
+        return;
+    }
+
+    if (workflowId == L"assign-responsibility" ||
+        workflowId == L"guided-provider-execution" ||
+        workflowId == L"configure-autonomy") {
+        OpenProviderManagementSurface(workflowId);
         return;
     }
 
@@ -1393,6 +1479,9 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ConnectQuickPr
     if (refreshRequested_) {
         refreshRequested_();
     }
+    RevealConnectedProvider(
+        result.providerId,
+        L"Provider connection is saved locally. Assign ownership or adjust autonomy below.");
     UpdateEditorState();
 }
 
@@ -1714,6 +1803,11 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RunCliSignInAs
         if (registerResult.succeeded && refreshRequested_) {
             refreshRequested_();
         }
+        if (registerResult.succeeded) {
+            RevealConnectedProvider(
+                providerId,
+                L"Provider sign-in is complete and saved locally. Assign ownership or adjust autonomy below.");
+        }
         co_return;
     }
 
@@ -1745,13 +1839,16 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RunCliSignInAs
         co_await uiThread;
         if (statusResult.status == L"complete") {
             statusText.Text(winrt::hstring(statusResult.message.empty()
-                ? L"Signed in. Assign this provider to a role below."
+                ? L"Signed in and saved locally. Assign this provider to a role below."
                 : statusResult.message));
             primaryButton.IsEnabled(true);
             RefreshCliInstallStateAsync();
             if (refreshRequested_) {
                 refreshRequested_();
             }
+            RevealConnectedProvider(
+                providerId,
+                L"Provider sign-in is complete and saved locally. Assign ownership or adjust autonomy below.");
             co_return;
         }
         if (statusResult.status == L"failed") {
@@ -1897,8 +1994,8 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RefreshCliInst
                     : L"STEP 3 OF 3 - ADD PROVIDER"));
             statusText.Text(winrt::hstring(
                 registrationState.partiallyRegistered()
-                    ? L"Saved sign-in found. Add remaining provider."
-                    : L"Saved sign-in found. Add provider."));
+                    ? L"Saved sign-in found. Finish provider setup in this app."
+                    : L"Saved sign-in found. Add provider in this app."));
         } else if (!entry.signedIn) {
             // State 2: installed but no saved session — STEP 2 is the only action.
             installButton.Visibility(Visibility::Collapsed);
@@ -1912,7 +2009,7 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::RefreshCliInst
             signInButton.Visibility(Visibility::Visible);
             signInButton.Content(winrt::box_value(winrt::hstring(L"Re-authenticate")));
             chipText.Text(winrt::hstring(L"READY - SIGNED IN"));
-            statusText.Text(winrt::hstring(L"Signed in and registered. Ready."));
+            statusText.Text(winrt::hstring(L"Signed in, registered, and saved locally."));
         }
     }
     co_return;
@@ -1961,12 +2058,15 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ConnectGrokAsy
     if (result.succeeded) {
         GrokConnectStatusText().Text(winrt::hstring(
             result.summary.empty()
-                ? L"Grok connected. Assign it to a role below."
+                ? L"Grok connected and saved locally. Assign it to a role below."
                 : result.summary));
         GrokApiKeyBox().Password(L"");
         if (refreshRequested_) {
             refreshRequested_();
         }
+        RevealConnectedProvider(
+            L"xai-grok",
+            L"Grok is connected and saved locally. Assign ownership or adjust autonomy below.");
     } else {
         GrokConnectStatusText().Text(winrt::hstring(
             result.errorMessage.empty()

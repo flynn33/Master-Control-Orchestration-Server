@@ -19,7 +19,7 @@
                  Condition="INSTALL_START_MENU_SHORTCUT=1">
         <Shortcut Id="StartMenuShortcut"
                   Name="Master Control Orchestration Server"
-                  Description="Master Control Orchestration Server administrative shell"
+                  Description="Master Control Orchestration Server Windows application"
                   Target="[#MasterControlShellExe]"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="MasterControlIcon.ico"/>
@@ -41,7 +41,7 @@
                  Condition="INSTALL_DESKTOP_SHORTCUT=1">
         <Shortcut Id="DesktopShortcut"
                   Name="Master Control Orchestration Server"
-                  Description="Master Control Orchestration Server administrative shell"
+                  Description="Master Control Orchestration Server Windows application"
                   Target="[#MasterControlShellExe]"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="MasterControlIcon.ico"/>

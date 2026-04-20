@@ -811,8 +811,8 @@ std::wstring usageText() {
         L"  --skip-shortcuts                  Skip shortcut creation.\n"
         L"  --skip-uninstall-registration     Skip Programs and Features registration.\n"
         L"  --quiet                           Suppress completion dialogs.\n"
-        L"  --launch-shell                    Launch the desktop shell after install.\n"
-        L"  --no-launch-shell                 Do not prompt to launch the shell.\n";
+        L"  --launch-shell                    Launch the Windows app after install.\n"
+        L"  --no-launch-shell                 Do not prompt to launch the Windows app.\n";
 }
 
 std::filesystem::path existingDirectoryForPicker(const std::filesystem::path& candidate) {
@@ -1340,7 +1340,7 @@ int finalizeSetupProcess(const int exitCode, const bool shouldUninitializeCom) {
 ShellLaunchResult maybeLaunchShell(const LauncherOptions& options) {
     ShellLaunchResult result;
     if (options.noLaunchShell) {
-        result.message = L"Shell launch disabled by setup option.";
+        result.message = L"Windows app launch disabled by setup option.";
         return result;
     }
 
@@ -1349,7 +1349,7 @@ ShellLaunchResult maybeLaunchShell(const LauncherOptions& options) {
         result.promptShown = true;
         const int promptChoice = MessageBoxW(
             nullptr,
-            L"Master Control Orchestration Server installed successfully.\n\nLaunch the desktop shell now?",
+            L"Master Control Orchestration Server installed successfully.\n\nLaunch the Windows app now?",
             L"Master Control Orchestration Server Setup",
             MB_ICONQUESTION | MB_YESNO | MB_SETFOREGROUND);
         result.userAccepted = (promptChoice == IDYES);
@@ -1358,8 +1358,8 @@ ShellLaunchResult maybeLaunchShell(const LauncherOptions& options) {
 
     if (!launchShell) {
         result.message = options.autoLaunchShell
-            ? L"Shell launch was requested but not started."
-            : L"User declined shell launch after install.";
+            ? L"Windows app launch was requested but not started."
+            : L"User declined Windows app launch after install.";
         return result;
     }
 
@@ -1375,8 +1375,8 @@ ShellLaunchResult maybeLaunchShell(const LauncherOptions& options) {
     result.shellExecuteCode = static_cast<DWORD>(reinterpret_cast<INT_PTR>(shellExecuteResult));
     result.launched = reinterpret_cast<INT_PTR>(shellExecuteResult) > 32;
     result.message = result.launched
-        ? L"Desktop shell launched successfully."
-        : L"Desktop shell launch failed with ShellExecute code " + std::to_wstring(result.shellExecuteCode) + L".";
+        ? L"Windows app launched successfully."
+        : L"Windows app launch failed with ShellExecute code " + std::to_wstring(result.shellExecuteCode) + L".";
     return result;
 }
 

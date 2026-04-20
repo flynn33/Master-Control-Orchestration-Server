@@ -94,6 +94,52 @@ function Invoke-CapturedProcess {
     }
 }
 
+function ConvertTo-ExtendedLengthPath {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    if ($fullPath.StartsWith("\\?\")) {
+        return $fullPath
+    }
+
+    if ($fullPath.StartsWith("\\\\")) {
+        return "\\?\UNC\" + $fullPath.TrimStart('\')
+    }
+
+    return "\\?\" + $fullPath
+}
+
+function Remove-DirectoryRobust {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    try {
+        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+    } catch {
+        if (-not (Test-Path -LiteralPath $Path)) {
+            return
+        }
+
+        $extendedPath = ConvertTo-ExtendedLengthPath -Path $Path
+        if ([System.IO.Directory]::Exists($extendedPath)) {
+            [System.IO.Directory]::Delete($extendedPath, $true)
+        }
+    }
+
+    if (Test-Path -LiteralPath $Path) {
+        throw "Failed to remove directory '$Path'."
+    }
+}
+
 $toolchain = Resolve-MasterControlToolchain
 $vsDevCmd = $toolchain.VsDevCmd
 $cmake = $toolchain.CMake
@@ -140,7 +186,11 @@ if ($Preset -ne "release") {
     $packageName += "-$Preset"
 }
 
-$payloadRoot = Join-Path $OutputRoot "_payload"
+# Keep the install payload under a short internal build path. WiX still hits
+# MAX_PATH limits on staged file references even when PowerShell can see them
+# via extended-length paths, so the caller's OutputRoot should not determine
+# the payload path depth.
+$payloadRoot = Join-Path $repoRoot "build\_payload"
 $stageDirectory = Join-Path $payloadRoot $packageName
 $bundleDirectory = Join-Path $OutputRoot $packageName
 $zipPath = Join-Path $OutputRoot ($packageName + ".zip")
@@ -161,13 +211,13 @@ $validationTarget = Join-Path $OutputRoot ($packageName + ".validation-target")
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
 if ((Test-Path $stageDirectory) -and -not $KeepStage) {
-    Remove-Item -Path $stageDirectory -Recurse -Force
+    Remove-DirectoryRobust -Path $stageDirectory
 }
 if (Test-Path $bundleDirectory) {
-    Remove-Item -Path $bundleDirectory -Recurse -Force
+    Remove-DirectoryRobust -Path $bundleDirectory
 }
 if (Test-Path $validationTarget) {
-    Remove-Item -Path $validationTarget -Recurse -Force
+    Remove-DirectoryRobust -Path $validationTarget
 }
 New-Item -ItemType Directory -Force -Path $bundleDirectory | Out-Null
 
@@ -261,15 +311,15 @@ Advanced / CI:
 USING THE SERVER ON THE HOST MACHINE
 
 The Master Control Orchestration Server runs as a Windows service and ships
-with a native desktop shell (MasterControlShell.exe). On the machine where
-you installed the server, launch the desktop shell — it is the full
+with a native Windows application (MasterControlShell.exe). On the machine where
+you installed the server, launch the Windows app - it is the full
 Windows-application surface for operator use and lives in the Start Menu
 under 'Master Control Orchestration Server'.
 
 The browser dashboard is intended for remote clients on the LAN. A
 shortcut to it is installed under 'Start Menu > Master Control
 Orchestration Server > Remote Access > Browser Dashboard (Remote)' so it
-does not compete with the desktop shell on the host itself.
+does not compete with the Windows app on the host itself.
 "@
 Set-Content -Path $startHerePath -Value $startHere -Encoding UTF8
 

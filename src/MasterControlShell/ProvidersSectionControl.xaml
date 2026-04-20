@@ -173,11 +173,18 @@
                             BorderThickness="1"
                             Background="{StaticResource ShellPanelDeepBrush}" />
 
-                        <StackPanel Orientation="Horizontal" Spacing="12">
-                            <Button x:Name="ConnectQuickProviderButton" Click="ConnectQuickProviderButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Auto-Connect" />
-                            <Button Tag="assign-responsibility" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellSecondaryButtonStyle}" Content="Manage Assignments" />
-                            <Button Tag="guided-provider-execution" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellSecondaryButtonStyle}" Content="Validate Routing" />
-                        </StackPanel>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="ConnectQuickProviderButton" Click="ConnectQuickProviderButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Auto-Connect" HorizontalAlignment="Stretch" />
+                            <Button Grid.Column="1" Tag="assign-responsibility" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellSecondaryButtonStyle}" Content="Manage Assignments" HorizontalAlignment="Stretch" />
+                            <Button Grid.Column="2" Tag="configure-autonomy" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellSecondaryButtonStyle}" Content="Autonomy Settings" HorizontalAlignment="Stretch" />
+                        </Grid>
+
+                        <Button Tag="guided-provider-execution" Click="GuidedProviderActionButton_Click" Style="{StaticResource ShellSecondaryButtonStyle}" Content="Validate Routing" HorizontalAlignment="Stretch" />
 
                         <TextBlock
                             x:Name="QuickConnectStatusText"
@@ -187,11 +194,11 @@
                     </StackPanel>
                 </Border>
 
-                <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="False">
+                <Expander x:Name="ProviderControlsExpander" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="True">
                     <Expander.Header>
                         <StackPanel Spacing="2">
-                            <TextBlock Text="ADVANCED Â· DIRECT EDIT" Style="{StaticResource ShellEyebrowTextStyle}" />
-                            <TextBlock Text="Route editor, credentials, autonomy" Style="{StaticResource ShellBodyTextStyle}" />
+                            <TextBlock Text="PROVIDER CONTROLS" Style="{StaticResource ShellEyebrowTextStyle}" />
+                            <TextBlock Text="Saved routes, credentials, and autonomy settings live here." Style="{StaticResource ShellBodyTextStyle}" />
                         </StackPanel>
                     </Expander.Header>
                     <StackPanel Spacing="20">
@@ -324,11 +331,11 @@
                     </StackPanel>
                 </Border>
 
-                <Expander HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="False">
+                <Expander x:Name="OrchestrationControlsExpander" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="True">
                     <Expander.Header>
                         <StackPanel Spacing="2">
-                            <TextBlock Text="ADVANCED Â· ORCHESTRATION" Style="{StaticResource ShellEyebrowTextStyle}" />
-                            <TextBlock Text="Sub-agent groups, ownership routing, run console" Style="{StaticResource ShellBodyTextStyle}" />
+                            <TextBlock Text="ROLE OWNERSHIP - ORCHESTRATION" Style="{StaticResource ShellEyebrowTextStyle}" />
+                            <TextBlock Text="Assign roles, manage specialist groups, and validate provider routing here." Style="{StaticResource ShellBodyTextStyle}" />
                         </StackPanel>
                     </Expander.Header>
                     <StackPanel Spacing="20">
