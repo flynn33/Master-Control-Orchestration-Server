@@ -5,6 +5,17 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.5-rc.2] - 2026-04-20
+### Summary
+**GitHub-published release candidate for the Windows host experience.** This release supersedes the old `v0.4.5-rc.1` tag mismatch and publishes the current host-session AI sign-in and MSI-first packaging fixes as a clean prerelease from the latest commit.
+
+### Included Changes
+- fix(shell): the Windows app owns `claude login` / `codex login` launch and saved-auth detection, so host users authenticate in their interactive session instead of the service session.
+- fix(runtime): CLI-backed provider registration now preserves `credentialsConfigured` through provider upsert and dashboard snapshot generation, so ChatGPT, Codex, and Claude Code stay marked ready after shell sign-in.
+- test: `tests/MasterControlOrchestrationServerTests.cpp` exercises the CLI sign-in registration handoff for existing OpenAI-backed and Claude-backed providers.
+- fix(packaging): the operator-facing ZIP is MSI-first, no longer ships the legacy setup exe, and excludes packaged `.pdb` symbol files from end-user artifacts.
+- release: publish the `v0.4.5-rc.2` GitHub prerelease with the matching MSI, ZIP, and package metadata assets.
+
 ## [0.4.5-rc.1] - 2026-04-19
 ### Summary
 **Release candidate for the Windows host experience.** This candidate rolls up the guided CLI-install flow, the host-session AI sign-in fix so `claude login` / `codex login` open for the interactive Windows user instead of the service account, and the packaging cleanup needed to ship a clean MSI + ZIP pair from the latest commits.

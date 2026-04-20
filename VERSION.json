@@ -1,11 +1,25 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.5-rc.1",
-  "current_tag": "v0.4.5-rc.1",
-  "released_at": "2026-04-18",
-  "last_release_commit": "de3bca1",
+  "current_version": "0.4.5-rc.2",
+  "current_tag": "v0.4.5-rc.2",
+  "released_at": "2026-04-20",
+  "last_release_commit": "0e76391",
   "history": [
+    {
+      "version": "0.4.5-rc.2",
+      "tag": "v0.4.5-rc.2",
+      "released_at": "2026-04-20",
+      "commit": "0e76391",
+      "summary": "GitHub-published release candidate for the Windows host experience. Supersedes the old rc.1 tag mismatch and publishes the host-session AI sign-in and MSI-first packaging fixes as a clean prerelease from the latest commit.",
+      "entries": [
+        "fix(shell): the Windows app now owns claude/codex CLI sign-in launch and saved-auth detection, so host users authenticate in their own interactive session",
+        "fix(runtime): CLI-backed provider registration now preserves credentialsConfigured through provider upsert and dashboard snapshot generation",
+        "test: the CLI sign-in registration handoff is covered for existing OpenAI-backed and Claude-backed providers",
+        "fix(packaging): the operator-facing ZIP is MSI-first, no longer ships the legacy setup exe, and excludes end-user .pdb files",
+        "release: publish a GitHub prerelease for v0.4.5-rc.2 with the matching MSI, ZIP, and package metadata assets"
+      ]
+    },
     {
       "version": "0.4.5-rc.1",
       "tag": "v0.4.5-rc.1",
