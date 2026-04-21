@@ -58,8 +58,12 @@ std::optional<std::wstring> wideEnvironmentVariable(const wchar_t* name) {
         return std::nullopt;
     }
 
-    std::wstring value(static_cast<size_t>(required - 1), L'\0');
-    GetEnvironmentVariableW(name, value.data(), required);
+    std::wstring value(static_cast<size_t>(required), L'\0');
+    const DWORD copied = GetEnvironmentVariableW(name, value.data(), required);
+    if (copied == 0) {
+        return std::nullopt;
+    }
+    value.resize(static_cast<size_t>(copied));
     return value;
 }
 
@@ -207,6 +211,8 @@ struct LocalCliSignInSession final {
     std::filesystem::path authFilePath;
     HANDLE processHandle = nullptr;
     bool registrationInProgress = false;
+    bool awaitingAuthFile = false;
+    std::chrono::steady_clock::time_point authFileDeadline{};
 };
 
 std::mutex gCliSignInMutex;
@@ -287,9 +293,17 @@ std::optional<std::filesystem::path> findCommandOnPath(const std::vector<std::ws
 
 std::optional<std::filesystem::path> resolveCliPath(const std::wstring& bridge) {
     if (bridge == L"claude") {
+        if (const auto configured = wideEnvironmentVariable(L"MASTERCONTROL_CLAUDE_COMMAND");
+            configured.has_value() && !configured->empty()) {
+            return std::filesystem::path(*configured);
+        }
         return findCommandOnPath({ L"claude.exe", L"claude.cmd", L"claude.bat", L"claude" });
     }
     if (bridge == L"codex") {
+        if (const auto configured = wideEnvironmentVariable(L"MASTERCONTROL_CODEX_COMMAND");
+            configured.has_value() && !configured->empty()) {
+            return std::filesystem::path(*configured);
+        }
         return findCommandOnPath({ L"codex.exe", L"codex.cmd", L"codex.bat", L"codex" });
     }
     return std::nullopt;
@@ -3101,7 +3115,11 @@ ShellRuntime::ShellCliSignInStartResult ShellRuntime::StartCliSignIn(
     startupInfo.cb = sizeof(startupInfo);
     PROCESS_INFORMATION processInfo{};
     std::wstring mutableCommand = commandLine;
-    const auto workingDirectory = currentUserProfileDirectory().value_or(executablePath.parent_path());
+    auto workingDirectory = currentUserProfileDirectory().value_or(executablePath.parent_path());
+    std::error_code workingDirectoryError;
+    if (!workingDirectory.empty() && !std::filesystem::exists(workingDirectory, workingDirectoryError)) {
+        workingDirectory = executablePath.parent_path();
+    }
     const std::wstring workingDirectoryText = workingDirectory.empty()
         ? std::wstring()
         : workingDirectory.wstring();
@@ -3170,30 +3188,55 @@ ShellRuntime::ShellCliSignInStatusResult ShellRuntime::GetCliSignInStatus(
         }
 
         auto& session = iterator->second;
-        if (session.status == L"pending" && session.processHandle != nullptr) {
-            const DWORD waitResult = WaitForSingleObject(session.processHandle, 0);
-            if (waitResult == WAIT_OBJECT_0) {
-                DWORD exitCode = 0;
-                GetExitCodeProcess(session.processHandle, &exitCode);
-                CloseHandle(session.processHandle);
-                session.processHandle = nullptr;
+        if (session.status == L"pending") {
+            const auto now = std::chrono::steady_clock::now();
+            if (session.processHandle != nullptr) {
+                const DWORD waitResult = WaitForSingleObject(session.processHandle, 0);
+                if (waitResult == WAIT_OBJECT_0) {
+                    DWORD exitCode = 0;
+                    GetExitCodeProcess(session.processHandle, &exitCode);
+                    CloseHandle(session.processHandle);
+                    session.processHandle = nullptr;
 
+                    const bool authFileExists = !session.authFilePath.empty() &&
+                        std::filesystem::exists(session.authFilePath);
+                    if (exitCode == 0 && authFileExists) {
+                        if (!session.registrationInProgress) {
+                            session.registrationInProgress = true;
+                            session.awaitingAuthFile = false;
+                            session.authFileDeadline = {};
+                            session.message = L"Finishing sign-in and registering the provider...";
+                            registrationRequest = std::make_pair(session.bridge, session.providerId);
+                        }
+                    } else if (exitCode == 0) {
+                        session.awaitingAuthFile = true;
+                        session.authFileDeadline = now + std::chrono::seconds(30);
+                        session.message = L"Sign-in finished. Waiting for " + cliBridgeDisplayName(session.bridge) +
+                            L" to finish writing its credential file for this Windows user.";
+                    } else {
+                        session.status = L"failed";
+                        session.message = L"Sign-in was canceled or failed (exit code " +
+                            std::to_wstring(exitCode) + L").";
+                    }
+                }
+            }
+
+            if (session.status == L"pending" && session.awaitingAuthFile && !session.registrationInProgress) {
                 const bool authFileExists = !session.authFilePath.empty() &&
                     std::filesystem::exists(session.authFilePath);
-                if (exitCode == 0 && authFileExists) {
-                    if (!session.registrationInProgress) {
-                        session.registrationInProgress = true;
-                        session.message = L"Finishing sign-in and registering the provider...";
-                        registrationRequest = std::make_pair(session.bridge, session.providerId);
-                    }
-                } else if (exitCode == 0) {
+                if (authFileExists) {
+                    session.registrationInProgress = true;
+                    session.awaitingAuthFile = false;
+                    session.authFileDeadline = {};
+                    session.message = L"Finishing sign-in and registering the provider...";
+                    registrationRequest = std::make_pair(session.bridge, session.providerId);
+                } else if (session.authFileDeadline != std::chrono::steady_clock::time_point{} &&
+                           now >= session.authFileDeadline) {
                     session.status = L"failed";
+                    session.awaitingAuthFile = false;
+                    session.authFileDeadline = {};
                     session.message = L"Sign-in exited cleanly, but " + cliBridgeDisplayName(session.bridge) +
                         L" did not create its credential file for this Windows user.";
-                } else {
-                    session.status = L"failed";
-                    session.message = L"Sign-in was canceled or failed (exit code " +
-                        std::to_wstring(exitCode) + L").";
                 }
             }
         }
@@ -3214,6 +3257,8 @@ ShellRuntime::ShellCliSignInStatusResult ShellRuntime::GetCliSignInStatus(
         if (iterator != gCliSignInSessions.end()) {
             auto& session = iterator->second;
             session.registrationInProgress = false;
+            session.awaitingAuthFile = false;
+            session.authFileDeadline = {};
             if (registerResult.succeeded) {
                 session.status = L"complete";
                 const auto successMessage = session.bridge == L"codex"

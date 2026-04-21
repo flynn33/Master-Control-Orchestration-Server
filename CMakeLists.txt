@@ -115,6 +115,7 @@ if(WIN32 AND MASTERCONTROL_POWERSHELL)
         MasterControlServiceHost
         MasterControlShell
         MasterControlBootstrapper
+        MasterControlOrchestrationServerLauncher
         MasterControlOrchestrationServerSetup
     )
 

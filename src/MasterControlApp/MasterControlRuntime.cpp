@@ -25,6 +25,8 @@
 #include <Windows.h>
 #include <ShlObj.h>    // SHGetFolderPathW + CSIDL_APPDATA — used by findCommandOnPath
                        // to locate npm-global binaries under %APPDATA%\npm.
+#include <Userenv.h>
+#include <WtsApi32.h>
 #include <iphlpapi.h>
 #include <urlmon.h>
 #include <wincrypt.h>
@@ -526,33 +528,161 @@ std::wstring joinCommandArguments(const std::vector<std::wstring>& arguments) {
     return commandLine;
 }
 
-std::optional<std::filesystem::path> findCommandOnPath(const std::vector<std::wstring>& fileNames) {
-    // 1. Standard SearchPathW which honours the process %PATH%. This misses
-    //    binaries installed into the service account's npm-global location,
-    //    but catches anything on the real PATH.
-    for (const auto& fileName : fileNames) {
+constexpr auto kCliAuthFileGracePeriod = std::chrono::seconds(30);
+
+std::optional<std::filesystem::path> environmentPathVariable(const wchar_t* name) {
+    const DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
+    if (required <= 1) {
+        return std::nullopt;
+    }
+
+    std::wstring value(static_cast<size_t>(required), L'\0');
+    const DWORD copied = GetEnvironmentVariableW(name, value.data(), required);
+    if (copied == 0) {
+        return std::nullopt;
+    }
+    value.resize(static_cast<size_t>(copied));
+    if (value.empty()) {
+        return std::nullopt;
+    }
+    return std::filesystem::path(value);
+}
+
+std::optional<std::filesystem::path> interactiveUserProfileDirectory() {
+    if (const auto overrideProfile = environmentPathVariable(L"MASTERCONTROL_INTERACTIVE_USERPROFILE");
+        overrideProfile.has_value() && !overrideProfile->empty()) {
+        return overrideProfile;
+    }
+
+    const DWORD activeSessionId = WTSGetActiveConsoleSessionId();
+    if (activeSessionId != 0xFFFFFFFF) {
+        HANDLE userToken = nullptr;
+        if (WTSQueryUserToken(activeSessionId, &userToken) != 0) {
+            DWORD required = 0;
+            GetUserProfileDirectoryW(userToken, nullptr, &required);
+            if (required > 1) {
+                std::wstring profile(static_cast<size_t>(required - 1), L'\0');
+                if (GetUserProfileDirectoryW(userToken, profile.data(), &required) != 0 && !profile.empty()) {
+                    CloseHandle(userToken);
+                    return std::filesystem::path(profile);
+                }
+            }
+            CloseHandle(userToken);
+        }
+    }
+
+    if (const auto currentProfile = environmentPathVariable(L"USERPROFILE");
+        currentProfile.has_value() && !currentProfile->empty()) {
+        return currentProfile;
+    }
+
+    PWSTR profilePath = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Profile, KF_FLAG_DEFAULT, nullptr, &profilePath)) &&
+        profilePath != nullptr) {
+        const std::filesystem::path profile(profilePath);
+        CoTaskMemFree(profilePath);
+        return profile;
+    }
+    if (profilePath != nullptr) {
+        CoTaskMemFree(profilePath);
+    }
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path> interactiveUserAppDataDirectory() {
+    if (const auto profile = interactiveUserProfileDirectory(); profile.has_value() && !profile->empty()) {
+        return *profile / L"AppData" / L"Roaming";
+    }
+    if (const auto appData = environmentPathVariable(L"APPDATA"); appData.has_value() && !appData->empty()) {
+        return appData;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path> interactiveUserLocalAppDataDirectory() {
+    if (const auto profile = interactiveUserProfileDirectory(); profile.has_value() && !profile->empty()) {
+        return *profile / L"AppData" / L"Local";
+    }
+    if (const auto localAppData = environmentPathVariable(L"LOCALAPPDATA");
+        localAppData.has_value() && !localAppData->empty()) {
+        return localAppData;
+    }
+    return std::nullopt;
+}
+
+void appendInteractiveUserProfileEnvironment(std::vector<std::pair<std::wstring, std::wstring>>& environmentOverrides) {
+    const auto interactiveProfile = interactiveUserProfileDirectory();
+    if (!interactiveProfile.has_value() || interactiveProfile->empty()) {
+        return;
+    }
+
+    environmentOverrides.emplace_back(L"USERPROFILE", interactiveProfile->wstring());
+    environmentOverrides.emplace_back(L"HOME", interactiveProfile->wstring());
+    if (const auto appData = interactiveUserAppDataDirectory(); appData.has_value() && !appData->empty()) {
+        environmentOverrides.emplace_back(L"APPDATA", appData->wstring());
+    }
+    if (const auto localAppData = interactiveUserLocalAppDataDirectory();
+        localAppData.has_value() && !localAppData->empty()) {
+        environmentOverrides.emplace_back(L"LOCALAPPDATA", localAppData->wstring());
+    }
+}
+
+std::optional<std::filesystem::path> resolveCommandProcessorPath() {
+    if (const auto comSpec = environmentPathVariable(L"ComSpec"); comSpec.has_value() && !comSpec->empty()) {
+        std::error_code error;
+        if (std::filesystem::exists(*comSpec, error)) {
+            return comSpec;
+        }
+    }
+
+    wchar_t systemRoot[MAX_PATH] = {};
+    const auto systemRootLength = GetEnvironmentVariableW(L"SystemRoot", systemRoot, MAX_PATH);
+    if (systemRootLength > 0 && systemRootLength < MAX_PATH) {
+        const auto candidate = std::filesystem::path(systemRoot) / L"System32" / L"cmd.exe";
+        std::error_code error;
+        if (std::filesystem::exists(candidate, error)) {
+            return candidate;
+        }
+    }
+
+    for (const auto* fileName : { L"cmd.exe", L"cmd" }) {
         std::array<wchar_t, 4096> buffer{};
-        const DWORD length = SearchPathW(nullptr, fileName.c_str(), nullptr, static_cast<DWORD>(buffer.size()), buffer.data(), nullptr);
+        const DWORD length = SearchPathW(nullptr, fileName, nullptr, static_cast<DWORD>(buffer.size()), buffer.data(), nullptr);
         if (length > 0 && length < buffer.size()) {
             return std::filesystem::path(buffer.data());
         }
     }
-    // 2. Explicit well-known npm-global bin directories. When the service
+
+    return std::nullopt;
+}
+
+std::optional<std::filesystem::path> findCommandOnPath(const std::vector<std::wstring>& fileNames) {
+    // 1. Explicit well-known npm-global bin directories. When the service
     //    runs as LocalSystem, `npm install -g` drops binaries into
     //    %SystemRoot%\System32\config\systemprofile\AppData\Roaming\npm
-    //    which isn't on the process PATH. When it runs as the current user,
-    //    %APPDATA%\npm is the target. Also probe the nodejs install dir
-    //    in case npm wrote a binary alongside node itself.
+    //    which isn't on the process PATH. When the interactive user installed
+    //    the CLI, %USERPROFILE%\AppData\Roaming\npm is the target even though
+    //    the service itself is running as LocalSystem. Also probe the nodejs
+    //    install dir in case npm wrote a binary alongside node itself.
     std::vector<std::filesystem::path> fallbackDirs;
+    if (const auto interactiveAppData = interactiveUserAppDataDirectory();
+        interactiveAppData.has_value() && !interactiveAppData->empty()) {
+        fallbackDirs.emplace_back(*interactiveAppData / L"npm");
+    }
     wchar_t systemRoot[MAX_PATH] = {};
     const auto systemRootLen = GetEnvironmentVariableW(L"SystemRoot", systemRoot, MAX_PATH);
     if (systemRootLen > 0 && systemRootLen < MAX_PATH) {
         fallbackDirs.emplace_back(
             std::filesystem::path(systemRoot) / L"System32" / L"config" / L"systemprofile" / L"AppData" / L"Roaming" / L"npm");
     }
-    wchar_t appDataBuf[MAX_PATH] = {};
-    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataBuf))) {
-        fallbackDirs.emplace_back(std::filesystem::path(appDataBuf) / L"npm");
+    if (const auto currentAppData = environmentPathVariable(L"APPDATA");
+        currentAppData.has_value() && !currentAppData->empty()) {
+        fallbackDirs.emplace_back(*currentAppData / L"npm");
+    } else {
+        wchar_t appDataBuf[MAX_PATH] = {};
+        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appDataBuf))) {
+            fallbackDirs.emplace_back(std::filesystem::path(appDataBuf) / L"npm");
+        }
     }
     fallbackDirs.emplace_back(L"C:\\Program Files\\nodejs");
     for (const auto& fallbackDir : fallbackDirs) {
@@ -562,6 +692,17 @@ std::optional<std::filesystem::path> findCommandOnPath(const std::vector<std::ws
             if (std::filesystem::exists(candidate, ec)) {
                 return candidate;
             }
+        }
+    }
+    // 2. Standard SearchPathW which honours the process %PATH%. This is a
+    //    useful fallback, but we intentionally prefer the interactive user's
+    //    npm-global shim directory above so the host-installed CLI wins over
+    //    any stale or service-account copy on PATH.
+    for (const auto& fileName : fileNames) {
+        std::array<wchar_t, 4096> buffer{};
+        const DWORD length = SearchPathW(nullptr, fileName.c_str(), nullptr, static_cast<DWORD>(buffer.size()), buffer.data(), nullptr);
+        if (length > 0 && length < buffer.size()) {
+            return std::filesystem::path(buffer.data());
         }
     }
     return std::nullopt;
@@ -2887,6 +3028,8 @@ public:
         HANDLE processHandle = nullptr;
         HANDLE waitThread = nullptr;
         std::filesystem::path authFilePath;
+        bool awaitingAuthFile = false;
+        std::chrono::steady_clock::time_point authFileDeadline{};
     };
 
     ProviderCliSignInService(std::shared_ptr<IProviderRegistry> providerRegistry,
@@ -2942,13 +3085,25 @@ public:
         // Spawn the CLI's login subcommand in a new console window so the
         // operator can see the OAuth URL / device code prompts. We do NOT
         // capture stdout/stderr — the CLI owns the interaction.
+        std::wstring applicationName;
         std::wstring commandLine;
         if (startsWithInsensitive(cliPath->extension().string(), ".cmd") ||
             startsWithInsensitive(cliPath->extension().string(), ".bat")) {
-            commandLine = L"cmd.exe /d /s /c ";
+            const auto commandProcessor = resolveCommandProcessorPath();
+            if (!commandProcessor.has_value()) {
+                response["succeeded"] = false;
+                response["message"] = "Windows could not locate cmd.exe to launch " + bridgeDisplayName(bridge) + " sign-in.";
+                response["cliInstalled"] = true;
+                return response;
+            }
+
+            applicationName = commandProcessor->wstring();
+            commandLine = quoteWindowsArgument(commandProcessor->wstring());
+            commandLine += L" /d /s /c ";
             commandLine += quoteWindowsArgument(cliPath->wstring());
             commandLine += L" login";
         } else {
+            applicationName = cliPath->wstring();
             commandLine = quoteWindowsArgument(cliPath->wstring());
             commandLine += L" login";
         }
@@ -2957,15 +3112,23 @@ public:
         startupInfo.cb = sizeof(startupInfo);
         PROCESS_INFORMATION processInfo{};
         std::wstring mutableCommand = commandLine;
+        auto workingDirectory = interactiveUserProfileDirectory().value_or(cliPath->parent_path());
+        std::error_code workingDirectoryError;
+        if (!workingDirectory.empty() && !std::filesystem::exists(workingDirectory, workingDirectoryError)) {
+            workingDirectory = cliPath->parent_path();
+        }
+        const std::wstring workingDirectoryText = workingDirectory.empty()
+            ? std::wstring()
+            : workingDirectory.wstring();
         const BOOL created = CreateProcessW(
-            nullptr,
+            applicationName.empty() ? nullptr : applicationName.c_str(),
             mutableCommand.data(),
             nullptr,
             nullptr,
             FALSE,
-            CREATE_NEW_CONSOLE,
+            CREATE_NEW_CONSOLE | CREATE_UNICODE_ENVIRONMENT,
             nullptr,
-            nullptr,
+            workingDirectoryText.empty() ? nullptr : workingDirectoryText.c_str(),
             &startupInfo,
             &processInfo);
         if (created == 0) {
@@ -3002,38 +3165,66 @@ public:
         }
 
         auto& session = iterator->second;
-        if (session.status == "pending" && session.processHandle != nullptr) {
-            const DWORD waitResult = WaitForSingleObject(session.processHandle, 0);
-            if (waitResult == WAIT_OBJECT_0) {
-                DWORD exitCode = 0;
-                GetExitCodeProcess(session.processHandle, &exitCode);
-                CloseHandle(session.processHandle);
-                session.processHandle = nullptr;
-                session.completedAtUtc = timestampNowUtc();
+        const auto finalizeRegistration = [&]() {
+            const auto registerResult = registerBridgedProvider(session.bridge, session.providerId);
+            session.completedAtUtc = timestampNowUtc();
+            session.awaitingAuthFile = false;
+            session.authFileDeadline = {};
+            if (registerResult.succeeded) {
+                session.status = "complete";
+                if (session.bridge == "codex") {
+                    session.message = "Signed in. ChatGPT (planning / reasoning) and Codex (coding agent) are both registered — assign each to roles below.";
+                } else {
+                    session.message = "Signed in. " + session.accountLabel + " is registered — assign it to a role below.";
+                }
+            } else {
+                session.status = "failed";
+                session.message = registerResult.message.empty()
+                    ? "Sign-in finished, but provider registration failed."
+                    : registerResult.message;
+            }
+        };
 
-                const bool authFileExists = !session.authFilePath.empty() &&
-                    std::filesystem::exists(session.authFilePath);
-                if (exitCode == 0 && authFileExists) {
-                    const auto registerResult = registerBridgedProvider(session.bridge, session.providerId);
-                    if (registerResult.succeeded) {
-                        session.status = "complete";
+        if (session.status == "pending") {
+            const auto now = std::chrono::steady_clock::now();
+            if (session.processHandle != nullptr) {
+                const DWORD waitResult = WaitForSingleObject(session.processHandle, 0);
+                if (waitResult == WAIT_OBJECT_0) {
+                    DWORD exitCode = 0;
+                    GetExitCodeProcess(session.processHandle, &exitCode);
+                    CloseHandle(session.processHandle);
+                    session.processHandle = nullptr;
+
+                    const bool authFileExists = !session.authFilePath.empty() &&
+                        std::filesystem::exists(session.authFilePath);
+                    if (exitCode == 0 && authFileExists) {
+                        finalizeRegistration();
+                    } else if (exitCode == 0) {
+                        session.awaitingAuthFile = true;
+                        session.authFileDeadline = now + kCliAuthFileGracePeriod;
+                        session.message = "Sign-in finished. Waiting for " + bridgeDisplayName(session.bridge) +
+                            " to finish writing its credential file.";
                     } else {
                         session.status = "failed";
-                        session.message = registerResult.message.empty()
-                            ? "Sign-in finished, but provider registration failed."
-                            : registerResult.message;
+                        session.completedAtUtc = timestampNowUtc();
+                        session.message = "Sign-in was canceled or failed (exit code " + std::to_string(exitCode) + ").";
                     }
-                    if (registerResult.succeeded && session.bridge == "codex") {
-                        session.message = "Signed in. ChatGPT (planning / reasoning) and Codex (coding agent) are both registered — assign each to roles below.";
-                    } else if (registerResult.succeeded) {
-                        session.message = "Signed in. " + session.accountLabel + " is registered — assign it to a role below.";
-                    }
-                } else if (exitCode == 0) {
+                }
+            }
+
+            if (session.status == "pending" && session.awaitingAuthFile) {
+                const bool authFileExists = !session.authFilePath.empty() &&
+                    std::filesystem::exists(session.authFilePath);
+                if (authFileExists) {
+                    finalizeRegistration();
+                } else if (session.authFileDeadline != std::chrono::steady_clock::time_point{} &&
+                           now >= session.authFileDeadline) {
                     session.status = "failed";
-                    session.message = "Sign-in appeared to exit cleanly, but " + bridgeDisplayName(session.bridge) + " did not create its credential file.";
-                } else {
-                    session.status = "failed";
-                    session.message = "Sign-in was canceled or failed (exit code " + std::to_string(exitCode) + ").";
+                    session.completedAtUtc = timestampNowUtc();
+                    session.awaitingAuthFile = false;
+                    session.authFileDeadline = {};
+                    session.message = "Sign-in appeared to exit cleanly, but " + bridgeDisplayName(session.bridge) +
+                        " did not create its credential file.";
                 }
             }
         }
@@ -3088,22 +3279,28 @@ private:
 
     static std::optional<std::filesystem::path> resolveCliPath(const std::string& bridge) {
         if (bridge == "claude") {
+            if (const auto configured = environmentPathVariable(L"MASTERCONTROL_CLAUDE_COMMAND");
+                configured.has_value() && !configured->empty()) {
+                return configured;
+            }
             return findCommandOnPath({ L"claude.exe", L"claude.cmd", L"claude.bat", L"claude" });
         }
         if (bridge == "codex") {
+            if (const auto configured = environmentPathVariable(L"MASTERCONTROL_CODEX_COMMAND");
+                configured.has_value() && !configured->empty()) {
+                return configured;
+            }
             return findCommandOnPath({ L"codex.exe", L"codex.cmd", L"codex.bat", L"codex" });
         }
         return std::nullopt;
     }
 
     static std::filesystem::path expectedAuthFilePath(const std::string& bridge) {
-        const DWORD required = GetEnvironmentVariableW(L"USERPROFILE", nullptr, 0);
-        if (required == 0) {
+        const auto userProfile = interactiveUserProfileDirectory();
+        if (!userProfile.has_value() || userProfile->empty()) {
             return {};
         }
-        std::wstring userProfile(static_cast<size_t>(required - 1), L'\0');
-        GetEnvironmentVariableW(L"USERPROFILE", userProfile.data(), required);
-        std::filesystem::path base(userProfile);
+        const std::filesystem::path base(*userProfile);
         if (bridge == "claude") {
             // Claude Code stores OAuth tokens here as of Claude Code 2.x.
             return base / L".claude" / L".credentials.json";
@@ -4009,7 +4206,16 @@ public:
         // bag is the expected path there. OpenAI-compatible direct HTTP still
         // requires an API key because it does not share the CLI's auth.
         if (credentials.empty() && !cliBridgedTransport) {
-            record.errorMessage = "Provider credentials must be configured before execution can start.";
+            const auto providerLabel = providerIterator->displayName.empty()
+                ? providerIterator->id
+                : providerIterator->displayName;
+            const auto targetLabel = record.targetDisplayName.empty()
+                ? request.targetId
+                : record.targetDisplayName;
+            record.errorMessage =
+                "The assigned provider route '" + providerLabel +
+                "' is not connected for '" + targetLabel +
+                "'. Please reassign this lane or reconnect the provider before execution can start.";
             record.completedAtUtc = timestampNowUtc();
             persistRecord(record);
             return record;
@@ -4490,6 +4696,7 @@ private:
         if (!authToken.empty()) {
             environmentOverrides.emplace_back(L"ANTHROPIC_AUTH_TOKEN", wideFromUtf8(authToken));
         }
+        appendInteractiveUserProfileEnvironment(environmentOverrides);
         if (!provider.baseUrl.empty()) {
             environmentOverrides.emplace_back(L"ANTHROPIC_BASE_URL", wideFromUtf8(provider.baseUrl));
         }
@@ -4619,6 +4826,7 @@ private:
             // uses its own ~/.codex/auth.json OAuth tokens.
             environmentOverrides.emplace_back(L"OPENAI_API_KEY", wideFromUtf8(apiKey));
         }
+        appendInteractiveUserProfileEnvironment(environmentOverrides);
 
         const auto workingDirectory = request.workingDirectory.empty()
             ? std::filesystem::current_path()

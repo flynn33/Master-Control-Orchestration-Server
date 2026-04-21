@@ -16,6 +16,7 @@
 #include "../../include/MasterControl/DeploymentLogPaths.h"
 #include "microsoft.ui.xaml.window.h"
 #include "OverviewSectionControl.xaml.h"
+#include "ProviderAssignmentOptions.h"
 #include "ProvidersSectionControl.xaml.h"
 #include "RuntimeSectionControl.xaml.h"
 #include "ShellFormatting.h"
@@ -2964,15 +2965,6 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
     };
 
     ComboBox providerSelector;
-    for (const auto& provider : currentSnapshot_.providers) {
-        ComboBoxItem item;
-        item.Content(box_value(winrt::hstring(provider.displayName.empty() ? provider.id : provider.displayName)));
-        item.Tag(box_value(winrt::hstring(provider.id)));
-        providerSelector.Items().Append(item);
-    }
-    if (providerSelector.Items().Size() > 0) {
-        providerSelector.SelectedIndex(0);
-    }
     root.Children().Append([&]() {
         addLabel(L"Step 1. Connected AI Model");
         return providerSelector;
@@ -3013,17 +3005,59 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
     createButton.Style(Application::Current().Resources().Lookup(box_value(L"ShellCommandButtonStyle")).try_as<Style>());
     root.Children().Append(createButton);
 
+    std::vector<::MasterControlShell::AssignableProviderOption> assignableProviders;
+    const auto refreshProviderSelector = [&, this]() {
+        std::wstring previousProviderId;
+        if (providerSelector.SelectedIndex() >= 0 &&
+            providerSelector.SelectedIndex() < static_cast<int>(assignableProviders.size())) {
+            previousProviderId = assignableProviders[static_cast<size_t>(providerSelector.SelectedIndex())].providerId;
+        }
+
+        providerSelector.Items().Clear();
+        assignableProviders.clear();
+        if (targetSelector.SelectedIndex() >= 0 &&
+            targetSelector.SelectedIndex() < static_cast<int>(currentSnapshot_.providerAssignmentTargets.size())) {
+            assignableProviders = ::MasterControlShell::buildAssignableProviderOptions(
+                currentSnapshot_.providers,
+                currentSnapshot_.providerCapabilities,
+                currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(targetSelector.SelectedIndex())]);
+        }
+
+        for (const auto& option : assignableProviders) {
+            ComboBoxItem item;
+            item.Content(box_value(winrt::hstring(option.displayName)));
+            item.Tag(box_value(winrt::hstring(option.providerId)));
+            providerSelector.Items().Append(item);
+        }
+
+        const auto preferredIndex = ::MasterControlShell::findPreferredAssignableProviderIndex(
+            assignableProviders,
+            previousProviderId,
+            L"");
+        if (preferredIndex.has_value()) {
+            providerSelector.SelectedIndex(static_cast<int>(*preferredIndex));
+        } else if (providerSelector.Items().Size() > 0) {
+            providerSelector.SelectedIndex(0);
+        } else {
+            providerSelector.SelectedIndex(-1);
+        }
+    };
+
     const auto updateSummary = [&, this]() {
-        if (providerSelector.SelectedIndex() < 0 || targetSelector.SelectedIndex() < 0 ||
-            currentSnapshot_.providers.empty() || currentSnapshot_.providerAssignmentTargets.empty()) {
-            summaryText.Text(L"Create at least one provider route and one orchestration target before assigning ownership.");
+        if (targetSelector.SelectedIndex() < 0 ||
+            currentSnapshot_.providerAssignmentTargets.empty()) {
+            summaryText.Text(L"Create at least one orchestration target before assigning ownership.");
+            return;
+        }
+        if (providerSelector.SelectedIndex() < 0 || assignableProviders.empty()) {
+            summaryText.Text(L"Connect a provider with active credentials for this lane before assigning ownership.");
             return;
         }
 
-        const auto& provider = currentSnapshot_.providers[static_cast<size_t>(providerSelector.SelectedIndex())];
+        const auto& provider = assignableProviders[static_cast<size_t>(providerSelector.SelectedIndex())];
         const auto& target = currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(targetSelector.SelectedIndex())];
         std::wstring summary = L"This will assign AI model ";
-        summary += provider.displayName.empty() ? provider.id : provider.displayName;
+        summary += provider.displayName.empty() ? provider.providerId : provider.displayName;
         summary += L" to responsibility lane ";
         summary += target.displayName.empty() ? target.targetId : target.displayName;
         if (!target.kind.empty()) {
@@ -3036,8 +3070,10 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
         updateSummary();
     });
     targetSelector.SelectionChanged([&](IInspectable const&, Controls::SelectionChangedEventArgs const&) {
+        refreshProviderSelector();
         updateSummary();
     });
+    refreshProviderSelector();
     updateSummary();
 
     scrollViewer.Content(root);
@@ -3045,16 +3081,21 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
 
     createButton.Click([this, dialog, createButton, statusText, providerSelector, targetSelector](IInspectable const&, RoutedEventArgs const&) {
         auto ignored = [this, dialog, createButton, statusText, providerSelector, targetSelector]() -> IAsyncAction {
-            if (providerSelector.SelectedIndex() < 0 || providerSelector.SelectedIndex() >= static_cast<int>(currentSnapshot_.providers.size())) {
-                statusText.Text(L"Create or select a provider route before saving an assignment.");
-                co_return;
-            }
             if (targetSelector.SelectedIndex() < 0 || targetSelector.SelectedIndex() >= static_cast<int>(currentSnapshot_.providerAssignmentTargets.size())) {
                 statusText.Text(L"Select an orchestration target before saving an assignment.");
                 co_return;
             }
+            const auto assignableProviders = ::MasterControlShell::buildAssignableProviderOptions(
+                currentSnapshot_.providers,
+                currentSnapshot_.providerCapabilities,
+                currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(targetSelector.SelectedIndex())]);
+            if (providerSelector.SelectedIndex() < 0 ||
+                providerSelector.SelectedIndex() >= static_cast<int>(assignableProviders.size())) {
+                statusText.Text(L"Connect a provider with active credentials for this lane before saving an assignment.");
+                co_return;
+            }
 
-            const auto& provider = currentSnapshot_.providers[static_cast<size_t>(providerSelector.SelectedIndex())];
+            const auto& provider = assignableProviders[static_cast<size_t>(providerSelector.SelectedIndex())];
             const auto& target = currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(targetSelector.SelectedIndex())];
 
             createButton.IsEnabled(false);
@@ -3065,7 +3106,7 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
             const auto result = runtime_.UpsertProviderAssignment(::MasterControlShell::ShellProviderAssignment{
                 target.targetId,
                 target.kind,
-                provider.id,
+                provider.providerId,
                 L""
             });
             co_await uiThread;
@@ -3078,7 +3119,7 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
             }
 
             GuidedWorkflowStatusText().Text(winrt::hstring(L"Assigned AI model '" +
-                (provider.displayName.empty() ? provider.id : provider.displayName) +
+                (provider.displayName.empty() ? provider.providerId : provider.displayName) +
                 L"' to " +
                 (target.displayName.empty() ? target.targetId : target.displayName) + L"."));
             const auto completionMessage = GuidedWorkflowStatusText().Text();

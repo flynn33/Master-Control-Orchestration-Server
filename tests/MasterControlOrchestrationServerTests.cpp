@@ -6,6 +6,7 @@
 #include "MasterControl/MasterControlModels.h"
 #include "MasterControl/MasterControlRuntime.h"
 #include "MasterControl/MasterControlVersion.h"
+#include "../src/MasterControlShell/ProviderAssignmentOptions.h"
 #include "../src/MasterControlShell/SnapshotCollectionMerge.h"
 
 #include <winsock2.h>
@@ -1670,6 +1671,65 @@ int main() {
             success &= expect(
                 sawClaude && claudeConfigured,
                 "Claude sign-in registration should mark an existing Claude Code provider as credentialsConfigured.");
+
+            const auto delayedProfile = tempRoot / "delayed-signin-profile";
+            const auto delayedAuthFile = delayedProfile / ".codex" / "auth.json";
+            const auto delayedCliCommand = tempRoot / "delayed-codex-login.cmd";
+            writeTextFile(
+                delayedCliCommand,
+                "@echo off\r\n"
+                "setlocal\r\n"
+                "set \"AUTH_DIR=" + utf8FromWide(delayedAuthFile.parent_path().wstring()) + "\"\r\n"
+                "set \"AUTH_FILE=" + utf8FromWide(delayedAuthFile.wstring()) + "\"\r\n"
+                "start \"\" /b cmd /c \"ping -n 3 127.0.0.1 >nul & if not exist \"%AUTH_DIR%\" mkdir \"%AUTH_DIR%\" & echo ok > \"%AUTH_FILE%\"\"\r\n"
+                "exit /b 0\r\n");
+
+            ScopedEnvironmentOverride interactiveProfileOverride(
+                L"MASTERCONTROL_INTERACTIVE_USERPROFILE",
+                delayedProfile.wstring());
+            ScopedEnvironmentOverride delayedCodexCommandOverride(
+                L"MASTERCONTROL_CODEX_COMMAND",
+                delayedCliCommand.wstring());
+
+            const auto signInStart = httpPostJson(
+                application.browserUrl() + "api/providers/signin/start",
+                R"({"bridge":"codex","providerId":"chatgpt"})");
+            success &= expect(
+                signInStart.has_value() && signInStart->value("succeeded", false),
+                "CLI sign-in should start successfully for the delayed-auth regression path.");
+
+            std::string delayedSessionId;
+            if (signInStart.has_value()) {
+                delayedSessionId = signInStart->value("sessionId", std::string{});
+            }
+            success &= expect(
+                !delayedSessionId.empty(),
+                "CLI sign-in should return a session id so delayed auth can be polled.");
+
+            bool delayedSignInCompleted = false;
+            std::string finalDelayedStatus;
+            for (int attempt = 0; attempt < 30 && !delayedSessionId.empty(); ++attempt) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                const auto signInStatus = httpGetJson(
+                    application.browserUrl() + "api/providers/signin/status?sessionId=" + delayedSessionId);
+                if (!signInStatus.has_value()) {
+                    continue;
+                }
+                finalDelayedStatus = signInStatus->value("status", std::string{});
+                if (finalDelayedStatus == "complete") {
+                    delayedSignInCompleted = true;
+                    break;
+                }
+                if (finalDelayedStatus == "failed") {
+                    break;
+                }
+            }
+            success &= expect(
+                delayedSignInCompleted,
+                "CLI sign-in polling should tolerate a short delay between CLI exit and auth file creation.");
+            success &= expect(
+                finalDelayedStatus == "complete",
+                "Delayed CLI auth creation should end in a complete sign-in state, not a permanent failure.");
         }
 
         // =====================================================================
@@ -3241,6 +3301,73 @@ int main() {
             }
         }
 
+        {
+            const auto interactiveProfile = tempRoot / "interactive-codex-profile";
+            const auto interactiveAuthFile = interactiveProfile / ".codex" / "auth.json";
+            const auto interactiveNpmDirectory = interactiveProfile / "AppData" / "Roaming" / "npm";
+            const auto interactiveCodexCommand = interactiveNpmDirectory / "codex.cmd";
+            const auto interactiveProfileCapture = tempRoot / "interactive-codex-userprofile.txt";
+            writeTextFile(interactiveAuthFile, "{ \"signedIn\": true }\n");
+            writeTextFile(
+                interactiveCodexCommand,
+                "@echo off\r\n"
+                "setlocal\r\n"
+                "set \"PROFILE_FILE=" + utf8FromWide(interactiveProfileCapture.wstring()) + "\"\r\n"
+                "echo %USERPROFILE% > \"%PROFILE_FILE%\"\r\n"
+                "if not exist \"%USERPROFILE%\\.codex\\auth.json\" exit /b 55\r\n"
+                "echo Interactive Codex execution ok.\r\n"
+                "exit /b 0\r\n");
+
+            ScopedEnvironmentOverride interactiveProfileOverride(
+                L"MASTERCONTROL_INTERACTIVE_USERPROFILE",
+                interactiveProfile.wstring());
+
+            const auto interactiveCodexProviderResult = application.upsertProviderJson(nlohmann::json{
+                { "id", "interactive-codex-provider" },
+                { "kind", "codex" },
+                { "displayName", "Interactive Codex Provider" },
+                { "baseUrl", "https://api.openai.com/v1" },
+                { "modelId", "gpt-5-codex" },
+                { "enabled", true },
+                { "allowAutonomousControl", false }
+            }.dump());
+            success &= expect(
+                interactiveCodexProviderResult.succeeded,
+                "Interactive-user Codex provider route should save successfully.");
+
+            const auto plannerOwnershipResult = application.upsertProviderAssignmentJson(nlohmann::json{
+                { "targetId", "planner" },
+                { "kind", "role" },
+                { "providerId", "interactive-codex-provider" }
+            }.dump());
+            success &= expect(
+                plannerOwnershipResult.succeeded,
+                "Planner ownership should be assignable to the interactive-user Codex provider.");
+
+            const auto interactiveCodexExecution = application.executeProviderTaskJson(nlohmann::json{
+                { "targetId", "planner" },
+                { "prompt", "Summarize the current planning lane." },
+                { "allowToolAccess", false },
+                { "maxTurns", 1 }
+            }.dump());
+            success &= expect(
+                interactiveCodexExecution.status == MasterControl::ProviderExecutionStatus::Succeeded,
+                "CLI-backed Codex execution should succeed when the auth store and npm shim live only under the interactive user's profile.");
+            success &= expect(
+                interactiveCodexExecution.outputText == "Interactive Codex execution ok.",
+                "Interactive-user Codex execution should capture the CLI stdout payload.");
+            success &= expect(
+                std::filesystem::exists(interactiveProfileCapture),
+                "Interactive-user Codex execution should run the CLI shim discovered from the interactive user's npm directory.");
+            if (std::filesystem::exists(interactiveProfileCapture)) {
+                const auto profileCapture = readFileUtf8(interactiveProfileCapture);
+                success &= expect(
+                    profileCapture.has_value() &&
+                        profileCapture->find(utf8FromWide(interactiveProfile.wstring())) != std::string::npos,
+                    "CLI-backed Codex execution should project the interactive user's profile into USERPROFILE so the CLI can reuse shell-created auth.");
+            }
+        }
+
         if (powerShellExists()) {
             const auto packageScript = tempRoot / "package-install.ps1";
             const auto markerFile = tempRoot / "package-install.ok";
@@ -3635,6 +3762,9 @@ int main() {
             std::filesystem::exists(bootstrapInstallDirectory / "MasterControlShell.exe"),
             "Bootstrapper install should stage the shell host");
         success &= expect(
+            std::filesystem::exists(bootstrapInstallDirectory / "MasterControlOrchestrationServer.exe"),
+            "Bootstrapper install should stage the product-named Windows app launcher.");
+        success &= expect(
             std::filesystem::exists(bootstrapInstallDirectory / "share" / "MasterControlOrchestrationServer" / "web" / "index.html"),
             "Bootstrapper install should stage browser resources");
         success &= expect(
@@ -3643,6 +3773,12 @@ int main() {
         success &= expect(
             std::filesystem::exists(bootstrapInstallStateFile),
             "Bootstrapper install should write installation state");
+        const auto bootstrapInstallState = readJsonFile(bootstrapInstallStateFile);
+        success &= expect(
+            bootstrapInstallState.has_value() &&
+                bootstrapInstallState->value("launcherBinary", std::string{}) ==
+                    (bootstrapInstallDirectory / "MasterControlOrchestrationServer.exe").string(),
+            "Bootstrapper install state should record the product-named launcher as the user-facing Windows app.");
         success &= expect(
             std::filesystem::exists(bootstrapConfigurationFile),
             "Bootstrapper install should seed configuration in the configured data directory");
@@ -4131,9 +4267,17 @@ int main() {
     // the old launcher path is still the primary install surface.
     {
         const auto wixSource = readFileUtf8(sourceRepoRoot() / "installer" / "MasterControlOrchestrationServer.wxs");
+        const auto shortcutsSource = readFileUtf8(sourceRepoRoot() / "installer" / "Fragments" / "ShortcutsFragment.wxs");
+        const auto buildMsiSource = readFileUtf8(sourceRepoRoot() / "installer" / "Build-Msi.ps1");
         success &= expect(
             wixSource.has_value(),
             "MSI source should be readable for installer wording regression coverage.");
+        success &= expect(
+            shortcutsSource.has_value(),
+            "Shortcut fragment should be readable for launcher targeting regression coverage.");
+        success &= expect(
+            buildMsiSource.has_value(),
+            "Build-Msi script should be readable for launcher file-id regression coverage.");
         if (wixSource.has_value()) {
             success &= expect(
                 !containsText(*wixSource, "Launch Master Control Shell"),
@@ -4142,10 +4286,143 @@ int main() {
                 containsText(*wixSource, "Launch Master Control Orchestration Server"),
                 "MSI exit dialog should launch the Windows application by product name.");
             success &= expect(
+                containsText(*wixSource, "[#MasterControlOrchestrationServerExe]"),
+                "MSI exit dialog should launch the product-named Windows app launcher executable.");
+            success &= expect(
                 containsText(*wixSource, "Create Start Menu shortcut") &&
                     containsText(*wixSource, "Create Desktop shortcut"),
                 "MSI options dialog should continue exposing Start Menu and Desktop shortcut choices.");
         }
+        if (shortcutsSource.has_value()) {
+            success &= expect(
+                containsText(*shortcutsSource, "[#MasterControlOrchestrationServerExe]"),
+                "Installed Start Menu and Desktop shortcuts should target the product-named launcher executable.");
+        }
+        if (buildMsiSource.has_value()) {
+            success &= expect(
+                containsText(*buildMsiSource, "MasterControlOrchestrationServer.exe") &&
+                    containsText(*buildMsiSource, "MasterControlOrchestrationServerExe"),
+                "Build-Msi should assign a stable WiX File Id to the product-named launcher executable.");
+        }
+    }
+
+    // R6: assignment surfaces should only offer connected providers that can
+    // actually own the selected orchestration lane. Stale disconnected routes
+    // must not continue to win selection just because an old assignment points
+    // at them.
+    {
+        struct AssignmentProviderProbe final {
+            std::wstring id;
+            std::wstring kind;
+            std::wstring displayName;
+            bool enabled = true;
+            bool credentialsConfigured = false;
+        };
+        struct AssignmentCapabilityProbe final {
+            std::wstring providerId;
+            std::wstring kind;
+            std::vector<std::wstring> supportedTargets;
+        };
+        struct AssignmentTargetProbe final {
+            std::wstring targetId;
+            std::wstring kind;
+        };
+
+        const AssignmentTargetProbe plannerTarget{
+            L"planner",
+            L"role"
+        };
+        const std::vector<AssignmentProviderProbe> providers{
+            { L"xai-grok-20260419-075934", L"xai", L"Grok", true, false },
+            { L"chatgpt", L"codex", L"ChatGPT", true, true },
+            { L"codex", L"codex", L"Codex", true, true }
+        };
+        const std::vector<AssignmentCapabilityProbe> capabilities{
+            {
+                L"chatgpt",
+                L"codex",
+                { L"planner", L"architect" }
+            },
+            {
+                L"codex",
+                L"codex",
+                { L"forge", L"coding-specialists" }
+            },
+            {
+                L"xai-grok",
+                L"xai",
+                { L"planner" }
+            }
+        };
+
+        const auto options = MasterControlShell::buildAssignableProviderOptions(
+            providers,
+            capabilities,
+            plannerTarget);
+        success &= expect(
+            options.size() == 1U,
+            "Assignment surfaces should exclude stale or unsupported providers from the ownership picker.");
+        success &= expect(
+            !options.empty() && options.front().providerId == L"chatgpt",
+            "Planner ownership should keep the connected supported provider and drop the disconnected stale route.");
+        const auto preferredIndex = MasterControlShell::findPreferredAssignableProviderIndex(
+            options,
+            L"xai-grok-20260419-075934",
+            L"chatgpt");
+        success &= expect(
+            preferredIndex.has_value() && *preferredIndex == 0U,
+            "A disconnected stale assignment should no longer override the newly connected provider the operator just selected.");
+    }
+
+    // R7: when a lane still points at a disconnected provider, execution
+    // should explain that the ownership mapping is stale instead of blaming the
+    // operator with a generic 'configure credentials' failure.
+    {
+        const auto staleOwnershipRoot = tempRoot / "regression-stale-provider-ownership";
+        ScopedEnvironmentOverride dataDirectoryOverride(L"MASTERCONTROL_DATA_DIR", (staleOwnershipRoot / "data").wstring());
+        const auto appPaths = MasterControl::resolveAppPaths();
+        writeIsolatedAppConfiguration(appPaths.configurationFile, isolatedTestBrowserPort());
+
+        MasterControl::MasterControlApplication application;
+        success &= expect(application.initialize(), "stale-provider-ownership: application should initialize.");
+
+        const auto staleProviderResult = application.upsertProviderJson(nlohmann::json{
+            { "id", "stale-xai-provider" },
+            { "kind", "xai" },
+            { "displayName", "Stale Grok Provider" },
+            { "baseUrl", "https://api.x.ai/v1" },
+            { "modelId", "grok-code-fast-1" },
+            { "enabled", true },
+            { "allowAutonomousControl", false }
+        }.dump());
+        success &= expect(
+            staleProviderResult.succeeded,
+            "stale-provider-ownership: provider route should save successfully.");
+
+        const auto staleAssignmentResult = application.upsertProviderAssignmentJson(nlohmann::json{
+            { "targetId", "planner" },
+            { "kind", "role" },
+            { "providerId", "stale-xai-provider" }
+        }.dump());
+        success &= expect(
+            staleAssignmentResult.succeeded,
+            "stale-provider-ownership: planner assignment should save successfully.");
+
+        const auto staleExecution = application.executeProviderTaskJson(nlohmann::json{
+            { "targetId", "planner" },
+            { "prompt", "Summarize the current planning lane." },
+            { "allowToolAccess", false },
+            { "maxTurns", 1 }
+        }.dump());
+        success &= expect(
+            staleExecution.status == MasterControl::ProviderExecutionStatus::Failed,
+            "stale-provider-ownership: execution should fail when the assigned provider is disconnected.");
+        success &= expect(
+            staleExecution.errorMessage.find("Stale Grok Provider") != std::string::npos &&
+                staleExecution.errorMessage.find("reassign") != std::string::npos,
+            "stale-provider-ownership: execution should tell the operator which disconnected provider still owns the lane and to reassign it.");
+
+        application.shutdown();
     }
 
     std::filesystem::remove_all(tempRoot);

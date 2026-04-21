@@ -100,8 +100,10 @@ function Test-Excluded([string]$fileName) {
 # Stable component GUIDs: WiX will auto-generate ("*") for us. The component
 # Id is a sanitized version of the file's relative path. We give the two
 # "headline" executables explicit File Ids so the main .wxs + shortcut
-# fragment can reference them as [#MasterControlShellExe] / [#MasterControlBootstrapperExe].
+# fragment can reference them as [#MasterControlOrchestrationServerExe] /
+# [#MasterControlShellExe] / [#MasterControlBootstrapperExe].
 $specialFileIds = @{
+    'MasterControlOrchestrationServer.exe' = 'MasterControlOrchestrationServerExe'
     'MasterControlShell.exe'        = 'MasterControlShellExe'
     'MasterControlBootstrapper.exe' = 'MasterControlBootstrapperExe'
 }

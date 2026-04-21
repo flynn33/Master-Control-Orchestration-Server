@@ -67,7 +67,7 @@
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"
               Value="Launch Master Control Orchestration Server"/>
-    <Property Id="WixShellExecTarget" Value="[#MasterControlShellExe]"/>
+    <Property Id="WixShellExecTarget" Value="[#MasterControlOrchestrationServerExe]"/>
     <CustomAction Id="LaunchApplication"
                   BinaryRef="Wix4UtilCA_X64"
                   DllEntry="WixShellExec"

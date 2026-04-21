@@ -29,6 +29,8 @@ target_link_libraries(MasterControlApp
         dnsapi
         shlwapi
         shell32
+        userenv
+        wtsapi32
 )
 
 target_compile_definitions(MasterControlApp PUBLIC

@@ -25,6 +25,7 @@
 namespace {
 
 constexpr wchar_t kBootstrapperName[] = L"MasterControlBootstrapper.exe";
+constexpr wchar_t kLauncherBinaryName[] = L"MasterControlOrchestrationServer.exe";
 constexpr wchar_t kShellBinaryName[] = L"MasterControlShell.exe";
 constexpr wchar_t kLogDirectoryEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_LOG_DIR";
 constexpr wchar_t kDefaultInstallLeaf[] = L"Master Control Orchestration Server";
@@ -223,6 +224,7 @@ bool directoryContainsInstallPayload(const std::filesystem::path& directory) {
     }
 
     if (std::filesystem::exists(directory / kBootstrapperName, error) ||
+        std::filesystem::exists(directory / kLauncherBinaryName, error) ||
         std::filesystem::exists(directory / "MasterControlServiceHost.exe", error) ||
         std::filesystem::exists(directory / kShellBinaryName, error) ||
         std::filesystem::exists(directory / "installation-state.json", error)) {
@@ -1363,7 +1365,7 @@ ShellLaunchResult maybeLaunchShell(const LauncherOptions& options) {
         return result;
     }
 
-    const auto shellPath = options.installDirectory / kShellBinaryName;
+    const auto shellPath = options.installDirectory / kLauncherBinaryName;
     result.attempted = true;
     const HINSTANCE shellExecuteResult = ShellExecuteW(
         nullptr,

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Start Menu and Desktop shortcuts. Both point at MasterControlShell.exe and
+  Start Menu and Desktop shortcuts. Both point at MasterControlOrchestrationServer.exe and
   take their icon from the embedded PE resource (group 1) — no external
   IconIndex needed, because Windows uses the exe's default icon.
 
@@ -20,7 +20,7 @@
         <Shortcut Id="StartMenuShortcut"
                   Name="Master Control Orchestration Server"
                   Description="Master Control Orchestration Server Windows application"
-                  Target="[#MasterControlShellExe]"
+                  Target="[#MasterControlOrchestrationServerExe]"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="MasterControlIcon.ico"/>
         <RemoveFolder Id="RemoveApplicationProgramsFolder"
@@ -42,7 +42,7 @@
         <Shortcut Id="DesktopShortcut"
                   Name="Master Control Orchestration Server"
                   Description="Master Control Orchestration Server Windows application"
-                  Target="[#MasterControlShellExe]"
+                  Target="[#MasterControlOrchestrationServerExe]"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="MasterControlIcon.ico"/>
         <RegistryValue Root="HKCU"

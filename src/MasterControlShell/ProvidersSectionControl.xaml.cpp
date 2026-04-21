@@ -224,9 +224,16 @@ void ProvidersSectionControl::SelectProviderById(const std::wstring& providerId,
 
     suspendDirtyTracking_ = true;
     ProviderSelector().SelectedIndex(index);
-    if (preselectAssignmentOwner &&
-        ProviderAssignmentProviderSelector().Items().Size() > static_cast<uint32_t>(index + 1)) {
-        ProviderAssignmentProviderSelector().SelectedIndex(index + 1);
+    if (preselectAssignmentOwner) {
+        selectedAssignmentProviderId_ = providerId;
+        const auto assignmentIterator = std::find_if(
+            assignmentProviderOptions_.begin(),
+            assignmentProviderOptions_.end(),
+            [&providerId](const auto& option) { return option.providerId == providerId; });
+        if (assignmentIterator != assignmentProviderOptions_.end()) {
+            ProviderAssignmentProviderSelector().SelectedIndex(
+                static_cast<int>(std::distance(assignmentProviderOptions_.begin(), assignmentIterator)) + 1);
+        }
     }
     suspendDirtyTracking_ = false;
 
@@ -566,6 +573,7 @@ void ProvidersSectionControl::ProviderAssignmentTargetSelector_SelectionChanged(
     if (!suspendDirtyTracking_) {
         selectedAssignmentTargetIndex_ = ProviderAssignmentTargetSelector().SelectedIndex();
         providerAssignmentDirty_ = true;
+        RefreshAssignmentSelectors();
         UpdateEditorState();
     }
 }
@@ -574,6 +582,13 @@ void ProvidersSectionControl::ProviderAssignmentProviderSelector_SelectionChange
     Windows::Foundation::IInspectable const&,
     SelectionChangedEventArgs const&) {
     if (!suspendDirtyTracking_) {
+        selectedAssignmentProviderId_.clear();
+        const auto providerSelectionIndex = ProviderAssignmentProviderSelector().SelectedIndex();
+        if (providerSelectionIndex > 0 &&
+            providerSelectionIndex - 1 < static_cast<int>(assignmentProviderOptions_.size())) {
+            selectedAssignmentProviderId_ =
+                assignmentProviderOptions_[static_cast<size_t>(providerSelectionIndex - 1)].providerId;
+        }
         providerAssignmentDirty_ = true;
         UpdateEditorState();
     }
@@ -1008,6 +1023,7 @@ void ProvidersSectionControl::RefreshSubAgentMemberSelector() {
 
 void ProvidersSectionControl::RefreshAssignmentSelectors() {
     const auto previousTargetIndex = selectedAssignmentTargetIndex_;
+    const auto previouslySelectedProviderId = selectedAssignmentProviderId_;
     suspendDirtyTracking_ = true;
 
     ProviderAssignmentTargetSelector().Items().Clear();
@@ -1023,16 +1039,35 @@ void ProvidersSectionControl::RefreshAssignmentSelectors() {
 
     ProviderAssignmentProviderSelector().Items().Clear();
     ProviderAssignmentProviderSelector().Items().Append(winrt::box_value(winrt::hstring(L"(Unassigned)")));
-    for (const auto& provider : providers_) {
-        ProviderAssignmentProviderSelector().Items().Append(
-            winrt::box_value(winrt::hstring(provider.displayName.empty() ? provider.id : provider.displayName)));
-    }
+    assignmentProviderOptions_.clear();
 
     if (previousTargetIndex >= 0 && previousTargetIndex < static_cast<int>(providerAssignmentTargets_.size())) {
-        ProviderAssignmentTargetSelector().SelectedIndex(previousTargetIndex);
+        selectedAssignmentTargetIndex_ = previousTargetIndex;
+    } else if (!providerAssignmentTargets_.empty()) {
+        selectedAssignmentTargetIndex_ = 0;
+    } else {
+        selectedAssignmentTargetIndex_ = -1;
+    }
+
+    if (selectedAssignmentTargetIndex_ >= 0 &&
+        selectedAssignmentTargetIndex_ < static_cast<int>(providerAssignmentTargets_.size())) {
+        const auto& target = providerAssignmentTargets_[static_cast<size_t>(selectedAssignmentTargetIndex_)];
+        assignmentProviderOptions_ = ::MasterControlShell::buildAssignableProviderOptions(
+            providers_,
+            providerCapabilities_,
+            target);
+    }
+
+    for (const auto& option : assignmentProviderOptions_) {
+        ProviderAssignmentProviderSelector().Items().Append(
+            winrt::box_value(winrt::hstring(option.displayName)));
+    }
+
+    if (selectedAssignmentTargetIndex_ >= 0 &&
+        selectedAssignmentTargetIndex_ < static_cast<int>(providerAssignmentTargets_.size())) {
+        ProviderAssignmentTargetSelector().SelectedIndex(selectedAssignmentTargetIndex_);
     } else if (!providerAssignmentTargets_.empty()) {
         ProviderAssignmentTargetSelector().SelectedIndex(0);
-        selectedAssignmentTargetIndex_ = 0;
     }
 
     if (selectedAssignmentTargetIndex_ >= 0 &&
@@ -1042,20 +1077,29 @@ void ProvidersSectionControl::RefreshAssignmentSelectors() {
             providerAssignments_.begin(),
             providerAssignments_.end(),
             [&target](const auto& assignment) { return assignment.targetId == target.targetId; });
-        if (assignmentIterator != providerAssignments_.end()) {
-            const auto providerIterator = std::find_if(
-                providers_.begin(),
-                providers_.end(),
-                [&assignmentIterator](const auto& provider) { return provider.id == assignmentIterator->providerId; });
-            if (providerIterator != providers_.end()) {
-                ProviderAssignmentProviderSelector().SelectedIndex(
-                    static_cast<int>(std::distance(providers_.begin(), providerIterator)) + 1);
-            } else {
-                ProviderAssignmentProviderSelector().SelectedIndex(0);
-            }
+        const auto assignedProviderId = assignmentIterator != providerAssignments_.end()
+            ? std::wstring(assignmentIterator->providerId)
+            : std::wstring{};
+        const auto preferredPrimary = providerAssignmentDirty_
+            ? previouslySelectedProviderId
+            : assignedProviderId;
+        const auto preferredSecondary = providerAssignmentDirty_
+            ? assignedProviderId
+            : selectedProviderId_;
+        const auto preferredIndex = ::MasterControlShell::findPreferredAssignableProviderIndex(
+            assignmentProviderOptions_,
+            preferredPrimary,
+            preferredSecondary);
+        if (preferredIndex.has_value()) {
+            selectedAssignmentProviderId_ = assignmentProviderOptions_[*preferredIndex].providerId;
+            ProviderAssignmentProviderSelector().SelectedIndex(static_cast<int>(*preferredIndex) + 1);
         } else {
+            selectedAssignmentProviderId_.clear();
             ProviderAssignmentProviderSelector().SelectedIndex(0);
         }
+    } else {
+        selectedAssignmentProviderId_.clear();
+        ProviderAssignmentProviderSelector().SelectedIndex(0);
     }
 
     suspendDirtyTracking_ = false;
@@ -1637,8 +1681,9 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::SaveProviderAs
     const auto& target = providerAssignmentTargets_[static_cast<size_t>(selectedAssignmentTargetIndex_)];
     std::wstring providerId;
     const auto providerSelectionIndex = ProviderAssignmentProviderSelector().SelectedIndex();
-    if (providerSelectionIndex > 0 && providerSelectionIndex - 1 < static_cast<int>(providers_.size())) {
-        providerId = providers_[static_cast<size_t>(providerSelectionIndex - 1)].id;
+    if (providerSelectionIndex > 0 &&
+        providerSelectionIndex - 1 < static_cast<int>(assignmentProviderOptions_.size())) {
+        providerId = assignmentProviderOptions_[static_cast<size_t>(providerSelectionIndex - 1)].providerId;
     }
 
     SaveProviderAssignmentButton().IsEnabled(false);

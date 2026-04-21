@@ -69,6 +69,7 @@ struct InstallationState final {
     std::string version;
     std::string installDirectory;
     std::string serviceBinary;
+    std::string launcherBinary;
     std::string shellBinary;
     std::string bootstrapperBinary;
     std::string shortcutDirectory;
@@ -132,6 +133,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     version,
     installDirectory,
     serviceBinary,
+    launcherBinary,
     shellBinary,
     bootstrapperBinary,
     shortcutDirectory,
@@ -319,6 +321,7 @@ bool directoryContainsInstallPayload(const std::filesystem::path& directory) {
     }
 
     if (std::filesystem::exists(directory / "MasterControlBootstrapper.exe", error) ||
+        std::filesystem::exists(directory / "MasterControlOrchestrationServer.exe", error) ||
         std::filesystem::exists(directory / "MasterControlServiceHost.exe", error) ||
         std::filesystem::exists(directory / "MasterControlShell.exe", error) ||
         std::filesystem::exists(directory / kInstallStateFileName, error)) {
@@ -999,6 +1002,7 @@ PayloadLayout resolvePayloadLayout() {
         }
     }
     if (std::filesystem::exists(currentDirectory / "MasterControlServiceHost.exe") &&
+        std::filesystem::exists(currentDirectory / "MasterControlOrchestrationServer.exe") &&
         std::filesystem::exists(currentDirectory / "MasterControlShell.exe") &&
         !flatShare.empty()) {
         return PayloadLayout{
@@ -1017,7 +1021,8 @@ PayloadLayout resolvePayloadLayout() {
     const auto serviceDirectory = buildRoot / "src" / "MasterControlServiceHost" / configurationName;
     const auto shellDirectory = buildRoot / "src" / "MasterControlShell" / configurationName;
 
-    if (std::filesystem::exists(serviceDirectory / "MasterControlServiceHost.exe") &&
+    if (std::filesystem::exists(currentDirectory / "MasterControlOrchestrationServer.exe") &&
+        std::filesystem::exists(serviceDirectory / "MasterControlServiceHost.exe") &&
         std::filesystem::exists(shellDirectory / "MasterControlShell.exe")) {
         return PayloadLayout{
             false,
@@ -1074,6 +1079,7 @@ InstallationState buildInstallationState(const std::filesystem::path& installDir
     state.version = MASTERCONTROL_BOOTSTRAPPER_VERSION;
     state.installDirectory = installDirectory.string();
     state.serviceBinary = (installDirectory / "MasterControlServiceHost.exe").string();
+    state.launcherBinary = (installDirectory / "MasterControlOrchestrationServer.exe").string();
     state.shellBinary = (installDirectory / "MasterControlShell.exe").string();
     state.bootstrapperBinary = (installDirectory / "MasterControlBootstrapper.exe").string();
     state.shortcutDirectory = shortcutDirectory.string();
@@ -1246,7 +1252,10 @@ bool registerUninstallEntry(const InstallationState& state) {
         setRegistryStringValue(key, L"Publisher", L"James Daley") &&
         setRegistryStringValue(key, L"DisplayVersion", wideFromUtf8(state.version)) &&
         setRegistryStringValue(key, L"InstallLocation", std::filesystem::path(state.installDirectory).wstring()) &&
-        setRegistryStringValue(key, L"DisplayIcon", std::filesystem::path(state.shellBinary).wstring()) &&
+        setRegistryStringValue(
+            key,
+            L"DisplayIcon",
+            std::filesystem::path(state.launcherBinary.empty() ? state.shellBinary : state.launcherBinary).wstring()) &&
         setRegistryStringValue(key, L"UninstallString", uninstallCommand) &&
         setRegistryDwordValue(key, L"NoModify", 1) &&
         setRegistryDwordValue(key, L"NoRepair", 0);
@@ -1264,12 +1273,13 @@ bool unregisterUninstallEntry() {
 bool createShellShortcut(const InstallationState& state) {
     const auto shortcutPath = std::filesystem::path(state.shellShortcutPath);
     std::filesystem::create_directories(shortcutPath.parent_path());
+    const auto launcherPath = std::filesystem::path(state.launcherBinary.empty() ? state.shellBinary : state.launcherBinary);
 
     const auto script = L"$shell = New-Object -ComObject WScript.Shell; " \
         L"$shortcut = $shell.CreateShortcut('" + escapePowerShellLiteral(shortcutPath.wstring()) + L"'); " \
-        L"$shortcut.TargetPath = '" + escapePowerShellLiteral(std::filesystem::path(state.shellBinary).wstring()) + L"'; " \
+        L"$shortcut.TargetPath = '" + escapePowerShellLiteral(launcherPath.wstring()) + L"'; " \
         L"$shortcut.WorkingDirectory = '" + escapePowerShellLiteral(std::filesystem::path(state.installDirectory).wstring()) + L"'; " \
-        L"$shortcut.IconLocation = '" + escapePowerShellLiteral(std::filesystem::path(state.shellBinary).wstring()) + L",0'; " \
+        L"$shortcut.IconLocation = '" + escapePowerShellLiteral(launcherPath.wstring()) + L",0'; " \
         L"$shortcut.Description = '" + std::wstring(kProductDisplayName) + L" Windows application'; " \
         L"$shortcut.Save()";
 
@@ -1280,9 +1290,10 @@ bool createShellShortcut(const InstallationState& state) {
 bool createDashboardShortcut(const InstallationState& state) {
     const auto shortcutPath = std::filesystem::path(state.dashboardShortcutPath);
     std::filesystem::create_directories(shortcutPath.parent_path());
+    const auto iconPath = state.launcherBinary.empty() ? state.shellBinary : state.launcherBinary;
     const auto contents =
         std::string("[InternetShortcut]\r\nURL=") + state.browserUrl +
-        "\r\nIconFile=" + state.shellBinary +
+        "\r\nIconFile=" + iconPath +
         "\r\nIconIndex=0\r\n";
     return writeTextFile(shortcutPath, contents);
 }
@@ -1861,6 +1872,7 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
     };
 
     checkFile(installDirectory / "MasterControlServiceHost.exe", L"Service host");
+    checkFile(installDirectory / "MasterControlOrchestrationServer.exe", L"Windows app launcher");
     checkFile(installDirectory / "MasterControlShell.exe", L"Shell host");
     checkFile(installDirectory / "MasterControlBootstrapper.exe", L"Bootstrapper");
     std::filesystem::path shareRoot;
@@ -2157,6 +2169,9 @@ bool runPreflight(const std::filesystem::path& installDirectory, const Integrati
     }
 
     if (payloadLayout.has_value()) {
+        if (!std::filesystem::exists(payloadLayout->bootstrapperDirectory / "MasterControlOrchestrationServer.exe")) {
+            appendIssue(L"Bootstrapper payload is missing MasterControlOrchestrationServer.exe.");
+        }
         if (!std::filesystem::exists(payloadLayout->serviceDirectory / "MasterControlServiceHost.exe")) {
             appendIssue(L"Bootstrapper payload is missing MasterControlServiceHost.exe.");
         }

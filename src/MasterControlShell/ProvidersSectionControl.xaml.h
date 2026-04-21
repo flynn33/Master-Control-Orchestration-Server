@@ -7,6 +7,7 @@
 #include "ProvidersSectionControl.g.h"
 #include "pch.h"
 
+#include "ProviderAssignmentOptions.h"
 #include "ShellRuntime.h"
 
 namespace winrt::MasterControlShell::implementation {
@@ -152,6 +153,8 @@ private:
     int selectedSubAgentGroupIndex_ = -1;
     std::wstring selectedSubAgentGroupId_;
     int selectedAssignmentTargetIndex_ = -1;
+    std::wstring selectedAssignmentProviderId_;
+    std::vector<::MasterControlShell::AssignableProviderOption> assignmentProviderOptions_;
     int selectedExecutionTargetIndex_ = -1;
 };
 

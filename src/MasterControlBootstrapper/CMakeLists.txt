@@ -17,6 +17,20 @@ target_compile_definitions(MasterControlBootstrapper PRIVATE
     MASTERCONTROL_BOOTSTRAPPER_VERSION="${PROJECT_VERSION}"
 )
 
+add_executable(MasterControlOrchestrationServerLauncher WIN32
+    launcher_main.cpp
+    MasterControlBootstrapper.rc
+)
+
+set_target_properties(MasterControlOrchestrationServerLauncher PROPERTIES
+    OUTPUT_NAME "MasterControlOrchestrationServer"
+)
+
+target_link_libraries(MasterControlOrchestrationServerLauncher PRIVATE
+    shell32
+    user32
+)
+
 add_executable(MasterControlOrchestrationServerSetup WIN32
     setup_main.cpp
     MasterControlBootstrapper.rc
@@ -36,3 +50,4 @@ target_link_libraries(MasterControlOrchestrationServerSetup PRIVATE
 )
 
 install(TARGETS MasterControlBootstrapper RUNTIME DESTINATION .)
+install(TARGETS MasterControlOrchestrationServerLauncher RUNTIME DESTINATION .)
