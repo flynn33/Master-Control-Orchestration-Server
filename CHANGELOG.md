@@ -5,6 +5,17 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.5-rc.3] - 2026-04-21
+### Summary
+**Release candidate for the Windows app install and provider-role workflow.** This candidate fixes the last two operator-facing gaps from rc.2: the MSI now presents the product as the Windows application instead of "the shell," and the Windows app no longer lets stale cached provider rows shadow the live signed-in provider state after authentication.
+
+### Included Changes
+- fix(shell): the Windows app now prefers authoritative `/api/dashboard` provider and sub-agent-group rows over stale cached rows, de-duplicating by id so authenticated providers stay marked ready for role assignment and autonomy controls after sign-in.
+- test: `tests/MasterControlOrchestrationServerTests.cpp` covers the authoritative snapshot merge semantics that caused stale unsigned provider rows to shadow the live signed-in copy.
+- fix(installer): `installer/MasterControlOrchestrationServer.wxs` now says "Launch Master Control Orchestration Server" and "Launch the ... Windows app after installation completes" instead of telling operators to launch "Master Control Shell."
+- test: the regression suite now verifies the MSI still exposes Start Menu and Desktop shortcut options while using Windows-app wording instead of shell wording.
+- fix(browser/package): host guidance in `resources/web/app.js`, `INSTALL.txt`, and `START-HERE.txt` now consistently points operators at the Master Control Orchestration Server Windows app on the host machine.
+
 ## [0.4.5-rc.2] - 2026-04-20
 ### Summary
 **GitHub-published release candidate for the Windows host experience.** This release supersedes the old `v0.4.5-rc.1` tag mismatch and publishes the current host-session AI sign-in and MSI-first packaging fixes as a clean prerelease from the latest commit.

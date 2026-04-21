@@ -1,11 +1,25 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.5-rc.2",
-  "current_tag": "v0.4.5-rc.2",
-  "released_at": "2026-04-20",
+  "current_version": "0.4.5-rc.3",
+  "current_tag": "v0.4.5-rc.3",
+  "released_at": "2026-04-21",
   "last_release_commit": "0e76391",
   "history": [
+    {
+      "version": "0.4.5-rc.3",
+      "tag": "v0.4.5-rc.3",
+      "released_at": "2026-04-21",
+      "commit": "",
+      "summary": "Release candidate for the Windows app install and provider-role workflow. Fixes the remaining rc.2 operator-facing gaps by making the MSI talk about the Windows app instead of 'the shell' and by preferring live dashboard provider rows over stale cached provider rows after sign-in so role assignment and autonomy controls keep seeing the authenticated provider state.",
+      "entries": [
+        "fix(shell): authoritative /api/dashboard provider and sub-agent-group rows now de-duplicate and outrank cached shell snapshot rows, so authenticated providers stay ready for role assignment after sign-in",
+        "test: MasterControlOrchestrationServerTests covers the authoritative snapshot merge semantics that previously let stale unsigned provider rows shadow the live signed-in copy",
+        "fix(installer): MSI launch-on-finish copy now refers to Master Control Orchestration Server as the Windows app instead of 'Master Control Shell', while keeping Start Menu and Desktop shortcut choices visible",
+        "test: installer regression coverage now verifies the MSI wording and shortcut options in installer/MasterControlOrchestrationServer.wxs",
+        "fix(browser/package): host guidance in the browser status view and packaged install docs now consistently points operators at the Master Control Orchestration Server Windows app on the host machine"
+      ]
+    },
     {
       "version": "0.4.5-rc.2",
       "tag": "v0.4.5-rc.2",

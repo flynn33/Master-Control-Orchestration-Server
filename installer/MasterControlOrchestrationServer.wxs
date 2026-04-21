@@ -63,10 +63,10 @@
     <ui:WixUI Id="WixUI_InstallDir"/>
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER"/>
 
-    <!-- Install-as exit dialog checkbox: launch Master Control Shell. -->
+    <!-- Install-as exit dialog checkbox: launch the Windows app. -->
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"
-              Value="Launch Master Control Shell"/>
+              Value="Launch Master Control Orchestration Server"/>
     <Property Id="WixShellExecTarget" Value="[#MasterControlShellExe]"/>
     <CustomAction Id="LaunchApplication"
                   BinaryRef="Wix4UtilCA_X64"
@@ -129,7 +129,7 @@
                  Text="Create Desktop shortcut"/>
         <Control Id="LaunchCheck" Type="CheckBox" X="20" Y="170" Width="330" Height="17"
                  Property="LAUNCH_ON_EXIT" CheckBoxValue="1"
-                 Text="Launch Master Control Shell after installation completes"/>
+                 Text="Launch the Master Control Orchestration Server Windows app after installation completes"/>
 
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)"/>
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)"/>

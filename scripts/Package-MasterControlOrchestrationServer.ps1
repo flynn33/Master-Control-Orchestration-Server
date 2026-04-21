@@ -279,10 +279,10 @@ Silent / CI install
 msiexec /i $msiFileName /qn /l*v install.log
 
 Host machine use
-On the machine where the server is installed, launch MasterControlShell.exe
-from the Start Menu or Desktop shortcut. The Windows shell is the primary
-operator surface on the host machine. The browser dashboard is for remote
-access from other clients on the LAN.
+On the machine where the server is installed, launch the Master Control
+Orchestration Server Windows app from the Start Menu or Desktop shortcut.
+It is the primary operator surface on the host machine. The browser
+dashboard is for remote access from other clients on the LAN.
 
 Validation
 $(Split-Path -Leaf $bundleValidationPath)
@@ -311,10 +311,10 @@ Advanced / CI:
 USING THE SERVER ON THE HOST MACHINE
 
 The Master Control Orchestration Server runs as a Windows service and ships
-with a native Windows application (MasterControlShell.exe). On the machine where
-you installed the server, launch the Windows app - it is the full
-Windows-application surface for operator use and lives in the Start Menu
-under 'Master Control Orchestration Server'.
+with a native Windows application. On the machine where you installed the
+server, launch the Windows app - it is the full Windows-application surface
+for operator use and lives in the Start Menu under
+'Master Control Orchestration Server'.
 
 The browser dashboard is intended for remote clients on the LAN. A
 shortcut to it is installed under 'Start Menu > Master Control

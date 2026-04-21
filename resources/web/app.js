@@ -444,7 +444,7 @@ function renderSignInCards() {
     const session = sessions[bridge];
     const matchingProvider = (snapshot.providers || []).find((p) => p.id === cap.providerId);
 
-    let statusLine = 'Use MasterControlShell.exe on the host machine to install, sign in, and register this provider. The browser dashboard is for remote access only.';
+    let statusLine = 'Use the Master Control Orchestration Server Windows app on the host machine to install, sign in, and register this provider. The browser dashboard is for remote access only.';
     let buttonLabel = 'Use Windows app on host';
     let buttonDisabled = ' disabled';
 
@@ -458,17 +458,17 @@ function renderSignInCards() {
       buttonLabel = 'Waiting on host';
       buttonDisabled = ' disabled';
     } else if (session && session.status === 'legacy-browser-flow') {
-      statusLine = 'A host-machine sign-in is already in progress. Complete the prompt in the Windows shell or sign-in console on the host.';
+      statusLine = 'A host-machine sign-in is already in progress. Complete the prompt in the Windows app or sign-in console on the host.';
       buttonLabel = 'Waiting for sign-in…';
       buttonDisabled = ' disabled';
     } else if (matchingProvider && matchingProvider.credentialsConfigured) {
       statusLine = `Signed in. ${escapeHtml(cap.cliBridgeAccountLabel || 'Account is ready')}. This provider is ready for remote monitoring and role assignment.`;
       buttonLabel = 'Ready on host';
     } else if (info.signedIn) {
-      statusLine = 'Use MasterControlShell.exe on the host machine to finish registration or re-authenticate this provider. The browser dashboard is for remote access only.';
+      statusLine = 'Use the Master Control Orchestration Server Windows app on the host machine to finish registration or re-authenticate this provider. The browser dashboard is for remote access only.';
       buttonLabel = 'Finish in Windows app';
     } else {
-      statusLine = 'Use MasterControlShell.exe on the host machine to start sign-in for this provider. Interactive account sign-in does not start from the remote browser.';
+      statusLine = 'Use the Master Control Orchestration Server Windows app on the host machine to start sign-in for this provider. Interactive account sign-in does not start from the remote browser.';
     }
 
     const message = session && session.message ? `<p class="status-message" data-tone="${escapeHtml(session.status === 'failed' ? 'error' : session.status === 'complete' ? 'success' : 'info')}">${escapeHtml(session.message)}</p>` : '';
@@ -529,8 +529,8 @@ function renderSignInCards() {
   const cliSection = uniqueCaps.length ? `
       <p class="eyebrow">Add AI Model \u2014 Account Sign-In</p>
       <h3>Complete account sign-in from the host Windows app</h3>
-      <p class="narrative-copy">Use MasterControlShell.exe on the host machine for interactive account sign-in. This browser view is status-only for remote access.</p>
-      <p class="narrative-copy">Open MasterControlShell.exe on the host machine to start or finish sign-in. This browser view is status-only for remote access and role assignment.</p>
+      <p class="narrative-copy">Use the Master Control Orchestration Server Windows app on the host machine for interactive account sign-in. This browser view is status-only for remote access.</p>
+      <p class="narrative-copy">Open the Master Control Orchestration Server Windows app on the host machine to start or finish sign-in. Role assignment and autonomy controls live there.</p>
       <div class="sign-in-grid">
         ${cardsMarkup}
       </div>

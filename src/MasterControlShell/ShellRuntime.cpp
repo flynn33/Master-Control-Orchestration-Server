@@ -4,6 +4,7 @@
 
 #include "pch.h"
 
+#include "SnapshotCollectionMerge.h"
 #include "ShellRuntime.h"
 
 #include <ShlObj.h>
@@ -2106,11 +2107,17 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                     dashboardJson->GetNamedArray(L"providers", JsonArray()),
                     providerRow,
                     providerRows);
+                std::vector<ShellProviderConnection> liveProviders;
                 for (const auto& value : dashboardJson->GetNamedArray(L"providers", JsonArray())) {
                     if (value.ValueType() == JsonValueType::Object) {
-                        providers.push_back(providerFromJson(value.GetObject()));
+                        liveProviders.push_back(providerFromJson(value.GetObject()));
                     }
                 }
+                providers = mergeAuthoritativeSnapshotCollection(
+                    providers,
+                    std::move(liveProviders),
+                    dashboardJson->HasKey(L"providers"),
+                    [](const ShellProviderConnection& provider) { return provider.id; });
                 for (const auto& value : dashboardJson->GetNamedArray(L"providerCapabilities", JsonArray())) {
                     if (value.ValueType() == JsonValueType::Object) {
                         providerCapabilities.push_back(providerCapabilityFromJson(value.GetObject()));
@@ -2121,11 +2128,17 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                         providerCredentialStatuses.push_back(providerCredentialStatusFromJson(value.GetObject()));
                     }
                 }
+                std::vector<ShellSubAgentGroupDefinition> liveSubAgentGroups;
                 for (const auto& value : dashboardJson->GetNamedArray(L"subAgentGroups", JsonArray())) {
                     if (value.ValueType() == JsonValueType::Object) {
-                        subAgentGroups.push_back(subAgentGroupFromJson(value.GetObject()));
+                        liveSubAgentGroups.push_back(subAgentGroupFromJson(value.GetObject()));
                     }
                 }
+                subAgentGroups = mergeAuthoritativeSnapshotCollection(
+                    subAgentGroups,
+                    std::move(liveSubAgentGroups),
+                    dashboardJson->HasKey(L"subAgentGroups"),
+                    [](const ShellSubAgentGroupDefinition& group) { return group.groupId; });
                 for (const auto& value : dashboardJson->GetNamedArray(L"providerAssignmentTargets", JsonArray())) {
                     if (value.ValueType() == JsonValueType::Object) {
                         providerAssignmentTargets.push_back(providerAssignmentTargetFromJson(value.GetObject()));

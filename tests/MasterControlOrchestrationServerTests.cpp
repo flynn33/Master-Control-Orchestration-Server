@@ -6,6 +6,7 @@
 #include "MasterControl/MasterControlModels.h"
 #include "MasterControl/MasterControlRuntime.h"
 #include "MasterControl/MasterControlVersion.h"
+#include "../src/MasterControlShell/SnapshotCollectionMerge.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -131,11 +132,20 @@ std::optional<std::string> readFileUtf8(const std::filesystem::path& filePath) {
         std::istreambuf_iterator<char>());
 }
 
+bool containsText(const std::string& text, const std::string& needle) {
+    return text.find(needle) != std::string::npos;
+}
+
 struct TestHttpRequest final {
     std::string method;
     std::string path;
     std::map<std::string, std::string> headers;
     std::string body;
+};
+
+struct SnapshotCollectionProbe final {
+    std::string id;
+    bool ready = false;
 };
 
 struct TestHttpResponse final {
@@ -4075,6 +4085,67 @@ int main() {
         }
 
         application.shutdown();
+    }
+
+    // R4: when the shell has both cached providers and an authoritative
+    // dashboard payload for the same provider id, the authoritative copy must
+    // come first so the authenticated state wins and stale duplicates do not
+    // shadow role-assignment or sign-in status checks.
+    {
+        const std::vector<SnapshotCollectionProbe> cachedProviders{
+            { "codex", false },
+            { "claude-code", false }
+        };
+        const std::vector<SnapshotCollectionProbe> liveProviders{
+            { "codex", true }
+        };
+        const auto mergedProviders = MasterControlShell::mergeAuthoritativeSnapshotCollection(
+            cachedProviders,
+            liveProviders,
+            true,
+            [](const SnapshotCollectionProbe& provider) { return provider.id; });
+
+        success &= expect(
+            mergedProviders.size() == 2U,
+            "Shell snapshot merge should de-duplicate providers by id when dashboard data is available.");
+        success &= expect(
+            mergedProviders.front().id == "codex" && mergedProviders.front().ready,
+            "Authoritative dashboard providers should come first so live authenticated state wins.");
+        success &= expect(
+            mergedProviders.back().id == "claude-code" && !mergedProviders.back().ready,
+            "Cached providers without authoritative duplicates should still be preserved after the live provider list.");
+
+        const auto clearedProviders = MasterControlShell::mergeAuthoritativeSnapshotCollection(
+            cachedProviders,
+            std::vector<SnapshotCollectionProbe>{},
+            true,
+            [](const SnapshotCollectionProbe& provider) { return provider.id; });
+        success &= expect(
+            clearedProviders.empty(),
+            "An authoritative empty dashboard provider array should clear the cached provider list.");
+    }
+
+    // R5: the MSI should present the product as the Windows application and
+    // continue advertising Start Menu / Desktop shortcut choices in the native
+    // options dialog. If these strings drift back to 'Shell', operators assume
+    // the old launcher path is still the primary install surface.
+    {
+        const auto wixSource = readFileUtf8(sourceRepoRoot() / "installer" / "MasterControlOrchestrationServer.wxs");
+        success &= expect(
+            wixSource.has_value(),
+            "MSI source should be readable for installer wording regression coverage.");
+        if (wixSource.has_value()) {
+            success &= expect(
+                !containsText(*wixSource, "Launch Master Control Shell"),
+                "MSI dialogs should no longer tell operators to launch 'Master Control Shell'.");
+            success &= expect(
+                containsText(*wixSource, "Launch Master Control Orchestration Server"),
+                "MSI exit dialog should launch the Windows application by product name.");
+            success &= expect(
+                containsText(*wixSource, "Create Start Menu shortcut") &&
+                    containsText(*wixSource, "Create Desktop shortcut"),
+                "MSI options dialog should continue exposing Start Menu and Desktop shortcut choices.");
+        }
     }
 
     std::filesystem::remove_all(tempRoot);
