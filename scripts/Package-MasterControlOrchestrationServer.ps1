@@ -284,6 +284,12 @@ Orchestration Server Windows app from the Start Menu or Desktop shortcut.
 It is the primary operator surface on the host machine. The browser
 dashboard is for remote access from other clients on the LAN.
 
+Persistent diagnostics
+Verbose installer, runtime, shell, warning, error, and telemetry logs are
+stored under:
+%PUBLIC%\Documents\Master Control Orchestration Server\logs
+Look for installer\, runtime\, and shell\ plus LOG-LOCATION.txt.
+
 Validation
 $(Split-Path -Leaf $bundleValidationPath)
 
@@ -320,6 +326,15 @@ The browser dashboard is intended for remote clients on the LAN. A
 shortcut to it is installed under 'Start Menu > Master Control
 Orchestration Server > Remote Access > Browser Dashboard (Remote)' so it
 does not compete with the Windows app on the host itself.
+
+DIAGNOSTICS
+
+Persistent logs live under:
+%PUBLIC%\Documents\Master Control Orchestration Server\logs
+
+Use LOG-LOCATION.txt in that folder for the current runtime, shell, and
+installer paths. Runtime warnings/errors are written to runtime\events.jsonl
+and runtime telemetry is written to runtime\telemetry.jsonl.
 "@
 Set-Content -Path $startHerePath -Value $startHere -Encoding UTF8
 

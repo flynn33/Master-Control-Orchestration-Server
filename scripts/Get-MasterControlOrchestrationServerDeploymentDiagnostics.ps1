@@ -13,20 +13,24 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 
 function Get-PersistentInstallerLogRoot {
+    return (Join-Path (Get-PersistentLogRoot) "installer")
+}
+
+function Get-PersistentLogRoot {
     if (-not [string]::IsNullOrWhiteSpace($env:MASTERCONTROL_BOOTSTRAPPER_PERSISTENT_LOG_DIR)) {
-        return $env:MASTERCONTROL_BOOTSTRAPPER_PERSISTENT_LOG_DIR
+        return (Split-Path -Parent $env:MASTERCONTROL_BOOTSTRAPPER_PERSISTENT_LOG_DIR)
     }
 
     $publicDocuments = [Environment]::GetFolderPath("CommonDocuments")
     if (-not [string]::IsNullOrWhiteSpace($publicDocuments)) {
-        return (Join-Path $publicDocuments "Master Control Orchestration Server\logs\installer")
+        return (Join-Path $publicDocuments "Master Control Orchestration Server\logs")
     }
 
     if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-        return (Join-Path $env:LOCALAPPDATA "Master Control Orchestration Server\logs\installer")
+        return (Join-Path $env:LOCALAPPDATA "Master Control Orchestration Server\logs")
     }
 
-    return (Join-Path $env:TEMP "Master Control Orchestration Server\logs\installer")
+    return (Join-Path $env:TEMP "Master Control Orchestration Server\logs")
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
@@ -38,27 +42,62 @@ $destinationRoot = Join-Path $OutputRoot ("deployment-diagnostics-" + $timestamp
 $artifactsDirectory = Join-Path $destinationRoot "artifacts"
 New-Item -ItemType Directory -Force -Path $artifactsDirectory | Out-Null
 
-$persistentLogRoot = Get-PersistentInstallerLogRoot
-$latestSessionPath = Join-Path $persistentLogRoot "latest-session.json"
-$latestRecordPath = Join-Path $persistentLogRoot "installer-latest.json"
-$latestFailurePath = Join-Path $persistentLogRoot "installer-latest-failure.json"
-$shellLatestPath = Join-Path $persistentLogRoot "components\shell-latest.log"
-$serviceLatestPath = Join-Path $persistentLogRoot "components\service-latest.log"
+$persistentLogRoot = Get-PersistentLogRoot
+$persistentInstallerLogRoot = Get-PersistentInstallerLogRoot
+$latestSessionPath = Join-Path $persistentInstallerLogRoot "latest-session.json"
+$latestRecordPath = Join-Path $persistentInstallerLogRoot "installer-latest.json"
+$latestFailurePath = Join-Path $persistentInstallerLogRoot "installer-latest-failure.json"
+$shellLatestPath = Join-Path $persistentInstallerLogRoot "components\shell-latest.log"
+$serviceLatestPath = Join-Path $persistentInstallerLogRoot "components\service-latest.log"
+$logLocationPath = Join-Path $persistentLogRoot "LOG-LOCATION.txt"
+$runtimeLogLocationPath = Join-Path $persistentLogRoot "runtime\LOG-LOCATION.txt"
+$runtimeEventsPath = Join-Path $persistentLogRoot "runtime\events.jsonl"
+$runtimeTelemetryPath = Join-Path $persistentLogRoot "runtime\telemetry.jsonl"
+$shellLogLocationPath = Join-Path $persistentLogRoot "shell\LOG-LOCATION.txt"
+$shellEventsPath = Join-Path $persistentLogRoot "shell\events.jsonl"
+$shellTelemetryPath = Join-Path $persistentLogRoot "shell\telemetry.jsonl"
 
 $summary = [ordered]@{
     generatedAt = (Get-Date).ToString("o")
     persistentLogRoot = $persistentLogRoot
+    persistentInstallerLogRoot = $persistentInstallerLogRoot
     latestSessionPath = $latestSessionPath
     latestRecordPath = $latestRecordPath
     latestFailurePath = $latestFailurePath
+    logLocationPath = $logLocationPath
+    runtimeLogLocationPath = $runtimeLogLocationPath
+    runtimeEventsPath = $runtimeEventsPath
+    runtimeTelemetryPath = $runtimeTelemetryPath
+    shellLogLocationPath = $shellLogLocationPath
+    shellEventsPath = $shellEventsPath
+    shellTelemetryPath = $shellTelemetryPath
     shellLatestPath = $shellLatestPath
     serviceLatestPath = $serviceLatestPath
     copiedArtifacts = @()
 }
 
-foreach ($candidatePath in @($latestSessionPath, $latestRecordPath, $latestFailurePath, $shellLatestPath, $serviceLatestPath)) {
+foreach ($candidatePath in @(
+    $logLocationPath,
+    $runtimeLogLocationPath,
+    $runtimeEventsPath,
+    $runtimeTelemetryPath,
+    $shellLogLocationPath,
+    $shellEventsPath,
+    $shellTelemetryPath,
+    $latestSessionPath,
+    $latestRecordPath,
+    $latestFailurePath,
+    $shellLatestPath,
+    $serviceLatestPath
+)) {
     if (Test-Path $candidatePath) {
-        $destinationPath = Join-Path $artifactsDirectory ([System.IO.Path]::GetFileName($candidatePath))
+        $nameParts = @()
+        $parent = Split-Path -Parent $candidatePath
+        if (-not [string]::IsNullOrWhiteSpace($parent)) {
+            $nameParts += (Split-Path -Leaf $parent)
+        }
+        $nameParts += ([System.IO.Path]::GetFileName($candidatePath))
+        $destinationPath = Join-Path $artifactsDirectory ($nameParts -join "-")
         Copy-Item -Path $candidatePath -Destination $destinationPath -Force
         $summary.copiedArtifacts += $destinationPath
     }
@@ -89,6 +128,12 @@ $lines.Add("# Master Control Orchestration Server Deployment Diagnostics")
 $lines.Add("")
 $lines.Add("* Generated: $($summary.generatedAt)")
 $lines.Add("* Persistent root: $($summary.persistentLogRoot)")
+$lines.Add("* Root log location note: $($summary.logLocationPath)")
+$lines.Add("* Runtime events: $($summary.runtimeEventsPath)")
+$lines.Add("* Runtime telemetry: $($summary.runtimeTelemetryPath)")
+$lines.Add("* Shell events: $($summary.shellEventsPath)")
+$lines.Add("* Shell telemetry: $($summary.shellTelemetryPath)")
+$lines.Add("* Installer root: $($summary.persistentInstallerLogRoot)")
 $lines.Add("* Latest session path: $($summary.latestSessionPath)")
 $lines.Add("* Latest installer record: $($summary.latestRecordPath)")
 $lines.Add("* Latest installer failure: $($summary.latestFailurePath)")

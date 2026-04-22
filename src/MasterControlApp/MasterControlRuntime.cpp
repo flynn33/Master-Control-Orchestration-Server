@@ -16,6 +16,7 @@
 #include "ForsettiCore/ModuleManager.h"
 #include "ForsettiCore/StaticModuleRegistry.h"
 #include "ForsettiCore/UISurfaceManager.h"
+#include "MasterControl/MasterControlDiagnostics.h"
 #include "ForsettiPlatform/DefaultPlatformServices.h"
 #include "MasterControl/MasterControlDefaults.h"
 #include "MasterControl/MasterControlModules.h"
@@ -231,6 +232,55 @@ Iterator findExecutionRegistrationByProviderId(
     return std::find_if(begin, end,
         [kind](const ProviderExecutionRegistration& registration) {
             return registration.kind == kind;
+        });
+}
+
+bool isDerivedProviderIdForCapability(const std::string& candidateId, const std::string& providerId) {
+    return !providerId.empty()
+        && candidateId.size() > providerId.size()
+        && candidateId[providerId.size()] == '-'
+        && candidateId.compare(0, providerId.size(), providerId) == 0;
+}
+
+bool providerHasConfiguredCredentials(const std::vector<ProviderCredentialStatus>& statuses,
+                                      const std::string& providerId) {
+    const auto iterator = std::find_if(
+        statuses.begin(),
+        statuses.end(),
+        [&providerId](const ProviderCredentialStatus& status) { return status.providerId == providerId; });
+    return iterator != statuses.end() && iterator->configured;
+}
+
+template <typename Iterator>
+Iterator findReusableProviderForAutoConnect(Iterator begin,
+                                            Iterator end,
+                                            const ProviderCapabilityDescriptor& capability,
+                                            const std::vector<ProviderCredentialStatus>& statuses) {
+    auto providerReady = [&statuses](const ProviderConnection& provider) {
+        return provider.enabled &&
+            !provider.isTemplate &&
+            (provider.credentialsConfigured || providerHasConfiguredCredentials(statuses, provider.id));
+    };
+
+    const auto exact = std::find_if(
+        begin,
+        end,
+        [&capability, &providerReady](const ProviderConnection& provider) {
+            return provider.id == capability.providerId &&
+                provider.kind == capability.kind &&
+                providerReady(provider);
+        });
+    if (exact != end) {
+        return exact;
+    }
+
+    return std::find_if(
+        begin,
+        end,
+        [&capability, &providerReady](const ProviderConnection& provider) {
+            return provider.kind == capability.kind &&
+                isDerivedProviderIdForCapability(provider.id, capability.providerId) &&
+                providerReady(provider);
         });
 }
 
@@ -2442,6 +2492,24 @@ public:
         AutoConnectResult result;
         const auto totalStart = std::chrono::steady_clock::now();
 
+        auto logAutoConnect = [&request](const std::string& severity,
+                                         const std::string& eventName,
+                                         const std::string& message,
+                                         nlohmann::json details = nlohmann::json::object()) {
+            details["providerIdHint"] = request.providerId;
+            details["kind"] = to_string(request.kind);
+            details["credentialFieldCount"] = request.credentials.size();
+            details["assignmentTargetIds"] = request.assignmentTargetIds;
+            details["allowAutonomousControl"] = request.allowAutonomousControl;
+            details["discoverModels"] = request.discoverModels;
+            MasterControl::Diagnostics::appendEvent(
+                L"runtime",
+                severity,
+                eventName,
+                message,
+                std::move(details));
+        };
+
         auto recordStep = [&result](const std::string& stage,
                                     bool succeeded,
                                     const std::string& message,
@@ -2454,6 +2522,8 @@ public:
             result.steps.push_back(std::move(step));
         };
 
+        logAutoConnect("info", "provider-auto-connect-start", "Processing provider auto-connect request.");
+
         // -- Stage 1: Resolve capability ---------------------------------------
         const auto capabilities = providerCatalogService_->listCapabilities();
         const auto capabilityIterator = findCapabilityByProviderId(
@@ -2462,6 +2532,7 @@ public:
             result.errorMessage = "The selected provider kind has no active provider module.";
             recordStep("resolve-capability", false, result.errorMessage);
             result.summary = result.errorMessage;
+            logAutoConnect("warning", "provider-auto-connect-failed", result.errorMessage);
             return result;
         }
         const auto& capability = *capabilityIterator;
@@ -2469,57 +2540,125 @@ public:
                    "Matched '" + capability.displayName + "' module (" + capability.providerId + ")");
 
         // -- Stage 2: Derive connection shape ----------------------------------
+        const auto existingProviders = listProviders();
+        const auto credentialStatuses = [this]() {
+            if (const auto store = credentialStore_.lock()) {
+                return store->listStatuses();
+            }
+            return std::vector<ProviderCredentialStatus>{};
+        }();
+        const auto reusableProviderIterator = request.credentials.empty()
+            ? findReusableProviderForAutoConnect(
+                existingProviders.begin(),
+                existingProviders.end(),
+                capability,
+                credentialStatuses)
+            : existingProviders.end();
+        const bool reusingExistingProvider = reusableProviderIterator != existingProviders.end();
+
         ProviderConnection connection;
-        connection.kind = request.kind;
-        connection.displayName = request.displayNameOverride.empty()
-            ? capability.displayName
-            : request.displayNameOverride;
-        connection.baseUrl = request.baseUrlOverride.empty()
-            ? capability.defaultBaseUrl
-            : request.baseUrlOverride;
-        connection.modelId = request.modelIdOverride.empty()
-            ? capability.recommendedModel
-            : request.modelIdOverride;
-        connection.enabled = true;
-        connection.allowAutonomousControl = request.allowAutonomousControl
-            && capability.supportsAutonomousControl;
+        if (reusingExistingProvider) {
+            connection = *reusableProviderIterator;
+            connection.kind = capability.kind;
+            connection.enabled = true;
+            connection.credentialsConfigured = true;
+            if (!request.displayNameOverride.empty()) {
+                connection.displayName = request.displayNameOverride;
+            }
+            if (!request.baseUrlOverride.empty()) {
+                connection.baseUrl = request.baseUrlOverride;
+            }
+            if (!request.modelIdOverride.empty()) {
+                connection.modelId = request.modelIdOverride;
+            }
+            if (request.allowAutonomousControl && capability.supportsAutonomousControl) {
+                connection.allowAutonomousControl = true;
+            }
+            if (connection.displayName.empty()) {
+                connection.displayName = capability.displayName;
+            }
+            if (connection.baseUrl.empty()) {
+                connection.baseUrl = capability.defaultBaseUrl;
+            }
+            if (connection.modelId.empty()) {
+                connection.modelId = capability.recommendedModel;
+            }
+        } else {
+            connection.kind = request.kind;
+            connection.displayName = request.displayNameOverride.empty()
+                ? capability.displayName
+                : request.displayNameOverride;
+            connection.baseUrl = request.baseUrlOverride.empty()
+                ? capability.defaultBaseUrl
+                : request.baseUrlOverride;
+            connection.modelId = request.modelIdOverride.empty()
+                ? capability.recommendedModel
+                : request.modelIdOverride;
+            connection.enabled = true;
+            connection.allowAutonomousControl = request.allowAutonomousControl
+                && capability.supportsAutonomousControl;
+        }
 
         // Unique provider id: {providerId}-YYYYMMDD-HHMMSS — scoped under the
         // canonical module providerId so multiple connections for the same
         // kind remain disambiguated even across clock ticks.
-        connection.id = generateAutoConnectProviderId(capability.providerId);
-        result.providerId = connection.id;
-        result.displayName = connection.displayName;
-        result.baseUrl = connection.baseUrl;
-        recordStep("derive-shape", true,
-                   "Generated id '" + connection.id + "' targeting " + connection.baseUrl);
+        if (reusingExistingProvider) {
+            result.providerId = connection.id;
+            result.displayName = connection.displayName;
+            result.baseUrl = connection.baseUrl;
+            recordStep("derive-shape", true,
+                       "Reusing existing signed-in provider '" + connection.id + "'");
+            logAutoConnect(
+                "info",
+                "provider-auto-connect-reuse",
+                "Reusing an existing provider registration for role assignment.",
+                nlohmann::json{
+                    { "providerId", connection.id },
+                    { "displayName", connection.displayName }
+                });
+        } else {
+            connection.id = generateAutoConnectProviderId(capability.providerId);
+            result.providerId = connection.id;
+            result.displayName = connection.displayName;
+            result.baseUrl = connection.baseUrl;
+            recordStep("derive-shape", true,
+                       "Generated id '" + connection.id + "' targeting " + connection.baseUrl);
+        }
 
         // -- Stage 3: Validate required credential fields ----------------------
-        std::vector<std::string> missingFields;
-        for (const auto& descriptor : capability.credentialFields) {
-            if (!descriptor.required) {
-                continue;
+        if (reusingExistingProvider) {
+            recordStep("validate-credentials", true,
+                       "Existing sign-in / secure credentials detected for '" + connection.id + "'");
+        } else {
+            std::vector<std::string> missingFields;
+            for (const auto& descriptor : capability.credentialFields) {
+                if (!descriptor.required) {
+                    continue;
+                }
+                const auto iterator = request.credentials.find(descriptor.fieldId);
+                if (iterator == request.credentials.end() || iterator->second.empty()) {
+                    missingFields.push_back(descriptor.label.empty() ? descriptor.fieldId : descriptor.label);
+                }
             }
-            const auto iterator = request.credentials.find(descriptor.fieldId);
-            if (iterator == request.credentials.end() || iterator->second.empty()) {
-                missingFields.push_back(descriptor.label.empty() ? descriptor.fieldId : descriptor.label);
+            if (!missingFields.empty()) {
+                std::string joined;
+                for (const auto& field : missingFields) {
+                    if (!joined.empty()) joined += ", ";
+                    joined += field;
+                }
+                result.errorMessage = "Missing required credential fields: " + joined;
+                recordStep("validate-credentials", false, result.errorMessage);
+                result.summary = result.errorMessage;
+                logAutoConnect("warning", "provider-auto-connect-failed", result.errorMessage);
+                return result;
             }
+            recordStep("validate-credentials", true, "All required credential fields supplied");
         }
-        if (!missingFields.empty()) {
-            std::string joined;
-            for (const auto& field : missingFields) {
-                if (!joined.empty()) joined += ", ";
-                joined += field;
-            }
-            result.errorMessage = "Missing required credential fields: " + joined;
-            recordStep("validate-credentials", false, result.errorMessage);
-            result.summary = result.errorMessage;
-            return result;
-        }
-        recordStep("validate-credentials", true, "All required credential fields supplied");
 
         // -- Stage 4: Connectivity + auth probe + model discovery --------------
-        if (request.discoverModels) {
+        if (reusingExistingProvider) {
+            recordStep("discover-models", true, "Model discovery skipped while reusing the existing provider registration");
+        } else if (request.discoverModels) {
             const auto probeStart = std::chrono::steady_clock::now();
             const auto discoveryResult = discoverRemoteModels(connection.baseUrl, request.credentials);
             const auto probeLatency = static_cast<int>(
@@ -2571,14 +2710,29 @@ public:
         result.selectedModelId = connection.modelId;
 
         // -- Stage 5: Register provider ----------------------------------------
-        const auto upsertResult = upsertProvider(connection);
-        if (!upsertResult.succeeded) {
-            result.errorMessage = "Provider registration failed: " + upsertResult.message;
-            recordStep("register-provider", false, result.errorMessage);
-            result.summary = result.errorMessage;
-            return result;
+        const bool providerNeedsUpdate = !reusingExistingProvider ||
+            connection.displayName != reusableProviderIterator->displayName ||
+            connection.baseUrl != reusableProviderIterator->baseUrl ||
+            connection.modelId != reusableProviderIterator->modelId ||
+            connection.enabled != reusableProviderIterator->enabled ||
+            connection.allowAutonomousControl != reusableProviderIterator->allowAutonomousControl ||
+            connection.credentialsConfigured != reusableProviderIterator->credentialsConfigured;
+        if (providerNeedsUpdate) {
+            const auto upsertResult = upsertProvider(connection);
+            if (!upsertResult.succeeded) {
+                result.errorMessage = "Provider registration failed: " + upsertResult.message;
+                recordStep("register-provider", false, result.errorMessage);
+                result.summary = result.errorMessage;
+                logAutoConnect("warning", "provider-auto-connect-failed", result.errorMessage);
+                return result;
+            }
+            recordStep("register-provider", true,
+                       reusingExistingProvider
+                           ? "Existing provider configuration refreshed."
+                           : "Provider registered in configuration");
+        } else {
+            recordStep("register-provider", true, "Reused existing provider registration");
         }
-        recordStep("register-provider", true, "Provider registered in configuration");
 
         // Track overall success across stages 6-7. Previously we hard-coded
         // result.succeeded = true at finalize even when stage 6 or 7 had
@@ -2587,7 +2741,9 @@ public:
         bool postRegistrationSucceeded = true;
 
         // -- Stage 6: Persist credentials via DPAPI -----------------------------
-        if (auto store = credentialStore_.lock()) {
+        if (reusingExistingProvider) {
+            recordStep("store-credentials", true, "Existing provider credentials / CLI sign-in were reused");
+        } else if (auto store = credentialStore_.lock()) {
             ProviderCredentialUpdate update;
             update.providerId = connection.id;
             update.values = request.credentials;
@@ -2599,6 +2755,7 @@ public:
                 // unusable record behind.
                 removeProviderInternal(connection.id);
                 result.summary = result.errorMessage;
+                logAutoConnect("warning", "provider-auto-connect-failed", result.errorMessage);
                 return result;
             }
             recordStep("store-credentials", true, "Credentials encrypted with DPAPI and stored");
@@ -2677,12 +2834,34 @@ public:
                     ? "Auto-connect completed with one or more failures."
                     : result.errorMessage;
             }
+            logAutoConnect(
+                "warning",
+                "provider-auto-connect-failed",
+                result.summary,
+                nlohmann::json{
+                    { "providerId", connection.id },
+                    { "reusedExistingProvider", reusingExistingProvider },
+                    { "assignmentsApplied", result.assignmentsApplied },
+                    { "assignmentsFailed", result.assignmentsFailed }
+                });
             return result;
         }
-        result.summary = "Connected '" + connection.displayName + "' in "
+        result.summary = (reusingExistingProvider ? "Reused '" : "Connected '")
+            + connection.displayName + "' in "
             + std::to_string(result.totalLatencyMs) + "ms ("
             + std::to_string(result.discoveredModels.size()) + " model(s), "
             + std::to_string(result.assignmentsApplied.size()) + " role(s))";
+        logAutoConnect(
+            "info",
+            "provider-auto-connect-complete",
+            result.summary,
+            nlohmann::json{
+                { "providerId", connection.id },
+                { "reusedExistingProvider", reusingExistingProvider },
+                { "assignmentsApplied", result.assignmentsApplied },
+                { "assignmentsFailed", result.assignmentsFailed },
+                { "selectedModelId", result.selectedModelId }
+            });
         return result;
     }
 
@@ -3318,6 +3497,15 @@ private:
     }
 
     OperationResult registerBridgedProvider(const std::string& bridge, const std::string& providerIdHint) {
+        MasterControl::Diagnostics::appendEvent(
+            L"runtime",
+            "info",
+            "provider-signin-register-start",
+            "Registering providers after shell sign-in completed.",
+            nlohmann::json{
+                { "bridge", bridge },
+                { "providerIdHint", providerIdHint }
+            });
         // A single `codex login` authenticates the user's OpenAI account for
         // BOTH ChatGPT (general reasoning) and Codex (coding agent). We
         // therefore register every capability whose cliBridgeCommand
@@ -3361,6 +3549,15 @@ private:
         }
 
         if (matchedCapabilityCount == 0) {
+            MasterControl::Diagnostics::appendEvent(
+                L"runtime",
+                "warning",
+                "provider-signin-register-failed",
+                "No provider capabilities are registered for the requested CLI bridge.",
+                nlohmann::json{
+                    { "bridge", bridge },
+                    { "providerIdHint", providerIdHint }
+                });
             return OperationResult{
                 false,
                 false,
@@ -3377,10 +3574,29 @@ private:
                 }
                 message << failures[index];
             }
+            MasterControl::Diagnostics::appendEvent(
+                L"runtime",
+                "warning",
+                "provider-signin-register-failed",
+                message.str(),
+                nlohmann::json{
+                    { "bridge", bridge },
+                    { "providerIdHint", providerIdHint },
+                    { "failures", failures }
+                });
             return OperationResult{ false, false, message.str() };
         }
 
         if (bridge == "codex") {
+            MasterControl::Diagnostics::appendEvent(
+                L"runtime",
+                "info",
+                "provider-signin-register-complete",
+                "OpenAI-backed providers were registered after shell sign-in.",
+                nlohmann::json{
+                    { "bridge", bridge },
+                    { "registeredCapabilities", matchedCapabilityCount }
+                });
             return OperationResult{
                 true,
                 false,
@@ -3388,6 +3604,15 @@ private:
             };
         }
 
+        MasterControl::Diagnostics::appendEvent(
+            L"runtime",
+            "info",
+            "provider-signin-register-complete",
+            "CLI-backed provider registration completed successfully.",
+            nlohmann::json{
+                { "bridge", bridge },
+                { "registeredCapabilities", matchedCapabilityCount }
+            });
         return OperationResult{
             true,
             false,
@@ -3936,12 +4161,29 @@ public:
     }
 
     OperationResult upsertAssignment(const ProviderAssignment& assignment) override {
+        auto logAssignment = [&assignment](const std::string& severity,
+                                           const std::string& eventName,
+                                           const std::string& message,
+                                           nlohmann::json details = nlohmann::json::object()) {
+            details["targetId"] = assignment.targetId;
+            details["targetKind"] = to_string(assignment.kind);
+            details["providerId"] = assignment.providerId;
+            MasterControl::Diagnostics::appendEvent(
+                L"runtime",
+                severity,
+                eventName,
+                message,
+                std::move(details));
+        };
+
+        logAssignment("info", "provider-assignment-save-start", "Processing provider ownership update.");
         const auto targets = listTargets();
         const auto targetIterator = std::find_if(
             targets.begin(),
             targets.end(),
             [&assignment](const ProviderAssignmentTarget& target) { return target.targetId == assignment.targetId; });
         if (targetIterator == targets.end()) {
+            logAssignment("warning", "provider-assignment-save-failed", "The requested orchestration target is not available.");
             return OperationResult{ false, false, "The requested orchestration target is not available." };
         }
 
@@ -3952,6 +4194,7 @@ public:
                 providers.end(),
                 [&assignment](const ProviderConnection& provider) { return provider.id == assignment.providerId; });
             if (providerIterator == providers.end()) {
+                logAssignment("warning", "provider-assignment-save-failed", "The selected provider route does not exist.");
                 return OperationResult{ false, false, "The selected provider route does not exist." };
             }
         }
@@ -4001,13 +4244,23 @@ public:
             }
 
             if (!writeJsonFile(configurationFile_, state_->configuration)) {
+                logAssignment("warning", "provider-assignment-save-failed", "Provider assignment update could not be written to disk.");
                 return OperationResult{ false, false, "Provider assignment update could not be written to disk." };
             }
             const std::string verb = assignment.providerId.empty() ? "Cleared" : "Assigned";
+            const auto message =
+                verb + " " + std::to_string(targetIterator->memberTargetIds.size()) + " sub-agent routes for " + targetIterator->displayName + ".";
+            logAssignment(
+                "info",
+                "provider-assignment-save-complete",
+                message,
+                nlohmann::json{
+                    { "memberTargetCount", targetIterator->memberTargetIds.size() }
+                });
             return OperationResult{
                 true,
                 false,
-                verb + " " + std::to_string(targetIterator->memberTargetIds.size()) + " sub-agent routes for " + targetIterator->displayName + "."
+                message
             };
         }
 
@@ -4023,8 +4276,15 @@ public:
         }
 
         if (!writeJsonFile(configurationFile_, state_->configuration)) {
+            logAssignment("warning", "provider-assignment-save-failed", "Provider ownership update could not be written to disk.");
             return OperationResult{ false, false, "Provider ownership update could not be written to disk." };
         }
+        logAssignment(
+            "info",
+            "provider-assignment-save-complete",
+            assignment.providerId.empty()
+                ? "Provider ownership was cleared."
+                : "Provider ownership was updated.");
         return OperationResult{
             true,
             false,
@@ -9166,6 +9426,18 @@ public:
                 false
             });
         }
+        MasterControl::Diagnostics::appendTelemetry(
+            L"runtime",
+            "dashboard-snapshot",
+            nlohmann::json{
+                { "hostName", snapshot.telemetry.hostName },
+                { "primaryIpAddress", snapshot.telemetry.primaryIpAddress },
+                { "cpuPercent", snapshot.telemetry.cpuPercent },
+                { "providers", snapshot.providers.size() },
+                { "providerAssignments", snapshot.providerAssignments.size() },
+                { "providerCredentialStatuses", snapshot.providerCredentialStatuses.size() },
+                { "endpoints", snapshot.endpoints.size() }
+            });
         return snapshot;
     }
 

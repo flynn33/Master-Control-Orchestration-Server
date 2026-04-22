@@ -17,6 +17,24 @@ struct AssignableProviderOption final {
     std::wstring displayName;
 };
 
+template <typename Status>
+inline bool hasConfiguredCredentialStatus(
+    const std::vector<Status>& statuses,
+    std::wstring_view providerId,
+    std::wstring_view capabilityProviderId) {
+    return std::any_of(
+        statuses.begin(),
+        statuses.end(),
+        [providerId, capabilityProviderId](const auto& status) {
+            if (!status.configured) {
+                return false;
+            }
+
+            return status.providerId == providerId ||
+                (!capabilityProviderId.empty() && status.providerId == capabilityProviderId);
+        });
+}
+
 template <typename Capability, typename Provider>
 inline const Capability* findCapabilityForAssignment(
     const std::vector<Capability>& capabilities,
@@ -64,27 +82,38 @@ inline bool providerSupportsAssignmentTarget(
             capability->supportedTargets.end();
 }
 
-template <typename Provider, typename Capability, typename Target>
+template <typename Provider, typename Capability, typename Target, typename Status>
 inline bool isProviderAssignable(
     const Provider& provider,
     const std::vector<Capability>& capabilities,
+    const std::vector<Status>& statuses,
     const Target& target) {
-    if (!provider.enabled || !provider.credentialsConfigured) {
+    if (!provider.enabled) {
         return false;
     }
 
-    return providerSupportsAssignmentTarget(findCapabilityForAssignment(capabilities, provider), target);
+    const auto* capability = findCapabilityForAssignment(capabilities, provider);
+    if (!provider.credentialsConfigured &&
+        !hasConfiguredCredentialStatus(
+            statuses,
+            provider.id,
+            capability == nullptr ? std::wstring_view{} : std::wstring_view(capability->providerId))) {
+        return false;
+    }
+
+    return providerSupportsAssignmentTarget(capability, target);
 }
 
-template <typename Provider, typename Capability, typename Target>
+template <typename Provider, typename Capability, typename Target, typename Status>
 inline std::vector<AssignableProviderOption> buildAssignableProviderOptions(
     const std::vector<Provider>& providers,
     const std::vector<Capability>& capabilities,
+    const std::vector<Status>& statuses,
     const Target& target) {
     std::vector<AssignableProviderOption> options;
     options.reserve(providers.size());
     for (const auto& provider : providers) {
-        if (!isProviderAssignable(provider, capabilities, target)) {
+        if (!isProviderAssignable(provider, capabilities, statuses, target)) {
             continue;
         }
 

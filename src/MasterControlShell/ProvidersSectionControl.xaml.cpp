@@ -10,6 +10,7 @@
 #include "ProvidersSectionControl.g.cpp"
 #endif
 
+#include "MasterControl/MasterControlDiagnostics.h"
 #include "ShellFormatting.h"
 
 #include <optional>
@@ -61,6 +62,32 @@ const ::MasterControlShell::ShellProviderCredentialStatus* findCredentialStatus(
         statuses.end(),
         [providerId](const auto& status) { return status.providerId == providerId; });
     return iterator == statuses.end() ? nullptr : &(*iterator);
+}
+
+bool canReuseQuickConnectProviderWithoutCredentials(
+    const std::vector<::MasterControlShell::ShellProviderConnection>& providers,
+    const std::vector<::MasterControlShell::ShellProviderCredentialStatus>& statuses,
+    const ::MasterControlShell::ShellProviderCapability& capability) {
+    if (const auto* status = findCredentialStatus(statuses, capability.providerId);
+        status != nullptr && status->configured) {
+        return true;
+    }
+
+    return std::any_of(
+        providers.begin(),
+        providers.end(),
+        [&capability](const auto& provider) {
+            if (!provider.enabled || !provider.credentialsConfigured) {
+                return false;
+            }
+            if (provider.id == capability.providerId) {
+                return true;
+            }
+            return !capability.providerId.empty() &&
+                provider.id.size() > capability.providerId.size() &&
+                provider.id[capability.providerId.size()] == L'-' &&
+                provider.id.compare(0, capability.providerId.size(), capability.providerId) == 0;
+        });
 }
 
 const ::MasterControlShell::ShellProviderCapability* findCapabilityByProviderId(
@@ -1055,7 +1082,28 @@ void ProvidersSectionControl::RefreshAssignmentSelectors() {
         assignmentProviderOptions_ = ::MasterControlShell::buildAssignableProviderOptions(
             providers_,
             providerCapabilities_,
+            providerCredentialStatuses_,
             target);
+        if (assignmentProviderOptions_.empty()) {
+            nlohmann::json configuredStatuses = nlohmann::json::array();
+            for (const auto& status : providerCredentialStatuses_) {
+                if (status.configured) {
+                    configuredStatuses.push_back(MasterControl::Diagnostics::utf8FromWide(status.providerId));
+                }
+            }
+
+            MasterControl::Diagnostics::appendEvent(
+                L"shell",
+                "warning",
+                "provider-assignment-options-empty",
+                "No assignable providers are currently available for the selected orchestration target.",
+                nlohmann::json{
+                    { "targetId", MasterControl::Diagnostics::utf8FromWide(target.targetId) },
+                    { "targetKind", MasterControl::Diagnostics::utf8FromWide(target.kind) },
+                    { "providerCount", providers_.size() },
+                    { "configuredCredentialStatuses", std::move(configuredStatuses) }
+                });
+        }
     }
 
     for (const auto& option : assignmentProviderOptions_) {
@@ -1270,6 +1318,11 @@ void ProvidersSectionControl::ApplyQuickConnectFields() {
         return;
     }
 
+    const bool canReuseExistingProvider = canReuseQuickConnectProviderWithoutCredentials(
+        providers_,
+        providerCredentialStatuses_,
+        *capability);
+
     std::wstring summary = capability->displayName.empty() ? capability->providerId : capability->displayName;
     if (!capability->defaultBaseUrl.empty()) {
         summary += L"  |  endpoint: ";
@@ -1290,15 +1343,18 @@ void ProvidersSectionControl::ApplyQuickConnectFields() {
             summary += status->message;
         }
     }
+    if (canReuseExistingProvider) {
+        summary += L"\nAlready connected on this host. Auto-Connect will reuse the existing provider and only apply role or autonomy changes.";
+    }
 
     QuickConnectSummaryText().Text(winrt::hstring(summary));
 
     std::optional<::MasterControlShell::ShellProviderCredentialField> fieldOne;
     std::optional<::MasterControlShell::ShellProviderCredentialField> fieldTwo;
-    if (!capability->credentialFields.empty()) {
+    if (!canReuseExistingProvider && !capability->credentialFields.empty()) {
         fieldOne = capability->credentialFields[0];
     }
-    if (capability->credentialFields.size() > 1U) {
+    if (!canReuseExistingProvider && capability->credentialFields.size() > 1U) {
         fieldTwo = capability->credentialFields[1];
     }
 
@@ -1419,6 +1475,10 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ConnectQuickPr
         QuickConnectStatusText().Text(L"The selected provider does not have a published connection profile.");
         co_return;
     }
+    const bool canReuseExistingProvider = canReuseQuickConnectProviderWithoutCredentials(
+        providers_,
+        providerCredentialStatuses_,
+        *capability);
 
     // Collect credentials from the two password boxes. If the capability
     // declares more fields than we have UI widgets for, we fall through and
@@ -1433,7 +1493,7 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ConnectQuickPr
                 ? std::wstring(QuickConnectCredentialFieldOneValueBox().Password().c_str())
                 : std::wstring(QuickConnectCredentialFieldTwoValueBox().Password().c_str());
 
-        if (field.required && value.empty()) {
+        if (field.required && value.empty() && !canReuseExistingProvider) {
             std::wstring message = L"Enter ";
             message += field.label.empty() ? field.fieldId : field.label;
             message += L" before auto-connecting.";
@@ -1453,10 +1513,13 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::ConnectQuickPr
     request.credentials = credentialValues;
     request.assignmentTargetIds = selectedAutoConnectRoleTargetIds_;
     request.allowAutonomousControl = false;
-    request.discoverModels = true;
+    request.discoverModels = !canReuseExistingProvider && !credentialValues.empty();
 
     ConnectQuickProviderButton().IsEnabled(false);
-    QuickConnectStatusText().Text(L"Auto-connecting... resolving capability, probing endpoint, discovering models.");
+    QuickConnectStatusText().Text(
+        canReuseExistingProvider && credentialValues.empty()
+            ? L"Applying roles with the provider already signed in on this host."
+            : L"Auto-connecting... resolving capability, probing endpoint, discovering models.");
     winrt::apartment_context uiThread;
     const auto requestCopy = request;
     co_await winrt::resume_background();
@@ -1687,6 +1750,16 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::SaveProviderAs
     }
 
     SaveProviderAssignmentButton().IsEnabled(false);
+    MasterControl::Diagnostics::appendEvent(
+        L"shell",
+        "info",
+        "provider-assignment-save-start",
+        "Saving provider ownership from the Windows application.",
+        nlohmann::json{
+            { "targetId", MasterControl::Diagnostics::utf8FromWide(target.targetId) },
+            { "targetKind", MasterControl::Diagnostics::utf8FromWide(target.kind) },
+            { "providerId", MasterControl::Diagnostics::utf8FromWide(providerId) }
+        });
     winrt::apartment_context uiThread;
     co_await winrt::resume_background();
     const auto result = runtime_->UpsertProviderAssignment(::MasterControlShell::ShellProviderAssignment{
@@ -1698,6 +1771,16 @@ winrt::Windows::Foundation::IAsyncAction ProvidersSectionControl::SaveProviderAs
     co_await uiThread;
 
     ProviderAssignmentStatusText().Text(winrt::hstring(result.message));
+    MasterControl::Diagnostics::appendEvent(
+        L"shell",
+        result.succeeded ? "info" : "warning",
+        result.succeeded ? "provider-assignment-save-complete" : "provider-assignment-save-failed",
+        MasterControl::Diagnostics::utf8FromWide(result.message),
+        nlohmann::json{
+            { "targetId", MasterControl::Diagnostics::utf8FromWide(target.targetId) },
+            { "targetKind", MasterControl::Diagnostics::utf8FromWide(target.kind) },
+            { "providerId", MasterControl::Diagnostics::utf8FromWide(providerId) }
+        });
     if (result.succeeded) {
         providerAssignmentDirty_ = false;
         if (refreshRequested_) {

@@ -4269,6 +4269,10 @@ int main() {
         const auto wixSource = readFileUtf8(sourceRepoRoot() / "installer" / "MasterControlOrchestrationServer.wxs");
         const auto shortcutsSource = readFileUtf8(sourceRepoRoot() / "installer" / "Fragments" / "ShortcutsFragment.wxs");
         const auto buildMsiSource = readFileUtf8(sourceRepoRoot() / "installer" / "Build-Msi.ps1");
+        const auto shellRuntimeSource = readFileUtf8(sourceRepoRoot() / "src" / "MasterControlShell" / "ShellRuntime.cpp");
+        const auto quickConnectSource = readFileUtf8(sourceRepoRoot() / "src" / "MasterControlShell" / "ProvidersSectionControl.xaml.cpp");
+        const auto diagnosticsSource = readFileUtf8(sourceRepoRoot() / "include" / "MasterControl" / "MasterControlDiagnostics.h");
+        const auto deploymentDiagnosticsSource = readFileUtf8(sourceRepoRoot() / "scripts" / "Get-MasterControlOrchestrationServerDeploymentDiagnostics.ps1");
         success &= expect(
             wixSource.has_value(),
             "MSI source should be readable for installer wording regression coverage.");
@@ -4278,6 +4282,18 @@ int main() {
         success &= expect(
             buildMsiSource.has_value(),
             "Build-Msi script should be readable for launcher file-id regression coverage.");
+        success &= expect(
+            shellRuntimeSource.has_value(),
+            "Shell runtime source should be readable for signed-in provider reuse regression coverage.");
+        success &= expect(
+            quickConnectSource.has_value(),
+            "ProvidersSectionControl source should be readable for signed-in provider reuse regression coverage.");
+        success &= expect(
+            diagnosticsSource.has_value(),
+            "Diagnostics module header should exist so runtime and shell failures have a shared persistent log surface.");
+        success &= expect(
+            deploymentDiagnosticsSource.has_value(),
+            "Deployment diagnostics script should be readable so persistent runtime and shell logs can be collected.");
         if (wixSource.has_value()) {
             success &= expect(
                 !containsText(*wixSource, "Launch Master Control Shell"),
@@ -4303,7 +4319,80 @@ int main() {
                 containsText(*buildMsiSource, "MasterControlOrchestrationServer.exe") &&
                     containsText(*buildMsiSource, "MasterControlOrchestrationServerExe"),
                 "Build-Msi should assign a stable WiX File Id to the product-named launcher executable.");
+            success &= expect(
+                containsText(*buildMsiSource, "ConvertTo-MsiProductVersion"),
+                "Build-Msi should convert prerelease versions through a dedicated helper instead of collapsing every RC to the same MSI version.");
+            success &= expect(
+                !containsText(*buildMsiSource, "$Version -replace '-.*$', ''"),
+                "Build-Msi should no longer strip the RC suffix away before deriving the MSI product version.");
         }
+        if (shellRuntimeSource.has_value()) {
+            success &= expect(
+                !containsText(*shellRuntimeSource, "Enter account credentials before auto-connecting."),
+                "Shell runtime should allow auto-connect requests that reuse a provider already authenticated through CLI sign-in.");
+        }
+        if (quickConnectSource.has_value()) {
+            success &= expect(
+                containsText(*quickConnectSource, "canReuseQuickConnectProviderWithoutCredentials"),
+                "Quick-connect should explicitly detect when role assignment can reuse an already signed-in provider without prompting for fresh credentials.");
+        }
+        if (diagnosticsSource.has_value()) {
+            success &= expect(
+                containsText(*diagnosticsSource, "events.jsonl") &&
+                    containsText(*diagnosticsSource, "telemetry.jsonl"),
+                "Diagnostics module should define persistent verbose event and telemetry logs.");
+            success &= expect(
+                containsText(*diagnosticsSource, "root / \"LOG-LOCATION.txt\""),
+                "Diagnostics module should publish a root log-location note beside the installer, runtime, and shell log folders.");
+        }
+        if (deploymentDiagnosticsSource.has_value()) {
+            success &= expect(
+                containsText(*deploymentDiagnosticsSource, "runtimeEventsPath") &&
+                    containsText(*deploymentDiagnosticsSource, "shellEventsPath") &&
+                    containsText(*deploymentDiagnosticsSource, "logLocationPath"),
+                "Deployment diagnostics script should collect runtime and shell log artifacts in addition to installer logs.");
+        }
+    }
+
+    {
+        struct DummyProvider final {
+            std::wstring id;
+            std::wstring displayName;
+            std::wstring kind;
+            bool enabled = false;
+            bool credentialsConfigured = false;
+        };
+        struct DummyCapability final {
+            std::wstring providerId;
+            std::wstring kind;
+            std::vector<std::wstring> supportedTargets;
+        };
+        struct DummyTarget final {
+            std::wstring targetId;
+            std::wstring kind;
+        };
+        struct DummyCredentialStatus final {
+            std::wstring providerId;
+            bool configured = false;
+        };
+
+        const std::vector<DummyProvider> providers{
+            DummyProvider{ L"chatgpt", L"ChatGPT", L"codex", true, false }
+        };
+        const std::vector<DummyCapability> capabilities{
+            DummyCapability{ L"chatgpt", L"codex", { L"planner" } }
+        };
+        const std::vector<DummyCredentialStatus> statuses{
+            DummyCredentialStatus{ L"chatgpt", true }
+        };
+        const auto options = ::MasterControlShell::buildAssignableProviderOptions(
+            providers,
+            capabilities,
+            statuses,
+            DummyTarget{ L"planner", L"role" });
+        success &= expect(
+            options.size() == 1U && options.front().providerId == L"chatgpt",
+            "Assignment pickers should allow a provider when credential status says it is configured, even if the provider row has not refreshed its credentialsConfigured flag yet.");
     }
 
     // R6: assignment surfaces should only offer connected providers that can
@@ -4326,6 +4415,10 @@ int main() {
         struct AssignmentTargetProbe final {
             std::wstring targetId;
             std::wstring kind;
+        };
+        struct AssignmentCredentialStatusProbe final {
+            std::wstring providerId;
+            bool configured = false;
         };
 
         const AssignmentTargetProbe plannerTarget{
@@ -4354,10 +4447,15 @@ int main() {
                 { L"planner" }
             }
         };
+        const std::vector<AssignmentCredentialStatusProbe> statuses{
+            AssignmentCredentialStatusProbe{ L"chatgpt", true },
+            AssignmentCredentialStatusProbe{ L"codex", true }
+        };
 
         const auto options = MasterControlShell::buildAssignableProviderOptions(
             providers,
             capabilities,
+            statuses,
             plannerTarget);
         success &= expect(
             options.size() == 1U,
@@ -4421,6 +4519,84 @@ int main() {
             staleExecution.errorMessage.find("Stale Grok Provider") != std::string::npos &&
                 staleExecution.errorMessage.find("reassign") != std::string::npos,
             "stale-provider-ownership: execution should tell the operator which disconnected provider still owns the lane and to reassign it.");
+
+        application.shutdown();
+    }
+
+    // R8: after CLI sign-in succeeds, role assignment should be able to reuse
+    // the authenticated provider without prompting for another credential entry
+    // or generating a second provider route.
+    {
+        const auto reuseSignedInProviderRoot = tempRoot / "regression-reuse-signed-in-provider";
+        ScopedEnvironmentOverride dataDirectoryOverride(L"MASTERCONTROL_DATA_DIR", (reuseSignedInProviderRoot / "data").wstring());
+        const auto appPaths = MasterControl::resolveAppPaths();
+        writeIsolatedAppConfiguration(appPaths.configurationFile, isolatedTestBrowserPort());
+
+        MasterControl::MasterControlApplication application;
+        success &= expect(application.initialize(), "reuse-signed-in-provider: application should initialize.");
+
+        const auto seedChatGpt = application.upsertProviderJson(nlohmann::json{
+            { "id", "chatgpt" },
+            { "kind", "codex" },
+            { "displayName", "ChatGPT" },
+            { "baseUrl", "https://api.openai.com/v1" },
+            { "modelId", "gpt-5.4" },
+            { "enabled", true },
+            { "allowAutonomousControl", false },
+            { "credentialsConfigured", false }
+        }.dump());
+        success &= expect(
+            seedChatGpt.succeeded,
+            "reuse-signed-in-provider: canonical ChatGPT provider should seed successfully.");
+
+        const auto registerCodex = httpPostJson(
+            application.browserUrl() + "api/providers/signin/register",
+            R"({"bridge":"codex","providerId":"chatgpt"})");
+        success &= expect(
+            registerCodex.has_value() && registerCodex->value("succeeded", false),
+            "reuse-signed-in-provider: Codex-backed provider registration should succeed after shell sign-in.");
+
+        const auto providersBeforeReuse = application.snapshot().providers;
+        const auto reuseSignedInProvider = application.autoConnectProviderJson(nlohmann::json{
+            { "kind", "codex" },
+            { "providerId", "chatgpt" },
+            { "credentials", nlohmann::json::object() },
+            { "assignmentTargetIds", nlohmann::json::array({ "planner" }) },
+            { "discoverModels", false },
+            { "allowAutonomousControl", false }
+        }.dump());
+        success &= expect(
+            reuseSignedInProvider.succeeded,
+            "Auto-connect should reuse an already signed-in provider when the operator only wants to assign roles.");
+        success &= expect(
+            reuseSignedInProvider.providerId == "chatgpt",
+            "Reusing an already signed-in provider should keep the canonical provider id instead of inventing a new route.");
+
+        const auto snapshotAfterReuse = application.snapshot();
+        size_t canonicalChatGptCount = 0;
+        size_t generatedChatGptCount = 0;
+        bool plannerAssignedToChatGpt = false;
+        for (const auto& provider : snapshotAfterReuse.providers) {
+            if (provider.id == "chatgpt") {
+                ++canonicalChatGptCount;
+            }
+            if (provider.id.rfind("chatgpt-", 0) == 0) {
+                ++generatedChatGptCount;
+            }
+        }
+        for (const auto& assignment : snapshotAfterReuse.providerAssignments) {
+            if (assignment.targetId == "planner" && assignment.providerId == "chatgpt") {
+                plannerAssignedToChatGpt = true;
+            }
+        }
+        success &= expect(
+            snapshotAfterReuse.providers.size() == providersBeforeReuse.size() &&
+                canonicalChatGptCount == 1U &&
+                generatedChatGptCount == 0U,
+            "Role assignment after CLI sign-in should reuse the existing provider instead of creating a second ChatGPT route.");
+        success &= expect(
+            plannerAssignedToChatGpt,
+            "Reusing a signed-in provider should still apply the requested role assignment.");
 
         application.shutdown();
     }

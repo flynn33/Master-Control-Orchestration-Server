@@ -4,6 +4,7 @@
 
 #include "pch.h"
 
+#include "MasterControl/MasterControlDiagnostics.h"
 #include "SnapshotCollectionMerge.h"
 #include "ShellRuntime.h"
 
@@ -2737,11 +2738,34 @@ ShellOperationResult ShellRuntime::UpsertProviderAssignment(const ShellProviderA
         return ShellOperationResult{ false, false, L"Select an orchestration target before saving provider ownership." };
     }
 
-    return postJsonObjectToAdminApi(
+    MasterControl::Diagnostics::appendEvent(
+        L"shell",
+        "info",
+        "provider-assignment-save-start",
+        "Submitting provider ownership update through the local admin API.",
+        nlohmann::json{
+            { "targetId", MasterControl::Diagnostics::utf8FromWide(assignment.targetId) },
+            { "targetKind", MasterControl::Diagnostics::utf8FromWide(assignment.kind) },
+            { "providerId", MasterControl::Diagnostics::utf8FromWide(assignment.providerId) }
+        });
+
+    auto result = postJsonObjectToAdminApi(
         ResolveConfigurationFile(),
         L"/api/providers/assignments",
         providerAssignmentToJson(assignment),
         L"Unable to update provider ownership through the local admin API.");
+
+    MasterControl::Diagnostics::appendEvent(
+        L"shell",
+        result.succeeded ? "info" : "warning",
+        result.succeeded ? "provider-assignment-save-complete" : "provider-assignment-save-failed",
+        MasterControl::Diagnostics::utf8FromWide(result.message),
+        nlohmann::json{
+            { "targetId", MasterControl::Diagnostics::utf8FromWide(assignment.targetId) },
+            { "targetKind", MasterControl::Diagnostics::utf8FromWide(assignment.kind) },
+            { "providerId", MasterControl::Diagnostics::utf8FromWide(assignment.providerId) }
+        });
+    return result;
 }
 
 ShellForsettiModuleCatalogResult ShellRuntime::FetchForsettiModules() const {
@@ -2824,13 +2848,38 @@ ShellAutoConnectProviderResult ShellRuntime::AutoConnectProvider(
         result.summary = result.errorMessage;
         return result;
     }
-    if (request.credentials.empty()) {
-        result.errorMessage = L"Enter account credentials before auto-connecting.";
-        result.summary = result.errorMessage;
-        return result;
-    }
 
-    return postAutoConnectProviderToAdminApi(ResolveConfigurationFile(), request);
+    MasterControl::Diagnostics::appendEvent(
+        L"shell",
+        "info",
+        "provider-auto-connect-start",
+        "Submitting provider auto-connect request from the Windows application.",
+        nlohmann::json{
+            { "providerIdHint", MasterControl::Diagnostics::utf8FromWide(request.providerId) },
+            { "kind", MasterControl::Diagnostics::utf8FromWide(request.kind) },
+            { "credentialFieldCount", request.credentials.size() },
+            { "assignmentTargetIds", [assignmentTargetIds = request.assignmentTargetIds]() {
+                nlohmann::json values = nlohmann::json::array();
+                for (const auto& targetId : assignmentTargetIds) {
+                    values.push_back(MasterControl::Diagnostics::utf8FromWide(targetId));
+                }
+                return values;
+            }() },
+            { "allowAutonomousControl", request.allowAutonomousControl },
+            { "discoverModels", request.discoverModels }
+        });
+
+    result = postAutoConnectProviderToAdminApi(ResolveConfigurationFile(), request);
+    MasterControl::Diagnostics::appendEvent(
+        L"shell",
+        result.succeeded ? "info" : "warning",
+        result.succeeded ? "provider-auto-connect-complete" : "provider-auto-connect-failed",
+        MasterControl::Diagnostics::utf8FromWide(result.summary.empty() ? result.errorMessage : result.summary),
+        nlohmann::json{
+            { "providerId", MasterControl::Diagnostics::utf8FromWide(result.providerId) },
+            { "assignmentCount", result.assignmentsApplied.size() }
+        });
+    return result;
 }
 
 ShellProviderExecutionRecord ShellRuntime::ExecuteProviderTask(const ShellProviderExecutionRequest& request) const {

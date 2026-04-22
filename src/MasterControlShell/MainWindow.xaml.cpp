@@ -3020,6 +3020,7 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
             assignableProviders = ::MasterControlShell::buildAssignableProviderOptions(
                 currentSnapshot_.providers,
                 currentSnapshot_.providerCapabilities,
+                currentSnapshot_.providerCredentialStatuses,
                 currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(targetSelector.SelectedIndex())]);
         }
 
@@ -3088,6 +3089,7 @@ IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
             const auto assignableProviders = ::MasterControlShell::buildAssignableProviderOptions(
                 currentSnapshot_.providers,
                 currentSnapshot_.providerCapabilities,
+                currentSnapshot_.providerCredentialStatuses,
                 currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(targetSelector.SelectedIndex())]);
             if (providerSelector.SelectedIndex() < 0 ||
                 providerSelector.SelectedIndex() >= static_cast<int>(assignableProviders.size())) {

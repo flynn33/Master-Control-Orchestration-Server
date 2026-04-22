@@ -38,6 +38,19 @@ param(
     [Parameter(Mandatory=$true)] [string]$InstallerDir
 )
 
+function ConvertTo-MsiProductVersion {
+    param(
+        [Parameter(Mandatory=$true)] [string]$Version
+    )
+
+    if ($Version -match '^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-rc\.(?<build>\d+))?$') {
+        $build = if ($Matches['build']) { $Matches['build'] } else { '0' }
+        return "$($Matches['major']).$($Matches['minor']).$($Matches['patch']).$build"
+    }
+
+    throw "Unsupported package version format for MSI conversion: $Version"
+}
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
@@ -62,10 +75,10 @@ $wixVersion = (& $wix --version | Select-Object -Last 1)
 Write-Host "    wix version:    $wixVersion"
 
 # ---------------------------------------------------------------------------
-# Version must be MAJOR.MINOR.PATCH.BUILD for MSI. Strip pre-release suffix.
+# Version must be MAJOR.MINOR.PATCH.BUILD for MSI. Preserve RC ordinals so
+# Windows Installer treats each release candidate as a distinct upgrade.
 # ---------------------------------------------------------------------------
-$msiVersion = $Version -replace '-.*$', ''
-$msiVersion = "$msiVersion.0"   # Make sure we have 4 parts (e.g. 0.4.3 -> 0.4.3.0)
+$msiVersion = ConvertTo-MsiProductVersion -Version $Version
 Write-Host "    MSI version:    $msiVersion"
 
 # ---------------------------------------------------------------------------
