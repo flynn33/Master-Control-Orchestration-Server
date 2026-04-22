@@ -5,6 +5,17 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.5-rc.4] - 2026-04-22
+### Summary
+**Release candidate for the latest Windows-app build.** This candidate promotes the current `main` fixes into a clean RC so the packaged release is no longer stuck on the older rc.3 commit. It includes the product-named installed launcher and the provider-ownership safeguards that stop disconnected providers from lingering in assignment and execution paths.
+
+### Included Changes
+- feat(launcher): add the installed `MasterControlOrchestrationServer.exe` product launcher and point MSI shortcuts plus launch-after-install at it so the installed product behaves like a normal Windows application entrypoint.
+- fix(shell): provider assignment surfaces now filter out disconnected or unsupported providers, so stale ownership stops masquerading as a sign-in failure.
+- fix(runtime): role execution now names the disconnected provider route that still owns a lane and tells the operator to reassign it instead of surfacing a generic credentials warning.
+- test: installer/package regression coverage now verifies the launcher wiring, and `tests/MasterControlOrchestrationServerTests.cpp` covers the stale-provider ownership failure path.
+- release: promote the latest `main` commit into a fresh release candidate so the formal RC matches the newest packaged build.
+
 ## [0.4.5-rc.3] - 2026-04-21
 ### Summary
 **Release candidate for the Windows app install and provider-role workflow.** This candidate fixes the last two operator-facing gaps from rc.2: the MSI now presents the product as the Windows application instead of "the shell," and the Windows app no longer lets stale cached provider rows shadow the live signed-in provider state after authentication.

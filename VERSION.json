@@ -1,11 +1,25 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.5-rc.3",
-  "current_tag": "v0.4.5-rc.3",
-  "released_at": "2026-04-21",
+  "current_version": "0.4.5-rc.4",
+  "current_tag": "v0.4.5-rc.4",
+  "released_at": "2026-04-22",
   "last_release_commit": "0e76391",
   "history": [
+    {
+      "version": "0.4.5-rc.4",
+      "tag": "v0.4.5-rc.4",
+      "released_at": "2026-04-22",
+      "commit": "",
+      "summary": "Release candidate for the latest Windows-app build. Promotes the current mainline fixes into a clean RC by shipping the new product-named launcher entrypoint and the provider-ownership safeguards that stop disconnected providers from lingering in role assignment and execution paths.",
+      "entries": [
+        "feat(launcher): add the installed MasterControlOrchestrationServer.exe product launcher and make MSI shortcuts plus launch-after-install point at it instead of exposing internal binaries or installer paths",
+        "fix(shell): role-assignment surfaces now filter out disconnected or unsupported providers so stale provider ownership cannot masquerade as a sign-in problem",
+        "fix(runtime): execution errors now name the disconnected provider route that still owns a lane and tell the operator to reassign it instead of showing a generic credential warning",
+        "test: installer and packaging coverage now verifies the product launcher wiring while provider ownership regressions are covered in MasterControlOrchestrationServerTests",
+        "release: promote the latest main commit into a fresh release candidate so the packaged RC matches current main instead of the older rc.3 commit"
+      ]
+    },
     {
       "version": "0.4.5-rc.3",
       "tag": "v0.4.5-rc.3",
