@@ -1365,6 +1365,13 @@ int main() {
                 success &= expect(
                     codexCap->providerId == "codex" && chatgptCap->providerId == "chatgpt",
                     "Codex and ChatGPT should have distinct providerIds.");
+                success &= expect(
+                    codexCap->providerFamilyId == "openai-chatgpt-codex" &&
+                        chatgptCap->providerFamilyId == "openai-chatgpt-codex",
+                    "Codex and ChatGPT should declare the same OpenAI provider family.");
+                success &= expect(
+                    codexCap->authBridgeId == "codex" && chatgptCap->authBridgeId == "codex",
+                    "Codex and ChatGPT should share the Codex auth bridge while remaining distinct providers.");
             }
         }
         // Execution registrations should also be distinct by providerId
@@ -1381,6 +1388,16 @@ int main() {
                 codexReg != snapshot.providerExecutionRegistrations.end() &&
                     chatgptReg != snapshot.providerExecutionRegistrations.end(),
                 "Both Codex and ChatGPT should have distinct execution registrations.");
+            if (codexReg != snapshot.providerExecutionRegistrations.end() &&
+                chatgptReg != snapshot.providerExecutionRegistrations.end()) {
+                success &= expect(
+                    codexReg->providerFamilyId == "openai-chatgpt-codex" &&
+                        chatgptReg->providerFamilyId == "openai-chatgpt-codex",
+                    "Codex and ChatGPT execution registrations should publish the same provider family.");
+                success &= expect(
+                    codexReg->authBridgeId == "codex" && chatgptReg->authBridgeId == "codex",
+                    "Codex and ChatGPT execution registrations should point at the shared Codex auth bridge.");
+            }
         }
 
         // =====================================================================

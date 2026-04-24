@@ -18,6 +18,9 @@ namespace MasterControl {
 
 namespace {
 
+constexpr char kOpenAiProviderFamilyId[] = "openai-chatgpt-codex";
+constexpr char kCodexAuthBridgeId[] = "codex";
+
 Forsetti::ModuleDescriptor makeDescriptor(const std::string& moduleId,
                                           const std::string& displayName,
                                           const Forsetti::ModuleType moduleType) {
@@ -660,6 +663,8 @@ ProviderCapabilityDescriptor makeCodexProviderCapability() {
     ProviderCapabilityDescriptor capability{
         "com.mastercontrol.provider-codex",
         "codex",
+        kOpenAiProviderFamilyId,
+        kCodexAuthBridgeId,
         ProviderKind::Codex,
         "Codex",
         "OpenAI Codex routing for planner, architect, and coding specialist control lanes.",
@@ -701,6 +706,8 @@ ProviderCapabilityDescriptor makeChatGptProviderCapability() {
     ProviderCapabilityDescriptor capability{
         "com.mastercontrol.provider-codex",
         "chatgpt",
+        kOpenAiProviderFamilyId,
+        kCodexAuthBridgeId,
         ProviderKind::Codex,
         "ChatGPT",
         "OpenAI ChatGPT routing for planning, auditing, and general orchestration review lanes.",
@@ -741,6 +748,8 @@ ProviderExecutionRegistration makeCodexProviderExecutionRegistration() {
     return ProviderExecutionRegistration{
         "com.mastercontrol.provider-codex",
         "codex",
+        kOpenAiProviderFamilyId,
+        kCodexAuthBridgeId,
         ProviderKind::Codex,
         "Codex",
         // Route through the Codex CLI so ChatGPT-account sign-in (the primary
@@ -757,6 +766,8 @@ ProviderExecutionRegistration makeChatGptProviderExecutionRegistration() {
     return ProviderExecutionRegistration{
         "com.mastercontrol.provider-codex",
         "chatgpt",
+        kOpenAiProviderFamilyId,
+        kCodexAuthBridgeId,
         ProviderKind::Codex,
         "ChatGPT",
         ProviderExecutionTransport::CodexCli,
@@ -769,6 +780,8 @@ ProviderCapabilityDescriptor makeClaudeCodeProviderCapability() {
     ProviderCapabilityDescriptor capability{
         "com.mastercontrol.provider-claude-code",
         "claude-code",
+        "anthropic-claude-code",
+        "claude",
         ProviderKind::ClaudeCode,
         "Claude Code",
         "Claude Code routing for architecture and specialist coding execution on Windows hosts.",
@@ -821,6 +834,8 @@ ProviderExecutionRegistration makeClaudeCodeProviderExecutionRegistration() {
     return ProviderExecutionRegistration{
         "com.mastercontrol.provider-claude-code",
         "claude-code",
+        "anthropic-claude-code",
+        "claude",
         ProviderKind::ClaudeCode,
         "Claude Code",
         ProviderExecutionTransport::ClaudeCodeCli,
@@ -833,6 +848,8 @@ ProviderCapabilityDescriptor makeXAIProviderCapability() {
     return ProviderCapabilityDescriptor{
         "com.mastercontrol.provider-xai",
         "xai-grok",
+        "xai-grok",
+        "",
         ProviderKind::XAI,
         "Grok",
         "xAI Grok coding and orchestration routing with shared MCP tool access.",
@@ -871,6 +888,8 @@ ProviderExecutionRegistration makeXAIProviderExecutionRegistration() {
     return ProviderExecutionRegistration{
         "com.mastercontrol.provider-xai",
         "xai-grok",
+        "xai-grok",
+        "",
         ProviderKind::XAI,
         "Grok",
         ProviderExecutionTransport::OpenAICompatibleChat,

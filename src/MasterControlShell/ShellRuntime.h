@@ -64,6 +64,8 @@ struct ShellProviderCredentialField final {
 struct ShellProviderCapability final {
     std::wstring moduleId;
     std::wstring providerId;
+    std::wstring providerFamilyId;
+    std::wstring authBridgeId;
     std::wstring kind;
     std::wstring displayName;
     std::wstring description;
@@ -179,6 +181,8 @@ struct ShellAutoConnectProviderResult final {
 struct ShellProviderExecutionRegistration final {
     std::wstring moduleId;
     std::wstring providerId;
+    std::wstring providerFamilyId;
+    std::wstring authBridgeId;
     std::wstring kind;
     std::wstring displayName;
     std::wstring transport;

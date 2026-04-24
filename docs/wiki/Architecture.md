@@ -55,7 +55,7 @@ flowchart TB
 | `MasterControlServiceHost.exe` | `src/MasterControlServiceHost/` | Windows service host (also runs as console for development) |
 | `MasterControlShell.exe` | `src/MasterControlShell/` | WinUI 3 operator shell, hosts the same runtime in-process |
 | `MasterControlBootstrapper.exe` | `src/MasterControlBootstrapper/` | Lifecycle engine (preflight, install, validate, upgrade, repair, uninstall) |
-| `MasterControlOrchestrationServerSetup.exe` | `src/MasterControlBootstrapper/setup_main.cpp` | Tron-themed setup launcher with progress UI |
+| `MasterControlOrchestrationServerSetup.exe` | `src/MasterControlBootstrapper/setup_main.cpp` | Legacy GUI setup launcher source retained for compatibility work; release bundles are MSI-first |
 
 ---
 

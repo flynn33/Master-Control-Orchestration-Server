@@ -21,11 +21,13 @@ processes on the same machine — and occasionally over a tunnel from another ho
 2. POST to `/api/runtime/mcp-servers` with the endpoint definition.
 3. The runtime probes the endpoint asynchronously and exposes it through `/api/dashboard`.
 
-### Remote operator over tunnel
+### Remote operator access
 
-The admin API binds to `127.0.0.1:7300`. To reach it from another host, use a trusted 
-transport — `ssh -L 7300:127.0.0.1:7300 user@host` is the canonical pattern. The product 
-intentionally does not expose the API on an external interface.
+On the host machine, the packaged browser shortcut opens `http://127.0.0.1:7300/`.
+Depending on host configuration, the listener may also be reachable on the LAN. Until
+transport hardening lands in a future phase, prefer a trusted transport for remote
+administration — `ssh -L 7300:127.0.0.1:7300 user@host` is the canonical pattern, and a
+trusted reverse proxy is the supported alternative when you need shared remote access.
 
 ---
 

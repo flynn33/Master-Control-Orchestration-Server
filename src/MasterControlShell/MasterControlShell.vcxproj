@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
-    <NugetPackageDirectory Condition="'$(NugetPackageDirectory)'==''">packages</NugetPackageDirectory>
+    <NugetPackageDirectory Condition="'$(NugetPackageDirectory)'==''">.nuget\packages</NugetPackageDirectory>
     <UseWinUI>true</UseWinUI>
     <WindowsPackageType>None</WindowsPackageType>
   </PropertyGroup>
@@ -79,7 +79,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(GeneratedFilesDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\..\include;$(MSBuildThisFileDirectory)..\..\build\release\vcpkg_installed\x64-windows\include;$(MSBuildThisFileDirectory)..\..\build\debug\vcpkg_installed\x64-windows\include;$(VCPKG_ROOT)\installed\x64-windows\include;$(GeneratedFilesDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)pch.pch</PrecompiledHeaderOutputFile>

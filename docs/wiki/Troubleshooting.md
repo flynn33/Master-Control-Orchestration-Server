@@ -54,7 +54,7 @@ directly under the same mutex as the upsert, eliminating the race.
 
 1. Check `~\Desktop\MasterControlOrchestrationServer-install-log-pointer.txt` for the real log path.
 2. The launcher uses `ShellExecuteEx` with the `runas` verb. If UAC is suppressed at the policy level, the elevation will fail silently.
-3. Fall back to `Install-MasterControlOrchestrationServer.ps1 -Verbose` for a richer log trail.
+3. For packaged bundles, use `INSTALL.txt` or rerun the MSI with `msiexec /i <package>.msi /l*v install.log` for a richer log trail.
 
 ---
 

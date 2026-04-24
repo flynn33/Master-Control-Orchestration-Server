@@ -692,6 +692,8 @@ ShellProviderCapability providerCapabilityFromJson(const JsonObject& object) {
     ShellProviderCapability capability;
     capability.moduleId = wideFromUtf8(jsonStringOr(object, L"moduleId", ""));
     capability.providerId = wideFromUtf8(jsonStringOr(object, L"providerId", ""));
+    capability.providerFamilyId = wideFromUtf8(jsonStringOr(object, L"providerFamilyId", ""));
+    capability.authBridgeId = wideFromUtf8(jsonStringOr(object, L"authBridgeId", ""));
     capability.kind = wideFromUtf8(jsonStringOr(object, L"kind", "generic"));
     capability.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
     capability.description = wideFromUtf8(jsonStringOr(object, L"description", ""));
@@ -752,6 +754,8 @@ ShellProviderExecutionRegistration providerExecutionRegistrationFromJson(const J
     ShellProviderExecutionRegistration registration;
     registration.moduleId = wideFromUtf8(jsonStringOr(object, L"moduleId", ""));
     registration.providerId = wideFromUtf8(jsonStringOr(object, L"providerId", ""));
+    registration.providerFamilyId = wideFromUtf8(jsonStringOr(object, L"providerFamilyId", ""));
+    registration.authBridgeId = wideFromUtf8(jsonStringOr(object, L"authBridgeId", ""));
     registration.kind = wideFromUtf8(jsonStringOr(object, L"kind", "generic"));
     registration.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
     registration.transport = wideFromUtf8(jsonStringOr(object, L"transport", ""));

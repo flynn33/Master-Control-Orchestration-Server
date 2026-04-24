@@ -103,7 +103,7 @@ file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/Directory.Build.targets"
 <Project>
   <ItemDefinitionGroup>
     <PostBuildEvent>
-      <Command>&quot;\$(WinDir)\\System32\\xcopy.exe&quot; /y &quot;\$(MSBuildThisFileDirectory)packages\\Microsoft.WindowsAppSDK.1.5.240227000\\runtimes\\win10-x64\\native\\Microsoft.WindowsAppRuntime.Bootstrap.dll&quot; &quot;\$(OutDir)&quot;</Command>
+      <Command>&quot;\$(WinDir)\\System32\\xcopy.exe&quot; /y &quot;\$(MSBuildThisFileDirectory)\$(NugetPackageDirectory)\\Microsoft.WindowsAppSDK.1.5.240227000\\runtimes\\win10-x64\\native\\Microsoft.WindowsAppRuntime.Bootstrap.dll&quot; &quot;\$(OutDir)&quot;</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
 </Project>

@@ -32,13 +32,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-mastercontrol-
 # Stage installable payload
 cmake --install build\debug --config Debug --prefix dist\debug
 
-# Build a release package (zip + setup launcher)
+# Build a release package (MSI-first bundle + zip)
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release
 ```
 
-Output is dropped under `dist\release\` and includes the Tron-themed setup launcher, 
-the bootstrapper, the service host, the WinUI shell, the staged Forsetti manifests, 
-and the browser admin UI assets.
+Output is dropped under `dist\packages\release\` and includes the MSI, the ZIP, the
+bundle directory, the bootstrapper, the service host, the WinUI shell, the staged
+Forsetti manifests, and the browser dashboard assets.
 
 ---
 
@@ -46,17 +46,17 @@ and the browser admin UI assets.
 
 | Entry point | When to use |
 | --- | --- |
-| **`MasterControlOrchestrationServerSetup.exe`** | Standard interactive Windows install. Tron-themed progress UI, elevation prompt, post-install shell launch. |
-| **`Install-MasterControlOrchestrationServer.ps1`** | Diagnostic fallback. Writes desktop log, supports `-Verbose`, useful when the launcher fails. |
-| **`MasterControlBootstrapper.exe`** | Lifecycle engine — exposes `preflight`, `install`, `validate`, `upgrade`, `repair`, `uninstall` subcommands. |
+| **`MasterControlOrchestrationServer-<version>-win-x64.msi`** | Standard interactive Windows install. This is the supported operator-facing installer. |
+| **`START-HERE.txt` / `INSTALL.txt`** | Packaged operator guidance for MSI-first and silent-install flows. |
+| **`MasterControlBootstrapper.exe`** | Lifecycle engine inside the packaged payload — exposes `preflight`, `install`, `validate`, `upgrade`, `repair`, `uninstall` subcommands. |
 
 ### Lifecycle subcommands
 
 ```powershell
 MasterControlBootstrapper.exe preflight
-MasterControlBootstrapper.exe install   --source dist\release
+MasterControlBootstrapper.exe install   --source dist\packages\release\<bundle-name>
 MasterControlBootstrapper.exe validate
-MasterControlBootstrapper.exe upgrade   --source dist\release
+MasterControlBootstrapper.exe upgrade   --source dist\packages\release\<bundle-name>
 MasterControlBootstrapper.exe repair
 MasterControlBootstrapper.exe uninstall --purge-data:false
 ```
@@ -81,7 +81,7 @@ MasterControlBootstrapper.exe uninstall --purge-data:false
 | --- | --- |
 | Windows service host | `MasterControlServiceHost.exe` (registered as `MasterControlProgram` for upgrade compat) |
 | Desktop shell | `MasterControlShell.exe` |
-| Browser admin UI | `http://127.0.0.1:7300/` |
+| Browser dashboard | `http://127.0.0.1:7300/` on the host machine; remote clients use the host's reachable address or an approved tunnel/proxy |
 | ProgramData | `%ProgramData%\Master Control Orchestration Server\` |
 
 On first run, a one-shot migration moves any legacy 

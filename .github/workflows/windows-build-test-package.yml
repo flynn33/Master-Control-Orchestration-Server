@@ -12,6 +12,8 @@ permissions:
 jobs:
   windows-product-gate:
     runs-on: windows-latest
+    env:
+      PACKAGE_ROOT: dist/packages/release
 
     steps:
       - name: Check out repository
@@ -37,6 +39,11 @@ jobs:
         run: |
           vcpkg install nlohmann-json:x64-windows
 
+      - name: Check repository version metadata
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/Sync-RepositoryVersionBadges.ps1 -CheckOnly
+
       - name: Configure (Release)
         shell: pwsh
         run: |
@@ -60,9 +67,9 @@ jobs:
       - name: Smoke validation - verify package contents
         shell: pwsh
         run: |
-          $packageDir = Get-ChildItem -Path dist/release -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+          $packageDir = Get-ChildItem -Path $env:PACKAGE_ROOT -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $packageDir) {
-            Write-Error "No package output found in dist/release"
+            Write-Error "No package output found in $env:PACKAGE_ROOT"
             exit 1
           }
           $requiredFiles = @(
@@ -84,7 +91,7 @@ jobs:
       - name: Bootstrapper preflight validation
         shell: pwsh
         run: |
-          $bootstrapper = Get-ChildItem -Path dist/release -Recurse -Filter "MasterControlBootstrapper.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $bootstrapper = Get-ChildItem -Path $env:PACKAGE_ROOT -Recurse -Filter "MasterControlBootstrapper.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($bootstrapper) {
             & $bootstrapper.FullName preflight --json-output 2>&1 | Out-Host
             Write-Host "Bootstrapper preflight completed (exit: $LASTEXITCODE)"
@@ -96,5 +103,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mastercontrol-release-package
-          path: dist/release/
+          path: ${{ env.PACKAGE_ROOT }}
           retention-days: 14

@@ -199,6 +199,12 @@ struct ProviderCredentialFieldDescriptor final {
 struct ProviderCapabilityDescriptor final {
     std::string moduleId;
     std::string providerId;
+    // Stable family identifier for distinct providers that belong to the same
+    // vendor/auth surface (for example ChatGPT + Codex).
+    std::string providerFamilyId;
+    // Shared authentication bridge identifier. This stays separate from
+    // providerId so multiple logical providers can reuse one sign-in flow.
+    std::string authBridgeId;
     ProviderKind kind = ProviderKind::Generic;
     std::string displayName;
     std::string description;
@@ -281,6 +287,8 @@ struct ProviderAssignment final {
 struct ProviderExecutionRegistration final {
     std::string moduleId;
     std::string providerId;
+    std::string providerFamilyId;
+    std::string authBridgeId;
     ProviderKind kind = ProviderKind::Generic;
     std::string displayName;
     ProviderExecutionTransport transport = ProviderExecutionTransport::OpenAICompatibleChat;
@@ -1049,6 +1057,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ProviderCapabilityDescriptor,
     moduleId,
     providerId,
+    providerFamilyId,
+    authBridgeId,
     kind,
     displayName,
     description,
@@ -1119,6 +1129,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ProviderExecutionRegistration,
     moduleId,
     providerId,
+    providerFamilyId,
+    authBridgeId,
     kind,
     displayName,
     transport,
