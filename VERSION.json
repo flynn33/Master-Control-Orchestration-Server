@@ -1,11 +1,25 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "patch-on-main",
-  "current_version": "0.4.5-rc.4",
-  "current_tag": "v0.4.5-rc.4",
-  "released_at": "2026-04-22",
-  "last_release_commit": "0e76391",
+  "current_version": "0.4.5-rc.5",
+  "current_tag": "v0.4.5-rc.5",
+  "released_at": "2026-04-24",
+  "last_release_commit": "c15af39",
   "history": [
+    {
+      "version": "0.4.5-rc.5",
+      "tag": "v0.4.5-rc.5",
+      "released_at": "2026-04-24",
+      "commit": "c15af39",
+      "summary": "Release candidate for the non-security remediation pass. Promotes the packaging, documentation, and shared-auth provider fixes from the remediation review into a clean RC while intentionally deferring security hardening to a later phase.",
+      "entries": [
+        "fix(models): shared-auth metadata now keeps ChatGPT and Codex tied to the same OpenAI bridge and provider family across module registration, execution registration, and shell snapshots",
+        "test: MasterControlOrchestrationServerTests now asserts providerFamilyId and authBridgeId coverage for the shared OpenAI-backed providers",
+        "fix(shell/build): MasterControlShell now restores Windows App SDK packages into a repo-local .nuget cache, ignores that cache, and drops the tracked src/MasterControlShell/packages tree without breaking clean builds",
+        "fix(ci/docs): Windows packaging CI and operator docs now target dist/packages/release, validate version-badge sync, and describe the MSI-first host-versus-remote workflow accurately",
+        "release: cut the non-security remediation candidate as v0.4.5-rc.5 while deferring security remediation to a future phase"
+      ]
+    },
     {
       "version": "0.4.5-rc.4",
       "tag": "v0.4.5-rc.4",

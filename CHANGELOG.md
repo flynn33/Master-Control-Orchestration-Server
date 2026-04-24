@@ -5,6 +5,17 @@ All notable changes to this repository are tracked here by the repository agents
 ## [Unreleased]
 - Changes pushed to `main` are promoted into the next numbered release automatically.
 
+## [0.4.5-rc.5] - 2026-04-24
+### Summary
+**Release candidate for the non-security remediation pass.** This candidate promotes the packaging, documentation, and shared-auth provider fixes from the remediation review into a clean RC while intentionally deferring security hardening to a later phase.
+
+### Included Changes
+- fix(models): shared-auth metadata now keeps ChatGPT and Codex tied to the same OpenAI bridge and provider family across module registration, execution registration, and shell snapshots.
+- test: `tests/MasterControlOrchestrationServerTests.cpp` now asserts `providerFamilyId` and `authBridgeId` coverage for the shared OpenAI-backed providers.
+- fix(shell/build): `MasterControlShell` now restores Windows App SDK packages into a repo-local `.nuget` cache, ignores that cache, and drops the tracked `src/MasterControlShell/packages` tree without breaking clean builds.
+- fix(ci/docs): Windows packaging CI and operator docs now target `dist/packages/release`, validate version-badge sync, and describe the MSI-first host-versus-remote workflow accurately.
+- release: cut the non-security remediation candidate as `v0.4.5-rc.5` while deferring security remediation to a future phase.
+
 ## [0.4.5-rc.4] - 2026-04-22
 ### Summary
 **Release candidate for the latest Windows-app build.** This candidate promotes the current `main` fixes into a clean RC so the packaged release is no longer stuck on the older rc.3 commit. It includes the product-named installed launcher and the provider-ownership safeguards that stop disconnected providers from lingering in assignment and execution paths.

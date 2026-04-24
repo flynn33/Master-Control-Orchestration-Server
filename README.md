@@ -1,13 +1,13 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.4.5--rc.4-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--22-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.4.5--rc.5-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--24-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
 
 > Forsetti-compliant Windows orchestration control plane for MCP services, AI provider routing, 
 > CLU governance, sub-agents, platform gateways, telemetry, and browser-based operations — 
 > all delivered as a single Tron-themed product.
 
 - **Repository:** [`master-control-dashboard`](https://github.com/flynn33/Master-Control-Orchestration-Server)
-- **Current release:** `v0.4.5-rc.4` (2026-04-22)
+- **Current release:** `v0.4.5-rc.5` (2026-04-24)
 - **Forsetti modules:** 19
 
 ---
@@ -117,15 +117,15 @@ See [Operations](docs/wiki/Operations.md) for the full deployment matrix, and
 
 ## Current release
 
-**`v0.4.5-rc.4` — 2026-04-22**
+**`v0.4.5-rc.5` — 2026-04-24**
 
-Release candidate for the latest Windows-app build. Promotes the current mainline fixes into a clean RC by shipping the new product-named launcher entrypoint and the provider-ownership safeguards that stop disconnected providers from lingering in role assignment and execution paths.
+Release candidate for the non-security remediation pass. Promotes the packaging, documentation, and shared-auth provider fixes from the remediation review into a clean RC while intentionally deferring security hardening to a later phase.
 
-- feat(launcher): add the installed MasterControlOrchestrationServer.exe product launcher and make MSI shortcuts plus launch-after-install point at it instead of exposing internal binaries or installer paths
-- fix(shell): role-assignment surfaces now filter out disconnected or unsupported providers so stale provider ownership cannot masquerade as a sign-in problem
-- fix(runtime): execution errors now name the disconnected provider route that still owns a lane and tell the operator to reassign it instead of showing a generic credential warning
-- test: installer and packaging coverage now verifies the product launcher wiring while provider ownership regressions are covered in MasterControlOrchestrationServerTests
-- release: promote the latest main commit into a fresh release candidate so the packaged RC matches current main instead of the older rc.3 commit
+- fix(models): shared-auth metadata now keeps ChatGPT and Codex tied to the same OpenAI bridge and provider family across module registration, execution registration, and shell snapshots
+- test: MasterControlOrchestrationServerTests now asserts providerFamilyId and authBridgeId coverage for the shared OpenAI-backed providers
+- fix(shell/build): MasterControlShell now restores Windows App SDK packages into a repo-local .nuget cache, ignores that cache, and drops the tracked src/MasterControlShell/packages tree without breaking clean builds
+- fix(ci/docs): Windows packaging CI and operator docs now target dist/packages/release, validate version-badge sync, and describe the MSI-first host-versus-remote workflow accurately
+- release: cut the non-security remediation candidate as v0.4.5-rc.5 while deferring security remediation to a future phase
 ---
 
 Repository: https://github.com/flynn33/Master-Control-Orchestration-Server
