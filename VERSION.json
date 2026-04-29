@@ -1,11 +1,34 @@
 {
   "scheme": "semantic-versioning",
-  "strategy": "patch-on-main",
-  "current_version": "0.4.5-rc.5",
-  "current_tag": "v0.4.5-rc.5",
-  "released_at": "2026-04-24",
-  "last_release_commit": "c15af39",
+  "strategy": "minor-on-architecture-change",
+  "current_version": "0.5.0",
+  "current_tag": "v0.5.0",
+  "released_at": "2026-04-25",
+  "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.5.0",
+      "tag": "v0.5.0",
+      "released_at": "2026-04-25",
+      "commit": "pending",
+      "summary": "LAN Client Control Plane (ADR-001 phases 1-9 functionally complete). Removed the AI provider integration stack and rebuilt MCOS as a control plane where external AI clients connect over the LAN under per-client privileges enforced by CLU. The shared MCP and sub-agent fabric is universally usable; only mutations are privilege-gated. Adds: LAN client identity, nine-flag privilege model, server-authored config bundle, identification middleware, CLU expansion to 15 governance action kinds, operator approval queue, browser dashboard pivot, full Forsetti-aligned governance profile rewrite, comprehensive wiki refresh.",
+      "entries": [
+        "feat(adr): adopt LAN client control plane (docs/wiki/Architecture-Decisions/ADR-001-lan-client-control-plane.md)",
+        "remove(provider-stack): delete ProviderIntegrationModule + Codex/Claude/xAI vendor modules, all Provider* and AutoConnect* data types, provider services, /api/providers/* routes, outbound CLI transports, provider docs and proof artifacts",
+        "feat(lan-client-identity): introduce LanClient + ILanClientAccessService + LanClientAccessModule. Six lifecycle routes (GET/POST /api/clients, disable/enable/delete)",
+        "feat(privileges): nine-flag LanClientPrivileges + autonomousMode toggle + dedicated /api/clients/{id}/privileges and /autonomous-mode routes",
+        "feat(config-bundle): GET /api/clients/{id}/config emits the schemaVersion-1.0 bundle; surfaces in /api/exports as lan-client-config:<id>",
+        "feat(middleware): X-MCOS-Client-Id resolver + AuthenticatedRequestContext + privilege gates on every mutation route",
+        "feat(client-fabric): /api/client/mcp-servers, /sub-agents, /activity, /governance/profile, /governance/decisions, /heartbeat",
+        "feat(governance): GovernanceActionKind expanded from 2 to 15 values; GovernanceDecisionOutcome added; CommandLogicUnitService::enforceAction rewritten as a switch over the full enum; soft-gate-lift on autonomous mode (CLU-C009 takes over)",
+        "feat(approval-queue): IGovernanceApprovalQueueService + in-memory implementation + GET/POST /api/clu/approvals routes",
+        "feat(governance-profile): rewrite resources/clu/governance-profile.json in Forsetti terms; LanClient as first-class role; new rules CLU-C009, CLU-C010, CLU-S001, CLU-S002",
+        "feat(browser): replace 6411-line provider-era app.js with focused 933-line LAN client surface (Overview, LAN Clients, Governance, Shared Fabric, Activity, Exports destinations)",
+        "docs(wiki): add LAN-Clients.md, Privileges.md, Client-Config-Bundle.md, Governance.md; rewrite Architecture.md, API-Reference.md, Remote-Client.md, Home.md; mark CLU-Governance.md superseded; update Sub-Agents.md and Telemetry-and-Activity.md for the new event kinds",
+        "test: skeletal test suite covers LanClient JSON round-trip, defaults, privileges, AuthenticatedRequestContext fallback, GovernanceActionKind/Outcome/DeferredAction serialization, config bundle shape pin",
+        "proof: plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md verification recipe with two LAN clients"
+      ]
+    },
     {
       "version": "0.4.5-rc.5",
       "tag": "v0.4.5-rc.5",

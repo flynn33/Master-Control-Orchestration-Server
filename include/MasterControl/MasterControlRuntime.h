@@ -30,9 +30,6 @@ public:
     OperationResult cancelAppleOperationJson(const std::string& requestBody);
     OperationResult applyConfigurationJson(const std::string& requestBody,
                                            bool confirmUnsafeChanges);
-    OperationResult upsertProviderJson(const std::string& requestBody);
-    AutoConnectResult autoConnectProviderJson(const std::string& requestBody);
-    OperationResult upsertProviderCredentialsJson(const std::string& requestBody);
     OperationResult upsertAppleRemoteHostJson(const std::string& requestBody);
     OperationResult removeAppleRemoteHostJson(const std::string& requestBody);
     OperationResult upsertMcpServerJson(const std::string& requestBody);
@@ -41,8 +38,6 @@ public:
     OperationResult removeSubAgentJson(const std::string& requestBody);
     OperationResult upsertSubAgentGroupJson(const std::string& requestBody);
     OperationResult removeSubAgentGroupJson(const std::string& requestBody);
-    OperationResult upsertProviderAssignmentJson(const std::string& requestBody);
-    ProviderExecutionRecord executeProviderTaskJson(const std::string& requestBody);
     OperationResult installPackageJson(const std::string& requestBody);
     OperationResult installRepoJson(const std::string& requestBody);
     OperationResult installZipJson(const std::string& requestBody);

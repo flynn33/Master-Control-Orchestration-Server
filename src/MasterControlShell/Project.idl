@@ -31,12 +31,6 @@ namespace MasterControlShell
     }
 
     [default_interface]
-    runtimeclass ProvidersSectionControl : Microsoft.UI.Xaml.Controls.UserControl
-    {
-        ProvidersSectionControl();
-    }
-
-    [default_interface]
     runtimeclass ImportsSectionControl : Microsoft.UI.Xaml.Controls.UserControl
     {
         ImportsSectionControl();

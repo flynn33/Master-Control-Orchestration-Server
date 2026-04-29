@@ -661,65 +661,9 @@ ShellRuntimeEndpoint runtimeEndpointFromJson(const JsonObject& object) {
     return endpoint;
 }
 
-ShellProviderConnection providerFromJson(const JsonObject& object) {
-    ShellProviderConnection provider;
-    provider.id = wideFromUtf8(jsonStringOr(object, L"id", ""));
-    provider.kind = wideFromUtf8(jsonStringOr(object, L"kind", "generic"));
-    provider.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
-    provider.baseUrl = wideFromUtf8(jsonStringOr(object, L"baseUrl", ""));
-    provider.modelId = wideFromUtf8(jsonStringOr(object, L"modelId", ""));
-    provider.enabled = jsonBoolOr(object, L"enabled", true);
-    provider.allowAutonomousControl = jsonBoolOr(object, L"allowAutonomousControl", false);
-    provider.credentialsConfigured = jsonBoolOr(object, L"credentialsConfigured", false);
-    return provider;
-}
 
-ShellProviderCredentialField credentialFieldFromJson(const JsonObject& object) {
-    ShellProviderCredentialField field;
-    field.fieldId = wideFromUtf8(jsonStringOr(object, L"fieldId", ""));
-    field.label = wideFromUtf8(jsonStringOr(object, L"label", ""));
-    field.kind = wideFromUtf8(jsonStringOr(object, L"kind", "text"));
-    field.helpText = wideFromUtf8(jsonStringOr(object, L"helpText", ""));
-    field.placeholder = wideFromUtf8(jsonStringOr(object, L"placeholder", ""));
-    field.environmentVariableHint = wideFromUtf8(jsonStringOr(object, L"environmentVariableHint", ""));
-    field.requirementGroup = wideFromUtf8(jsonStringOr(object, L"requirementGroup", ""));
-    field.secret = jsonBoolOr(object, L"secret", false);
-    field.required = jsonBoolOr(object, L"required", false);
-    return field;
-}
 
-ShellProviderCapability providerCapabilityFromJson(const JsonObject& object) {
-    ShellProviderCapability capability;
-    capability.moduleId = wideFromUtf8(jsonStringOr(object, L"moduleId", ""));
-    capability.providerId = wideFromUtf8(jsonStringOr(object, L"providerId", ""));
-    capability.providerFamilyId = wideFromUtf8(jsonStringOr(object, L"providerFamilyId", ""));
-    capability.authBridgeId = wideFromUtf8(jsonStringOr(object, L"authBridgeId", ""));
-    capability.kind = wideFromUtf8(jsonStringOr(object, L"kind", "generic"));
-    capability.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
-    capability.description = wideFromUtf8(jsonStringOr(object, L"description", ""));
-    capability.defaultBaseUrl = wideFromUtf8(jsonStringOr(object, L"defaultBaseUrl", ""));
-    capability.recommendedModel = wideFromUtf8(jsonStringOr(object, L"recommendedModel", ""));
-    capability.runtimeRequirements = jsonStringArrayOr(object, L"runtimeRequirements");
-    capability.supportedTargets = jsonStringArrayOr(object, L"supportedTargets");
-    capability.supportsSharedMcpAccess = jsonBoolOr(object, L"supportsSharedMcpAccess", true);
-    capability.supportsAutonomousControl = jsonBoolOr(object, L"supportsAutonomousControl", true);
-    for (const auto& value : object.GetNamedArray(L"credentialFields", JsonArray())) {
-        if (value.ValueType() == JsonValueType::Object) {
-            capability.credentialFields.push_back(credentialFieldFromJson(value.GetObject()));
-        }
-    }
-    return capability;
-}
 
-ShellProviderCredentialStatus providerCredentialStatusFromJson(const JsonObject& object) {
-    ShellProviderCredentialStatus status;
-    status.providerId = wideFromUtf8(jsonStringOr(object, L"providerId", ""));
-    status.configured = jsonBoolOr(object, L"configured", false);
-    status.configuredFieldIds = jsonStringArrayOr(object, L"configuredFieldIds");
-    status.updatedAtUtc = wideFromUtf8(jsonStringOr(object, L"updatedAtUtc", ""));
-    status.message = wideFromUtf8(jsonStringOr(object, L"message", ""));
-    return status;
-}
 
 ShellSubAgentGroupDefinition subAgentGroupFromJson(const JsonObject& object) {
     ShellSubAgentGroupDefinition group;
@@ -731,57 +675,9 @@ ShellSubAgentGroupDefinition subAgentGroupFromJson(const JsonObject& object) {
     return group;
 }
 
-ShellProviderAssignmentTarget providerAssignmentTargetFromJson(const JsonObject& object) {
-    ShellProviderAssignmentTarget target;
-    target.targetId = wideFromUtf8(jsonStringOr(object, L"targetId", ""));
-    target.kind = wideFromUtf8(jsonStringOr(object, L"kind", "role"));
-    target.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
-    target.description = wideFromUtf8(jsonStringOr(object, L"description", ""));
-    target.memberTargetIds = jsonStringArrayOr(object, L"memberTargetIds");
-    return target;
-}
 
-ShellProviderAssignment providerAssignmentFromJson(const JsonObject& object) {
-    ShellProviderAssignment assignment;
-    assignment.targetId = wideFromUtf8(jsonStringOr(object, L"targetId", ""));
-    assignment.kind = wideFromUtf8(jsonStringOr(object, L"kind", "role"));
-    assignment.providerId = wideFromUtf8(jsonStringOr(object, L"providerId", ""));
-    assignment.updatedAtUtc = wideFromUtf8(jsonStringOr(object, L"updatedAtUtc", ""));
-    return assignment;
-}
 
-ShellProviderExecutionRegistration providerExecutionRegistrationFromJson(const JsonObject& object) {
-    ShellProviderExecutionRegistration registration;
-    registration.moduleId = wideFromUtf8(jsonStringOr(object, L"moduleId", ""));
-    registration.providerId = wideFromUtf8(jsonStringOr(object, L"providerId", ""));
-    registration.providerFamilyId = wideFromUtf8(jsonStringOr(object, L"providerFamilyId", ""));
-    registration.authBridgeId = wideFromUtf8(jsonStringOr(object, L"authBridgeId", ""));
-    registration.kind = wideFromUtf8(jsonStringOr(object, L"kind", "generic"));
-    registration.displayName = wideFromUtf8(jsonStringOr(object, L"displayName", ""));
-    registration.transport = wideFromUtf8(jsonStringOr(object, L"transport", ""));
-    registration.supportsSharedMcpAccess = jsonBoolOr(object, L"supportsSharedMcpAccess", true);
-    registration.supportsDirectMcpConfig = jsonBoolOr(object, L"supportsDirectMcpConfig", false);
-    return registration;
-}
 
-ShellProviderExecutionRecord providerExecutionRecordFromJson(const JsonObject& object) {
-    ShellProviderExecutionRecord record;
-    record.executionId = wideFromUtf8(jsonStringOr(object, L"executionId", ""));
-    record.targetId = wideFromUtf8(jsonStringOr(object, L"targetId", ""));
-    record.targetDisplayName = wideFromUtf8(jsonStringOr(object, L"targetDisplayName", ""));
-    record.providerId = wideFromUtf8(jsonStringOr(object, L"providerId", ""));
-    record.providerDisplayName = wideFromUtf8(jsonStringOr(object, L"providerDisplayName", ""));
-    record.status = wideFromUtf8(jsonStringOr(object, L"status", "failed"));
-    record.modelId = wideFromUtf8(jsonStringOr(object, L"modelId", ""));
-    record.referencedMcpServerIds = jsonStringArrayOr(object, L"referencedMcpServerIds");
-    record.toolEvents = jsonStringArrayOr(object, L"toolEvents");
-    record.outputText = wideFromUtf8(jsonStringOr(object, L"outputText", ""));
-    record.rawResponse = wideFromUtf8(jsonStringOr(object, L"rawResponse", ""));
-    record.startedAtUtc = wideFromUtf8(jsonStringOr(object, L"startedAtUtc", ""));
-    record.completedAtUtc = wideFromUtf8(jsonStringOr(object, L"completedAtUtc", ""));
-    record.errorMessage = wideFromUtf8(jsonStringOr(object, L"errorMessage", ""));
-    return record;
-}
 
 ShellSecuritySettings securityFromJson(const JsonObject& object) {
     ShellSecuritySettings settings;
@@ -879,17 +775,6 @@ std::string installerKindString(const ShellInstallerKind kind) {
     }
 }
 
-JsonObject providerToJson(const ShellProviderConnection& provider) {
-    JsonObject object;
-    object.SetNamedValue(L"id", JsonValue::CreateStringValue(provider.id));
-    object.SetNamedValue(L"kind", JsonValue::CreateStringValue(provider.kind));
-    object.SetNamedValue(L"displayName", JsonValue::CreateStringValue(provider.displayName));
-    object.SetNamedValue(L"baseUrl", JsonValue::CreateStringValue(provider.baseUrl));
-    object.SetNamedValue(L"modelId", JsonValue::CreateStringValue(provider.modelId));
-    object.SetNamedValue(L"enabled", JsonValue::CreateBooleanValue(provider.enabled));
-    object.SetNamedValue(L"allowAutonomousControl", JsonValue::CreateBooleanValue(provider.allowAutonomousControl));
-    return object;
-}
 
 JsonObject runtimeEndpointToJson(const ShellRuntimeEndpoint& endpoint) {
     JsonObject object;
@@ -908,17 +793,6 @@ JsonObject runtimeEndpointToJson(const ShellRuntimeEndpoint& endpoint) {
     return object;
 }
 
-JsonObject providerCredentialsToJson(const std::wstring& providerId,
-                                     const std::vector<std::pair<std::wstring, std::wstring>>& values) {
-    JsonObject object;
-    JsonObject credentialValues;
-    object.SetNamedValue(L"providerId", JsonValue::CreateStringValue(providerId));
-    for (const auto& [fieldId, value] : values) {
-        credentialValues.SetNamedValue(fieldId, JsonValue::CreateStringValue(value));
-    }
-    object.SetNamedValue(L"values", credentialValues);
-    return object;
-}
 
 JsonObject subAgentGroupToJson(const ShellSubAgentGroupDefinition& group) {
     JsonObject object;
@@ -933,13 +807,6 @@ JsonObject subAgentGroupToJson(const ShellSubAgentGroupDefinition& group) {
     return object;
 }
 
-JsonObject providerAssignmentToJson(const ShellProviderAssignment& assignment) {
-    JsonObject object;
-    object.SetNamedValue(L"targetId", JsonValue::CreateStringValue(assignment.targetId));
-    object.SetNamedValue(L"kind", JsonValue::CreateStringValue(assignment.kind));
-    object.SetNamedValue(L"providerId", JsonValue::CreateStringValue(assignment.providerId));
-    return object;
-}
 
 JsonObject stringMapToJson(const std::map<std::wstring, std::wstring>& values) {
     JsonObject object;
@@ -1661,178 +1528,7 @@ ShellOperationResult postJsonObjectToAdminApi(const std::filesystem::path& confi
     return operationResultFromResponse(*response);
 }
 
-ShellAutoConnectProviderResult postAutoConnectProviderToAdminApi(
-    const std::filesystem::path& configurationFile,
-    const ShellAutoConnectProviderRequest& request) {
-    ShellAutoConnectProviderResult result;
 
-    JsonObject payload;
-    payload.SetNamedValue(L"kind", JsonValue::CreateStringValue(request.kind));
-    if (!request.providerId.empty()) {
-        payload.SetNamedValue(L"providerId", JsonValue::CreateStringValue(request.providerId));
-    }
-    payload.SetNamedValue(L"allowAutonomousControl",
-                          JsonValue::CreateBooleanValue(request.allowAutonomousControl));
-    payload.SetNamedValue(L"discoverModels", JsonValue::CreateBooleanValue(request.discoverModels));
-    if (!request.displayNameOverride.empty()) {
-        payload.SetNamedValue(L"displayNameOverride",
-                              JsonValue::CreateStringValue(request.displayNameOverride));
-    }
-    if (!request.baseUrlOverride.empty()) {
-        payload.SetNamedValue(L"baseUrlOverride", JsonValue::CreateStringValue(request.baseUrlOverride));
-    }
-    if (!request.modelIdOverride.empty()) {
-        payload.SetNamedValue(L"modelIdOverride", JsonValue::CreateStringValue(request.modelIdOverride));
-    }
-
-    // credentials: object mapping fieldId -> value
-    JsonObject credentialsObject;
-    for (const auto& [fieldId, value] : request.credentials) {
-        credentialsObject.SetNamedValue(fieldId, JsonValue::CreateStringValue(value));
-    }
-    payload.SetNamedValue(L"credentials", credentialsObject);
-
-    // assignmentTargetIds: array of strings
-    JsonArray targetsArray;
-    for (const auto& targetId : request.assignmentTargetIds) {
-        targetsArray.Append(JsonValue::CreateStringValue(targetId));
-    }
-    payload.SetNamedValue(L"assignmentTargetIds", targetsArray);
-
-    std::wstring errorMessage;
-    const auto [host, port] = adminApiEndpoint(configurationFile);
-    const auto response = httpRequest(
-        host,
-        port,
-        L"POST",
-        L"/api/providers/auto-connect",
-        narrowFromWide(payload.Stringify().c_str()),
-        {},
-        errorMessage);
-    if (!response.has_value()) {
-        result.errorMessage = errorMessage.empty()
-            ? std::wstring(L"Unable to auto-connect the provider through the local admin API.")
-            : errorMessage;
-        result.summary = result.errorMessage;
-        return result;
-    }
-
-    const auto json = parseJsonObject(response->body);
-    if (!json.has_value()) {
-        result.errorMessage = response->statusCode == 200
-            ? std::wstring(L"Local admin API returned invalid auto-connect JSON.")
-            : std::wstring(L"Local admin API rejected the auto-connect request.");
-        result.summary = result.errorMessage;
-        return result;
-    }
-
-    const auto& body = *json;
-    result.succeeded = body.HasKey(L"succeeded") && body.GetNamedBoolean(L"succeeded", false);
-    result.providerId = body.GetNamedString(L"providerId", L"");
-    result.displayName = body.GetNamedString(L"displayName", L"");
-    result.baseUrl = body.GetNamedString(L"baseUrl", L"");
-    result.selectedModelId = body.GetNamedString(L"selectedModelId", L"");
-    result.summary = body.GetNamedString(L"summary", L"");
-    result.errorMessage = body.GetNamedString(L"errorMessage", L"");
-    result.totalLatencyMs = static_cast<int>(body.GetNamedNumber(L"totalLatencyMs", 0));
-
-    if (body.HasKey(L"steps")) {
-        const auto stepsArray = body.GetNamedArray(L"steps", JsonArray());
-        for (const auto& entry : stepsArray) {
-            if (entry.ValueType() != JsonValueType::Object) continue;
-            const auto obj = entry.GetObject();
-            ShellAutoConnectProviderStep step;
-            step.stage = obj.GetNamedString(L"stage", L"");
-            step.succeeded = obj.HasKey(L"succeeded") && obj.GetNamedBoolean(L"succeeded", false);
-            step.message = obj.GetNamedString(L"message", L"");
-            step.latencyMs = static_cast<int>(obj.GetNamedNumber(L"latencyMs", 0));
-            result.steps.push_back(std::move(step));
-        }
-    }
-
-    if (body.HasKey(L"discoveredModels")) {
-        const auto modelsArray = body.GetNamedArray(L"discoveredModels", JsonArray());
-        for (const auto& entry : modelsArray) {
-            if (entry.ValueType() != JsonValueType::Object) continue;
-            const auto obj = entry.GetObject();
-            ShellAutoConnectProviderModel model;
-            model.id = obj.GetNamedString(L"id", L"");
-            model.displayName = obj.GetNamedString(L"displayName", L"");
-            model.description = obj.GetNamedString(L"description", L"");
-            result.discoveredModels.push_back(std::move(model));
-        }
-    }
-
-    if (body.HasKey(L"assignmentsApplied")) {
-        const auto array = body.GetNamedArray(L"assignmentsApplied", JsonArray());
-        for (const auto& entry : array) {
-            if (entry.ValueType() == JsonValueType::String) {
-                result.assignmentsApplied.push_back(entry.GetString().c_str());
-            }
-        }
-    }
-    if (body.HasKey(L"assignmentsFailed")) {
-        const auto array = body.GetNamedArray(L"assignmentsFailed", JsonArray());
-        for (const auto& entry : array) {
-            if (entry.ValueType() == JsonValueType::String) {
-                result.assignmentsFailed.push_back(entry.GetString().c_str());
-            }
-        }
-    }
-
-    if (response->statusCode != 200 && result.errorMessage.empty()) {
-        result.errorMessage = L"Local admin API rejected the auto-connect request.";
-        result.summary = result.errorMessage;
-    }
-    return result;
-}
-
-ShellProviderExecutionRecord postProviderExecutionToAdminApi(const std::filesystem::path& configurationFile,
-                                                             const ShellProviderExecutionRequest& request) {
-    ShellProviderExecutionRecord record;
-    record.targetId = request.targetId;
-    record.status = L"failed";
-
-    JsonObject payload;
-    payload.SetNamedValue(L"targetId", JsonValue::CreateStringValue(request.targetId));
-    payload.SetNamedValue(L"prompt", JsonValue::CreateStringValue(request.prompt));
-    payload.SetNamedValue(L"allowToolAccess", JsonValue::CreateBooleanValue(request.allowToolAccess));
-    payload.SetNamedValue(L"maxTurns", JsonValue::CreateNumberValue(request.maxTurns));
-
-    std::wstring errorMessage;
-    const auto [host, port] = adminApiEndpoint(configurationFile);
-    const auto response = httpRequest(
-        host,
-        port,
-        L"POST",
-        L"/api/providers/execute",
-        narrowFromWide(payload.Stringify().c_str()),
-        {},
-        errorMessage);
-    if (!response.has_value()) {
-        record.errorMessage = errorMessage.empty()
-            ? L"Unable to execute the provider task through the local admin API."
-            : errorMessage;
-        return record;
-    }
-
-    const auto json = parseJsonObject(response->body);
-    if (!json.has_value()) {
-        record.errorMessage = response->statusCode == 200
-            ? L"Local admin API returned invalid execution JSON."
-            : L"Local admin API rejected the provider execution request.";
-        return record;
-    }
-
-    auto parsedRecord = providerExecutionRecordFromJson(*json);
-    if (parsedRecord.status.empty()) {
-        parsedRecord.status = response->statusCode == 200 ? L"succeeded" : L"failed";
-    }
-    if (response->statusCode != 200 && parsedRecord.errorMessage.empty()) {
-        parsedRecord.errorMessage = L"Local admin API rejected the provider execution request.";
-    }
-    return parsedRecord;
-}
 
 ShellOperationResult postGovernanceToolToAdminApi(const std::filesystem::path& configurationFile,
                                                   const std::wstring& platform,
@@ -2649,33 +2345,7 @@ ShellOperationResult ShellRuntime::RemoveSubAgent(const std::wstring& subAgentId
         L"Unable to remove the selected custom sub-agent through the local admin API.");
 }
 
-ShellOperationResult ShellRuntime::UpsertProvider(const ShellProviderConnection& provider) const {
-    if (provider.id.empty()) {
-        return ShellOperationResult{ false, false, L"Provider ID is required." };
-    }
-    if (provider.displayName.empty()) {
-        return ShellOperationResult{ false, false, L"Provider display name is required." };
-    }
-    if (provider.baseUrl.empty()) {
-        return ShellOperationResult{ false, false, L"Provider base URL is required." };
-    }
 
-    return postProviderToAdminApi(ResolveConfigurationFile(), provider);
-}
-
-ShellOperationResult ShellRuntime::UpsertProviderCredentials(
-    const std::wstring& providerId,
-    const std::vector<std::pair<std::wstring, std::wstring>>& values) const {
-    if (providerId.empty()) {
-        return ShellOperationResult{ false, false, L"Select a provider route before saving credentials." };
-    }
-
-    return postJsonObjectToAdminApi(
-        ResolveConfigurationFile(),
-        L"/api/providers/credentials",
-        providerCredentialsToJson(providerId, values),
-        L"Unable to update provider credentials through the local admin API.");
-}
 
 ShellOperationResult ShellRuntime::UpsertAppleRemoteHost(const ShellAppleRemoteHost& host) const {
     if (host.hostId.empty()) {
@@ -2737,40 +2407,6 @@ ShellOperationResult ShellRuntime::RemoveSubAgentGroup(const std::wstring& group
         L"Unable to remove the sub-agent group through the local admin API.");
 }
 
-ShellOperationResult ShellRuntime::UpsertProviderAssignment(const ShellProviderAssignment& assignment) const {
-    if (assignment.targetId.empty()) {
-        return ShellOperationResult{ false, false, L"Select an orchestration target before saving provider ownership." };
-    }
-
-    MasterControl::Diagnostics::appendEvent(
-        L"shell",
-        "info",
-        "provider-assignment-save-start",
-        "Submitting provider ownership update through the local admin API.",
-        nlohmann::json{
-            { "targetId", MasterControl::Diagnostics::utf8FromWide(assignment.targetId) },
-            { "targetKind", MasterControl::Diagnostics::utf8FromWide(assignment.kind) },
-            { "providerId", MasterControl::Diagnostics::utf8FromWide(assignment.providerId) }
-        });
-
-    auto result = postJsonObjectToAdminApi(
-        ResolveConfigurationFile(),
-        L"/api/providers/assignments",
-        providerAssignmentToJson(assignment),
-        L"Unable to update provider ownership through the local admin API.");
-
-    MasterControl::Diagnostics::appendEvent(
-        L"shell",
-        result.succeeded ? "info" : "warning",
-        result.succeeded ? "provider-assignment-save-complete" : "provider-assignment-save-failed",
-        MasterControl::Diagnostics::utf8FromWide(result.message),
-        nlohmann::json{
-            { "targetId", MasterControl::Diagnostics::utf8FromWide(assignment.targetId) },
-            { "targetKind", MasterControl::Diagnostics::utf8FromWide(assignment.kind) },
-            { "providerId", MasterControl::Diagnostics::utf8FromWide(assignment.providerId) }
-        });
-    return result;
-}
 
 ShellForsettiModuleCatalogResult ShellRuntime::FetchForsettiModules() const {
     return fetchForsettiModulesFromAdminApi(ResolveConfigurationFile());
@@ -2843,65 +2479,7 @@ ShellActivityStreamResult ShellRuntime::FetchActivityEvents(const std::wstring& 
     return result;
 }
 
-ShellAutoConnectProviderResult ShellRuntime::AutoConnectProvider(
-    const ShellAutoConnectProviderRequest& request) const {
-    ShellAutoConnectProviderResult result;
 
-    if (request.kind.empty()) {
-        result.errorMessage = L"Select a provider kind before auto-connecting.";
-        result.summary = result.errorMessage;
-        return result;
-    }
-
-    MasterControl::Diagnostics::appendEvent(
-        L"shell",
-        "info",
-        "provider-auto-connect-start",
-        "Submitting provider auto-connect request from the Windows application.",
-        nlohmann::json{
-            { "providerIdHint", MasterControl::Diagnostics::utf8FromWide(request.providerId) },
-            { "kind", MasterControl::Diagnostics::utf8FromWide(request.kind) },
-            { "credentialFieldCount", request.credentials.size() },
-            { "assignmentTargetIds", [assignmentTargetIds = request.assignmentTargetIds]() {
-                nlohmann::json values = nlohmann::json::array();
-                for (const auto& targetId : assignmentTargetIds) {
-                    values.push_back(MasterControl::Diagnostics::utf8FromWide(targetId));
-                }
-                return values;
-            }() },
-            { "allowAutonomousControl", request.allowAutonomousControl },
-            { "discoverModels", request.discoverModels }
-        });
-
-    result = postAutoConnectProviderToAdminApi(ResolveConfigurationFile(), request);
-    MasterControl::Diagnostics::appendEvent(
-        L"shell",
-        result.succeeded ? "info" : "warning",
-        result.succeeded ? "provider-auto-connect-complete" : "provider-auto-connect-failed",
-        MasterControl::Diagnostics::utf8FromWide(result.summary.empty() ? result.errorMessage : result.summary),
-        nlohmann::json{
-            { "providerId", MasterControl::Diagnostics::utf8FromWide(result.providerId) },
-            { "assignmentCount", result.assignmentsApplied.size() }
-        });
-    return result;
-}
-
-ShellProviderExecutionRecord ShellRuntime::ExecuteProviderTask(const ShellProviderExecutionRequest& request) const {
-    ShellProviderExecutionRecord record;
-    record.targetId = request.targetId;
-    record.status = L"failed";
-
-    if (request.targetId.empty()) {
-        record.errorMessage = L"Select an orchestration target before executing a provider task.";
-        return record;
-    }
-    if (request.prompt.empty()) {
-        record.errorMessage = L"Enter a prompt before executing a provider task.";
-        return record;
-    }
-
-    return postProviderExecutionToAdminApi(ResolveConfigurationFile(), request);
-}
 
 ShellOperationResult ShellRuntime::ExecuteGovernanceTool(const std::wstring& platform,
                                                          const std::wstring& toolId,
@@ -3127,281 +2705,9 @@ std::filesystem::path ShellRuntime::ResolveExportsDirectory() const {
     return ResolveDataDirectory() / "exports";
 }
 
-ShellRuntime::ShellCliSignInStartResult ShellRuntime::StartCliSignIn(
-    const std::wstring& bridge,
-    const std::wstring& providerId) const {
-    ShellCliSignInStartResult result;
 
-    const auto cliPath = resolveCliPath(bridge);
-    if (!cliPath.has_value()) {
-        result.message = cliBridgeDisplayName(bridge) +
-            L" is not installed for this Windows user session. Install it first and try again.";
-        result.bridge = bridge;
-        result.cliInstalled = false;
-        return result;
-    }
 
-    const auto executablePath = *cliPath;
-    std::wstring applicationName = executablePath.wstring();
-    std::wstring commandLine;
-    if (usesCmdShim(*cliPath)) {
-        const auto commandProcessor = resolveCommandProcessorPath();
-        if (!commandProcessor.has_value()) {
-            result.message = L"Windows could not locate cmd.exe to launch " +
-                cliBridgeDisplayName(bridge) + L" sign-in.";
-            result.bridge = bridge;
-            result.cliInstalled = true;
-            return result;
-        }
 
-        applicationName = commandProcessor->wstring();
-        commandLine = quoteWindowsArgument(commandProcessor->wstring());
-        commandLine += L" /d /s /c ";
-        commandLine += quoteWindowsArgument(executablePath.wstring());
-        commandLine += L" login";
-    } else {
-        commandLine = quoteWindowsArgument(executablePath.wstring());
-        commandLine += L" login";
-    }
-
-    STARTUPINFOW startupInfo{};
-    startupInfo.cb = sizeof(startupInfo);
-    PROCESS_INFORMATION processInfo{};
-    std::wstring mutableCommand = commandLine;
-    auto workingDirectory = currentUserProfileDirectory().value_or(executablePath.parent_path());
-    std::error_code workingDirectoryError;
-    if (!workingDirectory.empty() && !std::filesystem::exists(workingDirectory, workingDirectoryError)) {
-        workingDirectory = executablePath.parent_path();
-    }
-    const std::wstring workingDirectoryText = workingDirectory.empty()
-        ? std::wstring()
-        : workingDirectory.wstring();
-    const BOOL created = CreateProcessW(
-        applicationName.empty() ? nullptr : applicationName.c_str(),
-        mutableCommand.data(),
-        nullptr,
-        nullptr,
-        FALSE,
-        CREATE_NEW_CONSOLE | CREATE_UNICODE_ENVIRONMENT,
-        nullptr,
-        workingDirectoryText.empty() ? nullptr : workingDirectoryText.c_str(),
-        &startupInfo,
-        &processInfo);
-    if (created == 0) {
-        const DWORD lastError = GetLastError();
-        result.message = L"Failed to launch " + cliBridgeDisplayName(bridge) +
-            L" sign-in (error " + std::to_wstring(lastError) + L").";
-        result.bridge = bridge;
-        result.cliInstalled = true;
-        return result;
-    }
-
-    CloseHandle(processInfo.hThread);
-
-    LocalCliSignInSession session;
-    session.sessionId = generateCliSignInSessionId();
-    session.bridge = bridge;
-    session.providerId = providerId;
-    session.message = L"Complete the sign-in prompt in the console window or browser.";
-    session.accountLabel = cliBridgeAccountLabel(bridge);
-    session.authFilePath = expectedCliAuthFilePath(bridge);
-    session.processHandle = processInfo.hProcess;
-
-    {
-        std::lock_guard<std::mutex> lock(gCliSignInMutex);
-        gCliSignInSessions[session.sessionId] = session;
-    }
-
-    result.succeeded = true;
-    result.message = L"Sign-in console opened. Complete the prompt to finish.";
-    result.sessionId = session.sessionId;
-    result.bridge = bridge;
-    result.cliInstalled = true;
-    return result;
-}
-
-ShellRuntime::ShellCliSignInStatusResult ShellRuntime::GetCliSignInStatus(
-    const std::wstring& sessionId) const {
-    ShellCliSignInStatusResult result;
-    result.succeeded = false;
-    result.status = L"failed";
-
-    if (sessionId.empty()) {
-        result.message = L"Missing session id.";
-        return result;
-    }
-
-    std::optional<std::pair<std::wstring, std::wstring>> registrationRequest;
-    {
-        std::lock_guard<std::mutex> lock(gCliSignInMutex);
-        const auto iterator = gCliSignInSessions.find(sessionId);
-        if (iterator == gCliSignInSessions.end()) {
-            result.message = L"Unknown sign-in session.";
-            return result;
-        }
-
-        auto& session = iterator->second;
-        if (session.status == L"pending") {
-            const auto now = std::chrono::steady_clock::now();
-            if (session.processHandle != nullptr) {
-                const DWORD waitResult = WaitForSingleObject(session.processHandle, 0);
-                if (waitResult == WAIT_OBJECT_0) {
-                    DWORD exitCode = 0;
-                    GetExitCodeProcess(session.processHandle, &exitCode);
-                    CloseHandle(session.processHandle);
-                    session.processHandle = nullptr;
-
-                    const bool authFileExists = !session.authFilePath.empty() &&
-                        std::filesystem::exists(session.authFilePath);
-                    if (exitCode == 0 && authFileExists) {
-                        if (!session.registrationInProgress) {
-                            session.registrationInProgress = true;
-                            session.awaitingAuthFile = false;
-                            session.authFileDeadline = {};
-                            session.message = L"Finishing sign-in and registering the provider...";
-                            registrationRequest = std::make_pair(session.bridge, session.providerId);
-                        }
-                    } else if (exitCode == 0) {
-                        session.awaitingAuthFile = true;
-                        session.authFileDeadline = now + std::chrono::seconds(30);
-                        session.message = L"Sign-in finished. Waiting for " + cliBridgeDisplayName(session.bridge) +
-                            L" to finish writing its credential file for this Windows user.";
-                    } else {
-                        session.status = L"failed";
-                        session.message = L"Sign-in was canceled or failed (exit code " +
-                            std::to_wstring(exitCode) + L").";
-                    }
-                }
-            }
-
-            if (session.status == L"pending" && session.awaitingAuthFile && !session.registrationInProgress) {
-                const bool authFileExists = !session.authFilePath.empty() &&
-                    std::filesystem::exists(session.authFilePath);
-                if (authFileExists) {
-                    session.registrationInProgress = true;
-                    session.awaitingAuthFile = false;
-                    session.authFileDeadline = {};
-                    session.message = L"Finishing sign-in and registering the provider...";
-                    registrationRequest = std::make_pair(session.bridge, session.providerId);
-                } else if (session.authFileDeadline != std::chrono::steady_clock::time_point{} &&
-                           now >= session.authFileDeadline) {
-                    session.status = L"failed";
-                    session.awaitingAuthFile = false;
-                    session.authFileDeadline = {};
-                    session.message = L"Sign-in exited cleanly, but " + cliBridgeDisplayName(session.bridge) +
-                        L" did not create its credential file for this Windows user.";
-                }
-            }
-        }
-    }
-
-    if (registrationRequest.has_value()) {
-        JsonObject payload;
-        payload.SetNamedValue(L"bridge", JsonValue::CreateStringValue(registrationRequest->first));
-        payload.SetNamedValue(L"providerId", JsonValue::CreateStringValue(registrationRequest->second));
-        const auto registerResult = postJsonObjectToAdminApi(
-            ResolveConfigurationFile(),
-            L"/api/providers/signin/register",
-            payload,
-            L"Unable to register the signed-in provider through the local admin API.");
-
-        std::lock_guard<std::mutex> lock(gCliSignInMutex);
-        const auto iterator = gCliSignInSessions.find(sessionId);
-        if (iterator != gCliSignInSessions.end()) {
-            auto& session = iterator->second;
-            session.registrationInProgress = false;
-            session.awaitingAuthFile = false;
-            session.authFileDeadline = {};
-            if (registerResult.succeeded) {
-                session.status = L"complete";
-                const auto successMessage = session.bridge == L"codex"
-                    ? std::wstring(L"Signed in. ChatGPT (planning / reasoning) and Codex (coding agent) are both registered - assign each to roles below.")
-                    : std::wstring(L"Signed in. ") + session.accountLabel + L" is registered - assign it to a role below.";
-                if (session.bridge == L"codex") {
-                    session.message = L"Signed in. ChatGPT (planning / reasoning) and Codex (coding agent) are both registered — assign each to roles below.";
-                } else {
-                    session.message = L"Signed in. " + session.accountLabel + L" is registered — assign it to a role below.";
-                }
-                session.message = successMessage;
-            } else {
-                session.status = L"failed";
-                session.message = registerResult.message.empty()
-                    ? L"Sign-in finished, but provider registration failed."
-                    : registerResult.message;
-            }
-        }
-    }
-
-    std::lock_guard<std::mutex> lock(gCliSignInMutex);
-    const auto iterator = gCliSignInSessions.find(sessionId);
-    if (iterator == gCliSignInSessions.end()) {
-        result.message = L"Unknown sign-in session.";
-        return result;
-    }
-
-    result.succeeded = true;
-    result.status = iterator->second.status;
-    result.message = iterator->second.message;
-    result.bridge = iterator->second.bridge;
-    result.providerId = iterator->second.providerId;
-    result.accountLabel = iterator->second.accountLabel;
-    return result;
-}
-
-std::vector<ShellRuntime::ShellCliSignInDetectEntry> ShellRuntime::DetectCliSignInInstalled() const {
-    std::vector<ShellCliSignInDetectEntry> entries;
-
-    for (const auto& bridge : { std::wstring(L"claude"), std::wstring(L"codex") }) {
-        ShellCliSignInDetectEntry entry;
-        entry.bridge = bridge;
-        entry.displayName = cliBridgeDisplayName(bridge);
-        entry.installed = resolveCliPath(bridge).has_value();
-        const auto authPath = expectedCliAuthFilePath(bridge);
-        entry.signedIn = !authPath.empty() && std::filesystem::exists(authPath);
-        entries.push_back(entry);
-    }
-    return entries;
-}
-
-ShellOperationResult ShellRuntime::RegisterCliSignedInProvider(
-    const std::wstring& bridge,
-    const std::wstring& providerId) const {
-    if (bridge != L"claude" && bridge != L"codex") {
-        return ShellOperationResult{
-            false,
-            false,
-            L"Unsupported CLI bridge."
-        };
-    }
-
-    if (!resolveCliPath(bridge).has_value()) {
-        return ShellOperationResult{
-            false,
-            false,
-            cliBridgeDisplayName(bridge) +
-                L" is not installed for this Windows user session. Install it first and try again."
-        };
-    }
-
-    const auto authPath = expectedCliAuthFilePath(bridge);
-    if (authPath.empty() || !std::filesystem::exists(authPath)) {
-        return ShellOperationResult{
-            false,
-            false,
-            L"No saved " + cliBridgeDisplayName(bridge) +
-                L" sign-in was found for this Windows user. Complete sign-in first."
-        };
-    }
-
-    JsonObject payload;
-    payload.SetNamedValue(L"bridge", JsonValue::CreateStringValue(bridge));
-    payload.SetNamedValue(L"providerId", JsonValue::CreateStringValue(providerId));
-    return postJsonObjectToAdminApi(
-        ResolveConfigurationFile(),
-        L"/api/providers/signin/register",
-        payload,
-        L"Unable to register the signed-in provider through the local admin API.");
-}
 
 // Internal: POST /api/setup/dependencies/{id}/install and unpack the
 // structured response. Blocks until the backend finishes running the

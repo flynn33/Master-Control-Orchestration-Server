@@ -24,8 +24,8 @@ public:
     virtual void refresh() = 0;
     // Non-blocking variant: fires the endpoint probe loop on a detached
     // background thread. Used by mutating handlers (upsertMcpServer,
-    // upsertSubAgent, upsertProvider, remove*) so the admin API doesn't
-    // block for 10+ seconds while N endpoints are TCP-probed sequentially.
+    // upsertSubAgent, remove*) so the admin API doesn't block for 10+
+    // seconds while N endpoints are TCP-probed sequentially.
     virtual void refreshAsync() = 0;
     virtual ~IRuntimeInventoryService() = default;
 };
@@ -71,41 +71,6 @@ public:
     virtual ~IInstallerOrchestrator() = default;
 };
 
-class IProviderRegistry {
-public:
-    virtual std::vector<ProviderConnection> listProviders() const = 0;
-    virtual OperationResult upsertProvider(const ProviderConnection& provider) = 0;
-
-    // Auto-Connect: fully automates adding a new AI model. The caller supplies
-    // only the provider kind, credentials, and optional role assignment targets.
-    // The runtime resolves the matching capability, generates a unique provider
-    // id, probes the remote endpoint, discovers available models, selects the
-    // best one (preferring capability.recommendedModel), persists credentials
-    // via DPAPI, registers the provider, and applies the requested role
-    // assignments — all in one atomic operation. The returned AutoConnectResult
-    // reports every automated step so the UI can render a transparent progress
-    // log.
-    virtual AutoConnectResult autoConnectProvider(const AutoConnectRequest& request) = 0;
-
-    virtual ~IProviderRegistry() = default;
-};
-
-class IProviderCatalogService {
-public:
-    virtual std::vector<ProviderCapabilityDescriptor> listCapabilities() const = 0;
-    virtual void upsertCapability(const ProviderCapabilityDescriptor& capability) = 0;
-    virtual void removeCapability(const std::string& providerId) = 0;
-    virtual ~IProviderCatalogService() = default;
-};
-
-class IProviderCredentialStore {
-public:
-    virtual std::vector<ProviderCredentialStatus> listStatuses() const = 0;
-    virtual std::map<std::string, std::string> readCredentials(const std::string& providerId) const = 0;
-    virtual OperationResult upsertCredentials(const ProviderCredentialUpdate& update) = 0;
-    virtual ~IProviderCredentialStore() = default;
-};
-
 class ISubAgentGroupService {
 public:
     virtual std::vector<SubAgentGroupDefinition> listGroups() const = 0;
@@ -128,29 +93,6 @@ public:
     virtual OperationResult upsertMcpServer(const RuntimeEndpoint& mcpServer) = 0;
     virtual OperationResult removeMcpServer(const std::string& mcpServerId) = 0;
     virtual ~IMcpServerCatalogService() = default;
-};
-
-class IProviderAssignmentService {
-public:
-    virtual std::vector<ProviderAssignmentTarget> listTargets() const = 0;
-    virtual std::vector<ProviderAssignment> listAssignments() const = 0;
-    virtual OperationResult upsertAssignment(const ProviderAssignment& assignment) = 0;
-    virtual ~IProviderAssignmentService() = default;
-};
-
-class IProviderExecutionCatalogService {
-public:
-    virtual std::vector<ProviderExecutionRegistration> listRegistrations() const = 0;
-    virtual void upsertRegistration(const ProviderExecutionRegistration& registration) = 0;
-    virtual void removeRegistration(const std::string& providerId) = 0;
-    virtual ~IProviderExecutionCatalogService() = default;
-};
-
-class IProviderExecutionService {
-public:
-    virtual std::vector<ProviderExecutionRecord> history() const = 0;
-    virtual ProviderExecutionRecord execute(const ProviderExecutionRequest& request) = 0;
-    virtual ~IProviderExecutionService() = default;
 };
 
 class IPlatformGovernanceToolService {
@@ -191,6 +133,24 @@ public:
     virtual GovernanceToolResult executeGovernanceTool(const GovernanceToolRequest& request) = 0;
     virtual OperationResult cancelAppleOperation(const std::string& operationId) = 0;
     virtual ~ICommandLogicUnitService() = default;
+};
+
+// Phase 7 of ADR-001. Stages mutations whose CLU outcome is
+// RequiresOperatorApproval until an operator approves or rejects them.
+// Implementations are in-memory only in Phase 7; persistence across
+// restarts is intentionally deferred (Phase 9 may add disk backing if
+// long-running deferrals become a real workflow).
+class IGovernanceApprovalQueueService {
+public:
+    virtual std::vector<GovernanceDeferredAction> listPending() const = 0;
+    virtual std::vector<GovernanceDeferredAction> listAll() const = 0;
+    virtual GovernanceDeferredAction stage(const GovernanceDeferredAction& action) = 0;
+    virtual OperationResult approve(const std::string& deferredActionId,
+                                    const std::string& operatorActor) = 0;
+    virtual OperationResult reject(const std::string& deferredActionId,
+                                   const std::string& operatorActor,
+                                   const std::string& reason) = 0;
+    virtual ~IGovernanceApprovalQueueService() = default;
 };
 
 class IModuleControlSurfaceService {
@@ -239,9 +199,6 @@ public:
     virtual OperationResult cancelAppleOperationJson(const std::string& requestBody) = 0;
     virtual OperationResult applyConfigurationJson(const std::string& requestBody,
                                                    bool confirmUnsafeChanges) = 0;
-    virtual OperationResult upsertProviderJson(const std::string& requestBody) = 0;
-    virtual AutoConnectResult autoConnectProviderJson(const std::string& requestBody) = 0;
-    virtual OperationResult upsertProviderCredentialsJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertAppleRemoteHostJson(const std::string& requestBody) = 0;
     virtual OperationResult removeAppleRemoteHostJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertMcpServerJson(const std::string& requestBody) = 0;
@@ -250,8 +207,6 @@ public:
     virtual OperationResult removeSubAgentJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertSubAgentGroupJson(const std::string& requestBody) = 0;
     virtual OperationResult removeSubAgentGroupJson(const std::string& requestBody) = 0;
-    virtual OperationResult upsertProviderAssignmentJson(const std::string& requestBody) = 0;
-    virtual ProviderExecutionRecord executeProviderTaskJson(const std::string& requestBody) = 0;
     virtual OperationResult installPackageJson(const std::string& requestBody) = 0;
     virtual OperationResult installRepoJson(const std::string& requestBody) = 0;
     virtual OperationResult installZipJson(const std::string& requestBody) = 0;

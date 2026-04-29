@@ -63,49 +63,6 @@ std::string to_string(EndpointStatus value) {
     });
 }
 
-std::string to_string(ProviderKind value) {
-    return enumToString(value, {
-        { ProviderKind::Codex, "codex" },
-        { ProviderKind::ClaudeCode, "claude_code" },
-        { ProviderKind::OpenAI, "openai" },
-        { ProviderKind::XAI, "xai" },
-        { ProviderKind::Generic, "generic" }
-    });
-}
-
-std::string to_string(ProviderCredentialFieldKind value) {
-    return enumToString(value, {
-        { ProviderCredentialFieldKind::ApiKey, "api_key" },
-        { ProviderCredentialFieldKind::AuthToken, "auth_token" },
-        { ProviderCredentialFieldKind::Model, "model" },
-        { ProviderCredentialFieldKind::Text, "text" }
-    });
-}
-
-std::string to_string(ProviderAssignmentTargetKind value) {
-    return enumToString(value, {
-        { ProviderAssignmentTargetKind::Role, "role" },
-        { ProviderAssignmentTargetKind::SubAgentGroup, "sub_agent_group" },
-        { ProviderAssignmentTargetKind::SubAgent, "sub_agent" }
-    });
-}
-
-std::string to_string(ProviderExecutionStatus value) {
-    return enumToString(value, {
-        { ProviderExecutionStatus::Pending, "pending" },
-        { ProviderExecutionStatus::Running, "running" },
-        { ProviderExecutionStatus::Succeeded, "succeeded" },
-        { ProviderExecutionStatus::Failed, "failed" }
-    });
-}
-
-std::string to_string(ProviderExecutionTransport value) {
-    return enumToString(value, {
-        { ProviderExecutionTransport::OpenAICompatibleChat, "openai_compatible_chat" },
-        { ProviderExecutionTransport::ClaudeCodeCli, "claude_code_cli" },
-        { ProviderExecutionTransport::CodexCli, "codex_cli" }
-    });
-}
 
 std::string to_string(InstallerKind value) {
     return enumToString(value, {
@@ -164,9 +121,28 @@ std::string to_string(AppleOperationStatus value) {
 std::string to_string(GovernanceActionKind value) {
     return enumToString(value, {
         { GovernanceActionKind::Unknown, "unknown" },
-        { GovernanceActionKind::ProviderExecution, "provider_execution" },
-        { GovernanceActionKind::ProviderAutonomyEnable, "provider_autonomy_enable" },
+        { GovernanceActionKind::ClientRegister, "client_register" },
+        { GovernanceActionKind::ClientPrivilegeChange, "client_privilege_change" },
+        { GovernanceActionKind::ClientAutonomousModeChange, "client_autonomous_mode_change" },
+        { GovernanceActionKind::ClientRevoke, "client_revoke" },
+        { GovernanceActionKind::McpServerCreate, "mcp_server_create" },
+        { GovernanceActionKind::McpServerModify, "mcp_server_modify" },
+        { GovernanceActionKind::McpServerRemove, "mcp_server_remove" },
+        { GovernanceActionKind::SubAgentCreate, "sub_agent_create" },
+        { GovernanceActionKind::SubAgentModify, "sub_agent_modify" },
+        { GovernanceActionKind::SubAgentRemove, "sub_agent_remove" },
+        { GovernanceActionKind::ModuleEnable, "module_enable" },
+        { GovernanceActionKind::ModuleDisable, "module_disable" },
+        { GovernanceActionKind::GovernancePolicyChange, "governance_policy_change" },
         { GovernanceActionKind::RemoteInstall, "remote_install" }
+    });
+}
+
+std::string to_string(GovernanceDecisionOutcome value) {
+    return enumToString(value, {
+        { GovernanceDecisionOutcome::Allow, "allow" },
+        { GovernanceDecisionOutcome::Block, "block" },
+        { GovernanceDecisionOutcome::RequiresOperatorApproval, "requires_operator_approval" }
     });
 }
 
@@ -188,50 +164,6 @@ EndpointStatus endpointStatusFromString(const std::string& value) {
         { EndpointStatus::Offline, "offline" },
         { EndpointStatus::Degraded, "degraded" },
         { EndpointStatus::Template, "template" }
-    });
-}
-
-ProviderKind providerKindFromString(const std::string& value) {
-    return enumFromString<ProviderKind>(value, {
-        { ProviderKind::Codex, "codex" },
-        { ProviderKind::ClaudeCode, "claude_code" },
-        { ProviderKind::OpenAI, "openai" },
-        { ProviderKind::XAI, "xai" },
-        { ProviderKind::Generic, "generic" }
-    });
-}
-
-ProviderCredentialFieldKind providerCredentialFieldKindFromString(const std::string& value) {
-    return enumFromString<ProviderCredentialFieldKind>(value, {
-        { ProviderCredentialFieldKind::ApiKey, "api_key" },
-        { ProviderCredentialFieldKind::AuthToken, "auth_token" },
-        { ProviderCredentialFieldKind::Model, "model" },
-        { ProviderCredentialFieldKind::Text, "text" }
-    });
-}
-
-ProviderAssignmentTargetKind providerAssignmentTargetKindFromString(const std::string& value) {
-    return enumFromString<ProviderAssignmentTargetKind>(value, {
-        { ProviderAssignmentTargetKind::Role, "role" },
-        { ProviderAssignmentTargetKind::SubAgentGroup, "sub_agent_group" },
-        { ProviderAssignmentTargetKind::SubAgent, "sub_agent" }
-    });
-}
-
-ProviderExecutionStatus providerExecutionStatusFromString(const std::string& value) {
-    return enumFromString<ProviderExecutionStatus>(value, {
-        { ProviderExecutionStatus::Pending, "pending" },
-        { ProviderExecutionStatus::Running, "running" },
-        { ProviderExecutionStatus::Succeeded, "succeeded" },
-        { ProviderExecutionStatus::Failed, "failed" }
-    });
-}
-
-ProviderExecutionTransport providerExecutionTransportFromString(const std::string& value) {
-    return enumFromString<ProviderExecutionTransport>(value, {
-        { ProviderExecutionTransport::OpenAICompatibleChat, "openai_compatible_chat" },
-        { ProviderExecutionTransport::ClaudeCodeCli, "claude_code_cli" },
-        { ProviderExecutionTransport::CodexCli, "codex_cli" }
     });
 }
 
@@ -292,9 +224,28 @@ AppleOperationStatus appleOperationStatusFromString(const std::string& value) {
 GovernanceActionKind governanceActionKindFromString(const std::string& value) {
     return enumFromString<GovernanceActionKind>(value, {
         { GovernanceActionKind::Unknown, "unknown" },
-        { GovernanceActionKind::ProviderExecution, "provider_execution" },
-        { GovernanceActionKind::ProviderAutonomyEnable, "provider_autonomy_enable" },
+        { GovernanceActionKind::ClientRegister, "client_register" },
+        { GovernanceActionKind::ClientPrivilegeChange, "client_privilege_change" },
+        { GovernanceActionKind::ClientAutonomousModeChange, "client_autonomous_mode_change" },
+        { GovernanceActionKind::ClientRevoke, "client_revoke" },
+        { GovernanceActionKind::McpServerCreate, "mcp_server_create" },
+        { GovernanceActionKind::McpServerModify, "mcp_server_modify" },
+        { GovernanceActionKind::McpServerRemove, "mcp_server_remove" },
+        { GovernanceActionKind::SubAgentCreate, "sub_agent_create" },
+        { GovernanceActionKind::SubAgentModify, "sub_agent_modify" },
+        { GovernanceActionKind::SubAgentRemove, "sub_agent_remove" },
+        { GovernanceActionKind::ModuleEnable, "module_enable" },
+        { GovernanceActionKind::ModuleDisable, "module_disable" },
+        { GovernanceActionKind::GovernancePolicyChange, "governance_policy_change" },
         { GovernanceActionKind::RemoteInstall, "remote_install" }
+    });
+}
+
+GovernanceDecisionOutcome governanceDecisionOutcomeFromString(const std::string& value) {
+    return enumFromString<GovernanceDecisionOutcome>(value, {
+        { GovernanceDecisionOutcome::Allow, "allow" },
+        { GovernanceDecisionOutcome::Block, "block" },
+        { GovernanceDecisionOutcome::RequiresOperatorApproval, "requires_operator_approval" }
     });
 }
 
@@ -314,45 +265,6 @@ void from_json(const nlohmann::json& json, EndpointStatus& value) {
     value = endpointStatusFromString(json.get<std::string>());
 }
 
-void to_json(nlohmann::json& json, ProviderKind value) {
-    json = to_string(value);
-}
-
-void from_json(const nlohmann::json& json, ProviderKind& value) {
-    value = providerKindFromString(json.get<std::string>());
-}
-
-void to_json(nlohmann::json& json, ProviderCredentialFieldKind value) {
-    json = to_string(value);
-}
-
-void from_json(const nlohmann::json& json, ProviderCredentialFieldKind& value) {
-    value = providerCredentialFieldKindFromString(json.get<std::string>());
-}
-
-void to_json(nlohmann::json& json, ProviderAssignmentTargetKind value) {
-    json = to_string(value);
-}
-
-void from_json(const nlohmann::json& json, ProviderAssignmentTargetKind& value) {
-    value = providerAssignmentTargetKindFromString(json.get<std::string>());
-}
-
-void to_json(nlohmann::json& json, ProviderExecutionStatus value) {
-    json = to_string(value);
-}
-
-void from_json(const nlohmann::json& json, ProviderExecutionStatus& value) {
-    value = providerExecutionStatusFromString(json.get<std::string>());
-}
-
-void to_json(nlohmann::json& json, ProviderExecutionTransport value) {
-    json = to_string(value);
-}
-
-void from_json(const nlohmann::json& json, ProviderExecutionTransport& value) {
-    value = providerExecutionTransportFromString(json.get<std::string>());
-}
 
 void to_json(nlohmann::json& json, InstallerKind value) {
     json = to_string(value);
@@ -408,6 +320,14 @@ void to_json(nlohmann::json& json, GovernanceActionKind value) {
 
 void from_json(const nlohmann::json& json, GovernanceActionKind& value) {
     value = governanceActionKindFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, GovernanceDecisionOutcome value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, GovernanceDecisionOutcome& value) {
+    value = governanceDecisionOutcomeFromString(json.get<std::string>());
 }
 
 std::string toPrettyJson(const nlohmann::json& json) {

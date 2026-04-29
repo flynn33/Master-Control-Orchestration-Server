@@ -26,7 +26,6 @@ struct AppPaths final {
     std::filesystem::path installHistoryFile;
     std::filesystem::path appleOperationHistoryFile;
     std::filesystem::path entitlementsFile;
-    std::filesystem::path providerCredentialsFile;
     std::filesystem::path manifestsDirectory;
     std::filesystem::path webRootDirectory;
     std::filesystem::path cluProfileFile;
@@ -36,7 +35,6 @@ struct AppPaths final {
 DiscoveredEnvironment detectLocalEnvironment();
 AppPaths resolveAppPaths();
 std::vector<RuntimeEndpoint> buildDefaultSeededEndpoints();
-std::vector<ProviderConnection> buildDefaultProviders();
 AppConfiguration buildDefaultConfiguration();
 std::string executableDirectoryUtf8();
 

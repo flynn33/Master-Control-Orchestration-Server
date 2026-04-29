@@ -18,6 +18,8 @@
 #include "ForsettiCore/UISurfaceManager.h"
 #include "MasterControl/MasterControlDiagnostics.h"
 #include "ForsettiPlatform/DefaultPlatformServices.h"
+#include "MasterControl/AuthenticatedRequestContext.h"
+#include "MasterControl/ILanClientAccessService.h"
 #include "MasterControl/MasterControlDefaults.h"
 #include "MasterControl/MasterControlModules.h"
 
@@ -162,151 +164,40 @@ bool startsWithInsensitive(const std::string& value, const std::string& prefix) 
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// Provider identity resolution helpers
-// ---------------------------------------------------------------------------
-// Resolve a ProviderCapabilityDescriptor by concrete provider identity rather
-// than by coarse ProviderKind. The lookup order is:
-//   1. Exact match on capability.providerId == providerId
-//   2. Prefix match for auto-connect-generated ids (format: {providerId}-YYYYMMDD-HHMMSS)
-//   3. Fallback to kind-based match (backward compatibility with pre-existing configs)
-// This ensures ChatGPT and Codex (both ProviderKind::Codex) resolve to their
-// own distinct capability descriptors.
-// ---------------------------------------------------------------------------
-
-template <typename Iterator>
-Iterator findCapabilityByProviderId(
-    Iterator begin, Iterator end,
-    const std::string& providerId, ProviderKind kind) {
-    if (!providerId.empty()) {
-        // Exact providerId match
-        auto exact = std::find_if(begin, end,
-            [&providerId](const ProviderCapabilityDescriptor& capability) {
-                return capability.providerId == providerId;
-            });
-        if (exact != end) {
-            return exact;
-        }
-        // Prefix match for auto-connect-generated ids ({providerId}-YYYYMMDD-HHMMSS)
-        auto prefix = std::find_if(begin, end,
-            [&providerId](const ProviderCapabilityDescriptor& capability) {
-                return !capability.providerId.empty()
-                    && providerId.size() > capability.providerId.size()
-                    && providerId[capability.providerId.size()] == '-'
-                    && providerId.compare(0, capability.providerId.size(), capability.providerId) == 0;
-            });
-        if (prefix != end) {
-            return prefix;
-        }
-    }
-    // Fallback: kind-based match for backward compatibility
-    return std::find_if(begin, end,
-        [kind](const ProviderCapabilityDescriptor& capability) {
-            return capability.kind == kind;
-        });
-}
-
-template <typename Iterator>
-Iterator findExecutionRegistrationByProviderId(
-    Iterator begin, Iterator end,
-    const std::string& providerId, ProviderKind kind) {
-    if (!providerId.empty()) {
-        auto exact = std::find_if(begin, end,
-            [&providerId](const ProviderExecutionRegistration& registration) {
-                return registration.providerId == providerId;
-            });
-        if (exact != end) {
-            return exact;
-        }
-        auto prefix = std::find_if(begin, end,
-            [&providerId](const ProviderExecutionRegistration& registration) {
-                return !registration.providerId.empty()
-                    && providerId.size() > registration.providerId.size()
-                    && providerId[registration.providerId.size()] == '-'
-                    && providerId.compare(0, registration.providerId.size(), registration.providerId) == 0;
-            });
-        if (prefix != end) {
-            return prefix;
-        }
-    }
-    return std::find_if(begin, end,
-        [kind](const ProviderExecutionRegistration& registration) {
-            return registration.kind == kind;
-        });
-}
-
-bool isDerivedProviderIdForCapability(const std::string& candidateId, const std::string& providerId) {
-    return !providerId.empty()
-        && candidateId.size() > providerId.size()
-        && candidateId[providerId.size()] == '-'
-        && candidateId.compare(0, providerId.size(), providerId) == 0;
-}
-
-bool providerHasConfiguredCredentials(const std::vector<ProviderCredentialStatus>& statuses,
-                                      const std::string& providerId) {
-    const auto iterator = std::find_if(
-        statuses.begin(),
-        statuses.end(),
-        [&providerId](const ProviderCredentialStatus& status) { return status.providerId == providerId; });
-    return iterator != statuses.end() && iterator->configured;
-}
-
-template <typename Iterator>
-Iterator findReusableProviderForAutoConnect(Iterator begin,
-                                            Iterator end,
-                                            const ProviderCapabilityDescriptor& capability,
-                                            const std::vector<ProviderCredentialStatus>& statuses) {
-    auto providerReady = [&statuses](const ProviderConnection& provider) {
-        return provider.enabled &&
-            !provider.isTemplate &&
-            (provider.credentialsConfigured || providerHasConfiguredCredentials(statuses, provider.id));
-    };
-
-    const auto exact = std::find_if(
-        begin,
-        end,
-        [&capability, &providerReady](const ProviderConnection& provider) {
-            return provider.id == capability.providerId &&
-                provider.kind == capability.kind &&
-                providerReady(provider);
-        });
-    if (exact != end) {
-        return exact;
-    }
-
-    return std::find_if(
-        begin,
-        end,
-        [&capability, &providerReady](const ProviderConnection& provider) {
-            return provider.kind == capability.kind &&
-                isDerivedProviderIdForCapability(provider.id, capability.providerId) &&
-                providerReady(provider);
-        });
-}
-
 bool isRemoteSource(const std::string& source) {
     return startsWith(source, "http://") || startsWith(source, "https://");
+}
+
+// Resolve the externally-reachable host portion of the MCOS admin URL.
+// Per ADR-001 the LAN client config bundle must never serve "0.0.0.0" - the
+// bundle is consumed by AI clients on other hosts who cannot route to the
+// wildcard bind address. Falls back through preferredBindAddress (set by the
+// environment-discovery module on startup) and finally "127.0.0.1" so the
+// bundle is always self-consistent even when the host network detection
+// returns nothing.
+std::string resolveMcosServerHost(const AppConfiguration& configuration) {
+    if (!configuration.bindAddress.empty() && configuration.bindAddress != "0.0.0.0") {
+        return configuration.bindAddress;
+    }
+    if (!configuration.activeProfile.preferredBindAddress.empty()) {
+        return configuration.activeProfile.preferredBindAddress;
+    }
+    return "127.0.0.1";
 }
 
 // ---------------------------------------------------------------------------
 // WS1 / WS4 / WS6 — Setup helpers
 // ---------------------------------------------------------------------------
 
-// Readiness snapshot assembly. Source-neutral: a manually created workflow
-// counts as ready exactly as a wizard-instantiated starter template does.
+// Readiness snapshot assembly. Reduced to MCP and sub-agent catalogs after the
+// AI provider stack was removed per ADR-001. Phase 3+ reintroduces a readiness
+// path for LAN client registration.
 ReadinessSnapshot computeReadinessSnapshot(const DashboardSnapshot& snapshot,
                                            const AppConfiguration& config) {
     ReadinessSnapshot result;
     result.setupStarted = !config.firstRunStartedAtUtc.empty() || config.firstRunCompleted;
     result.firstRunCompleted = config.firstRunCompleted;
 
-    // Providers: credentialed + enabled + not template.
-    for (const auto& provider : snapshot.providers) {
-        const bool ready = provider.credentialsConfigured && provider.enabled && !provider.isTemplate;
-        if (ready) { ++result.providersReadyCount; } else { ++result.providersMissingCount; }
-    }
-
-    // MCP servers: online endpoint of the MCPServer kind, not template.
     for (const auto& endpoint : snapshot.endpoints) {
         if (endpoint.kind != EndpointKind::MCPServer) {
             continue;
@@ -316,74 +207,25 @@ ReadinessSnapshot computeReadinessSnapshot(const DashboardSnapshot& snapshot,
         else { ++result.mcpMissingCount; }
     }
 
-    // Specialists: sub-agent endpoints with at least one provider assignment.
-    std::set<std::string> assignedSpecialists;
-    for (const auto& assignment : snapshot.providerAssignments) {
-        if (assignment.kind == ProviderAssignmentTargetKind::SubAgent) {
-            assignedSpecialists.insert(assignment.targetId);
-        }
-    }
     for (const auto& endpoint : snapshot.endpoints) {
         if (endpoint.kind != EndpointKind::SubAgent) {
             continue;
         }
         if (endpoint.isTemplate) { ++result.specialistsMissingCount; continue; }
-        if (assignedSpecialists.count(endpoint.id) > 0) { ++result.specialistsReadyCount; }
-        else { ++result.specialistsMissingCount; }
+        ++result.specialistsReadyCount;
     }
 
-    // Workflows: source-neutral. A workflow is valid when it has at least one
-    // provider assignment and at least one executable target (specialist or
-    // role). Count of ready workflows = count of distinct providers that have
-    // at least one assignment to a specialist or role. Missing = 1 if zero
-    // valid workflows exist, otherwise 0.
-    std::set<std::string> providersWithValidAssignment;
-    for (const auto& assignment : snapshot.providerAssignments) {
-        if (assignment.providerId.empty()) {
-            continue;
-        }
-        if (assignment.kind == ProviderAssignmentTargetKind::SubAgent
-            || assignment.kind == ProviderAssignmentTargetKind::Role
-            || assignment.kind == ProviderAssignmentTargetKind::SubAgentGroup) {
-            providersWithValidAssignment.insert(assignment.providerId);
-        }
-    }
-    result.workflowsReadyCount = static_cast<int>(providersWithValidAssignment.size());
-    result.workflowsMissingCount = (result.workflowsReadyCount == 0) ? 1 : 0;
+    result.workflowsReadyCount = 0;
+    result.workflowsMissingCount = 1;
 
-    // Blocking issues + recommended next step.
-    if (result.providersReadyCount == 0) {
-        result.blockingIssues.push_back(ReadinessIssue{
-            "providers.none-ready", "providers", "blocking",
-            "No providers connected",
-            "Connect at least one AI provider to get started.",
-            "providers", "Connect a provider"
-        });
-        result.recommendedNextStep = "connect-first-provider";
-    } else if (result.mcpReadyCount == 0) {
+    if (result.mcpReadyCount == 0) {
         result.blockingIssues.push_back(ReadinessIssue{
             "mcp.none-ready", "mcp", "warning",
             "No MCP servers online",
-            "Add or bring online at least one MCP server so providers can share tool lanes.",
+            "Add or bring online at least one MCP server so LAN clients can share tool lanes.",
             "runtime", "Add MCP server"
         });
         result.recommendedNextStep = "add-mcp";
-    } else if (result.specialistsReadyCount == 0) {
-        result.blockingIssues.push_back(ReadinessIssue{
-            "specialists.none-ready", "specialists", "warning",
-            "No specialists assigned",
-            "Assign at least one specialist/role so providers have something to execute.",
-            "providers", "Assign a specialist"
-        });
-        result.recommendedNextStep = "create-specialist";
-    } else if (result.workflowsReadyCount == 0) {
-        result.blockingIssues.push_back(ReadinessIssue{
-            "workflows.none-ready", "workflows", "warning",
-            "No workflows created",
-            "Create a starter workflow (or wire up a manual one) to complete setup.",
-            "setup-readiness", "Create a workflow"
-        });
-        result.recommendedNextStep = "create-starter-workflow";
     } else if (!result.firstRunCompleted) {
         result.recommendedNextStep = "review";
     } else {
@@ -414,47 +256,12 @@ std::vector<SupportedDependency> buildSupportedDependencyCatalog() {
     nodejs.installTimeoutSeconds = 600;
     // Node.js has no prerequisite — leave prerequisiteProbeCommand empty.
 
-    SupportedDependency claude;
-    claude.id = "claude-code-cli";
-    claude.displayName = "Claude Code CLI";
-    claude.description = "CLI runtime for Claude Code provider execution and account sign-in.";
-    claude.detectCommand = "claude --version";
-    claude.installMethod = "npm install -g @anthropic-ai/claude-code";
-    claude.docsUrl = "https://docs.anthropic.com/claude-code";
-    claude.installTimeoutSeconds = 300;
-    claude.prerequisiteProbeCommand = "npm --version";
-    claude.prerequisiteName = "Node.js (npm)";
-
-    SupportedDependency codex;
-    codex.id = "codex-cli";
-    codex.displayName = "Codex CLI";
-    codex.description = "CLI runtime for OpenAI account sign-in (ChatGPT + Codex providers) and Codex provider execution.";
-    codex.detectCommand = "codex --version";
-    codex.installMethod = "npm install -g @openai/codex";
-    codex.docsUrl = "https://github.com/openai/codex";
-    codex.installTimeoutSeconds = 300;
-    codex.prerequisiteProbeCommand = "npm --version";
-    codex.prerequisiteName = "Node.js (npm)";
-
-    return { nodejs, claude, codex };
+    return { nodejs };
 }
 
-// Starter workflow template catalog (WS6).
+// Starter workflow template catalog.
 std::vector<StarterWorkflowTemplate> buildStarterWorkflowTemplates() {
-    return {
-        StarterWorkflowTemplate{
-            "single-provider-demo", "Single-Provider Demo",
-            "One provider, no MCP, simple task routing.", 1, 0, 0
-        },
-        StarterWorkflowTemplate{
-            "mcp-assisted-demo", "MCP-Assisted Demo",
-            "One provider plus one MCP server.", 1, 1, 0
-        },
-        StarterWorkflowTemplate{
-            "specialist-team-demo", "Specialist Team Demo",
-            "Two providers with planner + coder specialists.", 2, 0, 2
-        }
-    };
+    return {};
 }
 
 std::string extractHostFromUrl(const std::string& source) {
@@ -834,7 +641,7 @@ HttpClientResponse sendJsonRequest(const std::string& method,
 
     HINTERNET connection = WinHttpConnect(session, wideFromUtf8(parsed.host).c_str(), parsed.port, 0);
     if (connection == nullptr) {
-        response.errorMessage = "Unable to connect to the remote provider.";
+        response.errorMessage = "Unable to connect to the remote endpoint.";
         WinHttpCloseHandle(session);
         return response;
     }
@@ -849,7 +656,7 @@ HttpClientResponse sendJsonRequest(const std::string& method,
         WINHTTP_DEFAULT_ACCEPT_TYPES,
         requestFlags);
     if (request == nullptr) {
-        response.errorMessage = "Unable to open the remote provider request.";
+        response.errorMessage = "Unable to open the remote endpoint request.";
         WinHttpCloseHandle(connection);
         WinHttpCloseHandle(session);
         return response;
@@ -874,7 +681,7 @@ HttpClientResponse sendJsonRequest(const std::string& method,
             optionalLength,
             0) == 0 ||
         WinHttpReceiveResponse(request, nullptr) == 0) {
-        response.errorMessage = "The remote provider request failed.";
+        response.errorMessage = "The remote endpoint request failed.";
         WinHttpCloseHandle(request);
         WinHttpCloseHandle(connection);
         WinHttpCloseHandle(session);
@@ -892,10 +699,10 @@ HttpClientResponse sendJsonRequest(const std::string& method,
         WINHTTP_NO_HEADER_INDEX);
     response.statusCode = static_cast<int>(statusCode);
 
-    // Cap accumulated response at 32 MiB. Any upstream provider that legitimately
+    // Cap accumulated response at 32 MiB. Any upstream endpoint that legitimately
     // needs more than this can be revisited; for now, a malformed or runaway
     // response must not be able to exhaust server memory.
-    constexpr size_t kMaxProviderResponseBytes = 32ull * 1024ull * 1024ull;
+    constexpr size_t kMaxResponseBytes = 32ull * 1024ull * 1024ull;
     std::string responseBody;
     for (;;) {
         DWORD available = 0;
@@ -903,8 +710,8 @@ HttpClientResponse sendJsonRequest(const std::string& method,
             break;
         }
 
-        if (responseBody.size() + static_cast<size_t>(available) > kMaxProviderResponseBytes) {
-            response.errorMessage = "Remote provider response exceeded the 32 MiB size limit.";
+        if (responseBody.size() + static_cast<size_t>(available) > kMaxResponseBytes) {
+            response.errorMessage = "Remote endpoint response exceeded the 32 MiB size limit.";
             WinHttpCloseHandle(request);
             WinHttpCloseHandle(connection);
             WinHttpCloseHandle(session);
@@ -914,7 +721,7 @@ HttpClientResponse sendJsonRequest(const std::string& method,
         std::string chunk(static_cast<size_t>(available), '\0');
         DWORD bytesRead = 0;
         if (WinHttpReadData(request, chunk.data(), available, &bytesRead) == 0) {
-            response.errorMessage = "Unable to read the remote provider response.";
+            response.errorMessage = "Unable to read the remote endpoint response.";
             WinHttpCloseHandle(request);
             WinHttpCloseHandle(connection);
             WinHttpCloseHandle(session);
@@ -928,7 +735,7 @@ HttpClientResponse sendJsonRequest(const std::string& method,
     response.succeeded = response.statusCode >= 200 && response.statusCode < 300;
     response.body = std::move(responseBody);
     if (!response.succeeded && response.errorMessage.empty()) {
-        response.errorMessage = "Remote provider returned an unsuccessful status code.";
+        response.errorMessage = "Remote endpoint returned an unsuccessful status code.";
     }
 
     WinHttpCloseHandle(request);
@@ -1483,8 +1290,8 @@ std::string protectSecretPayload(const std::string& plainText) {
     inputBlob.cbData = static_cast<DWORD>(plainText.size());
 
     DATA_BLOB outputBlob{};
-    if (CryptProtectData(&inputBlob, L"MasterControlProviderCredentials", nullptr, nullptr, nullptr, 0, &outputBlob) == 0) {
-        throw std::runtime_error("Unable to protect provider credential payload.");
+    if (CryptProtectData(&inputBlob, L"MasterControlSecretStore", nullptr, nullptr, nullptr, 0, &outputBlob) == 0) {
+        throw std::runtime_error("Unable to protect DPAPI secret payload.");
     }
 
     std::string protectedBytes(reinterpret_cast<const char*>(outputBlob.pbData), outputBlob.cbData);
@@ -1504,7 +1311,7 @@ std::string unprotectSecretPayload(const std::string& protectedText) {
 
     DATA_BLOB outputBlob{};
     if (CryptUnprotectData(&inputBlob, nullptr, nullptr, nullptr, nullptr, 0, &outputBlob) == 0) {
-        throw std::runtime_error("Unable to unprotect provider credential payload.");
+        throw std::runtime_error("Unable to unprotect DPAPI secret payload.");
     }
 
     std::string plainText(reinterpret_cast<const char*>(outputBlob.pbData), outputBlob.cbData);
@@ -1557,7 +1364,6 @@ struct SharedState final {
     mutable std::mutex mutex;
     AppConfiguration configuration;
     std::vector<InstallProvenance> installHistory;
-    std::vector<ProviderExecutionRecord> providerExecutionHistory;
 };
 
 std::string platformKey(const PlatformTarget platform) {
@@ -1624,7 +1430,6 @@ struct BootstrapManifestContract final {
     std::string bootstrapScript;
     std::string bootstrapArguments;
     std::vector<RuntimeEndpoint> seededEndpoints;
-    std::vector<ProviderConnection> providers;
 };
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -1632,8 +1437,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     version,
     bootstrapScript,
     bootstrapArguments,
-    seededEndpoints,
-    providers)
+    seededEndpoints)
 
 struct ValidatedBootstrapManifest final {
     BootstrapManifestContract contract;
@@ -1650,16 +1454,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     unlockedModuleIDs,
     unlockedProductIDs)
 
-struct ProviderCredentialsDocument final {
-    std::map<std::string, std::string> protectedPayloadsByProviderId;
-    std::map<std::string, std::string> updatedAtUtcByProviderId;
-};
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    ProviderCredentialsDocument,
-    protectedPayloadsByProviderId,
-    updatedAtUtcByProviderId)
-
 EntitlementStateDocument buildDefaultEntitlementStateDocument() {
     return EntitlementStateDocument{
         {
@@ -1667,14 +1461,10 @@ EntitlementStateDocument buildDefaultEntitlementStateDocument() {
             "com.mastercontrol.host-telemetry",
             "com.mastercontrol.runtime-inventory",
             "com.mastercontrol.configuration",
-            "com.mastercontrol.provider-codex",
-            "com.mastercontrol.provider-claude-code",
-            "com.mastercontrol.provider-xai",
             "com.mastercontrol.dashboard-ui"
         },
         {
             "mastercontrol.iap.installer-import",
-            "mastercontrol.iap.provider-integration",
             "mastercontrol.iap.export",
             "mastercontrol.iap.command-logic-unit",
             "mastercontrol.iap.gateway-windows",
@@ -1692,7 +1482,6 @@ const std::set<std::string>& protectedForsettiModuleIds() {
     static const std::set<std::string> moduleIds = {
         "com.mastercontrol.configuration",
         "com.mastercontrol.runtime-inventory",
-        "com.mastercontrol.provider-integration",
         "com.mastercontrol.command-logic-unit",
         "com.mastercontrol.dashboard-ui"
     };
@@ -2383,1249 +2172,10 @@ private:
     std::shared_ptr<SharedState> state_;
 };
 
-class ProviderCatalogService final : public IProviderCatalogService {
-public:
-    std::vector<ProviderCapabilityDescriptor> listCapabilities() const override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        std::vector<ProviderCapabilityDescriptor> capabilities;
-        capabilities.reserve(capabilitiesById_.size());
-        for (const auto& [providerId, capability] : capabilitiesById_) {
-            capabilities.push_back(capability);
-        }
 
-        std::sort(
-            capabilities.begin(),
-            capabilities.end(),
-            [](const ProviderCapabilityDescriptor& left, const ProviderCapabilityDescriptor& right) {
-                return std::tie(left.displayName, left.providerId) < std::tie(right.displayName, right.providerId);
-            });
-        return capabilities;
-    }
 
-    void upsertCapability(const ProviderCapabilityDescriptor& capability) override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        capabilitiesById_[capability.providerId] = capability;
-    }
-
-    void removeCapability(const std::string& providerId) override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        capabilitiesById_.erase(providerId);
-    }
-
-private:
-    mutable std::mutex mutex_;
-    std::map<std::string, ProviderCapabilityDescriptor> capabilitiesById_;
-};
-
-class ProviderRegistryService final : public IProviderRegistry {
-public:
-    ProviderRegistryService(std::shared_ptr<SharedState> state,
-                            std::filesystem::path configurationFile,
-                            std::shared_ptr<IProviderCatalogService> providerCatalogService)
-        : state_(std::move(state))
-        , configurationFile_(std::move(configurationFile))
-        , providerCatalogService_(std::move(providerCatalogService)) {}
-
-    // Late-bound dependencies for the Auto-Connect flow. These services are
-    // created after ProviderRegistryService (credentialStore takes a shared_ptr
-    // to this registry in its constructor) so we cannot take them upfront.
-    // Injected from the application composition root via weak_ptr to avoid
-    // circular ownership.
-    void wireAutoConnectDependencies(
-        std::weak_ptr<IProviderCredentialStore> credentialStore,
-        std::weak_ptr<IProviderAssignmentService> assignmentService) {
-        credentialStore_ = std::move(credentialStore);
-        assignmentService_ = std::move(assignmentService);
-    }
-
-    std::vector<ProviderConnection> listProviders() const override {
-        std::lock_guard<std::mutex> lock(state_->mutex);
-        return state_->configuration.providers;
-    }
-
-    OperationResult upsertProvider(const ProviderConnection& provider) override {
-        if (provider.id.empty() || isBlank(provider.id)) {
-            return OperationResult{ false, false, "Provider ID is required." };
-        }
-        if (provider.displayName.empty() || isBlank(provider.displayName)) {
-            return OperationResult{ false, false, "Provider display name is required." };
-        }
-        if (provider.baseUrl.empty() || isBlank(provider.baseUrl)) {
-            return OperationResult{ false, false, "Provider base URL is required." };
-        }
-
-        std::lock_guard<std::mutex> lock(state_->mutex);
-        const auto capabilities = providerCatalogService_->listCapabilities();
-        const auto capabilityIterator = findCapabilityByProviderId(
-            capabilities.begin(), capabilities.end(), provider.id, provider.kind);
-        if (capabilityIterator == capabilities.end()) {
-            return OperationResult{ false, false, "The selected provider kind is not currently supported by an active provider module." };
-        }
-
-        auto& providers = state_->configuration.providers;
-        ProviderConnection normalizedProvider = provider;
-        normalizedProvider.isTemplate = false; // User-saved providers are no longer templates
-        if (normalizedProvider.modelId.empty()) {
-            normalizedProvider.modelId = capabilityIterator->recommendedModel;
-        }
-        const auto iterator = std::find_if(
-            providers.begin(),
-            providers.end(),
-            [&provider](const ProviderConnection& candidate) { return candidate.id == provider.id; });
-
-        if (iterator == providers.end()) {
-            providers.push_back(normalizedProvider);
-        } else {
-            if (!normalizedProvider.credentialsConfigured) {
-                normalizedProvider.credentialsConfigured = iterator->credentialsConfigured;
-            }
-            *iterator = normalizedProvider;
-        }
-
-        if (!writeJsonFile(configurationFile_, state_->configuration)) {
-            return OperationResult{ false, false, "Provider settings could not be written to disk." };
-        }
-        return OperationResult{ true, false, "Provider settings updated." };
-    }
-
-    AutoConnectResult autoConnectProvider(const AutoConnectRequest& request) override {
-        AutoConnectResult result;
-        const auto totalStart = std::chrono::steady_clock::now();
-
-        auto logAutoConnect = [&request](const std::string& severity,
-                                         const std::string& eventName,
-                                         const std::string& message,
-                                         nlohmann::json details = nlohmann::json::object()) {
-            details["providerIdHint"] = request.providerId;
-            details["kind"] = to_string(request.kind);
-            details["credentialFieldCount"] = request.credentials.size();
-            details["assignmentTargetIds"] = request.assignmentTargetIds;
-            details["allowAutonomousControl"] = request.allowAutonomousControl;
-            details["discoverModels"] = request.discoverModels;
-            MasterControl::Diagnostics::appendEvent(
-                L"runtime",
-                severity,
-                eventName,
-                message,
-                std::move(details));
-        };
-
-        auto recordStep = [&result](const std::string& stage,
-                                    bool succeeded,
-                                    const std::string& message,
-                                    int latencyMs = 0) {
-            AutoConnectStep step;
-            step.stage = stage;
-            step.succeeded = succeeded;
-            step.message = message;
-            step.latencyMs = latencyMs;
-            result.steps.push_back(std::move(step));
-        };
-
-        logAutoConnect("info", "provider-auto-connect-start", "Processing provider auto-connect request.");
-
-        // -- Stage 1: Resolve capability ---------------------------------------
-        const auto capabilities = providerCatalogService_->listCapabilities();
-        const auto capabilityIterator = findCapabilityByProviderId(
-            capabilities.begin(), capabilities.end(), request.providerId, request.kind);
-        if (capabilityIterator == capabilities.end()) {
-            result.errorMessage = "The selected provider kind has no active provider module.";
-            recordStep("resolve-capability", false, result.errorMessage);
-            result.summary = result.errorMessage;
-            logAutoConnect("warning", "provider-auto-connect-failed", result.errorMessage);
-            return result;
-        }
-        const auto& capability = *capabilityIterator;
-        recordStep("resolve-capability", true,
-                   "Matched '" + capability.displayName + "' module (" + capability.providerId + ")");
-
-        // -- Stage 2: Derive connection shape ----------------------------------
-        const auto existingProviders = listProviders();
-        const auto credentialStatuses = [this]() {
-            if (const auto store = credentialStore_.lock()) {
-                return store->listStatuses();
-            }
-            return std::vector<ProviderCredentialStatus>{};
-        }();
-        const auto reusableProviderIterator = request.credentials.empty()
-            ? findReusableProviderForAutoConnect(
-                existingProviders.begin(),
-                existingProviders.end(),
-                capability,
-                credentialStatuses)
-            : existingProviders.end();
-        const bool reusingExistingProvider = reusableProviderIterator != existingProviders.end();
-
-        ProviderConnection connection;
-        if (reusingExistingProvider) {
-            connection = *reusableProviderIterator;
-            connection.kind = capability.kind;
-            connection.enabled = true;
-            connection.credentialsConfigured = true;
-            if (!request.displayNameOverride.empty()) {
-                connection.displayName = request.displayNameOverride;
-            }
-            if (!request.baseUrlOverride.empty()) {
-                connection.baseUrl = request.baseUrlOverride;
-            }
-            if (!request.modelIdOverride.empty()) {
-                connection.modelId = request.modelIdOverride;
-            }
-            if (request.allowAutonomousControl && capability.supportsAutonomousControl) {
-                connection.allowAutonomousControl = true;
-            }
-            if (connection.displayName.empty()) {
-                connection.displayName = capability.displayName;
-            }
-            if (connection.baseUrl.empty()) {
-                connection.baseUrl = capability.defaultBaseUrl;
-            }
-            if (connection.modelId.empty()) {
-                connection.modelId = capability.recommendedModel;
-            }
-        } else {
-            connection.kind = request.kind;
-            connection.displayName = request.displayNameOverride.empty()
-                ? capability.displayName
-                : request.displayNameOverride;
-            connection.baseUrl = request.baseUrlOverride.empty()
-                ? capability.defaultBaseUrl
-                : request.baseUrlOverride;
-            connection.modelId = request.modelIdOverride.empty()
-                ? capability.recommendedModel
-                : request.modelIdOverride;
-            connection.enabled = true;
-            connection.allowAutonomousControl = request.allowAutonomousControl
-                && capability.supportsAutonomousControl;
-        }
-
-        // Unique provider id: {providerId}-YYYYMMDD-HHMMSS — scoped under the
-        // canonical module providerId so multiple connections for the same
-        // kind remain disambiguated even across clock ticks.
-        if (reusingExistingProvider) {
-            result.providerId = connection.id;
-            result.displayName = connection.displayName;
-            result.baseUrl = connection.baseUrl;
-            recordStep("derive-shape", true,
-                       "Reusing existing signed-in provider '" + connection.id + "'");
-            logAutoConnect(
-                "info",
-                "provider-auto-connect-reuse",
-                "Reusing an existing provider registration for role assignment.",
-                nlohmann::json{
-                    { "providerId", connection.id },
-                    { "displayName", connection.displayName }
-                });
-        } else {
-            connection.id = generateAutoConnectProviderId(capability.providerId);
-            result.providerId = connection.id;
-            result.displayName = connection.displayName;
-            result.baseUrl = connection.baseUrl;
-            recordStep("derive-shape", true,
-                       "Generated id '" + connection.id + "' targeting " + connection.baseUrl);
-        }
-
-        // -- Stage 3: Validate required credential fields ----------------------
-        if (reusingExistingProvider) {
-            recordStep("validate-credentials", true,
-                       "Existing sign-in / secure credentials detected for '" + connection.id + "'");
-        } else {
-            std::vector<std::string> missingFields;
-            for (const auto& descriptor : capability.credentialFields) {
-                if (!descriptor.required) {
-                    continue;
-                }
-                const auto iterator = request.credentials.find(descriptor.fieldId);
-                if (iterator == request.credentials.end() || iterator->second.empty()) {
-                    missingFields.push_back(descriptor.label.empty() ? descriptor.fieldId : descriptor.label);
-                }
-            }
-            if (!missingFields.empty()) {
-                std::string joined;
-                for (const auto& field : missingFields) {
-                    if (!joined.empty()) joined += ", ";
-                    joined += field;
-                }
-                result.errorMessage = "Missing required credential fields: " + joined;
-                recordStep("validate-credentials", false, result.errorMessage);
-                result.summary = result.errorMessage;
-                logAutoConnect("warning", "provider-auto-connect-failed", result.errorMessage);
-                return result;
-            }
-            recordStep("validate-credentials", true, "All required credential fields supplied");
-        }
-
-        // -- Stage 4: Connectivity + auth probe + model discovery --------------
-        if (reusingExistingProvider) {
-            recordStep("discover-models", true, "Model discovery skipped while reusing the existing provider registration");
-        } else if (request.discoverModels) {
-            const auto probeStart = std::chrono::steady_clock::now();
-            const auto discoveryResult = discoverRemoteModels(connection.baseUrl, request.credentials);
-            const auto probeLatency = static_cast<int>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - probeStart).count());
-            if (discoveryResult.succeeded) {
-                result.discoveredModels = discoveryResult.models;
-                std::string message = "Discovered " + std::to_string(result.discoveredModels.size())
-                    + " model(s) from " + connection.baseUrl;
-                recordStep("discover-models", true, message, probeLatency);
-
-                // Prefer capability.recommendedModel if the remote actually
-                // reports it; otherwise fall back to the first listed model.
-                if (!capability.recommendedModel.empty()) {
-                    const auto matchIt = std::find_if(
-                        result.discoveredModels.begin(),
-                        result.discoveredModels.end(),
-                        [&capability](const DiscoveredModel& model) {
-                            return model.id == capability.recommendedModel;
-                        });
-                    if (matchIt != result.discoveredModels.end()) {
-                        connection.modelId = capability.recommendedModel;
-                        recordStep("select-model", true,
-                                   "Selected recommended model '" + connection.modelId + "'");
-                    } else if (!result.discoveredModels.empty()) {
-                        connection.modelId = result.discoveredModels.front().id;
-                        recordStep("select-model", true,
-                                   "Recommended model not exposed by remote; falling back to '"
-                                   + connection.modelId + "'");
-                    }
-                } else if (!result.discoveredModels.empty() && connection.modelId.empty()) {
-                    connection.modelId = result.discoveredModels.front().id;
-                    recordStep("select-model", true,
-                               "No capability recommendation; selected '" + connection.modelId + "'");
-                }
-            } else {
-                // Non-fatal: providers that do not implement a /models route
-                // (e.g. Claude Code CLI, local inference servers) should still
-                // install cleanly. We keep capability.recommendedModel and
-                // defer credential validation to the first execution.
-                recordStep("discover-models", false,
-                           "Remote models endpoint not reachable: " + discoveryResult.errorMessage
-                           + " (falling back to capability recommendation)",
-                           probeLatency);
-            }
-        } else {
-            recordStep("discover-models", true, "Model discovery skipped by request");
-        }
-        result.selectedModelId = connection.modelId;
-
-        // -- Stage 5: Register provider ----------------------------------------
-        const bool providerNeedsUpdate = !reusingExistingProvider ||
-            connection.displayName != reusableProviderIterator->displayName ||
-            connection.baseUrl != reusableProviderIterator->baseUrl ||
-            connection.modelId != reusableProviderIterator->modelId ||
-            connection.enabled != reusableProviderIterator->enabled ||
-            connection.allowAutonomousControl != reusableProviderIterator->allowAutonomousControl ||
-            connection.credentialsConfigured != reusableProviderIterator->credentialsConfigured;
-        if (providerNeedsUpdate) {
-            const auto upsertResult = upsertProvider(connection);
-            if (!upsertResult.succeeded) {
-                result.errorMessage = "Provider registration failed: " + upsertResult.message;
-                recordStep("register-provider", false, result.errorMessage);
-                result.summary = result.errorMessage;
-                logAutoConnect("warning", "provider-auto-connect-failed", result.errorMessage);
-                return result;
-            }
-            recordStep("register-provider", true,
-                       reusingExistingProvider
-                           ? "Existing provider configuration refreshed."
-                           : "Provider registered in configuration");
-        } else {
-            recordStep("register-provider", true, "Reused existing provider registration");
-        }
-
-        // Track overall success across stages 6-7. Previously we hard-coded
-        // result.succeeded = true at finalize even when stage 6 or 7 had
-        // recorded a failure step — so an unrouted credential store or a
-        // rejected assignment came back as a green success to the caller.
-        bool postRegistrationSucceeded = true;
-
-        // -- Stage 6: Persist credentials via DPAPI -----------------------------
-        if (reusingExistingProvider) {
-            recordStep("store-credentials", true, "Existing provider credentials / CLI sign-in were reused");
-        } else if (auto store = credentialStore_.lock()) {
-            ProviderCredentialUpdate update;
-            update.providerId = connection.id;
-            update.values = request.credentials;
-            const auto credentialResult = store->upsertCredentials(update);
-            if (!credentialResult.succeeded) {
-                result.errorMessage = "Credential storage failed: " + credentialResult.message;
-                recordStep("store-credentials", false, result.errorMessage);
-                // Roll back the provider registration so we do not leave an
-                // unusable record behind.
-                removeProviderInternal(connection.id);
-                result.summary = result.errorMessage;
-                logAutoConnect("warning", "provider-auto-connect-failed", result.errorMessage);
-                return result;
-            }
-            recordStep("store-credentials", true, "Credentials encrypted with DPAPI and stored");
-        } else {
-            // Credential store not wired: credentials were NOT persisted.
-            // This is a runtime-wiring failure but we don't roll back the
-            // provider registration — the operator can re-enter credentials
-            // via the direct API. Surface it as a failed overall result so
-            // the caller knows credentials are missing.
-            recordStep("store-credentials", false,
-                       "Credential store unavailable (runtime wiring incomplete)");
-            result.errorMessage = "Credential store unavailable; credentials were not persisted.";
-            postRegistrationSucceeded = false;
-        }
-
-        // -- Stage 7: Apply requested role assignments -------------------------
-        if (auto assignmentService = assignmentService_.lock()) {
-            const auto targets = assignmentService->listTargets();
-            for (const auto& targetId : request.assignmentTargetIds) {
-                const auto targetIt = std::find_if(
-                    targets.begin(), targets.end(),
-                    [&targetId](const ProviderAssignmentTarget& candidate) {
-                        return candidate.targetId == targetId;
-                    });
-                if (targetIt == targets.end()) {
-                    result.assignmentsFailed.push_back(targetId + " (unknown target)");
-                    continue;
-                }
-
-                ProviderAssignment assignment;
-                assignment.targetId = targetIt->targetId;
-                assignment.kind = targetIt->kind;
-                assignment.providerId = connection.id;
-                const auto opResult = assignmentService->upsertAssignment(assignment);
-                if (opResult.succeeded) {
-                    result.assignmentsApplied.push_back(targetIt->displayName);
-                } else {
-                    result.assignmentsFailed.push_back(targetIt->displayName + ": " + opResult.message);
-                }
-            }
-
-            std::string summary = "Applied " + std::to_string(result.assignmentsApplied.size())
-                + " role assignment(s)";
-            if (!result.assignmentsFailed.empty()) {
-                summary += ", " + std::to_string(result.assignmentsFailed.size()) + " failed";
-            }
-            const bool allAssignmentsApplied = result.assignmentsFailed.empty();
-            recordStep("apply-assignments", allAssignmentsApplied, summary);
-            if (!allAssignmentsApplied) {
-                postRegistrationSucceeded = false;
-                if (result.errorMessage.empty()) {
-                    result.errorMessage = std::to_string(result.assignmentsFailed.size())
-                        + " role assignment(s) failed: " + result.assignmentsFailed.front();
-                }
-            }
-        } else if (!request.assignmentTargetIds.empty()) {
-            recordStep("apply-assignments", false,
-                       "Assignment service unavailable (runtime wiring incomplete)");
-            for (const auto& targetId : request.assignmentTargetIds) {
-                result.assignmentsFailed.push_back(targetId + " (assignment service unavailable)");
-            }
-            if (result.errorMessage.empty()) {
-                result.errorMessage = "Assignment service unavailable; requested role assignments were not applied.";
-            }
-            postRegistrationSucceeded = false;
-        }
-
-        // -- Finalize ----------------------------------------------------------
-        result.totalLatencyMs = static_cast<int>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - totalStart).count());
-        result.succeeded = postRegistrationSucceeded;
-        if (!postRegistrationSucceeded) {
-            if (result.summary.empty()) {
-                result.summary = result.errorMessage.empty()
-                    ? "Auto-connect completed with one or more failures."
-                    : result.errorMessage;
-            }
-            logAutoConnect(
-                "warning",
-                "provider-auto-connect-failed",
-                result.summary,
-                nlohmann::json{
-                    { "providerId", connection.id },
-                    { "reusedExistingProvider", reusingExistingProvider },
-                    { "assignmentsApplied", result.assignmentsApplied },
-                    { "assignmentsFailed", result.assignmentsFailed }
-                });
-            return result;
-        }
-        result.summary = (reusingExistingProvider ? "Reused '" : "Connected '")
-            + connection.displayName + "' in "
-            + std::to_string(result.totalLatencyMs) + "ms ("
-            + std::to_string(result.discoveredModels.size()) + " model(s), "
-            + std::to_string(result.assignmentsApplied.size()) + " role(s))";
-        logAutoConnect(
-            "info",
-            "provider-auto-connect-complete",
-            result.summary,
-            nlohmann::json{
-                { "providerId", connection.id },
-                { "reusedExistingProvider", reusingExistingProvider },
-                { "assignmentsApplied", result.assignmentsApplied },
-                { "assignmentsFailed", result.assignmentsFailed },
-                { "selectedModelId", result.selectedModelId }
-            });
-        return result;
-    }
-
-private:
-    struct ModelDiscoveryResult final {
-        bool succeeded = false;
-        std::vector<DiscoveredModel> models;
-        std::string errorMessage;
-    };
-
-    // Generates a unique provider id using the canonical module providerId as
-    // a prefix and a local timestamp suffix — stable enough to survive a bulk
-    // rebuild and unique across typical manual creation rates.
-    static std::string generateAutoConnectProviderId(const std::string& modulePrefix) {
-        std::string prefix = modulePrefix.empty() ? std::string("provider") : modulePrefix;
-        std::transform(prefix.begin(), prefix.end(), prefix.begin(),
-                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-
-        SYSTEMTIME localTime{};
-        GetLocalTime(&localTime);
-        char suffix[32]{};
-        std::snprintf(
-            suffix, sizeof(suffix), "-%04u%02u%02u-%02u%02u%02u",
-            localTime.wYear, localTime.wMonth, localTime.wDay,
-            localTime.wHour, localTime.wMinute, localTime.wSecond);
-        return prefix + suffix;
-    }
-
-    // Issues an OpenAI-compatible `GET {baseUrl}/models` request using the
-    // already-established WinHTTP sendJsonRequest helper. The call is used
-    // for three things at once: connectivity check, credential validation,
-    // and model discovery. Providers that do not implement this route
-    // (Claude Code CLI, local servers) fall back to capability.recommendedModel.
-    ModelDiscoveryResult discoverRemoteModels(const std::string& baseUrl,
-                                              const std::map<std::string, std::string>& credentials) {
-        ModelDiscoveryResult discovery;
-        if (baseUrl.empty()) {
-            discovery.errorMessage = "Base URL not set";
-            return discovery;
-        }
-
-        std::string trimmedBase = baseUrl;
-        while (!trimmedBase.empty() && trimmedBase.back() == '/') {
-            trimmedBase.pop_back();
-        }
-        const std::string modelsUrl = trimmedBase + "/models";
-
-        // Build authentication headers from whatever credential fields the
-        // user supplied. Rather than hard-coding a short list of field ids,
-        // we walk every credential the user provided and pick the first one
-        // whose id looks like an API key / auth token (the convention used
-        // by every provider module in the tree). This keeps the pipeline
-        // module-agnostic — a new module can declare any field id and the
-        // auto-connect probe still Just Works.
-        std::vector<std::pair<std::wstring, std::wstring>> headers;
-        auto normalizedLower = [](std::string input) {
-            std::transform(input.begin(), input.end(), input.begin(),
-                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-            return input;
-        };
-        std::string bearer;
-        std::string customAuth;
-        for (const auto& [fieldId, value] : credentials) {
-            if (value.empty()) continue;
-            const auto lower = normalizedLower(fieldId);
-            if (lower == "authorization") {
-                customAuth = value;
-                continue;
-            }
-            const bool looksLikeKey =
-                lower.find("api_key") != std::string::npos ||
-                lower.find("apikey") != std::string::npos ||
-                lower.find("api-key") != std::string::npos ||
-                lower.find("token") != std::string::npos ||
-                lower.find("secret") != std::string::npos ||
-                lower == "key";
-            if (looksLikeKey && bearer.empty()) {
-                bearer = value;
-            }
-        }
-        if (!bearer.empty()) {
-            headers.emplace_back(L"Authorization", L"Bearer " + wideFromUtf8(bearer));
-        }
-        if (!customAuth.empty()) {
-            headers.emplace_back(L"Authorization", wideFromUtf8(customAuth));
-        }
-
-        const auto response = sendJsonRequest("GET", modelsUrl, headers, std::string());
-        if (!response.succeeded) {
-            discovery.errorMessage = response.errorMessage.empty()
-                ? ("HTTP " + std::to_string(response.statusCode))
-                : response.errorMessage;
-            return discovery;
-        }
-
-        // Parse the OpenAI-compatible `{"data": [{"id": "..."}, ...]}` shape.
-        // Some providers nest the list under "models" instead — try both.
-        try {
-            const auto payload = nlohmann::json::parse(response.body, nullptr, false);
-            if (payload.is_discarded()) {
-                discovery.errorMessage = "Response was not valid JSON";
-                return discovery;
-            }
-            const nlohmann::json* list = nullptr;
-            if (payload.contains("data") && payload["data"].is_array()) {
-                list = &payload["data"];
-            } else if (payload.contains("models") && payload["models"].is_array()) {
-                list = &payload["models"];
-            } else if (payload.is_array()) {
-                list = &payload;
-            }
-            if (list == nullptr) {
-                discovery.errorMessage = "Response did not contain a model list";
-                return discovery;
-            }
-            for (const auto& entry : *list) {
-                DiscoveredModel model;
-                if (entry.is_string()) {
-                    model.id = entry.get<std::string>();
-                } else if (entry.is_object()) {
-                    if (entry.contains("id") && entry["id"].is_string()) {
-                        model.id = entry["id"].get<std::string>();
-                    } else if (entry.contains("name") && entry["name"].is_string()) {
-                        model.id = entry["name"].get<std::string>();
-                    }
-                    if (entry.contains("display_name") && entry["display_name"].is_string()) {
-                        model.displayName = entry["display_name"].get<std::string>();
-                    } else if (entry.contains("displayName") && entry["displayName"].is_string()) {
-                        model.displayName = entry["displayName"].get<std::string>();
-                    }
-                    if (entry.contains("description") && entry["description"].is_string()) {
-                        model.description = entry["description"].get<std::string>();
-                    }
-                }
-                if (!model.id.empty()) {
-                    discovery.models.push_back(std::move(model));
-                }
-            }
-            discovery.succeeded = true;
-            return discovery;
-        } catch (const std::exception& exc) {
-            discovery.errorMessage = std::string("Parse error: ") + exc.what();
-            return discovery;
-        }
-    }
-
-    // Removes a provider by id from the configuration without touching its
-    // credentials. Used to roll back a partial Auto-Connect when a later
-    // stage (credential storage, assignment) fails.
-    void removeProviderInternal(const std::string& providerId) {
-        std::lock_guard<std::mutex> lock(state_->mutex);
-        auto& providers = state_->configuration.providers;
-        providers.erase(
-            std::remove_if(providers.begin(), providers.end(),
-                           [&providerId](const ProviderConnection& candidate) {
-                               return candidate.id == providerId;
-                           }),
-            providers.end());
-        (void)writeJsonFile(configurationFile_, state_->configuration);
-    }
-
-    std::shared_ptr<SharedState> state_;
-    std::filesystem::path configurationFile_;
-    std::shared_ptr<IProviderCatalogService> providerCatalogService_;
-    std::weak_ptr<IProviderCredentialStore> credentialStore_;
-    std::weak_ptr<IProviderAssignmentService> assignmentService_;
-};
-
-class ProviderCredentialStore final : public IProviderCredentialStore {
-public:
-    ProviderCredentialStore(std::filesystem::path filePath,
-                            std::shared_ptr<IProviderRegistry> providerRegistry,
-                            std::shared_ptr<IProviderCatalogService> providerCatalogService)
-        : filePath_(std::move(filePath))
-        , providerRegistry_(std::move(providerRegistry))
-        , providerCatalogService_(std::move(providerCatalogService)) {
-        if (!std::filesystem::exists(filePath_)) {
-            (void)writeJsonFile(filePath_, ProviderCredentialsDocument{});
-        }
-    }
-
-    std::vector<ProviderCredentialStatus> listStatuses() const override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return loadStatusesLocked();
-    }
-
-    std::map<std::string, std::string> readCredentials(const std::string& providerId) const override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto document = loadDocumentLocked();
-        const auto iterator = document.protectedPayloadsByProviderId.find(providerId);
-        if (iterator == document.protectedPayloadsByProviderId.end()) {
-            return {};
-        }
-
-        const auto payload = tryParseJson(unprotectSecretPayload(iterator->second));
-        if (!payload.has_value()) {
-            return {};
-        }
-        try {
-            return payload->get<std::map<std::string, std::string>>();
-        } catch (const nlohmann::json::exception&) {
-            return {};
-        } catch (...) {
-            return {};
-        }
-    }
-
-    OperationResult upsertCredentials(const ProviderCredentialUpdate& update) override {
-        if (update.providerId.empty() || isBlank(update.providerId)) {
-            return OperationResult{ false, false, "Provider credentials must target a provider route." };
-        }
-
-        const auto providers = providerRegistry_->listProviders();
-        const auto providerIterator = std::find_if(
-            providers.begin(),
-            providers.end(),
-            [&update](const ProviderConnection& provider) { return provider.id == update.providerId; });
-        if (providerIterator == providers.end()) {
-            return OperationResult{ false, false, "Provider route was not found." };
-        }
-
-        const auto capabilities = providerCatalogService_->listCapabilities();
-        const auto capabilityIterator = findCapabilityByProviderId(
-            capabilities.begin(), capabilities.end(),
-            providerIterator->id, providerIterator->kind);
-        if (capabilityIterator == capabilities.end()) {
-            return OperationResult{ false, false, "Provider module metadata is not available for the selected route." };
-        }
-
-        for (const auto& field : capabilityIterator->credentialFields) {
-            if (field.required && field.requirementGroup.empty()) {
-                const auto iterator = update.values.find(field.fieldId);
-                if (iterator == update.values.end() || iterator->second.empty() || isBlank(iterator->second)) {
-                    return OperationResult{ false, false, field.label + " is required." };
-                }
-            }
-        }
-
-        std::set<std::string> requirementGroups;
-        for (const auto& field : capabilityIterator->credentialFields) {
-            if (!field.requirementGroup.empty()) {
-                requirementGroups.insert(field.requirementGroup);
-            }
-        }
-        for (const auto& requirementGroup : requirementGroups) {
-            bool satisfied = false;
-            for (const auto& field : capabilityIterator->credentialFields) {
-                if (field.requirementGroup != requirementGroup) {
-                    continue;
-                }
-
-                const auto iterator = update.values.find(field.fieldId);
-                if (iterator != update.values.end() && !iterator->second.empty() && !isBlank(iterator->second)) {
-                    satisfied = true;
-                    break;
-                }
-            }
-            if (!satisfied) {
-                return OperationResult{ false, false, "One of the required " + requirementGroup + " credentials must be provided." };
-            }
-        }
-
-        nlohmann::json payload = nlohmann::json::object();
-        for (const auto& [fieldId, value] : update.values) {
-            if (!value.empty() && !isBlank(value)) {
-                payload[fieldId] = value;
-            }
-        }
-
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto document = loadDocumentLocked();
-        document.protectedPayloadsByProviderId[update.providerId] = protectSecretPayload(payload.dump());
-        document.updatedAtUtcByProviderId[update.providerId] = timestampNowUtc();
-        if (!writeJsonFile(filePath_, document)) {
-            return OperationResult{ false, false, "Provider credentials could not be written to the local secure store." };
-        }
-        return OperationResult{ true, false, "Provider credentials were saved to the local secure store." };
-    }
-
-private:
-    ProviderCredentialsDocument loadDocumentLocked() const {
-        const auto json = readJsonFile(filePath_);
-        if (json.is_null() || json.empty()) {
-            return {};
-        }
-        return json.get<ProviderCredentialsDocument>();
-    }
-
-    std::vector<ProviderCredentialStatus> loadStatusesLocked() const {
-        std::vector<ProviderCredentialStatus> statuses;
-        const auto document = loadDocumentLocked();
-        for (const auto& [providerId, protectedPayload] : document.protectedPayloadsByProviderId) {
-            ProviderCredentialStatus status;
-            status.providerId = providerId;
-            if (const auto updatedAtIterator = document.updatedAtUtcByProviderId.find(providerId);
-                updatedAtIterator != document.updatedAtUtcByProviderId.end()) {
-                status.updatedAtUtc = updatedAtIterator->second;
-            }
-
-            try {
-                const auto payload = nlohmann::json::parse(unprotectSecretPayload(protectedPayload));
-                status.configured = !payload.empty();
-                for (const auto& [fieldId, value] : payload.items()) {
-                    if (value.is_string() && !value.get<std::string>().empty()) {
-                        status.configuredFieldIds.push_back(fieldId);
-                    }
-                }
-                status.message = status.configured
-                    ? "Credentials are present in secure storage."
-                    : "No provider credentials are currently configured.";
-            } catch (...) {
-                status.configured = false;
-                status.message = "Stored credentials could not be read.";
-            }
-
-            statuses.push_back(std::move(status));
-        }
-        return statuses;
-    }
-
-    std::filesystem::path filePath_;
-    std::shared_ptr<IProviderRegistry> providerRegistry_;
-    std::shared_ptr<IProviderCatalogService> providerCatalogService_;
-    mutable std::mutex mutex_;
-};
 
 // CLI-based sign-in service. Spawns `claude login` or `codex login` in a new
-// console window so the operator can complete OAuth in their own browser,
-// then polls for completion (process exit + expected auth file present).
-// On success, registers a ProviderConnection that routes execution through
-// the CLI — no API key is ever stored by us; the CLI keeps its own tokens.
-class ProviderCliSignInService final {
-public:
-    struct SessionState {
-        std::string sessionId;
-        std::string bridge;          // "claude" or "codex"
-        std::string providerId;      // e.g. "claude-code", "codex"
-        std::string status;          // "pending" | "complete" | "failed"
-        std::string message;
-        std::string accountLabel;
-        std::string startedAtUtc;
-        std::string completedAtUtc;
-        HANDLE processHandle = nullptr;
-        HANDLE waitThread = nullptr;
-        std::filesystem::path authFilePath;
-        bool awaitingAuthFile = false;
-        std::chrono::steady_clock::time_point authFileDeadline{};
-    };
-
-    ProviderCliSignInService(std::shared_ptr<IProviderRegistry> providerRegistry,
-                             std::shared_ptr<IProviderCatalogService> providerCatalogService)
-        : providerRegistry_(std::move(providerRegistry))
-        , providerCatalogService_(std::move(providerCatalogService)) {}
-
-    ~ProviderCliSignInService() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        for (auto& [_, session] : sessions_) {
-            if (session.processHandle != nullptr) {
-                CloseHandle(session.processHandle);
-            }
-            if (session.waitThread != nullptr) {
-                CloseHandle(session.waitThread);
-            }
-        }
-    }
-
-    nlohmann::json startSession(const std::string& bridge, const std::string& providerId) {
-        nlohmann::json response = nlohmann::json::object();
-
-        if (bridge != "claude" && bridge != "codex") {
-            response["succeeded"] = false;
-            response["message"] = "Unsupported sign-in bridge: " + bridge;
-            return response;
-        }
-
-        // Resolve the CLI binary path. If it isn't installed, tell the UI
-        // explicitly so it can offer an "install" action instead of a
-        // sign-in spinner that never finishes.
-        const auto cliPath = resolveCliPath(bridge);
-        if (!cliPath.has_value()) {
-            response["succeeded"] = false;
-            response["message"] = bridgeDisplayName(bridge) + " is not installed on this host. Install it first (e.g. via the dependency setup) and try again.";
-            response["cliInstalled"] = false;
-            response["bridge"] = bridge;
-            return response;
-        }
-
-        SessionState session;
-        session.sessionId = generateSessionId();
-        session.bridge = bridge;
-        session.providerId = providerId;
-        session.status = "pending";
-        session.message = "Complete the sign-in prompt in the console window or browser.";
-        session.accountLabel = bridge == "claude"
-            ? "Claude Pro / Max / Team account"
-            : "OpenAI account (ChatGPT + Codex)";
-        session.startedAtUtc = timestampNowUtc();
-        session.authFilePath = expectedAuthFilePath(bridge);
-
-        // Spawn the CLI's login subcommand in a new console window so the
-        // operator can see the OAuth URL / device code prompts. We do NOT
-        // capture stdout/stderr — the CLI owns the interaction.
-        std::wstring applicationName;
-        std::wstring commandLine;
-        if (startsWithInsensitive(cliPath->extension().string(), ".cmd") ||
-            startsWithInsensitive(cliPath->extension().string(), ".bat")) {
-            const auto commandProcessor = resolveCommandProcessorPath();
-            if (!commandProcessor.has_value()) {
-                response["succeeded"] = false;
-                response["message"] = "Windows could not locate cmd.exe to launch " + bridgeDisplayName(bridge) + " sign-in.";
-                response["cliInstalled"] = true;
-                return response;
-            }
-
-            applicationName = commandProcessor->wstring();
-            commandLine = quoteWindowsArgument(commandProcessor->wstring());
-            commandLine += L" /d /s /c ";
-            commandLine += quoteWindowsArgument(cliPath->wstring());
-            commandLine += L" login";
-        } else {
-            applicationName = cliPath->wstring();
-            commandLine = quoteWindowsArgument(cliPath->wstring());
-            commandLine += L" login";
-        }
-
-        STARTUPINFOW startupInfo{};
-        startupInfo.cb = sizeof(startupInfo);
-        PROCESS_INFORMATION processInfo{};
-        std::wstring mutableCommand = commandLine;
-        auto workingDirectory = interactiveUserProfileDirectory().value_or(cliPath->parent_path());
-        std::error_code workingDirectoryError;
-        if (!workingDirectory.empty() && !std::filesystem::exists(workingDirectory, workingDirectoryError)) {
-            workingDirectory = cliPath->parent_path();
-        }
-        const std::wstring workingDirectoryText = workingDirectory.empty()
-            ? std::wstring()
-            : workingDirectory.wstring();
-        const BOOL created = CreateProcessW(
-            applicationName.empty() ? nullptr : applicationName.c_str(),
-            mutableCommand.data(),
-            nullptr,
-            nullptr,
-            FALSE,
-            CREATE_NEW_CONSOLE | CREATE_UNICODE_ENVIRONMENT,
-            nullptr,
-            workingDirectoryText.empty() ? nullptr : workingDirectoryText.c_str(),
-            &startupInfo,
-            &processInfo);
-        if (created == 0) {
-            const DWORD lastError = GetLastError();
-            response["succeeded"] = false;
-            response["message"] = "Failed to launch " + bridgeDisplayName(bridge) + " sign-in (error " + std::to_string(lastError) + ").";
-            response["cliInstalled"] = true;
-            return response;
-        }
-        CloseHandle(processInfo.hThread);
-        session.processHandle = processInfo.hProcess;
-
-        const std::string sessionId = session.sessionId;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            sessions_[sessionId] = std::move(session);
-        }
-
-        response["succeeded"] = true;
-        response["sessionId"] = sessionId;
-        response["message"] = "Sign-in console opened. Complete the prompt to finish.";
-        response["bridge"] = bridge;
-        return response;
-    }
-
-    nlohmann::json querySession(const std::string& sessionId) {
-        nlohmann::json response = nlohmann::json::object();
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto iterator = sessions_.find(sessionId);
-        if (iterator == sessions_.end()) {
-            response["succeeded"] = false;
-            response["message"] = "Unknown sign-in session.";
-            return response;
-        }
-
-        auto& session = iterator->second;
-        const auto finalizeRegistration = [&]() {
-            const auto registerResult = registerBridgedProvider(session.bridge, session.providerId);
-            session.completedAtUtc = timestampNowUtc();
-            session.awaitingAuthFile = false;
-            session.authFileDeadline = {};
-            if (registerResult.succeeded) {
-                session.status = "complete";
-                if (session.bridge == "codex") {
-                    session.message = "Signed in. ChatGPT (planning / reasoning) and Codex (coding agent) are both registered — assign each to roles below.";
-                } else {
-                    session.message = "Signed in. " + session.accountLabel + " is registered — assign it to a role below.";
-                }
-            } else {
-                session.status = "failed";
-                session.message = registerResult.message.empty()
-                    ? "Sign-in finished, but provider registration failed."
-                    : registerResult.message;
-            }
-        };
-
-        if (session.status == "pending") {
-            const auto now = std::chrono::steady_clock::now();
-            if (session.processHandle != nullptr) {
-                const DWORD waitResult = WaitForSingleObject(session.processHandle, 0);
-                if (waitResult == WAIT_OBJECT_0) {
-                    DWORD exitCode = 0;
-                    GetExitCodeProcess(session.processHandle, &exitCode);
-                    CloseHandle(session.processHandle);
-                    session.processHandle = nullptr;
-
-                    const bool authFileExists = !session.authFilePath.empty() &&
-                        std::filesystem::exists(session.authFilePath);
-                    if (exitCode == 0 && authFileExists) {
-                        finalizeRegistration();
-                    } else if (exitCode == 0) {
-                        session.awaitingAuthFile = true;
-                        session.authFileDeadline = now + kCliAuthFileGracePeriod;
-                        session.message = "Sign-in finished. Waiting for " + bridgeDisplayName(session.bridge) +
-                            " to finish writing its credential file.";
-                    } else {
-                        session.status = "failed";
-                        session.completedAtUtc = timestampNowUtc();
-                        session.message = "Sign-in was canceled or failed (exit code " + std::to_string(exitCode) + ").";
-                    }
-                }
-            }
-
-            if (session.status == "pending" && session.awaitingAuthFile) {
-                const bool authFileExists = !session.authFilePath.empty() &&
-                    std::filesystem::exists(session.authFilePath);
-                if (authFileExists) {
-                    finalizeRegistration();
-                } else if (session.authFileDeadline != std::chrono::steady_clock::time_point{} &&
-                           now >= session.authFileDeadline) {
-                    session.status = "failed";
-                    session.completedAtUtc = timestampNowUtc();
-                    session.awaitingAuthFile = false;
-                    session.authFileDeadline = {};
-                    session.message = "Sign-in appeared to exit cleanly, but " + bridgeDisplayName(session.bridge) +
-                        " did not create its credential file.";
-                }
-            }
-        }
-
-        response["succeeded"] = true;
-        response["sessionId"] = session.sessionId;
-        response["status"] = session.status;
-        response["message"] = session.message;
-        response["bridge"] = session.bridge;
-        response["providerId"] = session.providerId;
-        response["accountLabel"] = session.accountLabel;
-        response["startedAtUtc"] = session.startedAtUtc;
-        response["completedAtUtc"] = session.completedAtUtc;
-        return response;
-    }
-
-    nlohmann::json detectInstalled() const {
-        nlohmann::json response = nlohmann::json::array();
-        for (const char* bridge : { "claude", "codex" }) {
-            nlohmann::json entry = nlohmann::json::object();
-            entry["bridge"] = bridge;
-            entry["displayName"] = bridgeDisplayName(bridge);
-            const auto cliPath = resolveCliPath(bridge);
-            entry["installed"] = cliPath.has_value();
-            entry["path"] = cliPath.has_value() ? cliPath->string() : "";
-            const auto authPath = expectedAuthFilePath(bridge);
-            entry["signedIn"] = !authPath.empty() && std::filesystem::exists(authPath);
-            response.push_back(entry);
-        }
-        return response;
-    }
-
-    OperationResult registerAuthenticatedProvider(const std::string& bridge,
-                                                  const std::string& providerIdHint) {
-        if (bridge != "claude" && bridge != "codex") {
-            return OperationResult{
-                false,
-                false,
-                "Unsupported sign-in bridge: " + bridge
-            };
-        }
-        return registerBridgedProvider(bridge, providerIdHint);
-    }
-
-private:
-    static std::string generateSessionId() {
-        static std::atomic<uint64_t> counter{ 0 };
-        const auto now = std::chrono::system_clock::now().time_since_epoch();
-        const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(now).count();
-        return "signin-" + std::to_string(micros) + "-" + std::to_string(counter.fetch_add(1));
-    }
-
-    static std::optional<std::filesystem::path> resolveCliPath(const std::string& bridge) {
-        if (bridge == "claude") {
-            if (const auto configured = environmentPathVariable(L"MASTERCONTROL_CLAUDE_COMMAND");
-                configured.has_value() && !configured->empty()) {
-                return configured;
-            }
-            return findCommandOnPath({ L"claude.exe", L"claude.cmd", L"claude.bat", L"claude" });
-        }
-        if (bridge == "codex") {
-            if (const auto configured = environmentPathVariable(L"MASTERCONTROL_CODEX_COMMAND");
-                configured.has_value() && !configured->empty()) {
-                return configured;
-            }
-            return findCommandOnPath({ L"codex.exe", L"codex.cmd", L"codex.bat", L"codex" });
-        }
-        return std::nullopt;
-    }
-
-    static std::filesystem::path expectedAuthFilePath(const std::string& bridge) {
-        const auto userProfile = interactiveUserProfileDirectory();
-        if (!userProfile.has_value() || userProfile->empty()) {
-            return {};
-        }
-        const std::filesystem::path base(*userProfile);
-        if (bridge == "claude") {
-            // Claude Code stores OAuth tokens here as of Claude Code 2.x.
-            return base / L".claude" / L".credentials.json";
-        }
-        if (bridge == "codex") {
-            return base / L".codex" / L"auth.json";
-        }
-        return {};
-    }
-
-    static std::string bridgeDisplayName(const std::string& bridge) {
-        if (bridge == "claude") return "Claude Code CLI";
-        if (bridge == "codex") return "Codex CLI";
-        return bridge;
-    }
-
-    OperationResult registerBridgedProvider(const std::string& bridge, const std::string& providerIdHint) {
-        MasterControl::Diagnostics::appendEvent(
-            L"runtime",
-            "info",
-            "provider-signin-register-start",
-            "Registering providers after shell sign-in completed.",
-            nlohmann::json{
-                { "bridge", bridge },
-                { "providerIdHint", providerIdHint }
-            });
-        // A single `codex login` authenticates the user's OpenAI account for
-        // BOTH ChatGPT (general reasoning) and Codex (coding agent). We
-        // therefore register every capability whose cliBridgeCommand
-        // matches the bridge that just completed sign-in — the operator
-        // gets each distinct provider entry (chatgpt + codex) available
-        // for role assignment without having to sign in twice.
-        //
-        // For bridges that map 1:1 to a single provider (claude → claude-code)
-        // this still registers exactly one entry because only one capability
-        // declares the "claude" bridge.
-        //
-        // providerIdHint is retained for diagnostics / future routing but
-        // no longer restricts the set of registered providers — the user's
-        // intent in clicking "Sign in with ChatGPT" is to unlock the
-        // account, not to choose one of two logical endpoints.
-        (void)providerIdHint;
-        const auto capabilities = providerCatalogService_->listCapabilities();
-        size_t matchedCapabilityCount = 0;
-        std::vector<std::string> failures;
-        for (const auto& capability : capabilities) {
-            if (capability.cliBridgeCommand != bridge) {
-                continue;
-            }
-            ++matchedCapabilityCount;
-            ProviderConnection provider;
-            provider.id = capability.providerId;
-            provider.kind = capability.kind;
-            provider.displayName = capability.displayName;
-            provider.baseUrl = capability.defaultBaseUrl;
-            provider.modelId = capability.recommendedModel;
-            provider.enabled = true;
-            provider.allowAutonomousControl = false;
-            provider.credentialsConfigured = true; // via CLI's own OAuth store
-            provider.isTemplate = false;
-            const auto upsertResult = providerRegistry_->upsertProvider(provider);
-            if (!upsertResult.succeeded) {
-                failures.push_back(
-                    capability.providerId + ": " +
-                    (upsertResult.message.empty() ? std::string("provider registration failed") : upsertResult.message));
-            }
-        }
-
-        if (matchedCapabilityCount == 0) {
-            MasterControl::Diagnostics::appendEvent(
-                L"runtime",
-                "warning",
-                "provider-signin-register-failed",
-                "No provider capabilities are registered for the requested CLI bridge.",
-                nlohmann::json{
-                    { "bridge", bridge },
-                    { "providerIdHint", providerIdHint }
-                });
-            return OperationResult{
-                false,
-                false,
-                "No provider capabilities are registered for CLI bridge '" + bridge + "'."
-            };
-        }
-
-        if (!failures.empty()) {
-            std::ostringstream message;
-            message << "Signed in, but provider registration failed: ";
-            for (size_t index = 0; index < failures.size(); ++index) {
-                if (index > 0) {
-                    message << "; ";
-                }
-                message << failures[index];
-            }
-            MasterControl::Diagnostics::appendEvent(
-                L"runtime",
-                "warning",
-                "provider-signin-register-failed",
-                message.str(),
-                nlohmann::json{
-                    { "bridge", bridge },
-                    { "providerIdHint", providerIdHint },
-                    { "failures", failures }
-                });
-            return OperationResult{ false, false, message.str() };
-        }
-
-        if (bridge == "codex") {
-            MasterControl::Diagnostics::appendEvent(
-                L"runtime",
-                "info",
-                "provider-signin-register-complete",
-                "OpenAI-backed providers were registered after shell sign-in.",
-                nlohmann::json{
-                    { "bridge", bridge },
-                    { "registeredCapabilities", matchedCapabilityCount }
-                });
-            return OperationResult{
-                true,
-                false,
-                "Signed in. ChatGPT (planning / reasoning) and Codex (coding agent) are both registered - assign each to roles below."
-            };
-        }
-
-        MasterControl::Diagnostics::appendEvent(
-            L"runtime",
-            "info",
-            "provider-signin-register-complete",
-            "CLI-backed provider registration completed successfully.",
-            nlohmann::json{
-                { "bridge", bridge },
-                { "registeredCapabilities", matchedCapabilityCount }
-            });
-        return OperationResult{
-            true,
-            false,
-            "Signed in. " + bridgeDisplayName(bridge) + " is registered - assign it to a role below."
-        };
-    }
-
-    mutable std::mutex mutex_;
-    std::map<std::string, SessionState> sessions_;
-    std::shared_ptr<IProviderRegistry> providerRegistry_;
-    std::shared_ptr<IProviderCatalogService> providerCatalogService_;
-};
-
 class SubAgentCatalogService final : public ISubAgentCatalogService {
 public:
     SubAgentCatalogService(std::shared_ptr<SharedState> state,
@@ -3748,14 +2298,6 @@ public:
 
             endpoints.erase(iterator);
 
-            auto& assignments = state_->configuration.providerAssignments;
-            assignments.erase(
-                std::remove_if(
-                    assignments.begin(),
-                    assignments.end(),
-                    [&subAgentId](const ProviderAssignment& assignment) { return assignment.targetId == subAgentId; }),
-                assignments.end());
-
             auto& groups = state_->configuration.subAgentGroups;
             for (auto& group : groups) {
                 group.memberTargetIds.erase(
@@ -3763,31 +2305,12 @@ public:
                     group.memberTargetIds.end());
             }
 
-            std::vector<std::string> removedGroupIds;
             groups.erase(
                 std::remove_if(
                     groups.begin(),
                     groups.end(),
-                    [&removedGroupIds](const SubAgentGroupDefinition& group) {
-                        if (!group.memberTargetIds.empty()) {
-                            return false;
-                        }
-                        removedGroupIds.push_back(group.groupId);
-                        return true;
-                    }),
+                    [](const SubAgentGroupDefinition& group) { return group.memberTargetIds.empty(); }),
                 groups.end());
-
-            if (!removedGroupIds.empty()) {
-                assignments.erase(
-                    std::remove_if(
-                        assignments.begin(),
-                        assignments.end(),
-                        [&removedGroupIds](const ProviderAssignment& assignment) {
-                            return std::find(removedGroupIds.begin(), removedGroupIds.end(), assignment.targetId) != removedGroupIds.end() ||
-                                std::find(removedGroupIds.begin(), removedGroupIds.end(), assignment.sourceGroupId) != removedGroupIds.end();
-                        }),
-                    assignments.end());
-            }
 
             if (!writeJsonFile(configurationFile_, state_->configuration)) {
                 return OperationResult{ false, false, "Sub-agent removal could not be written to disk." };
@@ -4038,16 +2561,6 @@ public:
             return OperationResult{ false, false, "The requested sub-agent group was not found." };
         }
 
-        auto& assignments = state_->configuration.providerAssignments;
-        assignments.erase(
-            std::remove_if(
-                assignments.begin(),
-                assignments.end(),
-                [&groupId](const ProviderAssignment& assignment) {
-                    return assignment.targetId == groupId || assignment.sourceGroupId == groupId;
-                }),
-            assignments.end());
-
         if (!writeJsonFile(configurationFile_, state_->configuration)) {
             return OperationResult{ false, false, "Sub-agent group removal could not be written to disk." };
         }
@@ -4060,1093 +2573,454 @@ private:
     std::shared_ptr<IRuntimeInventoryService> inventoryService_;
 };
 
-class ProviderAssignmentService final : public IProviderAssignmentService {
+// Forward-declared activity emitter. The activity ring class is defined
+// further down (it lives with the HTTP layer); this thin free-function
+// wrapper lets earlier services emit events without needing the full ring
+// type at their point of definition. The implementation lives below the
+// ring class definition.
+void appendLanClientActivity(const std::string& kind,
+                             const std::string& target,
+                             const std::string& message);
+
+// Phase 5 of ADR-001: server-authored configuration bundle that an AI
+// client downloads (via GET /api/clients/{id}/config) and drops onto its
+// host. The bundle is the onboarding primitive - it tells the client how
+// to reach MCOS, what header to identify itself with, what privileges it
+// carries, what catalogs to discover, and what governance rules apply.
+//
+// The shape is fixed at schemaVersion 1.0. Future schema bumps add fields
+// without removing existing ones so older clients stay compatible.
+nlohmann::json composeLanClientConfigBundle(const LanClient& client,
+                                            const AppConfiguration& configuration) {
+    const auto host = resolveMcosServerHost(configuration);
+    const auto mcosServer = "http://" + host + ":" + std::to_string(configuration.browserPort);
+
+    nlohmann::json bundle;
+    bundle["schemaVersion"] = "1.0";
+    bundle["issuedAtUtc"] = timestampNowUtc();
+    bundle["mcosServer"] = mcosServer;
+    bundle["clientId"] = client.clientId;
+    bundle["displayName"] = client.displayName;
+    bundle["clientType"] = client.clientType;
+    bundle["enabled"] = client.enabled;
+    bundle["identification"] = nlohmann::json{
+        { "header", "X-MCOS-Client-Id" },
+        { "value", client.clientId }
+    };
+    bundle["privileges"] = client.privileges;
+    bundle["autonomousMode"] = client.autonomousMode;
+    bundle["catalogs"] = nlohmann::json{
+        { "mcpServers", "/api/client/mcp-servers" },
+        { "subAgents", "/api/client/sub-agents" },
+        { "activity", "/api/client/activity" }
+    };
+    bundle["governance"] = nlohmann::json{
+        { "authority", "CLU" },
+        { "framework", "Forsetti Framework for Agentic Coding" },
+        { "profileEndpoint", "/api/client/governance/profile" },
+        { "decisionEndpoint", "/api/client/governance/decisions" }
+    };
+    bundle["rules"] = nlohmann::json::array({
+        "All MCP servers registered with MCOS are available for use by every LAN client.",
+        "All sub-agents registered with MCOS are available for use by every LAN client.",
+        "Creation, modification, and removal of MCP servers and sub-agents are governed by the privileges listed above.",
+        "Autonomous mode (when enabled) allows unlimited creation of MCP servers and sub-agents. All other actions remain privilege-gated.",
+        "Every action is recorded in the MCOS activity stream and evaluated by CLU per Forsetti governance."
+    });
+    bundle["instructions"] = nlohmann::json{
+        { "heartbeat", "POST /api/client/heartbeat at least every 60 seconds to remain in the live roster." },
+        { "discovery", "Use the catalogs to discover the current shared fabric." },
+        { "invocation", "MCP servers and sub-agents are addressed directly using the endpoint metadata in each catalog entry." },
+        { "governance", "Before any privileged mutation, GET the governance profile and pre-check with the decisionEndpoint." }
+    };
+    return bundle;
+}
+
+// LanClientAccessService - Phase 3 of ADR-001 LAN Client Control Plane.
+// Owns persistence of the LanClient roster and emits activity events on
+// every lifecycle mutation. Identity is by clientId alone; no secrets are
+// exchanged on the trusted LAN. Phase 4 fills the LanClientPrivileges
+// boolean fields. Phase 6 attaches client identity to incoming requests
+// via X-MCOS-Client-Id header lookup against this service.
+//
+// Future cleanup: extract to its own translation unit once the SharedState
+// + writeJsonFile + isBlank/trimCopy helpers move to a shared internal
+// header. Pattern matches other in-process services in this file for now.
+class LanClientAccessService final : public ILanClientAccessService {
 public:
-    ProviderAssignmentService(std::shared_ptr<SharedState> state,
-                              std::filesystem::path configurationFile,
-                              std::shared_ptr<IRuntimeInventoryService> inventoryService,
-                              std::shared_ptr<ISubAgentGroupService> subAgentGroupService,
-                              std::shared_ptr<IProviderRegistry> providerRegistry)
+    LanClientAccessService(std::shared_ptr<SharedState> state,
+                           std::filesystem::path configurationFile)
         : state_(std::move(state))
-        , configurationFile_(std::move(configurationFile))
-        , inventoryService_(std::move(inventoryService))
-        , subAgentGroupService_(std::move(subAgentGroupService))
-        , providerRegistry_(std::move(providerRegistry)) {}
+        , configurationFile_(std::move(configurationFile)) {}
 
-    std::vector<ProviderAssignmentTarget> listTargets() const override {
-        auto endpoints = inventoryService_->listEndpoints();
-        std::set<std::string> availableSubAgentIds;
-        std::vector<ProviderAssignmentTarget> targets{
-            ProviderAssignmentTarget{
-                "planner",
-                ProviderAssignmentTargetKind::Role,
-                "Planner",
-                "Owns global planning and delivery sequencing.",
-                {}
-            },
-            ProviderAssignmentTarget{
-                "architect",
-                ProviderAssignmentTargetKind::Role,
-                "Architect",
-                "Owns solution architecture and design decisions.",
-                {}
-            },
-            ProviderAssignmentTarget{
-                "auditor",
-                ProviderAssignmentTargetKind::Role,
-                "Auditor",
-                "Owns review, verification, and compliance-oriented delivery checks.",
-                {}
-            }
-        };
-
-        ProviderAssignmentTarget specialistGroup;
-        specialistGroup.targetId = "coding-specialists";
-        specialistGroup.kind = ProviderAssignmentTargetKind::SubAgentGroup;
-        specialistGroup.displayName = "Coding Specialists";
-        specialistGroup.description = "Assign one provider across the current sub-agent specialist pool.";
-
-        for (const auto& endpoint : endpoints) {
-            if (endpoint.kind != EndpointKind::SubAgent) {
-                continue;
-            }
-
-            availableSubAgentIds.insert(endpoint.id);
-            specialistGroup.memberTargetIds.push_back(endpoint.id);
-            targets.push_back(ProviderAssignmentTarget{
-                endpoint.id,
-                ProviderAssignmentTargetKind::SubAgent,
-                endpoint.displayName,
-                endpoint.description.empty() ? "Sub-agent route" : endpoint.description,
-                {}
-            });
-        }
-
-        if (!specialistGroup.memberTargetIds.empty()) {
-            targets.push_back(std::move(specialistGroup));
-        }
-
-        for (const auto& group : subAgentGroupService_->listGroups()) {
-            ProviderAssignmentTarget customGroup;
-            customGroup.targetId = group.groupId;
-            customGroup.kind = ProviderAssignmentTargetKind::SubAgentGroup;
-            customGroup.displayName = group.displayName;
-            customGroup.description = group.description.empty()
-                ? "Assign one provider across a named sub-agent specialist group."
-                : group.description;
-
-            for (const auto& memberTargetId : group.memberTargetIds) {
-                if (availableSubAgentIds.contains(memberTargetId)) {
-                    customGroup.memberTargetIds.push_back(memberTargetId);
-                }
-            }
-
-            if (!customGroup.memberTargetIds.empty()) {
-                targets.push_back(std::move(customGroup));
-            }
-        }
-
-        std::sort(
-            targets.begin(),
-            targets.end(),
-            [](const ProviderAssignmentTarget& left, const ProviderAssignmentTarget& right) {
-                return std::tie(left.kind, left.displayName, left.targetId) < std::tie(right.kind, right.displayName, right.targetId);
-            });
-        return targets;
+    std::vector<LanClient> listClients() const override {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        return state_->configuration.lanClients;
     }
 
-    std::vector<ProviderAssignment> listAssignments() const override {
+    std::optional<LanClient> getClient(const std::string& clientId) const override {
+        if (clientId.empty()) {
+            return std::nullopt;
+        }
+        const auto normalized = normalizeId(clientId);
         std::lock_guard<std::mutex> lock(state_->mutex);
-        return state_->configuration.providerAssignments;
+        const auto iterator = std::find_if(
+            state_->configuration.lanClients.begin(),
+            state_->configuration.lanClients.end(),
+            [&normalized](const LanClient& candidate) { return candidate.clientId == normalized; });
+        if (iterator == state_->configuration.lanClients.end()) {
+            return std::nullopt;
+        }
+        return *iterator;
     }
 
-    OperationResult upsertAssignment(const ProviderAssignment& assignment) override {
-        auto logAssignment = [&assignment](const std::string& severity,
-                                           const std::string& eventName,
-                                           const std::string& message,
-                                           nlohmann::json details = nlohmann::json::object()) {
-            details["targetId"] = assignment.targetId;
-            details["targetKind"] = to_string(assignment.kind);
-            details["providerId"] = assignment.providerId;
-            MasterControl::Diagnostics::appendEvent(
-                L"runtime",
-                severity,
-                eventName,
-                message,
-                std::move(details));
-        };
-
-        logAssignment("info", "provider-assignment-save-start", "Processing provider ownership update.");
-        const auto targets = listTargets();
-        const auto targetIterator = std::find_if(
-            targets.begin(),
-            targets.end(),
-            [&assignment](const ProviderAssignmentTarget& target) { return target.targetId == assignment.targetId; });
-        if (targetIterator == targets.end()) {
-            logAssignment("warning", "provider-assignment-save-failed", "The requested orchestration target is not available.");
-            return OperationResult{ false, false, "The requested orchestration target is not available." };
+    OperationResult upsertClient(const LanClient& input) override {
+        if (input.clientId.empty() || isBlank(input.clientId)) {
+            return OperationResult{ false, false, "LAN client id is required." };
+        }
+        if (input.displayName.empty() || isBlank(input.displayName)) {
+            return OperationResult{ false, false, "LAN client display name is required." };
         }
 
-        if (!assignment.providerId.empty()) {
-            const auto providers = providerRegistry_->listProviders();
-            const auto providerIterator = std::find_if(
-                providers.begin(),
-                providers.end(),
-                [&assignment](const ProviderConnection& provider) { return provider.id == assignment.providerId; });
-            if (providerIterator == providers.end()) {
-                logAssignment("warning", "provider-assignment-save-failed", "The selected provider route does not exist.");
-                return OperationResult{ false, false, "The selected provider route does not exist." };
-            }
-        }
+        LanClient normalized = input;
+        normalized.clientId = normalizeId(normalized.clientId);
+        normalized.displayName = trimCopy(normalized.displayName);
+        normalized.clientType = trimCopy(normalized.clientType);
+        normalized.hostName = trimCopy(normalized.hostName);
+        normalized.networkAddress = trimCopy(normalized.networkAddress);
 
-        std::lock_guard<std::mutex> lock(state_->mutex);
-        auto& assignments = state_->configuration.providerAssignments;
+        // Phase 7 has lifted the autonomous-mode soft gate. CLU enforces
+        // the policy now via the ClientAutonomousModeChange action kind.
+        // upsertClient stores whatever the caller provides; the route
+        // handler runs CLU enforcement before invoking us.
 
-        auto clearTarget = [&assignments](const std::string& targetId) {
-            assignments.erase(
-                std::remove_if(
-                    assignments.begin(),
-                    assignments.end(),
-                    [&targetId](const ProviderAssignment& candidate) { return candidate.targetId == targetId; }),
-                assignments.end());
-        };
+        const auto now = timestampNowUtc();
+        bool createdNew = false;
 
-        if (targetIterator->kind == ProviderAssignmentTargetKind::SubAgentGroup) {
-            clearTarget(assignment.targetId);
-            assignments.erase(
-                std::remove_if(
-                    assignments.begin(),
-                    assignments.end(),
-                    [&assignment](const ProviderAssignment& candidate) { return candidate.sourceGroupId == assignment.targetId; }),
-                assignments.end());
-
-            if (!assignment.providerId.empty()) {
-                for (const auto& memberTargetId : targetIterator->memberTargetIds) {
-                    clearTarget(memberTargetId);
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            auto& clients = state_->configuration.lanClients;
+            const auto iterator = std::find_if(
+                clients.begin(),
+                clients.end(),
+                [&normalized](const LanClient& candidate) { return candidate.clientId == normalized.clientId; });
+            if (iterator == clients.end()) {
+                if (normalized.createdAtUtc.empty()) {
+                    normalized.createdAtUtc = now;
                 }
+                if (normalized.lastSeenUtc.empty()) {
+                    normalized.lastSeenUtc = now;
+                }
+                clients.push_back(normalized);
+                createdNew = true;
+            } else {
+                normalized.createdAtUtc = iterator->createdAtUtc.empty() ? now : iterator->createdAtUtc;
+                if (normalized.lastSeenUtc.empty()) {
+                    normalized.lastSeenUtc = iterator->lastSeenUtc;
+                }
+                if (!normalized.enabled && iterator->enabled) {
+                    normalized.disabledAtUtc = now;
+                } else if (normalized.enabled) {
+                    normalized.disabledAtUtc.clear();
+                }
+                *iterator = normalized;
+            }
 
-                assignments.push_back(ProviderAssignment{
-                    assignment.targetId,
-                    ProviderAssignmentTargetKind::SubAgentGroup,
-                    assignment.providerId,
-                    timestampNowUtc(),
-                    ""
+            std::sort(
+                clients.begin(),
+                clients.end(),
+                [](const LanClient& left, const LanClient& right) {
+                    return std::tie(left.displayName, left.clientId) < std::tie(right.displayName, right.clientId);
                 });
-                for (const auto& memberTargetId : targetIterator->memberTargetIds) {
-                    assignments.push_back(ProviderAssignment{
-                        memberTargetId,
-                        ProviderAssignmentTargetKind::SubAgent,
-                        assignment.providerId,
-                        timestampNowUtc(),
-                        assignment.targetId
-                    });
-                }
-            }
 
             if (!writeJsonFile(configurationFile_, state_->configuration)) {
-                logAssignment("warning", "provider-assignment-save-failed", "Provider assignment update could not be written to disk.");
-                return OperationResult{ false, false, "Provider assignment update could not be written to disk." };
+                return OperationResult{ false, false, "LAN client could not be written to disk." };
             }
-            const std::string verb = assignment.providerId.empty() ? "Cleared" : "Assigned";
-            const auto message =
-                verb + " " + std::to_string(targetIterator->memberTargetIds.size()) + " sub-agent routes for " + targetIterator->displayName + ".";
-            logAssignment(
-                "info",
-                "provider-assignment-save-complete",
-                message,
-                nlohmann::json{
-                    { "memberTargetCount", targetIterator->memberTargetIds.size() }
-                });
-            return OperationResult{
-                true,
-                false,
-                message
-            };
         }
 
-        clearTarget(assignment.targetId);
-        if (!assignment.providerId.empty()) {
-            assignments.push_back(ProviderAssignment{
-                assignment.targetId,
-                targetIterator->kind,
-                assignment.providerId,
-                timestampNowUtc(),
-                ""
-            });
+        emitEvent(createdNew ? "lan-client-created" : "lan-client-updated",
+                  normalized.clientId,
+                  createdNew
+                    ? "Registered LAN client " + normalized.clientId
+                    : "Updated LAN client " + normalized.clientId);
+        return OperationResult{ true, false, createdNew ? "LAN client registered." : "LAN client updated." };
+    }
+
+    OperationResult disableClient(const std::string& clientId) override {
+        return setEnabled(clientId, false);
+    }
+
+    OperationResult enableClient(const std::string& clientId) override {
+        return setEnabled(clientId, true);
+    }
+
+    OperationResult removeClient(const std::string& clientId) override {
+        if (clientId.empty() || isBlank(clientId)) {
+            return OperationResult{ false, false, "LAN client id is required." };
+        }
+        const auto normalized = normalizeId(clientId);
+
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            auto& clients = state_->configuration.lanClients;
+            const auto originalSize = clients.size();
+            clients.erase(
+                std::remove_if(
+                    clients.begin(),
+                    clients.end(),
+                    [&normalized](const LanClient& candidate) { return candidate.clientId == normalized; }),
+                clients.end());
+            if (clients.size() == originalSize) {
+                return OperationResult{ false, false, "LAN client not found." };
+            }
+            if (!writeJsonFile(configurationFile_, state_->configuration)) {
+                return OperationResult{ false, false, "LAN client removal could not be written to disk." };
+            }
         }
 
-        if (!writeJsonFile(configurationFile_, state_->configuration)) {
-            logAssignment("warning", "provider-assignment-save-failed", "Provider ownership update could not be written to disk.");
-            return OperationResult{ false, false, "Provider ownership update could not be written to disk." };
+        emitEvent("lan-client-removed", normalized, "Removed LAN client " + normalized);
+        return OperationResult{ true, false, "LAN client removed." };
+    }
+
+    void touchClient(const std::string& clientId, const std::string& observedAddress) override {
+        if (clientId.empty()) {
+            return;
         }
-        logAssignment(
-            "info",
-            "provider-assignment-save-complete",
-            assignment.providerId.empty()
-                ? "Provider ownership was cleared."
-                : "Provider ownership was updated.");
-        return OperationResult{
-            true,
-            false,
-            assignment.providerId.empty()
-                ? "Provider ownership was cleared."
-                : "Provider ownership was updated."
-        };
+        const auto normalized = normalizeId(clientId);
+        const auto now = timestampNowUtc();
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        auto& clients = state_->configuration.lanClients;
+        const auto iterator = std::find_if(
+            clients.begin(),
+            clients.end(),
+            [&normalized](const LanClient& candidate) { return candidate.clientId == normalized; });
+        if (iterator == clients.end()) {
+            return;
+        }
+        iterator->lastSeenUtc = now;
+        if (!observedAddress.empty()) {
+            iterator->networkAddress = observedAddress;
+        }
+        // touchClient is hot-path; deliberately skip writeJsonFile to avoid
+        // disk thrash on every authenticated request. Phase 6 may add a
+        // periodic flush if last-seen survival across restarts becomes a
+        // requirement.
+    }
+
+    OperationResult setPrivileges(const std::string& clientId,
+                                  const LanClientPrivileges& privileges) override {
+        if (clientId.empty() || isBlank(clientId)) {
+            return OperationResult{ false, false, "LAN client id is required." };
+        }
+        const auto normalized = normalizeId(clientId);
+
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            auto& clients = state_->configuration.lanClients;
+            const auto iterator = std::find_if(
+                clients.begin(),
+                clients.end(),
+                [&normalized](const LanClient& candidate) { return candidate.clientId == normalized; });
+            if (iterator == clients.end()) {
+                return OperationResult{ false, false, "LAN client not found." };
+            }
+            iterator->privileges = privileges;
+            if (!writeJsonFile(configurationFile_, state_->configuration)) {
+                return OperationResult{ false, false, "LAN client privileges could not be written to disk." };
+            }
+        }
+
+        emitEvent("lan-client-privileges-changed",
+                  normalized,
+                  "Updated privileges for LAN client " + normalized);
+        return OperationResult{ true, false, "LAN client privileges updated." };
+    }
+
+    OperationResult setAutonomousMode(const std::string& clientId, bool enabled) override {
+        if (clientId.empty() || isBlank(clientId)) {
+            return OperationResult{ false, false, "LAN client id is required." };
+        }
+        const auto normalized = normalizeId(clientId);
+        const auto now = timestampNowUtc();
+
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            auto& clients = state_->configuration.lanClients;
+            const auto iterator = std::find_if(
+                clients.begin(),
+                clients.end(),
+                [&normalized](const LanClient& candidate) { return candidate.clientId == normalized; });
+            if (iterator == clients.end()) {
+                return OperationResult{ false, false, "LAN client not found." };
+            }
+            if (iterator->autonomousMode == enabled) {
+                return OperationResult{
+                    true,
+                    false,
+                    enabled ? "Autonomous mode was already enabled." : "Autonomous mode was already disabled."
+                };
+            }
+            iterator->autonomousMode = enabled;
+            if (!writeJsonFile(configurationFile_, state_->configuration)) {
+                return OperationResult{ false, false, "Autonomous mode change could not be written to disk." };
+            }
+        }
+
+        emitEvent("lan-client-autonomous-mode-changed",
+                  normalized,
+                  (enabled ? std::string("Enabled autonomous mode for LAN client ")
+                           : std::string("Disabled autonomous mode for LAN client "))
+                  + normalized);
+        return OperationResult{ true, false, enabled ? "Autonomous mode enabled." : "Autonomous mode disabled." };
     }
 
 private:
+    static std::string normalizeId(std::string clientId) {
+        std::transform(clientId.begin(), clientId.end(), clientId.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        return clientId;
+    }
+
+    OperationResult setEnabled(const std::string& clientId, bool enabled) {
+        if (clientId.empty() || isBlank(clientId)) {
+            return OperationResult{ false, false, "LAN client id is required." };
+        }
+        const auto normalized = normalizeId(clientId);
+        const auto now = timestampNowUtc();
+
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            auto& clients = state_->configuration.lanClients;
+            const auto iterator = std::find_if(
+                clients.begin(),
+                clients.end(),
+                [&normalized](const LanClient& candidate) { return candidate.clientId == normalized; });
+            if (iterator == clients.end()) {
+                return OperationResult{ false, false, "LAN client not found." };
+            }
+            if (iterator->enabled == enabled) {
+                return OperationResult{ true, false,
+                    enabled ? "LAN client was already enabled." : "LAN client was already disabled." };
+            }
+            iterator->enabled = enabled;
+            iterator->disabledAtUtc = enabled ? std::string() : now;
+            if (!writeJsonFile(configurationFile_, state_->configuration)) {
+                return OperationResult{ false, false, "LAN client state could not be written to disk." };
+            }
+        }
+
+        emitEvent(enabled ? "lan-client-enabled" : "lan-client-disabled",
+                  normalized,
+                  (enabled ? "Enabled LAN client " : "Disabled LAN client ") + normalized);
+        return OperationResult{ true, false, enabled ? "LAN client enabled." : "LAN client disabled." };
+    }
+
+    void emitEvent(const std::string& kind, const std::string& clientId, const std::string& message) const {
+        appendLanClientActivity(kind, clientId, message);
+    }
+
     std::shared_ptr<SharedState> state_;
     std::filesystem::path configurationFile_;
-    std::shared_ptr<IRuntimeInventoryService> inventoryService_;
-    std::shared_ptr<ISubAgentGroupService> subAgentGroupService_;
-    std::shared_ptr<IProviderRegistry> providerRegistry_;
 };
 
-class ProviderExecutionCatalogService final : public IProviderExecutionCatalogService {
+// Phase 7: in-memory approval queue. Mutations whose CLU outcome is
+// RequiresOperatorApproval are staged here until an operator approves
+// (the original mutation is replayed) or rejects (the deferred record
+// is closed without effect). Persistence across service restarts is
+// deliberately deferred - long-running deferrals are operationally
+// suspect on a trusted LAN, so the queue lives in process memory only.
+class GovernanceApprovalQueueService final : public IGovernanceApprovalQueueService {
 public:
-    std::vector<ProviderExecutionRegistration> listRegistrations() const override {
+    std::vector<GovernanceDeferredAction> listPending() const override {
         std::lock_guard<std::mutex> lock(mutex_);
-        std::vector<ProviderExecutionRegistration> registrations;
-        registrations.reserve(registrationsByProviderId_.size());
-        for (const auto& [providerId, registration] : registrationsByProviderId_) {
-            (void)providerId;
-            registrations.push_back(registration);
-        }
-
-        std::sort(
-            registrations.begin(),
-            registrations.end(),
-            [](const ProviderExecutionRegistration& left, const ProviderExecutionRegistration& right) {
-                return std::tie(left.displayName, left.providerId) < std::tie(right.displayName, right.providerId);
-            });
-        return registrations;
-    }
-
-    void upsertRegistration(const ProviderExecutionRegistration& registration) override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        registrationsByProviderId_[registration.providerId] = registration;
-    }
-
-    void removeRegistration(const std::string& providerId) override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        for (auto iterator = registrationsByProviderId_.begin(); iterator != registrationsByProviderId_.end();) {
-            if (iterator->second.providerId == providerId) {
-                iterator = registrationsByProviderId_.erase(iterator);
-            } else {
-                ++iterator;
+        std::vector<GovernanceDeferredAction> pending;
+        for (const auto& action : actions_) {
+            if (action.status == "pending") {
+                pending.push_back(action);
             }
         }
+        return pending;
+    }
+
+    std::vector<GovernanceDeferredAction> listAll() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return actions_;
+    }
+
+    GovernanceDeferredAction stage(const GovernanceDeferredAction& input) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        GovernanceDeferredAction action = input;
+        ++nextSequence_;
+        action.id = "deferred-" + std::to_string(nextSequence_);
+        action.status = "pending";
+        action.createdAtUtc = timestampNowUtc();
+        actions_.push_back(action);
+        appendLanClientActivity(
+            "governance-deferred",
+            action.id,
+            std::string("Staged ") + to_string(action.action) + " for operator approval (actor=" + action.actor + ")");
+        return action;
+    }
+
+    OperationResult approve(const std::string& deferredActionId,
+                            const std::string& operatorActor) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto* action = findById(deferredActionId);
+        if (action == nullptr) {
+            return OperationResult{ false, false, "Deferred action not found." };
+        }
+        if (action->status != "pending") {
+            return OperationResult{ false, false,
+                "Deferred action is no longer pending (current status: " + action->status + ")." };
+        }
+        action->status = "approved";
+        action->decidedAtUtc = timestampNowUtc();
+        action->decidedBy = operatorActor.empty() ? std::string("operator") : operatorActor;
+        appendLanClientActivity(
+            "governance-approved",
+            action->id,
+            std::string("Operator approved deferred ") + to_string(action->action) + " for actor=" + action->actor);
+        return OperationResult{ true, false, "Deferred action approved." };
+    }
+
+    OperationResult reject(const std::string& deferredActionId,
+                           const std::string& operatorActor,
+                           const std::string& reason) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto* action = findById(deferredActionId);
+        if (action == nullptr) {
+            return OperationResult{ false, false, "Deferred action not found." };
+        }
+        if (action->status != "pending") {
+            return OperationResult{ false, false,
+                "Deferred action is no longer pending (current status: " + action->status + ")." };
+        }
+        action->status = "rejected";
+        action->decidedAtUtc = timestampNowUtc();
+        action->decidedBy = operatorActor.empty() ? std::string("operator") : operatorActor;
+        action->reason = reason;
+        appendLanClientActivity(
+            "governance-rejected",
+            action->id,
+            std::string("Operator rejected deferred ") + to_string(action->action) + " (reason=" + reason + ")");
+        return OperationResult{ true, false, "Deferred action rejected." };
     }
 
 private:
+    GovernanceDeferredAction* findById(const std::string& id) {
+        for (auto& action : actions_) {
+            if (action.id == id) {
+                return &action;
+            }
+        }
+        return nullptr;
+    }
+
     mutable std::mutex mutex_;
-    std::map<std::string, ProviderExecutionRegistration> registrationsByProviderId_;
+    std::vector<GovernanceDeferredAction> actions_;
+    uint64_t nextSequence_ = 0;
 };
 
-class ProviderExecutionService final : public IProviderExecutionService {
-public:
-    ProviderExecutionService(std::shared_ptr<SharedState> state,
-                             std::shared_ptr<IProviderRegistry> providerRegistry,
-                             std::shared_ptr<IProviderCredentialStore> providerCredentialStore,
-                             std::shared_ptr<IProviderAssignmentService> providerAssignmentService,
-                             std::shared_ptr<IRuntimeInventoryService> inventoryService,
-                             std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService,
-                             std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService)
-        : state_(std::move(state))
-        , providerRegistry_(std::move(providerRegistry))
-        , providerCredentialStore_(std::move(providerCredentialStore))
-        , providerAssignmentService_(std::move(providerAssignmentService))
-        , inventoryService_(std::move(inventoryService))
-        , providerExecutionCatalogService_(std::move(providerExecutionCatalogService))
-        , commandLogicUnitService_(std::move(commandLogicUnitService)) {}
-
-    std::vector<ProviderExecutionRecord> history() const override {
-        std::lock_guard<std::mutex> lock(state_->mutex);
-        return state_->providerExecutionHistory;
-    }
-
-    ProviderExecutionRecord execute(const ProviderExecutionRequest& request) override {
-        ProviderExecutionRecord record;
-        record.executionId = generateExecutionId();
-        record.targetId = request.targetId;
-        record.status = ProviderExecutionStatus::Failed;
-        record.startedAtUtc = timestampNowUtc();
-
-        if (request.targetId.empty() || isBlank(request.targetId)) {
-            record.errorMessage = "A provider execution target is required.";
-            record.completedAtUtc = timestampNowUtc();
-            persistRecord(record);
-            return record;
-        }
-        if (request.prompt.empty() || isBlank(request.prompt)) {
-            record.errorMessage = "A provider execution prompt is required.";
-            record.completedAtUtc = timestampNowUtc();
-            persistRecord(record);
-            return record;
-        }
-
-        const auto targets = providerAssignmentService_->listTargets();
-        const auto targetIterator = std::find_if(
-            targets.begin(),
-            targets.end(),
-            [&request](const ProviderAssignmentTarget& target) { return target.targetId == request.targetId; });
-        if (targetIterator == targets.end()) {
-            record.errorMessage = "The requested orchestration target is not available.";
-            record.completedAtUtc = timestampNowUtc();
-            persistRecord(record);
-            return record;
-        }
-        record.targetDisplayName = targetIterator->displayName;
-        const auto activeTarget = *targetIterator;
-
-        if (commandLogicUnitService_) {
-            const auto decision = commandLogicUnitService_->enforceAction(GovernanceEnforcementRequest{
-                GovernanceActionKind::ProviderExecution,
-                request.targetId,
-                {},
-                {},
-                false
-            });
-            if (!decision.allowed) {
-                record.errorMessage = decision.message.empty()
-                    ? "CLU blocked provider execution."
-                    : decision.message;
-                record.completedAtUtc = timestampNowUtc();
-                persistRecord(record);
-                return record;
-            }
-        }
-
-        const auto assignments = providerAssignmentService_->listAssignments();
-        const auto assignmentIterator = std::find_if(
-            assignments.begin(),
-            assignments.end(),
-            [&request](const ProviderAssignment& assignment) { return assignment.targetId == request.targetId; });
-        if (assignmentIterator == assignments.end() || assignmentIterator->providerId.empty()) {
-            record.errorMessage = "No provider route owns the requested orchestration target.";
-            record.completedAtUtc = timestampNowUtc();
-            persistRecord(record);
-            return record;
-        }
-
-        const auto providers = providerRegistry_->listProviders();
-        const auto providerIterator = std::find_if(
-            providers.begin(),
-            providers.end(),
-            [&assignmentIterator](const ProviderConnection& provider) { return provider.id == assignmentIterator->providerId; });
-        if (providerIterator == providers.end()) {
-            record.errorMessage = "The assigned provider route is no longer available.";
-            record.completedAtUtc = timestampNowUtc();
-            persistRecord(record);
-            return record;
-        }
-
-        record.providerId = providerIterator->id;
-        record.providerKind = providerIterator->kind;
-        record.providerDisplayName = providerIterator->displayName;
-        record.modelId = providerIterator->modelId;
-
-        const auto registrations = providerExecutionCatalogService_->listRegistrations();
-        const auto registrationIterator = findExecutionRegistrationByProviderId(
-            registrations.begin(), registrations.end(),
-            providerIterator->id, providerIterator->kind);
-        if (registrationIterator == registrations.end()) {
-            record.errorMessage = "No active provider execution module is available for the assigned provider kind.";
-            record.completedAtUtc = timestampNowUtc();
-            persistRecord(record);
-            return record;
-        }
-
-        const auto credentials = providerCredentialStore_->readCredentials(providerIterator->id);
-        const bool cliBridgedTransport =
-            registrationIterator->transport == ProviderExecutionTransport::ClaudeCodeCli ||
-            registrationIterator->transport == ProviderExecutionTransport::CodexCli;
-        // CLI-bridged transports get their credentials from the CLI's own OAuth
-        // store (e.g., `claude login`, `codex login`), so an empty credential
-        // bag is the expected path there. OpenAI-compatible direct HTTP still
-        // requires an API key because it does not share the CLI's auth.
-        if (credentials.empty() && !cliBridgedTransport) {
-            const auto providerLabel = providerIterator->displayName.empty()
-                ? providerIterator->id
-                : providerIterator->displayName;
-            const auto targetLabel = record.targetDisplayName.empty()
-                ? request.targetId
-                : record.targetDisplayName;
-            record.errorMessage =
-                "The assigned provider route '" + providerLabel +
-                "' is not connected for '" + targetLabel +
-                "'. Please reassign this lane or reconnect the provider before execution can start.";
-            record.completedAtUtc = timestampNowUtc();
-            persistRecord(record);
-            return record;
-        }
-
-        const auto accessibleEndpoints = resolveAccessibleMcpEndpoints(request);
-        for (const auto& endpoint : accessibleEndpoints) {
-            record.referencedMcpServerIds.push_back(endpoint.id);
-        }
-
-        record.status = ProviderExecutionStatus::Running;
-        switch (registrationIterator->transport) {
-            case ProviderExecutionTransport::ClaudeCodeCli:
-                record = executeClaudeCodeCli(*providerIterator, request, activeTarget, accessibleEndpoints, credentials, record);
-                break;
-            case ProviderExecutionTransport::CodexCli:
-                record = executeCodexCli(*providerIterator, request, activeTarget, accessibleEndpoints, credentials, record);
-                break;
-            case ProviderExecutionTransport::OpenAICompatibleChat:
-            default:
-                record = executeOpenAICompatibleChat(*providerIterator, request, activeTarget, accessibleEndpoints, credentials, record);
-                break;
-        }
-        if (record.completedAtUtc.empty()) {
-            record.completedAtUtc = timestampNowUtc();
-        }
-        persistRecord(record);
-        return record;
-    }
-
-private:
-    std::vector<RuntimeEndpoint> resolveAccessibleMcpEndpoints(const ProviderExecutionRequest& request) const {
-        std::vector<RuntimeEndpoint> endpoints;
-        for (const auto& endpoint : inventoryService_->listEndpoints()) {
-            if (endpoint.kind != EndpointKind::MCPServer && endpoint.kind != EndpointKind::Gateway) {
-                continue;
-            }
-            if (endpoint.host.empty() || endpoint.port == 0) {
-                continue;
-            }
-            if (!request.preferredMcpServerIds.empty() &&
-                std::find(request.preferredMcpServerIds.begin(), request.preferredMcpServerIds.end(), endpoint.id) ==
-                    request.preferredMcpServerIds.end()) {
-                continue;
-            }
-            endpoints.push_back(endpoint);
-        }
-        return endpoints;
-    }
-
-    static std::string firstCredentialValue(
-        const std::map<std::string, std::string>& credentials,
-        const std::initializer_list<const char*>& keys) {
-        for (const char* key : keys) {
-            const auto iterator = credentials.find(key);
-            if (iterator != credentials.end() && !iterator->second.empty() && !isBlank(iterator->second)) {
-                return iterator->second;
-            }
-        }
-        return {};
-    }
-
-    static std::string normalizeBaseUrl(std::string baseUrl) {
-        while (!baseUrl.empty() && baseUrl.back() == '/') {
-            baseUrl.pop_back();
-        }
-        return baseUrl;
-    }
-
-    static std::string extractAssistantText(const nlohmann::json& message) {
-        if (!message.contains("content")) {
-            return {};
-        }
-        const auto& content = message.at("content");
-        if (content.is_string()) {
-            return content.get<std::string>();
-        }
-        if (!content.is_array()) {
-            return {};
-        }
-
-        std::ostringstream stream;
-        for (const auto& item : content) {
-            if (!item.is_object()) {
-                continue;
-            }
-            if (item.value("type", "") == "text") {
-                if (item.contains("text")) {
-                    if (item.at("text").is_string()) {
-                        stream << item.at("text").get<std::string>();
-                    } else if (item.at("text").is_object()) {
-                        stream << item.at("text").value("value", "");
-                    }
-                }
-            }
-        }
-        return trimCopy(stream.str());
-    }
-
-    std::string buildOwnershipSummary(const ProviderConnection& provider,
-                                      const ProviderAssignmentTarget& activeTarget) const {
-        const auto targets = providerAssignmentService_->listTargets();
-        const auto assignments = providerAssignmentService_->listAssignments();
-        std::set<std::string> renderedTargetIds;
-        std::ostringstream stream;
-        stream << "Current ownership across this server:\n";
-
-        auto appendTargetLine = [&](const ProviderAssignmentTarget& target,
-                                    const std::string& sourceGroupId) {
-            if (!renderedTargetIds.insert(target.targetId).second) {
-                return;
-            }
-
-            stream << "- " << (target.displayName.empty() ? target.targetId : target.displayName)
-                   << " (" << target.targetId << ")";
-            if (!target.description.empty()) {
-                stream << " - " << target.description;
-            }
-            if (!sourceGroupId.empty()) {
-                const auto sourceIterator = std::find_if(
-                    targets.begin(),
-                    targets.end(),
-                    [&sourceGroupId](const ProviderAssignmentTarget& candidate) {
-                        return candidate.targetId == sourceGroupId;
-                    });
-                if (sourceIterator != targets.end()) {
-                    stream << " [delegated via "
-                           << (sourceIterator->displayName.empty() ? sourceIterator->targetId : sourceIterator->displayName)
-                           << "]";
-                }
-            }
-            stream << "\n";
-        };
-
-        appendTargetLine(activeTarget, "");
-        for (const auto& assignment : assignments) {
-            if (assignment.providerId != provider.id) {
-                continue;
-            }
-
-            const auto targetIterator = std::find_if(
-                targets.begin(),
-                targets.end(),
-                [&assignment](const ProviderAssignmentTarget& candidate) {
-                    return candidate.targetId == assignment.targetId;
-                });
-            if (targetIterator == targets.end()) {
-                continue;
-            }
-
-            appendTargetLine(*targetIterator, assignment.sourceGroupId);
-        }
-
-        return stream.str();
-    }
-
-    std::string buildExecutionSystemPrompt(const ProviderConnection& provider,
-                                           const ProviderExecutionRequest& request,
-                                           const ProviderAssignmentTarget& activeTarget,
-                                           const std::vector<RuntimeEndpoint>& endpoints,
-                                           const bool useJsonRpcTools) const {
-        std::ostringstream prompt;
-        prompt << "You are connected to Master Control Orchestration Server as a governed provider route.\n"
-               << "Assigned provider route: " << provider.displayName << " (" << provider.id << ").\n"
-               << "Current execution lane: "
-               << (activeTarget.displayName.empty() ? activeTarget.targetId : activeTarget.displayName)
-               << " (" << request.targetId << ").\n";
-        if (!activeTarget.description.empty()) {
-            prompt << "Lane scope: " << activeTarget.description << "\n";
-        }
-        prompt << buildOwnershipSummary(provider, activeTarget)
-               << "Autonomous control posture: "
-               << (provider.allowAutonomousControl
-                       ? "This provider may help configure the server only when global AI autonomy is enabled and the task explicitly calls for it."
-                       : "Do not change server configuration unless the user explicitly directs it and autonomy has been enabled.")
-               << "\n"
-               << "Stay within the requested orchestration lane and do not assume ownership of other roles or sub-agents.\n";
-        if (!request.workingDirectory.empty()) {
-            prompt << "Preferred working directory: " << request.workingDirectory << "\n";
-        }
-        if (endpoints.empty()) {
-            prompt << "No shared MCP servers are currently published for this execution.\n";
-        } else {
-            prompt << "Shared MCP server access is available for these endpoints:\n";
-            for (const auto& endpoint : endpoints) {
-                prompt << "- " << endpoint.id << " | " << endpoint.displayName << " | " << buildEndpointUrl(endpoint) << "\n";
-            }
-        }
-        if (useJsonRpcTools) {
-            prompt << "Use the provided function tools to inspect shared MCP servers and invoke JSON-RPC requests against them when you need tool access.\n";
-        } else {
-            prompt << "Use the provided MCP configuration to access the shared MCP servers directly.\n";
-        }
-        return prompt.str();
-    }
-
-    static nlohmann::json buildClaudeMcpConfig(const std::vector<RuntimeEndpoint>& endpoints) {
-        nlohmann::json servers = nlohmann::json::object();
-        for (const auto& endpoint : endpoints) {
-            servers[endpoint.id] = {
-                { "type", "http" },
-                { "url", buildEndpointUrl(endpoint) }
-            };
-        }
-        return nlohmann::json{ { "mcpServers", servers } };
-    }
-
-    ProviderExecutionRecord executeOpenAICompatibleChat(const ProviderConnection& provider,
-                                                        const ProviderExecutionRequest& request,
-                                                        const ProviderAssignmentTarget& activeTarget,
-                                                        const std::vector<RuntimeEndpoint>& endpoints,
-                                                        const std::map<std::string, std::string>& credentials,
-                                                        ProviderExecutionRecord record) const {
-        const std::string bearerToken = firstCredentialValue(credentials, { "openai_api_key", "xai_api_key" });
-        if (bearerToken.empty()) {
-            record.status = ProviderExecutionStatus::Failed;
-            record.errorMessage = "A bearer API key is required for the selected provider route.";
-            record.completedAtUtc = timestampNowUtc();
-            return record;
-        }
-
-        nlohmann::json messages = nlohmann::json::array({
-            {
-                { "role", "system" },
-                { "content", buildExecutionSystemPrompt(provider, request, activeTarget, endpoints, true) }
-            },
-            {
-                { "role", "user" },
-                { "content", request.prompt }
-            }
-        });
-
-        const nlohmann::json tools = nlohmann::json::array({
-            {
-                { "type", "function" },
-                { "function", {
-                    { "name", "master_control_list_mcp_servers" },
-                    { "description", "List the MCP server endpoints currently shared through Master Control Orchestration Server for this execution." },
-                    { "parameters", {
-                        { "type", "object" },
-                        { "properties", nlohmann::json::object() },
-                        { "additionalProperties", false }
-                    } }
-                } }
-            },
-            {
-                { "type", "function" },
-                { "function", {
-                    { "name", "master_control_invoke_mcp_jsonrpc" },
-                    { "description", "Invoke a JSON-RPC request against a shared MCP server endpoint exposed by Master Control Orchestration Server." },
-                    { "parameters", {
-                        { "type", "object" },
-                        { "properties", {
-                            { "server_id", { { "type", "string" }, { "description", "The MCP server id returned by master_control_list_mcp_servers." } } },
-                            { "request", {
-                                { "type", "object" },
-                                { "description", "A complete JSON-RPC request body to send to the MCP server." }
-                            } }
-                        } },
-                        { "required", nlohmann::json::array({ "server_id", "request" }) },
-                        { "additionalProperties", false }
-                    } }
-                } }
-            }
-        });
-
-        const std::string endpointUrl = normalizeBaseUrl(provider.baseUrl) + "/chat/completions";
-        const int maxTurns = (std::max)(1, request.maxTurns);
-        for (int turn = 0; turn < maxTurns; ++turn) {
-            nlohmann::json requestBody = {
-                { "model", provider.modelId },
-                { "messages", messages }
-            };
-            if (request.allowToolAccess) {
-                requestBody["tools"] = tools;
-                requestBody["tool_choice"] = "auto";
-            }
-
-            const auto response = sendJsonRequest(
-                "POST",
-                endpointUrl,
-                { { L"Authorization", L"Bearer " + wideFromUtf8(bearerToken) } },
-                requestBody.dump());
-            record.rawResponse = response.body;
-            if (!response.succeeded) {
-                record.status = ProviderExecutionStatus::Failed;
-                record.errorMessage = response.errorMessage.empty() ? response.body : response.errorMessage;
-                record.completedAtUtc = timestampNowUtc();
-                return record;
-            }
-
-            nlohmann::json payload;
-            try {
-                payload = nlohmann::json::parse(response.body);
-            } catch (...) {
-                record.status = ProviderExecutionStatus::Failed;
-                record.errorMessage = "The provider returned an unreadable JSON payload.";
-                record.completedAtUtc = timestampNowUtc();
-                return record;
-            }
-
-            const auto* choices = payload.contains("choices") && payload.at("choices").is_array() && !payload.at("choices").empty()
-                ? &payload.at("choices")
-                : nullptr;
-            if (choices == nullptr || !choices->front().contains("message")) {
-                record.status = ProviderExecutionStatus::Failed;
-                record.errorMessage = "The provider response did not include a completion message.";
-                record.completedAtUtc = timestampNowUtc();
-                return record;
-            }
-
-            const auto assistantMessage = choices->front().at("message");
-            messages.push_back(assistantMessage);
-            if (request.allowToolAccess &&
-                assistantMessage.contains("tool_calls") &&
-                assistantMessage.at("tool_calls").is_array() &&
-                !assistantMessage.at("tool_calls").empty()) {
-                for (const auto& toolCall : assistantMessage.at("tool_calls")) {
-                    const std::string toolName = toolCall.contains("function")
-                        ? toolCall.at("function").value("name", "")
-                        : std::string{};
-                    std::string toolResponse = R"({"ok":false,"message":"Unsupported tool call."})";
-                    if (toolName == "master_control_list_mcp_servers") {
-                        nlohmann::json servers = nlohmann::json::array();
-                        for (const auto& endpoint : endpoints) {
-                            servers.push_back({
-                                { "id", endpoint.id },
-                                { "displayName", endpoint.displayName },
-                                { "url", buildEndpointUrl(endpoint) }
-                            });
-                        }
-                        toolResponse = nlohmann::json{ { "servers", servers } }.dump();
-                    } else if (toolName == "master_control_invoke_mcp_jsonrpc") {
-                        try {
-                            const auto arguments = nlohmann::json::parse(
-                                toolCall.at("function").value("arguments", "{}"));
-                            const std::string serverId = arguments.value("server_id", "");
-                            const auto endpointIterator = std::find_if(
-                                endpoints.begin(),
-                                endpoints.end(),
-                                [&serverId](const RuntimeEndpoint& endpoint) { return endpoint.id == serverId; });
-                            if (endpointIterator == endpoints.end()) {
-                                toolResponse = R"({"ok":false,"message":"Requested MCP server is not available for this execution."})";
-                            } else {
-                                const auto proxyResponse = sendJsonRequest(
-                                    "POST",
-                                    buildEndpointUrl(*endpointIterator),
-                                    {},
-                                    arguments.at("request").dump());
-                                if (proxyResponse.succeeded) {
-                                    nlohmann::json proxyPayload = {
-                                        { "ok", true },
-                                        { "statusCode", proxyResponse.statusCode }
-                                    };
-                                    try {
-                                        proxyPayload["body"] = nlohmann::json::parse(proxyResponse.body);
-                                    } catch (...) {
-                                        proxyPayload["body"] = proxyResponse.body;
-                                    }
-                                    toolResponse = proxyPayload.dump();
-                                } else {
-                                    toolResponse = nlohmann::json{
-                                        { "ok", false },
-                                        { "statusCode", proxyResponse.statusCode },
-                                        { "message", proxyResponse.errorMessage.empty() ? proxyResponse.body : proxyResponse.errorMessage }
-                                    }.dump();
-                                }
-                            }
-                        } catch (...) {
-                            toolResponse = R"({"ok":false,"message":"Tool call arguments were invalid JSON."})";
-                        }
-                    }
-
-                    record.toolEvents.push_back(toolName);
-                    messages.push_back({
-                        { "role", "tool" },
-                        { "tool_call_id", toolCall.value("id", "") },
-                        { "content", toolResponse }
-                    });
-                }
-                continue;
-            }
-
-            record.outputText = extractAssistantText(assistantMessage);
-            if (record.outputText.empty()) {
-                record.outputText = payload.dump(2);
-            }
-            record.status = ProviderExecutionStatus::Succeeded;
-            record.completedAtUtc = timestampNowUtc();
-            return record;
-        }
-
-        record.status = ProviderExecutionStatus::Failed;
-        record.errorMessage = "The provider execution exhausted its turn budget before returning a final answer.";
-        record.completedAtUtc = timestampNowUtc();
-        return record;
-    }
-
-    ProviderExecutionRecord executeClaudeCodeCli(const ProviderConnection& provider,
-                                                 const ProviderExecutionRequest& request,
-                                                 const ProviderAssignmentTarget& activeTarget,
-                                                 const std::vector<RuntimeEndpoint>& endpoints,
-                                                 const std::map<std::string, std::string>& credentials,
-                                                 ProviderExecutionRecord record) const {
-        std::optional<std::filesystem::path> claudeCommand;
-        const DWORD configuredCommandLength = GetEnvironmentVariableW(L"MASTERCONTROL_CLAUDE_COMMAND", nullptr, 0);
-        if (configuredCommandLength > 0) {
-            std::wstring configured(static_cast<size_t>(configuredCommandLength - 1), L'\0');
-            GetEnvironmentVariableW(L"MASTERCONTROL_CLAUDE_COMMAND", configured.data(), configuredCommandLength);
-            claudeCommand = std::filesystem::path(configured);
-        } else {
-            claudeCommand = findCommandOnPath({ L"claude.exe", L"claude.cmd", L"claude.bat" });
-        }
-        if (!claudeCommand.has_value()) {
-            record.status = ProviderExecutionStatus::Failed;
-            record.errorMessage = "Claude Code was not found on PATH.";
-            record.completedAtUtc = timestampNowUtc();
-            return record;
-        }
-
-        const auto executionDirectory = std::filesystem::temp_directory_path() / "MasterControlOrchestrationServer" / "provider-executions" / sanitizePathComponent(record.executionId);
-        std::filesystem::create_directories(executionDirectory);
-        const auto systemPromptFile = executionDirectory / "system-prompt.txt";
-        {
-            std::ofstream stream(systemPromptFile, std::ios::trunc);
-            stream << buildExecutionSystemPrompt(provider, request, activeTarget, endpoints, false);
-        }
-
-        std::filesystem::path mcpConfigFile;
-        if (request.allowToolAccess && !endpoints.empty()) {
-            mcpConfigFile = executionDirectory / "mcp.json";
-            if (!writeJsonFile(mcpConfigFile, buildClaudeMcpConfig(endpoints))) {
-                record.status = ProviderExecutionStatus::Failed;
-                record.errorMessage = "Failed to write MCP configuration for Claude execution.";
-                record.completedAtUtc = timestampNowUtc();
-                return record;
-            }
-        }
-
-        std::vector<std::wstring> arguments{
-            claudeCommand->wstring(),
-            L"-p",
-            wideFromUtf8(request.prompt),
-            L"--output-format",
-            L"json",
-            L"--max-turns",
-            std::to_wstring((std::max)(1, request.maxTurns)),
-            L"--append-system-prompt-file",
-            systemPromptFile.wstring()
-        };
-        if (!provider.modelId.empty()) {
-            arguments.push_back(L"--model");
-            arguments.push_back(wideFromUtf8(provider.modelId));
-        }
-        if (!mcpConfigFile.empty()) {
-            arguments.push_back(L"--mcp-config");
-            arguments.push_back(mcpConfigFile.wstring());
-            arguments.push_back(L"--strict-mcp-config");
-            arguments.push_back(L"--dangerously-skip-permissions");
-            record.toolEvents.push_back("claude_code_cli_mcp");
-        }
-
-        std::wstring commandLine;
-        if (startsWithInsensitive(claudeCommand->extension().string(), ".cmd") ||
-            startsWithInsensitive(claudeCommand->extension().string(), ".bat")) {
-            commandLine = L"cmd.exe /d /s /c ";
-            commandLine += quoteWindowsArgument(joinCommandArguments(arguments));
-        } else {
-            commandLine = joinCommandArguments(arguments);
-        }
-
-        std::vector<std::pair<std::wstring, std::wstring>> environmentOverrides;
-        const std::string apiKey = firstCredentialValue(credentials, { "anthropic_api_key" });
-        const std::string authToken = firstCredentialValue(credentials, { "anthropic_auth_token" });
-        if (!apiKey.empty()) {
-            environmentOverrides.emplace_back(L"ANTHROPIC_API_KEY", wideFromUtf8(apiKey));
-        }
-        if (!authToken.empty()) {
-            environmentOverrides.emplace_back(L"ANTHROPIC_AUTH_TOKEN", wideFromUtf8(authToken));
-        }
-        appendInteractiveUserProfileEnvironment(environmentOverrides);
-        if (!provider.baseUrl.empty()) {
-            environmentOverrides.emplace_back(L"ANTHROPIC_BASE_URL", wideFromUtf8(provider.baseUrl));
-        }
-        if (!provider.modelId.empty()) {
-            environmentOverrides.emplace_back(L"ANTHROPIC_MODEL", wideFromUtf8(provider.modelId));
-        }
-
-        const auto workingDirectory = request.workingDirectory.empty()
-            ? std::filesystem::current_path()
-            : std::filesystem::path(wideFromUtf8(request.workingDirectory));
-        const auto process = runProcessCapture(
-            commandLine,
-            workingDirectory,
-            environmentOverrides,
-            currentResourceAllocationProfile(),
-            true);
-        record.rawResponse = process.stdoutText.empty() ? process.stderrText : process.stdoutText;
-        if (!process.launched) {
-            record.status = ProviderExecutionStatus::Failed;
-            record.errorMessage = trimCopy(process.stderrText.empty() ? process.stdoutText : process.stderrText);
-            if (record.errorMessage.empty()) {
-                record.errorMessage = "Claude Code could not be launched.";
-            }
-            record.completedAtUtc = timestampNowUtc();
-            return record;
-        }
-        if (process.exitCode != 0) {
-            record.status = ProviderExecutionStatus::Failed;
-            record.errorMessage = trimCopy(process.stderrText.empty() ? process.stdoutText : process.stderrText);
-            if (record.errorMessage.empty()) {
-                record.errorMessage = "Claude Code returned a non-zero exit code.";
-            }
-            record.completedAtUtc = timestampNowUtc();
-            return record;
-        }
-
-        const std::string stdoutText = trimCopy(process.stdoutText);
-        try {
-            const auto payload = nlohmann::json::parse(stdoutText);
-            if (payload.contains("result") && payload.at("result").is_string()) {
-                record.outputText = payload.at("result").get<std::string>();
-            } else if (payload.contains("content") && payload.at("content").is_string()) {
-                record.outputText = payload.at("content").get<std::string>();
-            } else if (payload.contains("message") && payload.at("message").is_string()) {
-                record.outputText = payload.at("message").get<std::string>();
-            } else {
-                record.outputText = stdoutText;
-            }
-        } catch (...) {
-            record.outputText = stdoutText;
-        }
-        if (record.outputText.empty()) {
-            record.outputText = trimCopy(process.stderrText);
-        }
-        record.status = ProviderExecutionStatus::Succeeded;
-        record.completedAtUtc = timestampNowUtc();
-        return record;
-    }
-
-    // Codex CLI executor. Mirrors executeClaudeCodeCli: finds the `codex`
-    // binary on PATH, invokes `codex exec` with the user's prompt, and
-    // captures stdout. No credentials are passed — the Codex CLI uses its
-    // own OAuth-stored tokens (populated by the in-shell Sign-In wizard).
-    // If the user opted into an API-key fallback, we forward it via env.
-    ProviderExecutionRecord executeCodexCli(const ProviderConnection& provider,
-                                            const ProviderExecutionRequest& request,
-                                            const ProviderAssignmentTarget& activeTarget,
-                                            const std::vector<RuntimeEndpoint>& endpoints,
-                                            const std::map<std::string, std::string>& credentials,
-                                            ProviderExecutionRecord record) const {
-        std::optional<std::filesystem::path> codexCommand;
-        const DWORD configuredCommandLength = GetEnvironmentVariableW(L"MASTERCONTROL_CODEX_COMMAND", nullptr, 0);
-        if (configuredCommandLength > 0) {
-            std::wstring configured(static_cast<size_t>(configuredCommandLength - 1), L'\0');
-            GetEnvironmentVariableW(L"MASTERCONTROL_CODEX_COMMAND", configured.data(), configuredCommandLength);
-            codexCommand = std::filesystem::path(configured);
-        } else {
-            codexCommand = findCommandOnPath({ L"codex.exe", L"codex.cmd", L"codex.bat", L"codex" });
-        }
-        if (!codexCommand.has_value()) {
-            record.status = ProviderExecutionStatus::Failed;
-            record.errorMessage = "Codex CLI was not found on PATH. Run the Sign in to ChatGPT wizard first.";
-            record.completedAtUtc = timestampNowUtc();
-            return record;
-        }
-
-        const auto systemPrompt = buildExecutionSystemPrompt(provider, request, activeTarget, endpoints, false);
-        const auto flattenForCli = [](std::string value) {
-            for (char& character : value) {
-                if (character == '\r' || character == '\n' || character == '\t') {
-                    character = ' ';
-                }
-            }
-            return trimCopy(value);
-        };
-        const std::string combinedPrompt =
-            flattenForCli(
-                systemPrompt +
-                "\nUser task:\n" +
-                request.prompt +
-                "\nReturn your answer for the assigned orchestration lane only.");
-
-        std::vector<std::wstring> arguments{
-            codexCommand->wstring(),
-            L"exec",
-            wideFromUtf8(combinedPrompt)
-        };
-        if (!provider.modelId.empty()) {
-            arguments.push_back(L"--model");
-            arguments.push_back(wideFromUtf8(provider.modelId));
-        }
-
-        std::wstring commandLine;
-        if (startsWithInsensitive(codexCommand->extension().string(), ".cmd") ||
-            startsWithInsensitive(codexCommand->extension().string(), ".bat")) {
-            commandLine = L"cmd.exe /d /s /c ";
-            commandLine += quoteWindowsArgument(joinCommandArguments(arguments));
-        } else {
-            commandLine = joinCommandArguments(arguments);
-        }
-
-        std::vector<std::pair<std::wstring, std::wstring>> environmentOverrides;
-        const std::string apiKey = firstCredentialValue(credentials, { "openai_api_key" });
-        if (!apiKey.empty()) {
-            // Users with an OpenAI API key can opt into bypassing ChatGPT
-            // sign-in. When present we forward it; otherwise the Codex CLI
-            // uses its own ~/.codex/auth.json OAuth tokens.
-            environmentOverrides.emplace_back(L"OPENAI_API_KEY", wideFromUtf8(apiKey));
-        }
-        appendInteractiveUserProfileEnvironment(environmentOverrides);
-
-        const auto workingDirectory = request.workingDirectory.empty()
-            ? std::filesystem::current_path()
-            : std::filesystem::path(wideFromUtf8(request.workingDirectory));
-        const auto process = runProcessCapture(
-            commandLine,
-            workingDirectory,
-            environmentOverrides,
-            currentResourceAllocationProfile(),
-            true);
-        record.rawResponse = process.stdoutText.empty() ? process.stderrText : process.stdoutText;
-        if (!process.launched) {
-            record.status = ProviderExecutionStatus::Failed;
-            record.errorMessage = trimCopy(process.stderrText.empty() ? process.stdoutText : process.stderrText);
-            if (record.errorMessage.empty()) {
-                record.errorMessage = "Codex CLI could not be launched.";
-            }
-            record.completedAtUtc = timestampNowUtc();
-            return record;
-        }
-        if (process.exitCode != 0) {
-            record.status = ProviderExecutionStatus::Failed;
-            record.errorMessage = trimCopy(process.stderrText.empty() ? process.stdoutText : process.stderrText);
-            if (record.errorMessage.empty()) {
-                record.errorMessage = "Codex CLI returned a non-zero exit code.";
-            }
-            record.completedAtUtc = timestampNowUtc();
-            return record;
-        }
-
-        record.outputText = trimCopy(process.stdoutText);
-        if (record.outputText.empty()) {
-            record.outputText = trimCopy(process.stderrText);
-        }
-        record.status = ProviderExecutionStatus::Succeeded;
-        record.completedAtUtc = timestampNowUtc();
-        return record;
-    }
-
-    void persistRecord(const ProviderExecutionRecord& record) const {
-        std::lock_guard<std::mutex> lock(state_->mutex);
-        state_->providerExecutionHistory.insert(state_->providerExecutionHistory.begin(), record);
-        if (state_->providerExecutionHistory.size() > 24) {
-            state_->providerExecutionHistory.resize(24);
-        }
-    }
-
-    ResourceAllocationProfile currentResourceAllocationProfile() const {
-        std::lock_guard<std::mutex> lock(state_->mutex);
-        return state_->configuration.resourceAllocation;
-    }
-
-    std::shared_ptr<SharedState> state_;
-    std::shared_ptr<IProviderRegistry> providerRegistry_;
-    std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
-    std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
-    std::shared_ptr<IRuntimeInventoryService> inventoryService_;
-    std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService_;
-    std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService_;
-};
 
 class InstallerOrchestrator final : public IInstallerOrchestrator, public IBootstrapRepoService, public IZipBundleService {
 public:
@@ -5257,11 +3131,10 @@ OperationResult InstallerOrchestrator::installFromRepository(const BootstrapRepo
     }
 
     const auto registeredEndpoints = manifest->contract.seededEndpoints.size();
-    const auto registeredProviders = manifest->contract.providers.size();
     std::ostringstream summary;
     summary << "Bootstrap exited with code " << bootstrapExitCode;
-    if (bootstrapExitCode == 0 && (registeredEndpoints > 0U || registeredProviders > 0U)) {
-        summary << "; registered " << registeredEndpoints << " endpoints and " << registeredProviders << " providers";
+    if (bootstrapExitCode == 0 && registeredEndpoints > 0U) {
+        summary << "; registered " << registeredEndpoints << " endpoints";
     }
 
     recordHistory(InstallProvenance{
@@ -5275,8 +3148,8 @@ OperationResult InstallerOrchestrator::installFromRepository(const BootstrapRepo
 
     std::ostringstream message;
     message << (bootstrapExitCode == 0 ? "Bootstrap repository installed." : "Bootstrap repository failed.");
-    if (bootstrapExitCode == 0 && (registeredEndpoints > 0U || registeredProviders > 0U)) {
-        message << " Registered " << registeredEndpoints << " endpoints and " << registeredProviders << " providers.";
+    if (bootstrapExitCode == 0 && registeredEndpoints > 0U) {
+        message << " Registered " << registeredEndpoints << " endpoints.";
     }
 
     return OperationResult{
@@ -5336,11 +3209,10 @@ OperationResult InstallerOrchestrator::installFromZipBundle(const ZipBundleSpec&
     }
 
     const auto registeredEndpoints = manifest->contract.seededEndpoints.size();
-    const auto registeredProviders = manifest->contract.providers.size();
     std::ostringstream summary;
     summary << "Zip bootstrap exited with code " << bootstrapExitCode;
-    if (bootstrapExitCode == 0 && (registeredEndpoints > 0U || registeredProviders > 0U)) {
-        summary << "; registered " << registeredEndpoints << " endpoints and " << registeredProviders << " providers";
+    if (bootstrapExitCode == 0 && registeredEndpoints > 0U) {
+        summary << "; registered " << registeredEndpoints << " endpoints";
     }
 
     recordHistory(InstallProvenance{
@@ -5354,8 +3226,8 @@ OperationResult InstallerOrchestrator::installFromZipBundle(const ZipBundleSpec&
 
     std::ostringstream message;
     message << (bootstrapExitCode == 0 ? "Zip bundle installed." : "Zip bundle bootstrap failed.");
-    if (bootstrapExitCode == 0 && (registeredEndpoints > 0U || registeredProviders > 0U)) {
-        message << " Registered " << registeredEndpoints << " endpoints and " << registeredProviders << " providers.";
+    if (bootstrapExitCode == 0 && registeredEndpoints > 0U) {
+        message << " Registered " << registeredEndpoints << " endpoints.";
     }
 
     return OperationResult{
@@ -5410,7 +3282,6 @@ void InstallerOrchestrator::applyManifestRegistration(const BootstrapManifestCon
     std::lock_guard<std::mutex> lock(state_->mutex);
 
     auto& endpoints = state_->configuration.activeProfile.seededEndpoints;
-    auto& providers = state_->configuration.providers;
     const auto preferredHost = state_->configuration.activeProfile.preferredBindAddress.empty()
         ? std::string("127.0.0.1")
         : state_->configuration.activeProfile.preferredBindAddress;
@@ -5440,22 +3311,6 @@ void InstallerOrchestrator::applyManifestRegistration(const BootstrapManifestCon
             endpoints.push_back(std::move(endpoint));
         } else {
             *endpointIterator = std::move(endpoint);
-        }
-    }
-
-    for (const auto& provider : contract.providers) {
-        if (provider.id.empty()) {
-            continue;
-        }
-
-        const auto providerIterator = std::find_if(
-            providers.begin(),
-            providers.end(),
-            [&provider](const ProviderConnection& candidate) { return candidate.id == provider.id; });
-        if (providerIterator == providers.end()) {
-            providers.push_back(provider);
-        } else {
-            *providerIterator = provider;
         }
     }
 
@@ -5563,9 +3418,11 @@ void InstallerOrchestrator::recordHistory(const InstallProvenance& provenance) {
 class ExportService final : public IExportService {
 public:
     ExportService(std::shared_ptr<IRuntimeInventoryService> inventoryService,
-                  std::shared_ptr<IConfigurationService> configurationService)
+                  std::shared_ptr<IConfigurationService> configurationService,
+                  std::shared_ptr<ILanClientAccessService> lanClientAccessService)
         : inventoryService_(std::move(inventoryService))
-        , configurationService_(std::move(configurationService)) {}
+        , configurationService_(std::move(configurationService))
+        , lanClientAccessService_(std::move(lanClientAccessService)) {}
 
     std::vector<ExportArtifact> generateExports() const override {
         const auto endpoints = inventoryService_->listEndpoints();
@@ -5613,13 +3470,13 @@ public:
 
         nlohmann::json openAiJson = {
             { "gateway", gatewayUrl },
-            { "provider", "openai" },
+            { "clientType", "openai" },
             { "recommendedModel", "gpt-5" }
         };
 
         nlohmann::json xAiJson = {
             { "gateway", gatewayUrl },
-            { "provider", "xai" },
+            { "clientType", "xai" },
             { "recommendedModel", "grok-code" }
         };
 
@@ -5660,7 +3517,7 @@ public:
             << "$payload | Set-Content -Path $OutputPath -Encoding UTF8\n"
             << "Write-Host \"Wrote Codex MCP config to $OutputPath\"\n";
 
-        return {
+        std::vector<ExportArtifact> artifacts = {
             ExportArtifact{ "gateway-profile", "master-control-gateway-profile.json", "application/json", gatewayProfile.dump(2) },
             ExportArtifact{ "claude", ".claude.json", "application/json", claudeJson.dump(2) },
             ExportArtifact{ "claude-installer", "Install-ClaudeGateway.ps1", "text/plain", claudeScript.str() },
@@ -5669,19 +3526,40 @@ public:
             ExportArtifact{ "openai", "openai-gateway.json", "application/json", openAiJson.dump(2) },
             ExportArtifact{ "xai", "xai-gateway.json", "application/json", xAiJson.dump(2) }
         };
+
+        // Phase 5 of ADR-001: surface a per-LAN-client config bundle so
+        // operators can download bundles from the Exports surface as well
+        // as from the dedicated /api/clients/{id}/config route. Disabled
+        // clients are deliberately omitted - their bundle would tell the
+        // remote AI it can connect when in fact MCOS rejects its requests.
+        if (lanClientAccessService_) {
+            for (const auto& client : lanClientAccessService_->listClients()) {
+                if (!client.enabled || client.clientId.empty()) {
+                    continue;
+                }
+                const auto bundle = composeLanClientConfigBundle(client, configuration);
+                artifacts.push_back(ExportArtifact{
+                    "lan-client-config:" + client.clientId,
+                    "lan-client-" + client.clientId + ".json",
+                    "application/json",
+                    bundle.dump(2)
+                });
+            }
+        }
+
+        return artifacts;
     }
 
 private:
     std::shared_ptr<IRuntimeInventoryService> inventoryService_;
     std::shared_ptr<IConfigurationService> configurationService_;
+    std::shared_ptr<ILanClientAccessService> lanClientAccessService_;
 };
 
 class CommandLogicUnitService final : public ICommandLogicUnitService {
 public:
     CommandLogicUnitService(std::filesystem::path profileFile,
                             std::shared_ptr<IConfigurationService> configurationService,
-                            std::shared_ptr<IProviderRegistry> providerRegistry,
-                            std::shared_ptr<IProviderAssignmentService> providerAssignmentService,
                             std::shared_ptr<IInstallerOrchestrator> installerOrchestrator,
                             std::shared_ptr<IExportService> exportService,
                             std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService,
@@ -5689,8 +3567,6 @@ public:
                             std::shared_ptr<IPlatformGovernanceToolService> platformGovernanceToolService)
         : profile_(loadProfile(std::move(profileFile)))
         , configurationService_(std::move(configurationService))
-        , providerRegistry_(std::move(providerRegistry))
-        , providerAssignmentService_(std::move(providerAssignmentService))
         , installerOrchestrator_(std::move(installerOrchestrator))
         , exportService_(std::move(exportService))
         , appleRemoteHostService_(std::move(appleRemoteHostService))
@@ -5722,12 +3598,10 @@ public:
             "Managed Resource Envelope",
             "high",
             "Governed work is blocked when the enforced CPU, memory, bandwidth, or storage envelope is denied.",
-            "CLU preflights provider execution and managed install actions against the configured local CPU, memory, bandwidth, and storage envelope before spawning governed workloads."
+            "CLU preflights managed install actions against the configured local CPU, memory, bandwidth, and storage envelope before spawning governed workloads."
         });
 
         const auto configuration = configurationService_->current();
-        const auto providers = providerRegistry_->listProviders();
-        const auto assignments = providerAssignmentService_->listAssignments();
         const auto installHistory = installerOrchestrator_->history();
         const auto exports = exportService_->generateExports();
         snapshot.appleRemoteHosts = appleRemoteHostService_
@@ -5772,43 +3646,36 @@ public:
             }
         };
 
-        const auto autonomousProviderCount = static_cast<size_t>(std::count_if(
-            providers.begin(),
-            providers.end(),
-            [](const ProviderConnection& provider) {
-                return provider.enabled && provider.allowAutonomousControl;
-            }));
-
         if (configuration.resourceAllocation.cpuPercent <= 0) {
             appendFinding(
                 "CLU-C008",
                 "blocked",
-                "Managed execution is blocked because CPU allocation is set to 0%. Raise the CPU envelope before running governed providers or installs.");
-            snapshot.recommendedActions.push_back("Increase CPU allocation above 0% to re-enable CLU-governed provider execution and managed installs.");
+                "Managed execution is blocked because CPU allocation is set to 0%. Raise the CPU envelope before running governed installs.");
+            snapshot.recommendedActions.push_back("Increase CPU allocation above 0% to re-enable CLU-governed managed installs.");
         }
 
         if (configuration.resourceAllocation.memoryPercent <= 0) {
             appendFinding(
                 "CLU-C008",
                 "blocked",
-                "Managed execution is blocked because memory allocation is set to 0%. Raise the memory envelope before running governed providers or installs.");
-            snapshot.recommendedActions.push_back("Increase memory allocation above 0% to re-enable CLU-governed provider execution and managed installs.");
+                "Managed execution is blocked because memory allocation is set to 0%. Raise the memory envelope before running governed installs.");
+            snapshot.recommendedActions.push_back("Increase memory allocation above 0% to re-enable CLU-governed managed installs.");
         }
 
         if (configuration.resourceAllocation.bandwidthPercent <= 0) {
             appendFinding(
                 "CLU-C008",
                 "blocked",
-                "Governed network execution is blocked because bandwidth allocation is set to 0%. Raise the bandwidth envelope before running provider routes or remote installs.");
-            snapshot.recommendedActions.push_back("Increase bandwidth allocation above 0% to re-enable governed provider routes and remote installs.");
+                "Governed network execution is blocked because bandwidth allocation is set to 0%. Raise the bandwidth envelope before running remote installs.");
+            snapshot.recommendedActions.push_back("Increase bandwidth allocation above 0% to re-enable governed remote installs.");
         }
 
         if (configuration.resourceAllocation.storagePercent <= 0) {
             appendFinding(
                 "CLU-C008",
                 "blocked",
-                "Managed execution is blocked because storage allocation is set to 0%. Raise the storage envelope before running governed providers or installs.");
-            snapshot.recommendedActions.push_back("Increase storage allocation above 0% to re-enable CLU-governed provider execution and managed installs.");
+                "Managed execution is blocked because storage allocation is set to 0%. Raise the storage envelope before running governed installs.");
+            snapshot.recommendedActions.push_back("Increase storage allocation above 0% to re-enable CLU-governed managed installs.");
         }
 
         if (!configuration.security.securityProtocolsEnabled && configuration.security.allowOpenLanAccess) {
@@ -5825,38 +3692,6 @@ public:
                 "warning",
                 "Troubleshooting bypass is enabled. CLU is treating the runtime as temporarily degraded until bypass mode is cleared.");
             snapshot.recommendedActions.push_back("Turn off troubleshooting bypass after diagnostics are complete.");
-        }
-
-        if (configuration.aiAutonomyEnabled && autonomousProviderCount == 0U) {
-            appendFinding(
-                "CLU-C001",
-                "warning",
-                "Global AI autonomy is enabled, but no provider route currently allows autonomous control.");
-            snapshot.recommendedActions.push_back("Either disable global AI autonomy or explicitly authorize at least one provider for autonomous control.");
-        }
-
-        if (!configuration.aiAutonomyEnabled && autonomousProviderCount > 0U) {
-            appendFinding(
-                "CLU-C004",
-                "warning",
-                "One or more provider routes advertise autonomous control while global dashboard autonomy remains disabled.");
-            snapshot.recommendedActions.push_back("Align provider autonomy flags with the global AI autonomy posture.");
-        }
-
-        if (std::none_of(providers.begin(), providers.end(), [](const ProviderConnection& provider) { return provider.enabled; })) {
-            appendFinding(
-                "CLU-C004",
-                "warning",
-                "No enabled provider routes are available for governed agent operations.");
-            snapshot.recommendedActions.push_back("Enable at least one provider route before expecting CLU-managed agent workflows to run.");
-        }
-
-        if (!providers.empty() && assignments.empty()) {
-            appendFinding(
-                "CLU-C004",
-                "warning",
-                "Provider routes are configured, but no orchestration roles or sub-agents have been assigned to a provider owner yet.");
-            snapshot.recommendedActions.push_back("Assign planner, architect, or sub-agent ownership before expecting governed provider execution.");
         }
 
         if (std::any_of(installHistory.begin(), installHistory.end(), [](const InstallProvenance& entry) { return !entry.trusted; })) {
@@ -5935,6 +3770,7 @@ public:
         GovernanceEnforcementDecision decision;
         decision.action = request.action;
         decision.allowed = true;
+        decision.outcome = GovernanceDecisionOutcome::Allow;
 
         const auto configuration = configurationService_->current();
         const auto snapshot = currentGovernance();
@@ -5976,62 +3812,134 @@ public:
             }
 
             decision.allowed = false;
+            decision.outcome = GovernanceDecisionOutcome::Block;
             decision.ruleId = "CLU-C008";
             decision.blockingFindings.push_back(resourceMessage);
             decision.message = "CLU blocked " + actionLabel + " because the managed resource policy denies launch. " + resourceMessage;
             return true;
         };
 
-        if (request.action == GovernanceActionKind::ProviderExecution) {
-            if (resourcePreflightBlock("provider execution", true)) {
-                return decision;
-            }
-            if (snapshot.posture == "blocked") {
-                decision.allowed = false;
-                appendBlockedFindingMessages();
-                decision.message = "CLU blocked provider execution because runtime posture is blocked.";
-                if (!decision.blockingFindings.empty()) {
-                    decision.message += " " + decision.blockingFindings.front();
+        // Phase 7 dispatch: every supported action kind passes through CLU
+        // before the privilege gate's HTTP layer applies the decision.
+        // Default outcome is Allow; specific kinds Block when posture is
+        // bad or RequireOperatorApproval when the profile demands it.
+        switch (request.action) {
+            case GovernanceActionKind::RemoteInstall: {
+                if (resourcePreflightBlock("managed install", isRemoteSource(request.source))) {
+                    return decision;
                 }
-            }
-            return decision;
-        }
-
-        if (request.action == GovernanceActionKind::ProviderAutonomyEnable) {
-            if (snapshot.posture == "blocked") {
-                decision.allowed = false;
-                appendBlockedFindingMessages();
-                decision.message = "CLU blocked provider autonomous control while runtime posture is blocked.";
-                if (!decision.blockingFindings.empty()) {
-                    decision.message += " " + decision.blockingFindings.front();
+                if (isRemoteSource(request.source) && snapshot.posture == "blocked") {
+                    decision.allowed = false;
+                    decision.outcome = GovernanceDecisionOutcome::Block;
+                    appendBlockedFindingMessages();
+                    decision.message = "CLU blocked remote install while runtime posture is blocked.";
+                    if (!decision.blockingFindings.empty()) {
+                        decision.message += " " + decision.blockingFindings.front();
+                    }
                 }
                 return decision;
             }
 
-            if (!configuration.aiAutonomyEnabled) {
-                decision.allowed = false;
-                decision.ruleId = "CLU-C004";
-                decision.message = "Enable global AI autonomy before granting provider autonomous control.";
-            }
-            return decision;
-        }
-
-        if (request.action == GovernanceActionKind::RemoteInstall) {
-            if (resourcePreflightBlock("managed install", isRemoteSource(request.source))) {
+            case GovernanceActionKind::McpServerCreate:
+            case GovernanceActionKind::SubAgentCreate:
+            case GovernanceActionKind::McpServerModify:
+            case GovernanceActionKind::SubAgentModify: {
+                // Catalog mutations are allowed when posture is fine. They
+                // do not require per-action approval; the privilege gates
+                // already determined the caller has authority. CLU only
+                // intervenes when global posture is blocked.
+                if (snapshot.posture == "blocked") {
+                    decision.allowed = false;
+                    decision.outcome = GovernanceDecisionOutcome::Block;
+                    appendBlockedFindingMessages();
+                    decision.message = "CLU blocked catalog mutation while runtime posture is blocked.";
+                }
                 return decision;
             }
-            if (isRemoteSource(request.source) && snapshot.posture == "blocked") {
-                decision.allowed = false;
-                appendBlockedFindingMessages();
-                decision.message = "CLU blocked remote install while runtime posture is blocked.";
-                if (!decision.blockingFindings.empty()) {
-                    decision.message += " " + decision.blockingFindings.front();
-                }
-            }
-            return decision;
-        }
 
-        return decision;
+            case GovernanceActionKind::McpServerRemove:
+            case GovernanceActionKind::SubAgentRemove: {
+                // Removals are destructive. When posture is blocked CLU
+                // refuses outright; otherwise the privilege gate is
+                // sufficient. (Future profile rules may flip this to
+                // RequiresOperatorApproval for shared-fabric resources.)
+                if (snapshot.posture == "blocked") {
+                    decision.allowed = false;
+                    decision.outcome = GovernanceDecisionOutcome::Block;
+                    appendBlockedFindingMessages();
+                    decision.message = "CLU blocked catalog removal while runtime posture is blocked.";
+                }
+                return decision;
+            }
+
+            case GovernanceActionKind::ClientRegister:
+            case GovernanceActionKind::ClientPrivilegeChange:
+            case GovernanceActionKind::ClientRevoke: {
+                // Client-roster mutations are operator-driven and already
+                // privilege-gated by canManageClients. CLU only blocks
+                // them when posture is blocked.
+                if (snapshot.posture == "blocked") {
+                    decision.allowed = false;
+                    decision.outcome = GovernanceDecisionOutcome::Block;
+                    appendBlockedFindingMessages();
+                    decision.message = "CLU blocked LAN client roster change while runtime posture is blocked.";
+                }
+                return decision;
+            }
+
+            case GovernanceActionKind::ClientAutonomousModeChange: {
+                // Autonomous mode is a privileged switch. CLU governs it
+                // tightly: posture must be fine AND global aiAutonomyEnabled
+                // must be true before any client may flip to autonomous.
+                // Disabling autonomous mode (request.source == "disable")
+                // is always allowed.
+                if (request.source == "disable") {
+                    return decision;
+                }
+                if (snapshot.posture == "blocked") {
+                    decision.allowed = false;
+                    decision.outcome = GovernanceDecisionOutcome::Block;
+                    appendBlockedFindingMessages();
+                    decision.message = "CLU blocked autonomous-mode change while runtime posture is blocked.";
+                    return decision;
+                }
+                if (!configuration.aiAutonomyEnabled) {
+                    decision.allowed = false;
+                    decision.outcome = GovernanceDecisionOutcome::Block;
+                    decision.ruleId = "CLU-C009";
+                    decision.message = "Enable global AI autonomy in configuration before granting client autonomous mode.";
+                    return decision;
+                }
+                return decision;
+            }
+
+            case GovernanceActionKind::ModuleEnable:
+            case GovernanceActionKind::ModuleDisable: {
+                // Module lifecycle is operator-only territory. Posture
+                // governs this strictly because a misconfigured module set
+                // can desync the runtime.
+                if (snapshot.posture == "blocked") {
+                    decision.allowed = false;
+                    decision.outcome = GovernanceDecisionOutcome::Block;
+                    appendBlockedFindingMessages();
+                    decision.message = "CLU blocked Forsetti module lifecycle change while runtime posture is blocked.";
+                }
+                return decision;
+            }
+
+            case GovernanceActionKind::GovernancePolicyChange: {
+                // Editing the CLU profile itself is always sensitive.
+                // Defer to operator approval so changes are auditable.
+                decision.outcome = GovernanceDecisionOutcome::RequiresOperatorApproval;
+                decision.ruleId = "CLU-C010";
+                decision.message = "Governance policy edits require operator approval.";
+                return decision;
+            }
+
+            case GovernanceActionKind::Unknown:
+            default:
+                return decision;
+        }
     }
 
     GovernanceToolResult executeGovernanceTool(const GovernanceToolRequest& request) override {
@@ -6113,8 +4021,6 @@ private:
 
     GovernanceProfile profile_;
     std::shared_ptr<IConfigurationService> configurationService_;
-    std::shared_ptr<IProviderRegistry> providerRegistry_;
-    std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
     std::shared_ptr<IInstallerOrchestrator> installerOrchestrator_;
     std::shared_ptr<IExportService> exportService_;
     std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService_;
@@ -9311,15 +7217,9 @@ public:
                     std::shared_ptr<IConfigurationService> configurationService,
                     std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService,
                     std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService,
-                    std::shared_ptr<IProviderRegistry> providerRegistry,
-                    std::shared_ptr<IProviderCatalogService> providerCatalogService,
-                    std::shared_ptr<IProviderCredentialStore> providerCredentialStore,
                     std::shared_ptr<IMcpServerCatalogService> mcpServerCatalogService,
                     std::shared_ptr<ISubAgentCatalogService> subAgentCatalogService,
                     std::shared_ptr<ISubAgentGroupService> subAgentGroupService,
-                    std::shared_ptr<IProviderAssignmentService> providerAssignmentService,
-                    std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService,
-                    std::shared_ptr<IProviderExecutionService> providerExecutionService,
                     std::shared_ptr<IInstallerOrchestrator> installerOrchestrator,
                     std::shared_ptr<IBootstrapRepoService> bootstrapRepoService,
                     std::shared_ptr<IZipBundleService> zipBundleService,
@@ -9331,15 +7231,9 @@ public:
         , configurationService_(std::move(configurationService))
         , platformServiceCatalogService_(std::move(platformServiceCatalogService))
         , appleRemoteHostService_(std::move(appleRemoteHostService))
-        , providerRegistry_(std::move(providerRegistry))
-        , providerCatalogService_(std::move(providerCatalogService))
-        , providerCredentialStore_(std::move(providerCredentialStore))
         , mcpServerCatalogService_(std::move(mcpServerCatalogService))
         , subAgentCatalogService_(std::move(subAgentCatalogService))
         , subAgentGroupService_(std::move(subAgentGroupService))
-        , providerAssignmentService_(std::move(providerAssignmentService))
-        , providerExecutionCatalogService_(std::move(providerExecutionCatalogService))
-        , providerExecutionService_(std::move(providerExecutionService))
         , installerOrchestrator_(std::move(installerOrchestrator))
         , bootstrapRepoService_(std::move(bootstrapRepoService))
         , zipBundleService_(std::move(zipBundleService))
@@ -9355,23 +7249,7 @@ public:
         DashboardSnapshot snapshot;
         snapshot.telemetry = telemetryService_->captureSnapshot();
         snapshot.endpoints = inventoryService_->listEndpoints();
-        snapshot.providers = providerRegistry_->listProviders();
-        snapshot.providerCapabilities = providerCatalogService_->listCapabilities();
-        snapshot.providerCredentialStatuses = providerCredentialStore_->listStatuses();
         snapshot.subAgentGroups = subAgentGroupService_->listGroups();
-        snapshot.providerAssignmentTargets = providerAssignmentService_->listTargets();
-        snapshot.providerAssignments = providerAssignmentService_->listAssignments();
-        snapshot.providerExecutionRegistrations = providerExecutionCatalogService_->listRegistrations();
-        snapshot.providerExecutionHistory = providerExecutionService_->history();
-        for (auto& provider : snapshot.providers) {
-            const auto statusIterator = std::find_if(
-                snapshot.providerCredentialStatuses.begin(),
-                snapshot.providerCredentialStatuses.end(),
-                [&provider](const ProviderCredentialStatus& status) { return status.providerId == provider.id; });
-            const bool storeConfigured = statusIterator != snapshot.providerCredentialStatuses.end() &&
-                statusIterator->configured;
-            provider.credentialsConfigured = provider.credentialsConfigured || storeConfigured;
-        }
         snapshot.installHistory = installerOrchestrator_->history();
         snapshot.exports = exportService_->generateExports();
         const auto configuration = configurationService_->current();
@@ -9433,9 +7311,6 @@ public:
                 { "hostName", snapshot.telemetry.hostName },
                 { "primaryIpAddress", snapshot.telemetry.primaryIpAddress },
                 { "cpuPercent", snapshot.telemetry.cpuPercent },
-                { "providers", snapshot.providers.size() },
-                { "providerAssignments", snapshot.providerAssignments.size() },
-                { "providerCredentialStatuses", snapshot.providerCredentialStatuses.size() },
                 { "endpoints", snapshot.endpoints.size() }
             });
         return snapshot;
@@ -9458,84 +7333,6 @@ public:
     OperationResult applyConfigurationJson(const std::string& requestBody,
                                            bool confirmUnsafeChanges) override {
         return configurationService_->update(nlohmann::json::parse(requestBody).get<AppConfiguration>(), confirmUnsafeChanges);
-    }
-
-    OperationResult upsertProviderJson(const std::string& requestBody) override {
-        const auto provider = nlohmann::json::parse(requestBody).get<ProviderConnection>();
-        if (provider.allowAutonomousControl && commandLogicUnitService_) {
-            const auto decision = commandLogicUnitService_->enforceAction(GovernanceEnforcementRequest{
-                GovernanceActionKind::ProviderAutonomyEnable,
-                {},
-                provider.id,
-                {},
-                false
-            });
-            if (!decision.allowed) {
-                return OperationResult{ false, false, decision.message };
-            }
-        }
-        return providerRegistry_->upsertProvider(provider);
-    }
-
-    AutoConnectResult autoConnectProviderJson(const std::string& requestBody) override {
-        AutoConnectRequest request;
-        try {
-            if (requestBody.empty()) {
-                AutoConnectResult err;
-                err.errorMessage = "Request body is empty. Provide JSON with kind + credentials.";
-                err.summary = err.errorMessage;
-                AutoConnectStep step;
-                step.stage = "parse";
-                step.succeeded = false;
-                step.message = err.errorMessage;
-                err.steps.push_back(std::move(step));
-                return err;
-            }
-            request = nlohmann::json::parse(requestBody).get<AutoConnectRequest>();
-        } catch (const std::exception& parseErr) {
-            // Previously this path threw uncaught, which surfaced to the HTTP
-            // layer as HTTP 500 with an empty body — operator saw a dead
-            // connection without any clue what was wrong. Return a structured
-            // failure with the parse reason instead.
-            AutoConnectResult err;
-            err.errorMessage = std::string("Could not parse request: ") + parseErr.what();
-            err.summary = err.errorMessage;
-            AutoConnectStep step;
-            step.stage = "parse";
-            step.succeeded = false;
-            step.message = err.errorMessage;
-            err.steps.push_back(std::move(step));
-            return err;
-        }
-        // Autonomy enforcement is applied to the derived provider id inside
-        // autoConnectProvider's register-provider stage, so we do not need a
-        // pre-check here — the registry will emit a step error if the CLU
-        // denies the connection. We still fail fast if the kind is missing.
-        if (request.allowAutonomousControl && commandLogicUnitService_) {
-            const auto decision = commandLogicUnitService_->enforceAction(GovernanceEnforcementRequest{
-                GovernanceActionKind::ProviderAutonomyEnable,
-                {},
-                {},
-                {},
-                false
-            });
-            if (!decision.allowed) {
-                AutoConnectResult denied;
-                denied.errorMessage = decision.message;
-                denied.summary = decision.message;
-                AutoConnectStep step;
-                step.stage = "governance-check";
-                step.succeeded = false;
-                step.message = decision.message;
-                denied.steps.push_back(std::move(step));
-                return denied;
-            }
-        }
-        return providerRegistry_->autoConnectProvider(request);
-    }
-
-    OperationResult upsertProviderCredentialsJson(const std::string& requestBody) override {
-        return providerCredentialStore_->upsertCredentials(nlohmann::json::parse(requestBody).get<ProviderCredentialUpdate>());
     }
 
     OperationResult upsertAppleRemoteHostJson(const std::string& requestBody) override {
@@ -9572,14 +7369,6 @@ public:
     OperationResult removeSubAgentGroupJson(const std::string& requestBody) override {
         return subAgentGroupService_->removeGroup(
             nlohmann::json::parse(requestBody).get<SubAgentGroupRemovalRequest>().groupId);
-    }
-
-    OperationResult upsertProviderAssignmentJson(const std::string& requestBody) override {
-        return providerAssignmentService_->upsertAssignment(nlohmann::json::parse(requestBody).get<ProviderAssignment>());
-    }
-
-    ProviderExecutionRecord executeProviderTaskJson(const std::string& requestBody) override {
-        return providerExecutionService_->execute(nlohmann::json::parse(requestBody).get<ProviderExecutionRequest>());
     }
 
     OperationResult installPackageJson(const std::string& requestBody) override {
@@ -9639,15 +7428,9 @@ private:
     std::shared_ptr<IConfigurationService> configurationService_;
     std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService_;
     std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService_;
-    std::shared_ptr<IProviderRegistry> providerRegistry_;
-    std::shared_ptr<IProviderCatalogService> providerCatalogService_;
-    std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
     std::shared_ptr<IMcpServerCatalogService> mcpServerCatalogService_;
     std::shared_ptr<ISubAgentCatalogService> subAgentCatalogService_;
     std::shared_ptr<ISubAgentGroupService> subAgentGroupService_;
-    std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
-    std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService_;
-    std::shared_ptr<IProviderExecutionService> providerExecutionService_;
     std::shared_ptr<IInstallerOrchestrator> installerOrchestrator_;
     std::shared_ptr<IBootstrapRepoService> bootstrapRepoService_;
     std::shared_ptr<IZipBundleService> zipBundleService_;
@@ -9672,7 +7455,7 @@ struct HttpResponse final {
 // ---------------------------------------------------------------------------
 // ActivityEventRing — fixed-capacity, thread-safe, monotonically-indexed in-
 // memory ring buffer of ActivityEvent records. Every inbound admin API
-// request, outbound provider execution, governance decision, auto-connect
+// request, governance decision,
 // call, and service lifecycle transition appends here so the shell and
 // browser dashboard can render a live stream of "commands and requests".
 // Readers query with a cursor id and get back events strictly newer than
@@ -9754,6 +7537,17 @@ private:
 ActivityEventRing& globalActivityRing() {
     static ActivityEventRing instance;
     return instance;
+}
+
+void appendLanClientActivity(const std::string& kind,
+                             const std::string& target,
+                             const std::string& message) {
+    ActivityEvent event;
+    event.kind = kind;
+    event.actor = "lan-client-access";
+    event.target = target;
+    event.message = message;
+    globalActivityRing().append(event);
 }
 
 class SimpleHttpServer final {
@@ -10000,9 +7794,6 @@ public:
     GovernanceToolResult executeGovernanceToolJson(const std::string& requestBody) { return adminApiService_->executeGovernanceToolJson(requestBody); }
     OperationResult cancelAppleOperationJson(const std::string& requestBody) { return adminApiService_->cancelAppleOperationJson(requestBody); }
     OperationResult applyConfigurationJson(const std::string& requestBody, bool confirmUnsafeChanges) { return adminApiService_->applyConfigurationJson(requestBody, confirmUnsafeChanges); }
-    OperationResult upsertProviderJson(const std::string& requestBody) { return adminApiService_->upsertProviderJson(requestBody); }
-    AutoConnectResult autoConnectProviderJson(const std::string& requestBody) { return adminApiService_->autoConnectProviderJson(requestBody); }
-    OperationResult upsertProviderCredentialsJson(const std::string& requestBody) { return adminApiService_->upsertProviderCredentialsJson(requestBody); }
     OperationResult upsertAppleRemoteHostJson(const std::string& requestBody) { return adminApiService_->upsertAppleRemoteHostJson(requestBody); }
     OperationResult removeAppleRemoteHostJson(const std::string& requestBody) { return adminApiService_->removeAppleRemoteHostJson(requestBody); }
     OperationResult upsertMcpServerJson(const std::string& requestBody) { return adminApiService_->upsertMcpServerJson(requestBody); }
@@ -10011,8 +7802,6 @@ public:
     OperationResult removeSubAgentJson(const std::string& requestBody) { return adminApiService_->removeSubAgentJson(requestBody); }
     OperationResult upsertSubAgentGroupJson(const std::string& requestBody) { return adminApiService_->upsertSubAgentGroupJson(requestBody); }
     OperationResult removeSubAgentGroupJson(const std::string& requestBody) { return adminApiService_->removeSubAgentGroupJson(requestBody); }
-    OperationResult upsertProviderAssignmentJson(const std::string& requestBody) { return adminApiService_->upsertProviderAssignmentJson(requestBody); }
-    ProviderExecutionRecord executeProviderTaskJson(const std::string& requestBody) { return adminApiService_->executeProviderTaskJson(requestBody); }
     OperationResult installPackageJson(const std::string& requestBody) { return adminApiService_->installPackageJson(requestBody); }
     OperationResult installRepoJson(const std::string& requestBody) { return adminApiService_->installRepoJson(requestBody); }
     OperationResult installZipJson(const std::string& requestBody) { return adminApiService_->installZipJson(requestBody); }
@@ -10043,16 +7832,11 @@ private:
     std::shared_ptr<IAppleRemoteHostService> appleRemoteHostService_;
     std::shared_ptr<IPackageTrustEvaluator> trustEvaluator_;
     std::shared_ptr<InstallerOrchestrator> installerOrchestrator_;
-    std::shared_ptr<IProviderRegistry> providerRegistry_;
-    std::shared_ptr<IProviderCatalogService> providerCatalogService_;
-    std::shared_ptr<IProviderCredentialStore> providerCredentialStore_;
     std::shared_ptr<IMcpServerCatalogService> mcpServerCatalogService_;
     std::shared_ptr<ISubAgentCatalogService> subAgentCatalogService_;
     std::shared_ptr<ISubAgentGroupService> subAgentGroupService_;
-    std::shared_ptr<IProviderAssignmentService> providerAssignmentService_;
-    std::shared_ptr<IProviderExecutionCatalogService> providerExecutionCatalogService_;
-    std::shared_ptr<IProviderExecutionService> providerExecutionService_;
-    std::shared_ptr<ProviderCliSignInService> providerCliSignInService_;
+    std::shared_ptr<ILanClientAccessService> lanClientAccessService_;
+    std::shared_ptr<IGovernanceApprovalQueueService> governanceApprovalQueueService_;
     std::shared_ptr<IExportService> exportService_;
     std::shared_ptr<IPlatformGovernanceToolService> platformGovernanceToolService_;
     std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService_;
@@ -10077,30 +7861,12 @@ bool MasterControlApplication::Impl::initialize() {
     appleRemoteHostService_ = std::make_shared<AppleRemoteHostService>(state_, paths_.configurationFile);
     trustEvaluator_ = std::make_shared<PackageTrustEvaluator>(state_);
     installerOrchestrator_ = std::make_shared<InstallerOrchestrator>(state_, trustEvaluator_, paths_);
-    providerCatalogService_ = std::make_shared<ProviderCatalogService>();
-    providerRegistry_ = std::make_shared<ProviderRegistryService>(state_, paths_.configurationFile, providerCatalogService_);
-    providerCredentialStore_ = std::make_shared<ProviderCredentialStore>(paths_.providerCredentialsFile, providerRegistry_, providerCatalogService_);
     mcpServerCatalogService_ = std::make_shared<McpServerCatalogService>(state_, paths_.configurationFile, inventoryService_);
     subAgentCatalogService_ = std::make_shared<SubAgentCatalogService>(state_, paths_.configurationFile, inventoryService_);
     subAgentGroupService_ = std::make_shared<SubAgentGroupService>(state_, paths_.configurationFile, inventoryService_);
-    providerAssignmentService_ = std::make_shared<ProviderAssignmentService>(
-        state_,
-        paths_.configurationFile,
-        inventoryService_,
-        subAgentGroupService_,
-        providerRegistry_);
-
-    // Late-bind the Auto-Connect dependencies on the provider registry. Both
-    // the credential store and the assignment service are created *after* the
-    // registry (the credential store takes a shared_ptr to the registry, which
-    // would cycle if held the other way). Passing weak_ptrs breaks the cycle
-    // and lets autoConnectProvider() drive all three in a single call.
-    if (auto concreteRegistry = std::dynamic_pointer_cast<ProviderRegistryService>(providerRegistry_)) {
-        concreteRegistry->wireAutoConnectDependencies(
-            std::weak_ptr<IProviderCredentialStore>(providerCredentialStore_),
-            std::weak_ptr<IProviderAssignmentService>(providerAssignmentService_));
-    }
-    exportService_ = std::make_shared<ExportService>(inventoryService_, configurationService_);
+    lanClientAccessService_ = std::make_shared<LanClientAccessService>(state_, paths_.configurationFile);
+    governanceApprovalQueueService_ = std::make_shared<GovernanceApprovalQueueService>();
+    exportService_ = std::make_shared<ExportService>(inventoryService_, configurationService_, lanClientAccessService_);
     platformServiceCatalogService_ = std::make_shared<PlatformServiceCatalogService>(configurationService_, telemetryService_);
     platformGovernanceToolService_ = std::make_shared<PlatformGovernanceToolService>(
         paths_,
@@ -10109,23 +7875,11 @@ bool MasterControlApplication::Impl::initialize() {
     commandLogicUnitService_ = std::make_shared<CommandLogicUnitService>(
         paths_.cluProfileFile,
         configurationService_,
-        providerRegistry_,
-        providerAssignmentService_,
         installerOrchestrator_,
         exportService_,
         appleRemoteHostService_,
         platformServiceCatalogService_,
         platformGovernanceToolService_);
-    providerExecutionCatalogService_ = std::make_shared<ProviderExecutionCatalogService>();
-    providerExecutionService_ = std::make_shared<ProviderExecutionService>(
-        state_,
-        providerRegistry_,
-        providerCredentialStore_,
-        providerAssignmentService_,
-        inventoryService_,
-        providerExecutionCatalogService_,
-        commandLogicUnitService_);
-    providerCliSignInService_ = std::make_shared<ProviderCliSignInService>(providerRegistry_, providerCatalogService_);
     controlSurfaceService_ = std::make_shared<ModuleControlSurfaceService>();
     beaconService_ = std::make_shared<BeaconService>(configurationService_, telemetryService_, platformServiceCatalogService_);
     registerConfigurationDefaults();
@@ -10137,15 +7891,9 @@ bool MasterControlApplication::Impl::initialize() {
         configurationService_,
         platformServiceCatalogService_,
         appleRemoteHostService_,
-        providerRegistry_,
-        providerCatalogService_,
-        providerCredentialStore_,
         mcpServerCatalogService_,
         subAgentCatalogService_,
         subAgentGroupService_,
-        providerAssignmentService_,
-        providerExecutionCatalogService_,
-        providerExecutionService_,
         installerOrchestrator_,
         installerOrchestrator_,
         installerOrchestrator_,
@@ -10220,10 +7968,6 @@ void MasterControlApplication::Impl::registerConfigurationDefaults() {
     const auto currentConfiguration = configurationService_->current();
     std::lock_guard<std::mutex> lock(state_->mutex);
     state_->configuration = currentConfiguration;
-    if (state_->configuration.providers.empty()) {
-        state_->configuration.providers = buildDefaultProviders();
-        (void)writeJsonFile(paths_.configurationFile, state_->configuration);
-    }
 }
 
 void MasterControlApplication::Impl::createForsettiRuntime() {
@@ -10239,15 +7983,11 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
     services->registerService<IInstallerOrchestrator>(installerOrchestrator_);
     services->registerService<IBootstrapRepoService>(installerOrchestrator_);
     services->registerService<IZipBundleService>(installerOrchestrator_);
-    services->registerService<IProviderRegistry>(providerRegistry_);
-    services->registerService<IProviderCatalogService>(providerCatalogService_);
-    services->registerService<IProviderCredentialStore>(providerCredentialStore_);
     services->registerService<IMcpServerCatalogService>(mcpServerCatalogService_);
     services->registerService<ISubAgentCatalogService>(subAgentCatalogService_);
     services->registerService<ISubAgentGroupService>(subAgentGroupService_);
-    services->registerService<IProviderAssignmentService>(providerAssignmentService_);
-    services->registerService<IProviderExecutionCatalogService>(providerExecutionCatalogService_);
-    services->registerService<IProviderExecutionService>(providerExecutionService_);
+    services->registerService<ILanClientAccessService>(lanClientAccessService_);
+    services->registerService<IGovernanceApprovalQueueService>(governanceApprovalQueueService_);
     services->registerService<IExportService>(exportService_);
     services->registerService<IPlatformGovernanceToolService>(platformGovernanceToolService_);
     services->registerService<ICommandLogicUnitService>(commandLogicUnitService_);
@@ -10290,17 +8030,14 @@ void MasterControlApplication::Impl::createForsettiRuntime() {
 }
 
 void MasterControlApplication::Impl::activateDefaultModules() {
-    static const std::array<const char*, 19> moduleIds = {
+    static const std::array<const char*, 16> moduleIds = {
         "com.mastercontrol.environment-discovery",
         "com.mastercontrol.host-telemetry",
         "com.mastercontrol.runtime-inventory",
         "com.mastercontrol.configuration",
         "com.mastercontrol.installer-import",
-        "com.mastercontrol.provider-integration",
-        "com.mastercontrol.provider-codex",
-        "com.mastercontrol.provider-claude-code",
-        "com.mastercontrol.provider-xai",
         "com.mastercontrol.export",
+        "com.mastercontrol.lan-client-access",
         "com.mastercontrol.command-logic-unit",
         "com.mastercontrol.gateway-windows",
         "com.mastercontrol.gateway-macos",
@@ -10437,7 +8174,62 @@ OperationResult MasterControlApplication::Impl::manageForsettiModule(const std::
     return OperationResult{ false, false, "Unknown Forsetti module action." };
 }
 
+// Phase 6: case-insensitive header lookup. HTTP headers are
+// case-insensitive per RFC 7230 but the parser stores them as written.
+// Used to read X-MCOS-Client-Id regardless of the casing the client sent.
+static std::string findHeaderCaseInsensitive(const std::unordered_map<std::string, std::string>& headers,
+                                              const std::string& name) {
+    for (const auto& [key, value] : headers) {
+        if (key.size() != name.size()) {
+            continue;
+        }
+        bool match = true;
+        for (size_t i = 0; i < key.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(key[i])) !=
+                std::tolower(static_cast<unsigned char>(name[i]))) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            return value;
+        }
+    }
+    return {};
+}
+
 HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest& request) {
+    // Phase 6 - resolve the per-request authentication context. Identity is
+    // by header alone (the LAN is trusted per ADR-001); a missing or unknown
+    // header yields the operator-fallback context so the dashboard and
+    // ad-hoc curl keep working. A disabled client's id is rejected up front.
+    AuthenticatedRequestContext context = makeOperatorContext();
+    const auto headerClientId = findHeaderCaseInsensitive(request.headers, "X-MCOS-Client-Id");
+    if (!headerClientId.empty() && lanClientAccessService_) {
+        const auto resolved = lanClientAccessService_->getClient(headerClientId);
+        if (resolved.has_value()) {
+            if (!resolved->enabled) {
+                return HttpResponse{
+                    403,
+                    "application/json",
+                    nlohmann::json{
+                        { "succeeded", false },
+                        { "errorMessage", "LAN client is disabled: " + resolved->clientId }
+                    }.dump()
+                };
+            }
+            context.client = resolved;
+            context.privileges = resolved->privileges;
+            context.autonomousMode = resolved->autonomousMode;
+            context.actor = resolved->clientId;
+            context.isOperatorFallback = false;
+            // Hot-path liveness update; touchClient deliberately skips disk
+            // write to avoid thrash on every request. Phase 9 may add a
+            // periodic flush if last-seen survival becomes a hard requirement.
+            lanClientAccessService_->touchClient(resolved->clientId, std::string{});
+        }
+    }
+
     // Dedicated /api/activity read route — served before the main handler
     // body so incremental polling stays cheap and never touches the heavier
     // snapshot path. Clients pass `?since={id}` to get only new events.
@@ -10471,6 +8263,75 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         request.path == "/api/dashboard" ||
         request.path == "/api/config" ||
         request.path == "/api/health";
+
+    // Phase 6 - privilege gate helper. Returns nullopt when the predicate
+    // is satisfied, or a 403 HttpResponse otherwise. Captures the resolved
+    // context by reference so each gate is one line at the call site.
+    auto requirePrivilege = [&](bool granted, const char* privilegeName) -> std::optional<HttpResponse> {
+        if (granted) {
+            return std::nullopt;
+        }
+        nlohmann::json body = {
+            { "succeeded", false },
+            { "errorMessage", std::string("Required privilege missing: ") + privilegeName + "." },
+            { "actor", context.actor },
+            { "privilege", privilegeName }
+        };
+        return HttpResponse{ 403, "application/json", body.dump() };
+    };
+
+    // Phase 7 - CLU enforcement gate. Runs after the privilege check.
+    // Returns nullopt when the action is allowed, otherwise a final HTTP
+    // response: 403 for Block, 202 for RequiresOperatorApproval (the
+    // mutation is staged in the approval queue and the deferred id is
+    // handed back so the caller can poll). Allow falls through to the
+    // route's normal apply path.
+    auto enforceGovernance = [&](GovernanceActionKind action,
+                                 const std::string& targetId,
+                                 const std::string& actionSource = std::string{})
+            -> std::optional<HttpResponse> {
+        if (!commandLogicUnitService_) {
+            return std::nullopt;
+        }
+        GovernanceEnforcementRequest enforcementRequest;
+        enforcementRequest.action = action;
+        enforcementRequest.targetId = targetId;
+        enforcementRequest.actor = context.actor;
+        enforcementRequest.source = actionSource;
+        const auto decision = commandLogicUnitService_->enforceAction(enforcementRequest);
+        if (decision.outcome == GovernanceDecisionOutcome::Allow) {
+            return std::nullopt;
+        }
+        if (decision.outcome == GovernanceDecisionOutcome::RequiresOperatorApproval
+            && governanceApprovalQueueService_) {
+            GovernanceDeferredAction deferred;
+            deferred.action = action;
+            deferred.actor = context.actor;
+            deferred.targetId = targetId;
+            deferred.payload = request.body;
+            deferred.reason = decision.message;
+            const auto staged = governanceApprovalQueueService_->stage(deferred);
+            nlohmann::json body = {
+                { "succeeded", true },
+                { "outcome", to_string(decision.outcome) },
+                { "deferredActionId", staged.id },
+                { "ruleId", decision.ruleId },
+                { "message", decision.message },
+                { "actor", context.actor }
+            };
+            return HttpResponse{ 202, "application/json", body.dump() };
+        }
+        nlohmann::json body = {
+            { "succeeded", false },
+            { "outcome", to_string(decision.outcome) },
+            { "errorMessage", decision.message },
+            { "ruleId", decision.ruleId },
+            { "blockingFindings", decision.blockingFindings },
+            { "posture", decision.posture },
+            { "actor", context.actor }
+        };
+        return HttpResponse{ 403, "application/json", body.dump() };
+    };
 
     const auto response = ([&]() -> HttpResponse {
     try {
@@ -10576,7 +8437,7 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                         (selectedAppleHost.has_value() && isAppleHostReadyForPlatform(*selectedAppleHost, platform)) },
                 { "agentConfigurations", nlohmann::json::array({
                     {
-                        { "provider", "codex" },
+                        { "clientType", "codex" },
                         { "credentialFields", nlohmann::json::array({ "OPENAI_API_KEY" }) },
                         { "recommendedModel", "gpt-5.4" },
                         { "mcp", {
@@ -10586,7 +8447,7 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                         } }
                     },
                     {
-                        { "provider", "claude-code" },
+                        { "clientType", "claude-code" },
                         { "credentialFields", nlohmann::json::array({ "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN" }) },
                         { "mcp", {
                             { "mcpServers", {
@@ -10598,12 +8459,12 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                         } }
                     },
                     {
-                        { "provider", "xai" },
+                        { "clientType", "xai" },
                         { "credentialFields", nlohmann::json::array({ "XAI_API_KEY" }) },
                         { "recommendedModel", "grok-code-fast-1" },
                         { "mcp", {
                             { "gateway", gatewayUrl },
-                            { "provider", "xai" },
+                            { "clientType", "xai" },
                             { "recommendedModel", "grok-code-fast-1" }
                         } }
                     }
@@ -10618,9 +8479,6 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "GET" && request.path == "/api/config") {
             return jsonResponse(configurationService_->current());
-        }
-        if (request.method == "GET" && request.path == "/api/providers") {
-            return jsonResponse(providerRegistry_->listProviders());
         }
         if (request.method == "GET" && request.path == "/api/exports") {
             return jsonResponse(exportService_->generateExports());
@@ -10647,20 +8505,93 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             return jsonResponse(beaconService_->currentAdvertisement());
         }
         if (request.method == "GET" && request.path == "/api/environment-hints") {
-            // Report which provider credential environment variables are set,
-            // enabling guided workflows to pre-fill detected credentials.
-            const auto capabilities = providerCatalogService_->listCapabilities();
-            nlohmann::json hints = nlohmann::json::object();
-            for (const auto& capability : capabilities) {
-                for (const auto& field : capability.credentialFields) {
-                    if (!field.environmentVariableHint.empty()) {
-                        const auto wideHint = wideFromUtf8(field.environmentVariableHint);
-                        const DWORD exists = GetEnvironmentVariableW(wideHint.c_str(), nullptr, 0);
-                        hints[field.environmentVariableHint] = (exists > 0);
-                    }
+            // Reserved endpoint - returns an empty object after the provider
+            // stack was removed per ADR-001. Phase 3+ may repurpose this for
+            // LAN client environment discovery.
+            return jsonResponse(nlohmann::json::object());
+        }
+        // -------------------------------------------------------------------
+        // /api/client/* - shared-fabric read surface (Phase 6 of ADR-001)
+        // -------------------------------------------------------------------
+        // Open to any identified client (and to the operator-fallback
+        // context). Use is never gated; any LAN client that knows MCOS is
+        // there can list the catalog and send a heartbeat.
+        if (request.method == "GET" && request.path == "/api/client/mcp-servers") {
+            const auto endpoints = inventoryService_->listEndpoints();
+            std::vector<RuntimeEndpoint> mcpEndpoints;
+            for (const auto& endpoint : endpoints) {
+                if (endpoint.kind == EndpointKind::MCPServer && !endpoint.isTemplate) {
+                    mcpEndpoints.push_back(endpoint);
                 }
             }
-            return jsonResponse(hints);
+            return jsonResponse(mcpEndpoints);
+        }
+        if (request.method == "GET" && request.path == "/api/client/sub-agents") {
+            const auto endpoints = inventoryService_->listEndpoints();
+            std::vector<RuntimeEndpoint> subAgentEndpoints;
+            for (const auto& endpoint : endpoints) {
+                if (endpoint.kind == EndpointKind::SubAgent && !endpoint.isTemplate) {
+                    subAgentEndpoints.push_back(endpoint);
+                }
+            }
+            return jsonResponse(subAgentEndpoints);
+        }
+        if (request.method == "GET" && request.path == "/api/client/activity") {
+            // Re-uses the global activity ring; clients receive the same
+            // FIFO event stream as the operator dashboard. Phase 7 may
+            // filter to events scoped to the requester.
+            const auto snap = globalActivityRing().read("");
+            nlohmann::json body;
+            body["highWaterMarkId"] = snap.highWaterMarkId;
+            body["events"] = nlohmann::json::array();
+            for (const auto& e : snap.events) {
+                body["events"].push_back(e);
+            }
+            return HttpResponse{ 200, "application/json", body.dump() };
+        }
+        if (request.method == "GET" && request.path == "/api/client/governance/profile") {
+            // Mirrors /api/clu but trimmed to the read-only surface clients
+            // need to render the rules they're operating under. Phase 7 will
+            // expand the body if Forsetti adds client-targeted rules.
+            const auto snapshot = commandLogicUnitService_->currentGovernance();
+            nlohmann::json body = {
+                { "authority", snapshot.unitName.empty() ? std::string("Command Logic Unit") : snapshot.unitName },
+                { "framework", "Forsetti Framework for Agentic Coding" },
+                { "doctrine", snapshot.doctrine },
+                { "posture", snapshot.posture },
+                { "documents", snapshot.documents },
+                { "rules", snapshot.rules },
+                { "lastEvaluatedUtc", snapshot.lastEvaluatedUtc }
+            };
+            return jsonResponse(body);
+        }
+        if (request.method == "POST" && request.path == "/api/client/governance/decisions") {
+            // Phase 6 stub. Phase 7 expands GovernanceActionKind and wires
+            // this endpoint to commandLogicUnitService_->enforceAction so
+            // a client can pre-check whether a proposed mutation will be
+            // allowed, blocked, or queued for operator approval. For now,
+            // honestly report that the endpoint exists but defers to the
+            // privilege gates already in place on the mutation routes.
+            nlohmann::json body = {
+                { "outcome", "deferred" },
+                { "actor", context.actor },
+                { "message", "CLU pre-check is stubbed in Phase 6. Mutation routes apply privilege gates today; richer governance decisions land in Phase 7." }
+            };
+            return HttpResponse{ 202, "application/json", body.dump() };
+        }
+        if (request.method == "POST" && request.path == "/api/client/heartbeat") {
+            // Marks the calling client as live. The operator-fallback
+            // context has no clientId so heartbeats from anonymous callers
+            // are accepted but no-ops on the roster.
+            if (context.client.has_value() && lanClientAccessService_) {
+                lanClientAccessService_->touchClient(context.client->clientId, std::string{});
+            }
+            nlohmann::json body = {
+                { "succeeded", true },
+                { "clientId", context.actor },
+                { "isOperatorFallback", context.isOperatorFallback }
+            };
+            return jsonResponse(body);
         }
         // -------------------------------------------------------------------
         // WS1 — Readiness and setup lifecycle
@@ -10720,7 +8651,7 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             return jsonResponse(OperationResult{ true, false, "Setup reset." });
         }
         // -------------------------------------------------------------------
-        // WS4 — Provider install automation (Claude Code CLI only)
+        // WS4 — Host-side dependency installer (e.g., Claude Code CLI)
         // -------------------------------------------------------------------
         if (request.method == "GET" && request.path == "/api/setup/dependencies") {
             const auto catalog = buildSupportedDependencyCatalog();
@@ -11025,150 +8956,15 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "POST"
             && startsWith(request.path, "/api/setup/workflow-templates/")
             && endsWith(request.path, "/instantiate")) {
-            const auto prefix = std::string("/api/setup/workflow-templates/");
-            const auto suffix = std::string("/instantiate");
-            const auto id = request.path.substr(prefix.size(),
-                request.path.size() - prefix.size() - suffix.size());
-            const auto templates = buildStarterWorkflowTemplates();
-            const auto templateIt = std::find_if(templates.begin(), templates.end(),
-                [&id](const StarterWorkflowTemplate& t) { return t.id == id; });
-            if (templateIt == templates.end()) {
-                return jsonResponse(OperationResult{ false, false, "Unknown starter workflow template id." }, 404);
-            }
-            // Validate prerequisites against current readiness.
-            const auto snap = adminApiService_->snapshot();
-            const auto cfg = configurationService_->current();
-            const auto readiness = computeReadinessSnapshot(snap, cfg);
-            if (readiness.providersReadyCount < templateIt->requiresProviders) {
-                StarterWorkflowInstantiateResult fail;
-                fail.succeeded = false;
-                fail.message = "This starter workflow requires at least "
-                    + std::to_string(templateIt->requiresProviders)
-                    + " connected provider(s). Currently ready: "
-                    + std::to_string(readiness.providersReadyCount) + ".";
-                return jsonResponse(fail);
-            }
-            if (readiness.mcpReadyCount < templateIt->requiresMcp) {
-                StarterWorkflowInstantiateResult fail;
-                fail.succeeded = false;
-                fail.message = "This starter workflow requires at least "
-                    + std::to_string(templateIt->requiresMcp)
-                    + " MCP server(s) online. Currently ready: "
-                    + std::to_string(readiness.mcpReadyCount) + ".";
-                return jsonResponse(fail);
-            }
-            if (readiness.specialistsReadyCount < templateIt->requiresSpecialists) {
-                StarterWorkflowInstantiateResult fail;
-                fail.succeeded = false;
-                fail.message = "This starter workflow requires at least "
-                    + std::to_string(templateIt->requiresSpecialists)
-                    + " specialist(s) assigned. Currently ready: "
-                    + std::to_string(readiness.specialistsReadyCount) + ".";
-                return jsonResponse(fail);
-            }
-            // Build the actual assignment plan:
-            //   - Always wire provider #1 to the "planner" role.
-            //   - If the template requires N providers (N > 1), wire provider
-            //     #2 to "architect" and, if N >= 3, provider #3 to "auditor"
-            //     (the three default Role targets — see listTargets()).
-            //   - If the template requires specialists, find SubAgent targets
-            //     and fan them across the ready providers round-robin, up to
-            //     requiresSpecialists.
-            // Previously this code always created one assignment (provider #1
-            // → planner), so a template advertising "2 providers + 2
-            // specialists" (like specialist-team-demo) silently ended up with
-            // exactly one assignment — the template's prerequisites were
-            // already validated above, but the instantiation wasn't honoring
-            // them.
-            std::vector<std::string> readyProviderIds;
-            for (const auto& provider : snap.providers) {
-                if (provider.credentialsConfigured && provider.enabled && !provider.isTemplate) {
-                    readyProviderIds.push_back(provider.id);
-                }
-            }
-            // Enumerate all assignment targets so we can pick specialist
-            // (SubAgent-kind) ones for the team template.
-            const auto allTargets = providerAssignmentService_->listTargets();
-            std::vector<std::string> specialistTargetIds;
-            for (const auto& target : allTargets) {
-                if (target.kind == ProviderAssignmentTargetKind::SubAgent) {
-                    specialistTargetIds.push_back(target.targetId);
-                }
-            }
-
-            struct PlannedAssignment {
-                std::string targetId;
-                ProviderAssignmentTargetKind kind;
-                std::string providerId;
-            };
-            std::vector<PlannedAssignment> plan;
-
-            // Default Role targets in listTargets() order: planner, architect, auditor.
-            // NOTE: parens around std::max/std::min are deliberate — Windows
-            // headers can define max/min as macros, so we follow the
-            // codebase convention (see MasterControlRuntime.cpp:4145 etc.).
-            static constexpr const char* kDefaultRoleTargets[] = { "planner", "architect", "auditor" };
-            const int providerCount = (std::max)(1, templateIt->requiresProviders);
-            for (int i = 0; i < providerCount && i < 3; ++i) {
-                const size_t providerIdx = (std::min)(
-                    static_cast<size_t>(i),
-                    readyProviderIds.size() - 1);
-                const auto& providerId = readyProviderIds[providerIdx];
-                plan.push_back({
-                    std::string(kDefaultRoleTargets[i]),
-                    ProviderAssignmentTargetKind::Role,
-                    providerId
-                });
-            }
-
-            // Specialist assignments: round-robin across ready providers.
-            for (int i = 0;
-                 i < templateIt->requiresSpecialists
-                 && static_cast<size_t>(i) < specialistTargetIds.size();
-                 ++i) {
-                const auto& providerId = readyProviderIds[
-                    static_cast<size_t>(i) % readyProviderIds.size()];
-                plan.push_back({
-                    specialistTargetIds[i],
-                    ProviderAssignmentTargetKind::SubAgent,
-                    providerId
-                });
-            }
-
-            std::vector<std::string> appliedTargetIds;
-            std::vector<std::string> failedTargets;
-            for (const auto& planned : plan) {
-                ProviderAssignment assignment;
-                assignment.providerId = planned.providerId;
-                assignment.targetId = planned.targetId;
-                assignment.kind = planned.kind;
-                assignment.updatedAtUtc = timestampNowUtc();
-                const auto assignResult = providerAssignmentService_->upsertAssignment(assignment);
-                if (assignResult.succeeded) {
-                    appliedTargetIds.push_back(planned.targetId);
-                } else {
-                    failedTargets.push_back(planned.targetId + ": " + assignResult.message);
-                }
-            }
-
+            // Starter workflow instantiation was provider-driven. After the
+            // provider stack was removed per ADR-001 the template catalog is
+            // empty. A replacement LAN-client workflow experience lands in a
+            // later remediation phase.
             StarterWorkflowInstantiateResult response;
-            response.succeeded = !appliedTargetIds.empty() && failedTargets.empty();
-            response.workflowId = templateIt->id + ":"
-                + std::to_string(appliedTargetIds.size()) + "-targets";
-            if (response.succeeded) {
-                response.message = "Instantiated starter workflow '" + templateIt->displayName
-                    + "' (" + std::to_string(appliedTargetIds.size()) + " assignment(s) applied).";
-            } else if (!appliedTargetIds.empty()) {
-                response.message = "Partial instantiation: "
-                    + std::to_string(appliedTargetIds.size()) + " applied, "
-                    + std::to_string(failedTargets.size()) + " failed ("
-                    + failedTargets.front() + ").";
-            } else {
-                response.message = failedTargets.empty()
-                    ? "No assignments could be applied for this template."
-                    : failedTargets.front();
-            }
-            return jsonResponse(response);
+            response.succeeded = false;
+            response.message = "Starter workflow templates are temporarily unavailable "
+                               "while the LAN client control plane rebuild is in progress.";
+            return jsonResponse(response, 503);
         }
         if (request.method == "GET" && request.path == "/api/platform-services") {
             return jsonResponse(nlohmann::json{
@@ -11266,114 +9062,6 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const auto result = adminApiService_->applyConfigurationJson(request.body, confirmUnsafeChanges);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
-        if (request.method == "POST" && request.path == "/api/providers") {
-            const auto result = adminApiService_->upsertProviderJson(request.body);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
-        }
-        if (request.method == "POST" && request.path == "/api/providers/credentials") {
-            const auto result = adminApiService_->upsertProviderCredentialsJson(request.body);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
-        }
-        if (request.method == "POST" && request.path == "/api/providers/auto-connect") {
-            const auto result = adminApiService_->autoConnectProviderJson(request.body);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
-        }
-        if (request.method == "POST" && request.path == "/api/providers/signin/register") {
-            if (!providerCliSignInService_) {
-                return jsonResponse(nlohmann::json{
-                    { "succeeded", false },
-                    { "message", "Sign-in service is not ready." }
-                }, 500);
-            }
-            nlohmann::json body = nlohmann::json::object();
-            try {
-                if (!request.body.empty()) {
-                    body = nlohmann::json::parse(request.body);
-                }
-            } catch (...) {
-                return jsonResponse(nlohmann::json{
-                    { "succeeded", false },
-                    { "message", "Invalid JSON body." }
-                }, 400);
-            }
-            const std::string bridge = body.value("bridge", std::string{});
-            const std::string providerId = body.value("providerId", std::string{});
-            const auto result = providerCliSignInService_->registerAuthenticatedProvider(bridge, providerId);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
-        }
-        // Account-only sign-in wizard: spawn `claude login` or `codex login`
-        // in a new console, let the user complete OAuth in their browser,
-        // then poll for completion. On success a ProviderConnection is
-        // registered that routes execution through the CLI — no API key
-        // ever needs to be stored by the server.
-        if (request.method == "POST" && request.path == "/api/providers/signin/start") {
-            if (!providerCliSignInService_) {
-                return jsonResponse(nlohmann::json{
-                    { "succeeded", false },
-                    { "message", "Sign-in service is not ready." }
-                }, 500);
-            }
-            nlohmann::json body = nlohmann::json::object();
-            try {
-                if (!request.body.empty()) {
-                    body = nlohmann::json::parse(request.body);
-                }
-            } catch (...) {
-                return jsonResponse(nlohmann::json{
-                    { "succeeded", false },
-                    { "message", "Invalid JSON body." }
-                }, 400);
-            }
-            const std::string bridge = body.value("bridge", std::string{});
-            const std::string providerId = body.value("providerId", std::string{});
-            const auto result = providerCliSignInService_->startSession(bridge, providerId);
-            const int status = result.value("succeeded", false) ? 200 : 400;
-            return jsonResponse(result, status);
-        }
-        if (request.method == "GET" && startsWith(request.path, "/api/providers/signin/status")) {
-            if (!providerCliSignInService_) {
-                return jsonResponse(nlohmann::json{
-                    { "succeeded", false },
-                    { "message", "Sign-in service is not ready." }
-                }, 500);
-            }
-            // sessionId is passed as a query string parameter: ?sessionId=<id>
-            std::string sessionId;
-            const auto qmark = request.path.find('?');
-            if (qmark != std::string::npos) {
-                const auto query = request.path.substr(qmark + 1);
-                size_t cursor = 0;
-                while (cursor < query.size()) {
-                    const auto amp = query.find('&', cursor);
-                    const auto piece = query.substr(cursor, amp == std::string::npos ? std::string::npos : amp - cursor);
-                    const auto eq = piece.find('=');
-                    if (eq != std::string::npos) {
-                        const auto key = piece.substr(0, eq);
-                        const auto value = piece.substr(eq + 1);
-                        if (key == "sessionId") {
-                            sessionId = value;
-                            break;
-                        }
-                    }
-                    if (amp == std::string::npos) break;
-                    cursor = amp + 1;
-                }
-            }
-            if (sessionId.empty()) {
-                return jsonResponse(nlohmann::json{
-                    { "succeeded", false },
-                    { "message", "Missing sessionId parameter." }
-                }, 400);
-            }
-            const auto result = providerCliSignInService_->querySession(sessionId);
-            return jsonResponse(result, 200);
-        }
-        if (request.method == "GET" && request.path == "/api/providers/signin/installed") {
-            if (!providerCliSignInService_) {
-                return jsonResponse(nlohmann::json::array(), 200);
-            }
-            return jsonResponse(providerCliSignInService_->detectInstalled(), 200);
-        }
         if (request.method == "POST" && request.path == "/api/platform-services/apple-hosts") {
             const auto result = adminApiService_->upsertAppleRemoteHostJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
@@ -11383,42 +9071,373 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         if (request.method == "POST" && request.path == "/api/runtime/mcp-servers") {
+            // Distinguish create-vs-modify so the right privilege applies.
+            // Autonomous-mode clients bypass canCreateMcpServers per ADR-001.
+            std::string requestedId;
+            try {
+                if (!request.body.empty()) {
+                    requestedId = nlohmann::json::parse(request.body).value("id", std::string{});
+                }
+            } catch (...) {
+                return jsonResponse(OperationResult{ false, false, "Invalid JSON body." }, 400);
+            }
+            const auto endpoints = inventoryService_->listEndpoints();
+            const bool exists = !requestedId.empty() && std::any_of(
+                endpoints.begin(),
+                endpoints.end(),
+                [&requestedId](const RuntimeEndpoint& e) {
+                    return e.id == requestedId && e.kind == EndpointKind::MCPServer;
+                });
+            if (exists) {
+                if (auto deny = requirePrivilege(context.privileges.canModifyMcpServers,
+                                                 "canModifyMcpServers")) {
+                    return *deny;
+                }
+                if (auto governance = enforceGovernance(GovernanceActionKind::McpServerModify, requestedId)) {
+                    return *governance;
+                }
+            } else {
+                const bool granted = context.privileges.canCreateMcpServers || context.autonomousMode;
+                if (auto deny = requirePrivilege(granted, "canCreateMcpServers")) {
+                    return *deny;
+                }
+                // Autonomous-mode clients bypass CLU approval for create
+                // per ADR-001's locked autonomous-mode semantics. CLU still
+                // runs to honor posture-blocked enforcement.
+                if (!context.autonomousMode) {
+                    if (auto governance = enforceGovernance(GovernanceActionKind::McpServerCreate, requestedId)) {
+                        return *governance;
+                    }
+                }
+            }
             const auto result = adminApiService_->upsertMcpServerJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         if (request.method == "POST" && request.path == "/api/runtime/mcp-servers/remove") {
+            if (auto deny = requirePrivilege(context.privileges.canRemoveMcpServers,
+                                             "canRemoveMcpServers")) {
+                return *deny;
+            }
+            std::string removalTarget;
+            try {
+                if (!request.body.empty()) {
+                    removalTarget = nlohmann::json::parse(request.body).value("mcpServerId", std::string{});
+                }
+            } catch (...) {}
+            if (auto governance = enforceGovernance(GovernanceActionKind::McpServerRemove, removalTarget)) {
+                return *governance;
+            }
             const auto result = adminApiService_->removeMcpServerJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         if (request.method == "POST" && request.path == "/api/runtime/subagents") {
+            std::string requestedId;
+            try {
+                if (!request.body.empty()) {
+                    requestedId = nlohmann::json::parse(request.body).value("id", std::string{});
+                }
+            } catch (...) {
+                return jsonResponse(OperationResult{ false, false, "Invalid JSON body." }, 400);
+            }
+            const auto endpoints = inventoryService_->listEndpoints();
+            const bool exists = !requestedId.empty() && std::any_of(
+                endpoints.begin(),
+                endpoints.end(),
+                [&requestedId](const RuntimeEndpoint& e) {
+                    return e.id == requestedId && e.kind == EndpointKind::SubAgent;
+                });
+            if (exists) {
+                if (auto deny = requirePrivilege(context.privileges.canModifySubAgents,
+                                                 "canModifySubAgents")) {
+                    return *deny;
+                }
+                if (auto governance = enforceGovernance(GovernanceActionKind::SubAgentModify, requestedId)) {
+                    return *governance;
+                }
+            } else {
+                const bool granted = context.privileges.canCreateSubAgents || context.autonomousMode;
+                if (auto deny = requirePrivilege(granted, "canCreateSubAgents")) {
+                    return *deny;
+                }
+                if (!context.autonomousMode) {
+                    if (auto governance = enforceGovernance(GovernanceActionKind::SubAgentCreate, requestedId)) {
+                        return *governance;
+                    }
+                }
+            }
             const auto result = adminApiService_->upsertSubAgentJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         if (request.method == "POST" && request.path == "/api/runtime/subagents/remove") {
+            if (auto deny = requirePrivilege(context.privileges.canRemoveSubAgents,
+                                             "canRemoveSubAgents")) {
+                return *deny;
+            }
+            std::string removalTarget;
+            try {
+                if (!request.body.empty()) {
+                    removalTarget = nlohmann::json::parse(request.body).value("subAgentId", std::string{});
+                }
+            } catch (...) {}
+            if (auto governance = enforceGovernance(GovernanceActionKind::SubAgentRemove, removalTarget)) {
+                return *governance;
+            }
             const auto result = adminApiService_->removeSubAgentJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
-        if (request.method == "POST" && request.path == "/api/providers/groups") {
+        if (request.method == "POST" && request.path == "/api/runtime/subagent-groups") {
+            // Sub-agent groups are organizational metadata over the existing
+            // sub-agent roster; gate them on canModifySubAgents since they
+            // affect how sub-agents are addressed in execution.
+            if (auto deny = requirePrivilege(context.privileges.canModifySubAgents,
+                                             "canModifySubAgents")) {
+                return *deny;
+            }
             const auto result = adminApiService_->upsertSubAgentGroupJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
-        if (request.method == "POST" && request.path == "/api/providers/groups/remove") {
+        if (request.method == "POST" && request.path == "/api/runtime/subagent-groups/remove") {
+            if (auto deny = requirePrivilege(context.privileges.canModifySubAgents,
+                                             "canModifySubAgents")) {
+                return *deny;
+            }
             const auto result = adminApiService_->removeSubAgentGroupJson(request.body);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
-        if (request.method == "POST" && request.path == "/api/providers/assignments") {
-            const auto result = adminApiService_->upsertProviderAssignmentJson(request.body);
+        // -------------------------------------------------------------------
+        // LAN Client Access (Phase 3 of ADR-001)
+        // -------------------------------------------------------------------
+        if (request.method == "GET" && request.path == "/api/clients") {
+            return jsonResponse(lanClientAccessService_->listClients());
+        }
+        if (request.method == "GET"
+            && startsWith(request.path, "/api/clients/")
+            && endsWith(request.path, "/config")) {
+            const auto prefix = std::string("/api/clients/");
+            const auto suffix = std::string("/config");
+            const auto clientId = request.path.substr(
+                prefix.size(),
+                request.path.size() - prefix.size() - suffix.size());
+            const auto client = lanClientAccessService_->getClient(clientId);
+            if (!client.has_value()) {
+                return HttpResponse{ 404, "application/json", "{\"message\":\"LAN client not found.\"}" };
+            }
+            const auto bundle = composeLanClientConfigBundle(*client, configurationService_->current());
+            return jsonResponse(bundle);
+        }
+        if (request.method == "GET" && startsWith(request.path, "/api/clients/")) {
+            const auto suffix = request.path.substr(std::string("/api/clients/").size());
+            // Reject sub-resources here so they don't accidentally match the
+            // single-client lookup. Only the bare /api/clients/{id} form is
+            // a GET; disable/enable/delete have their own POST/DELETE methods.
+            if (suffix.empty() || suffix.find('/') != std::string::npos) {
+                return HttpResponse{ 404, "application/json", "{\"message\":\"Not found\"}" };
+            }
+            const auto client = lanClientAccessService_->getClient(suffix);
+            if (!client.has_value()) {
+                return HttpResponse{ 404, "application/json", "{\"message\":\"LAN client not found.\"}" };
+            }
+            return jsonResponse(*client);
+        }
+        if (request.method == "POST" && request.path == "/api/clients") {
+            if (auto deny = requirePrivilege(context.privileges.canManageClients,
+                                             "canManageClients")) {
+                return *deny;
+            }
+            std::string newClientId;
+            try {
+                if (!request.body.empty()) {
+                    newClientId = nlohmann::json::parse(request.body).value("clientId", std::string{});
+                }
+            } catch (...) {}
+            if (auto governance = enforceGovernance(GovernanceActionKind::ClientRegister, newClientId)) {
+                return *governance;
+            }
+            try {
+                const auto client = nlohmann::json::parse(request.body).get<LanClient>();
+                const auto result = lanClientAccessService_->upsertClient(client);
+                return jsonResponse(result, result.succeeded ? 200 : 400);
+            } catch (const std::exception& parseError) {
+                return jsonResponse(
+                    OperationResult{ false, false, std::string("Invalid LAN client payload: ") + parseError.what() },
+                    400);
+            }
+        }
+        if (request.method == "POST"
+            && startsWith(request.path, "/api/clients/")
+            && endsWith(request.path, "/disable")) {
+            if (auto deny = requirePrivilege(context.privileges.canManageClients,
+                                             "canManageClients")) {
+                return *deny;
+            }
+            const auto prefix = std::string("/api/clients/");
+            const auto suffix = std::string("/disable");
+            const auto clientId = request.path.substr(
+                prefix.size(),
+                request.path.size() - prefix.size() - suffix.size());
+            if (auto governance = enforceGovernance(GovernanceActionKind::ClientRevoke, clientId)) {
+                return *governance;
+            }
+            const auto result = lanClientAccessService_->disableClient(clientId);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
-        if (request.method == "POST" && request.path == "/api/providers/execute") {
-            const auto result = adminApiService_->executeProviderTaskJson(request.body);
-            return jsonResponse(result, result.status == ProviderExecutionStatus::Succeeded ? 200 : 400);
+        if (request.method == "POST"
+            && startsWith(request.path, "/api/clients/")
+            && endsWith(request.path, "/enable")) {
+            if (auto deny = requirePrivilege(context.privileges.canManageClients,
+                                             "canManageClients")) {
+                return *deny;
+            }
+            const auto prefix = std::string("/api/clients/");
+            const auto suffix = std::string("/enable");
+            const auto clientId = request.path.substr(
+                prefix.size(),
+                request.path.size() - prefix.size() - suffix.size());
+            if (auto governance = enforceGovernance(GovernanceActionKind::ClientRegister, clientId)) {
+                return *governance;
+            }
+            const auto result = lanClientAccessService_->enableClient(clientId);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
+        if (request.method == "POST"
+            && startsWith(request.path, "/api/clients/")
+            && endsWith(request.path, "/privileges")) {
+            if (auto deny = requirePrivilege(context.privileges.canManageClients,
+                                             "canManageClients")) {
+                return *deny;
+            }
+            const auto prefix = std::string("/api/clients/");
+            const auto suffix = std::string("/privileges");
+            const auto clientId = request.path.substr(
+                prefix.size(),
+                request.path.size() - prefix.size() - suffix.size());
+            if (auto governance = enforceGovernance(GovernanceActionKind::ClientPrivilegeChange, clientId)) {
+                return *governance;
+            }
+            try {
+                const auto privileges = nlohmann::json::parse(request.body).get<LanClientPrivileges>();
+                const auto result = lanClientAccessService_->setPrivileges(clientId, privileges);
+                return jsonResponse(result, result.succeeded ? 200 : 400);
+            } catch (const std::exception& parseError) {
+                return jsonResponse(
+                    OperationResult{ false, false, std::string("Invalid privileges payload: ") + parseError.what() },
+                    400);
+            }
+        }
+        if (request.method == "POST"
+            && startsWith(request.path, "/api/clients/")
+            && endsWith(request.path, "/autonomous-mode")) {
+            if (auto deny = requirePrivilege(context.privileges.canManageClients,
+                                             "canManageClients")) {
+                return *deny;
+            }
+            const auto prefix = std::string("/api/clients/");
+            const auto suffix = std::string("/autonomous-mode");
+            const auto clientId = request.path.substr(
+                prefix.size(),
+                request.path.size() - prefix.size() - suffix.size());
+            try {
+                const auto payload = nlohmann::json::parse(request.body);
+                const bool enabled = payload.value("enabled", false);
+                // Phase 7: CLU governs the autonomous-mode flip. Source
+                // tag tells CLU whether this is an enable (gated by
+                // posture + global aiAutonomyEnabled) or a disable (always
+                // permitted).
+                if (auto governance = enforceGovernance(
+                        GovernanceActionKind::ClientAutonomousModeChange,
+                        clientId,
+                        enabled ? std::string("enable") : std::string("disable"))) {
+                    return *governance;
+                }
+                const auto result = lanClientAccessService_->setAutonomousMode(clientId, enabled);
+                return jsonResponse(result, result.succeeded ? 200 : 400);
+            } catch (const std::exception& parseError) {
+                return jsonResponse(
+                    OperationResult{ false, false, std::string("Invalid autonomous-mode payload: ") + parseError.what() },
+                    400);
+            }
+        }
+        if (request.method == "DELETE" && startsWith(request.path, "/api/clients/")) {
+            if (auto deny = requirePrivilege(context.privileges.canManageClients,
+                                             "canManageClients")) {
+                return *deny;
+            }
+            const auto clientId = request.path.substr(std::string("/api/clients/").size());
+            if (clientId.empty() || clientId.find('/') != std::string::npos) {
+                return HttpResponse{ 404, "application/json", "{\"message\":\"Not found\"}" };
+            }
+            if (auto governance = enforceGovernance(GovernanceActionKind::ClientRevoke, clientId)) {
+                return *governance;
+            }
+            const auto result = lanClientAccessService_->removeClient(clientId);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         if (request.method == "POST" && request.path == "/api/forsetti/modules/state") {
+            if (auto deny = requirePrivilege(context.privileges.canManageModules,
+                                             "canManageModules")) {
+                return *deny;
+            }
             const auto payload = request.body.empty() ? nlohmann::json::object() : nlohmann::json::parse(request.body);
-            const auto result = manageForsettiModule(
-                payload.value("moduleId", std::string{}),
-                payload.value("action", std::string{}));
+            const auto moduleId = payload.value("moduleId", std::string{});
+            const auto action = payload.value("action", std::string{});
+            const auto governanceAction = (action == "disable" || action == "remove")
+                ? GovernanceActionKind::ModuleDisable
+                : GovernanceActionKind::ModuleEnable;
+            if (auto governance = enforceGovernance(governanceAction, moduleId)) {
+                return *governance;
+            }
+            const auto result = manageForsettiModule(moduleId, action);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
+        // -------------------------------------------------------------------
+        // Approval queue (Phase 7 of ADR-001)
+        // -------------------------------------------------------------------
+        if (request.method == "GET" && request.path == "/api/clu/approvals") {
+            if (!governanceApprovalQueueService_) {
+                return jsonResponse(nlohmann::json::array(), 200);
+            }
+            return jsonResponse(governanceApprovalQueueService_->listAll());
+        }
+        if (request.method == "POST"
+            && startsWith(request.path, "/api/clu/approvals/")
+            && endsWith(request.path, "/approve")) {
+            if (auto deny = requirePrivilege(context.privileges.canChangeGovernancePolicy,
+                                             "canChangeGovernancePolicy")) {
+                return *deny;
+            }
+            if (!governanceApprovalQueueService_) {
+                return jsonResponse(OperationResult{ false, false, "Approval queue is not ready." }, 500);
+            }
+            const auto prefix = std::string("/api/clu/approvals/");
+            const auto suffix = std::string("/approve");
+            const auto deferredId = request.path.substr(
+                prefix.size(),
+                request.path.size() - prefix.size() - suffix.size());
+            const auto result = governanceApprovalQueueService_->approve(deferredId, context.actor);
+            return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
+        if (request.method == "POST"
+            && startsWith(request.path, "/api/clu/approvals/")
+            && endsWith(request.path, "/reject")) {
+            if (auto deny = requirePrivilege(context.privileges.canChangeGovernancePolicy,
+                                             "canChangeGovernancePolicy")) {
+                return *deny;
+            }
+            if (!governanceApprovalQueueService_) {
+                return jsonResponse(OperationResult{ false, false, "Approval queue is not ready." }, 500);
+            }
+            const auto prefix = std::string("/api/clu/approvals/");
+            const auto suffix = std::string("/reject");
+            const auto deferredId = request.path.substr(
+                prefix.size(),
+                request.path.size() - prefix.size() - suffix.size());
+            std::string reason;
+            try {
+                if (!request.body.empty()) {
+                    reason = nlohmann::json::parse(request.body).value("reason", std::string{});
+                }
+            } catch (...) {}
+            const auto result = governanceApprovalQueueService_->reject(deferredId, context.actor, reason);
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         if (request.method == "POST" && request.path == "/api/clu/execute") {
@@ -11537,18 +9556,6 @@ OperationResult MasterControlApplication::applyConfigurationJson(const std::stri
     return impl_->applyConfigurationJson(requestBody, confirmUnsafeChanges);
 }
 
-OperationResult MasterControlApplication::upsertProviderJson(const std::string& requestBody) {
-    return impl_->upsertProviderJson(requestBody);
-}
-
-OperationResult MasterControlApplication::upsertProviderCredentialsJson(const std::string& requestBody) {
-    return impl_->upsertProviderCredentialsJson(requestBody);
-}
-
-AutoConnectResult MasterControlApplication::autoConnectProviderJson(const std::string& requestBody) {
-    return impl_->autoConnectProviderJson(requestBody);
-}
-
 OperationResult MasterControlApplication::upsertAppleRemoteHostJson(const std::string& requestBody) {
     return impl_->upsertAppleRemoteHostJson(requestBody);
 }
@@ -11579,14 +9586,6 @@ OperationResult MasterControlApplication::upsertSubAgentGroupJson(const std::str
 
 OperationResult MasterControlApplication::removeSubAgentGroupJson(const std::string& requestBody) {
     return impl_->removeSubAgentGroupJson(requestBody);
-}
-
-OperationResult MasterControlApplication::upsertProviderAssignmentJson(const std::string& requestBody) {
-    return impl_->upsertProviderAssignmentJson(requestBody);
-}
-
-ProviderExecutionRecord MasterControlApplication::executeProviderTaskJson(const std::string& requestBody) {
-    return impl_->executeProviderTaskJson(requestBody);
 }
 
 OperationResult MasterControlApplication::installPackageJson(const std::string& requestBody) {

@@ -1,121 +1,107 @@
 {
   "unitName": "Command Logic Unit",
-  "doctrine": "Governance is not assumed. CLU keeps agentic operations inside declared scope, exposes operator-visible policy, and reports when the runtime posture drifts away from the intended command model.",
+  "doctrine": "Governance is not assumed. CLU enforces the Forsetti Framework for Agentic Coding inside a LAN-shared MCP and sub-agent fabric: contract before action, scope is binding, truthfulness is mandatory, governance overrides convenience, no meaningful autonomous action without declared scope.",
   "documents": [
     {
       "id": "clu-constitution",
       "title": "CLU Constitution",
       "category": "constitution",
-      "summary": "Defines the non-negotiable operating principles for agentic work inside Master Control Orchestration Server.",
-      "content": "Contract before action. Scope is binding. Truthfulness is mandatory. Governance overrides convenience. Documentation is part of delivery. Compliance must be measurable. Release and operational integrity are non-negotiable."
+      "summary": "Non-negotiable operating principles for agentic work on a trusted LAN.",
+      "content": "Contract before action. Scope is binding. Truthfulness is mandatory. Governance overrides convenience. Documentation is part of delivery. Compliance must be measurable. Release and operational integrity are non-negotiable. Identity is by clientId; privilege is by record; autonomy is by declared scope."
+    },
+    {
+      "id": "clu-shared-fabric",
+      "title": "Shared Fabric Policy",
+      "category": "policy",
+      "summary": "All MCP servers and sub-agents are universally usable; only mutation is privileged.",
+      "content": "Use of any registered MCP server or sub-agent is open to every authenticated LAN client. Creation, modification, and removal of those resources are gated by the per-client privilege flags. CLU governs the mutations; CLU does not govern read or invoke."
     },
     {
       "id": "clu-change-control",
       "title": "Change Control Policy",
       "category": "policy",
-      "summary": "High-impact runtime changes must be deliberate, attributable, and recoverable.",
-      "content": "CLU expects meaningful runtime changes to be operator-visible, attributable to an approved actor, and recoverable through configuration history, exports, or reinstall paths."
+      "summary": "Privileged mutations are deliberate, attributable, and recoverable.",
+      "content": "Every privileged mutation passes through CLU enforceAction with the requesting actor. Decisions are logged in the activity ring. Mutations whose outcome is RequiresOperatorApproval are staged in the approval queue with the original payload preserved."
     },
     {
-      "id": "clu-compliance",
-      "title": "Compliance Policy",
+      "id": "clu-autonomy",
+      "title": "Autonomous Mode Doctrine",
       "category": "policy",
-      "summary": "A change is compliant only when required conditions and evidence are present.",
-      "content": "Blocking violations include out-of-scope autonomy, unsafe LAN posture without explicit intent, hidden failures, missing operator confirmation for dangerous security changes, and contradictions between runtime state and declared policy."
+      "summary": "Autonomous clients gain unlimited create authority on the shared fabric only.",
+      "content": "When LanClient.autonomousMode is true the client may create MCP servers and sub-agents without holding the matching canCreate privilege. All other actions remain privilege-gated. Autonomous mode does not waive the global aiAutonomyEnabled flag - both must be set."
     },
     {
-      "id": "clu-documentation",
-      "title": "Documentation Policy",
+      "id": "clu-policy-edits",
+      "title": "Governance Policy Doctrine",
       "category": "policy",
-      "summary": "Operational understanding is part of delivery, not a postscript.",
-      "content": "If runtime behavior, agent authority, import/export contracts, or security posture changes, CLU expects those changes to remain explainable through surfaced policies, exports, and current governance state."
-    },
-    {
-      "id": "clu-release",
-      "title": "Release Integrity Policy",
-      "category": "policy",
-      "summary": "Operational releases must preserve traceability and impact awareness.",
-      "content": "Installer, provider, import, and security changes should preserve version, provenance, and posture visibility so operators can understand what changed and why."
+      "summary": "CLU profile edits require operator approval.",
+      "content": "Edits to the governance profile itself are always staged for operator approval (RequiresOperatorApproval). Approval is recorded with the operator actor identity. This prevents silent drift of the rules CLU enforces."
     },
     {
       "id": "clu-vision",
       "title": "CLU Vision",
       "category": "vision",
-      "summary": "Provide a command-grade governance lane for local MCP and sub-agent orchestration.",
-      "content": "CLU exists so Master Control Orchestration Server can host AI-enabled orchestration without collapsing into unchecked autonomy, undocumented drift, or opaque security tradeoffs."
+      "summary": "Forsetti-aligned governance for the MCOS LAN client control plane.",
+      "content": "CLU exists so multiple AI coding clients can share an MCP and sub-agent fabric on a trusted LAN without collapsing into unchecked autonomy, undocumented drift, or opaque privilege escalation."
     }
   ],
   "roles": [
-    {
-      "roleId": "architect",
-      "name": "Architect",
-      "authorityLevel": "planning",
-      "responsibilities": [
-        "Classify tasks and operational changes",
-        "Define allowed scope and forbidden scope",
-        "Identify documentation and release impact",
-        "Produce a task contract before execution"
-      ],
-      "forbiddenActions": [
-        "Expand scope without explicit approval"
-      ],
-      "requiredOutputs": [
-        "Task contract",
-        "Scope definition",
-        "Change classification"
-      ]
-    },
-    {
-      "roleId": "builder",
-      "name": "Builder",
-      "authorityLevel": "execution",
-      "responsibilities": [
-        "Implement authorized runtime and configuration changes",
-        "Modify only approved surfaces and modules",
-        "Report what changed and any known issues"
-      ],
-      "forbiddenActions": [
-        "Edit unrelated areas",
-        "Hide partial or failed results"
-      ],
-      "requiredOutputs": [
-        "Artifact changes",
-        "Change summary",
-        "Scope confirmation"
-      ]
-    },
-    {
-      "roleId": "validator",
-      "name": "Validator",
-      "authorityLevel": "verification",
-      "responsibilities": [
-        "Review scope compliance",
-        "Review documentation and release obligations",
-        "Block incomplete or unsafe delivery"
-      ],
-      "forbiddenActions": [
-        "Approve unresolved blocking failures"
-      ],
-      "requiredOutputs": [
-        "Compliance report",
-        "Validation status"
-      ]
-    },
     {
       "roleId": "operator",
       "name": "Operator",
       "authorityLevel": "runtime",
       "responsibilities": [
-        "Approve high-risk runtime posture changes",
-        "Own the security and autonomy envelope",
-        "Review CLU findings and recommended actions"
+        "Register and revoke LAN clients",
+        "Author and adjust per-client privilege profiles",
+        "Approve or reject deferred governance actions",
+        "Own the global aiAutonomyEnabled posture"
       ],
       "forbiddenActions": [
-        "Delegate dangerous changes without visibility"
+        "Approve actions whose actor cannot be identified",
+        "Edit the governance profile without going through the approval queue"
       ],
       "requiredOutputs": [
         "Approval decision",
         "Operational acknowledgement"
+      ]
+    },
+    {
+      "roleId": "lan-client",
+      "name": "LAN Client",
+      "authorityLevel": "execution",
+      "responsibilities": [
+        "Identify with X-MCOS-Client-Id on every request",
+        "Use only privileges declared on the client record",
+        "Heartbeat to remain in the live roster",
+        "Pre-check destructive mutations against the governance decision endpoint"
+      ],
+      "forbiddenActions": [
+        "Attempt mutations beyond declared privileges",
+        "Spoof another client's id",
+        "Hide failed mutations from the activity stream"
+      ],
+      "requiredOutputs": [
+        "Privilege-compliant mutations",
+        "Heartbeat checkpoints"
+      ]
+    },
+    {
+      "roleId": "mcos-runtime",
+      "name": "MCOS Runtime",
+      "authorityLevel": "enforcement",
+      "responsibilities": [
+        "Resolve identity, apply privilege gates, run CLU enforceAction",
+        "Stage RequiresOperatorApproval mutations in the approval queue",
+        "Emit activity events for every privileged action and CLU decision",
+        "Refuse identified-but-disabled clients at the door"
+      ],
+      "forbiddenActions": [
+        "Bypass enforceAction on privileged mutations",
+        "Apply a deferred mutation without an approval decision"
+      ],
+      "requiredOutputs": [
+        "Authoritative decisions",
+        "Auditable activity stream"
       ]
     }
   ],
@@ -125,48 +111,77 @@
       "title": "No meaningful autonomous action without declared scope",
       "severity": "critical",
       "failureConsequence": "block_operation",
-      "description": "Agent autonomy should remain disabled unless the operator has explicitly enabled it for the dashboard."
+      "description": "A client may not enable autonomousMode unless aiAutonomyEnabled is true at the global configuration level."
     },
     {
       "ruleId": "CLU-C002",
       "title": "No unsafe open-LAN posture without explicit operator intent",
       "severity": "critical",
       "failureConsequence": "block_operation",
-      "description": "Security protocols should not be disabled while the browser surface remains open on the LAN."
+      "description": "Security protocols should not be disabled while the browser admin surface remains reachable on the LAN."
     },
     {
       "ruleId": "CLU-C003",
       "title": "Troubleshooting bypass must remain visible and temporary",
       "severity": "high",
       "failureConsequence": "warn_operator",
-      "description": "Bypass posture is allowed for troubleshooting, but CLU should continue to surface it as a risk until it is turned off."
-    },
-    {
-      "ruleId": "CLU-C004",
-      "title": "Provider authority must align with dashboard autonomy",
-      "severity": "high",
-      "failureConsequence": "warn_operator",
-      "description": "Provider-level autonomous control settings should not silently conflict with the global autonomy posture."
+      "description": "Bypass posture is allowed for diagnostics. CLU surfaces it as a risk until it is turned off."
     },
     {
       "ruleId": "CLU-C005",
       "title": "Imported software provenance must remain visible",
       "severity": "high",
       "failureConsequence": "warn_operator",
-      "description": "Trusted versus untrusted install history should remain visible after package, repo, or zip onboarding."
+      "description": "Trusted versus untrusted install history must remain visible after package, repo, or zip onboarding."
     },
     {
       "ruleId": "CLU-C006",
       "title": "Gateway and agent handoff material must remain exportable",
       "severity": "medium",
       "failureConsequence": "warn_operator",
-      "description": "Operators should be able to export the current gateway and agent connection material from the running system."
+      "description": "Operators must be able to export current gateway and LAN-client config bundles from the running system."
+    },
+    {
+      "ruleId": "CLU-C008",
+      "title": "Managed Resource Envelope",
+      "severity": "high",
+      "failureConsequence": "block_operation",
+      "description": "CLU preflights managed install actions against the configured CPU, memory, bandwidth, and storage envelope before launch."
+    },
+    {
+      "ruleId": "CLU-C009",
+      "title": "Autonomous mode requires global autonomy",
+      "severity": "high",
+      "failureConsequence": "block_operation",
+      "description": "Enabling client autonomous mode is refused unless the global aiAutonomyEnabled flag is true."
+    },
+    {
+      "ruleId": "CLU-C010",
+      "title": "Governance profile edits require operator approval",
+      "severity": "high",
+      "failureConsequence": "require_operator_approval",
+      "description": "Direct edits to the CLU governance profile are deferred to the approval queue. Any change must be approved by an operator before it takes effect."
+    },
+    {
+      "ruleId": "CLU-S001",
+      "title": "Shared fabric is universal for use",
+      "severity": "medium",
+      "failureConsequence": "informational",
+      "description": "Every authenticated LAN client may list and invoke any MCP server or sub-agent in the catalog. This rule is non-negotiable and not subject to per-client gating."
+    },
+    {
+      "ruleId": "CLU-S002",
+      "title": "Mutations attributed to actor",
+      "severity": "high",
+      "failureConsequence": "block_operation",
+      "description": "Privileged mutations carry the resolving actor (clientId or 'operator') into the activity ring and the deferred-action record. Untraceable mutations are refused."
     }
   ],
   "operatorChecklist": [
-    "Confirm the security posture before enabling AI autonomy.",
-    "Review trusted hosts before allowing unattended remote imports.",
+    "Confirm aiAutonomyEnabled before granting any client autonomous mode.",
+    "Review the approval queue daily and decide deferred actions promptly.",
     "Treat troubleshooting bypass as temporary and reversible.",
-    "Verify exported gateway and agent profiles after provider or port changes."
+    "Audit per-client privileges after onboarding new LAN clients.",
+    "Verify exported LAN-client config bundles after host or port changes."
   ]
 }

@@ -135,9 +135,6 @@
       <DependentUpon>OverviewSectionControl.xaml</DependentUpon>
     </ClInclude>
     <ClInclude Include="pch.h" />
-    <ClInclude Include="ProvidersSectionControl.xaml.h">
-      <DependentUpon>ProvidersSectionControl.xaml</DependentUpon>
-    </ClInclude>
     <ClInclude Include="RuntimeSectionControl.xaml.h">
       <DependentUpon>RuntimeSectionControl.xaml</DependentUpon>
     </ClInclude>
@@ -161,7 +158,6 @@
     <Page Include="ImportsSectionControl.xaml" />
     <Page Include="MainWindow.xaml" />
     <Page Include="OverviewSectionControl.xaml" />
-    <Page Include="ProvidersSectionControl.xaml" />
     <Page Include="RuntimeSectionControl.xaml" />
     <Page Include="SecuritySectionControl.xaml" />
     <Page Include="SettingsSectionControl.xaml" />
@@ -188,9 +184,6 @@
     </ClCompile>
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
-    </ClCompile>
-    <ClCompile Include="ProvidersSectionControl.xaml.cpp">
-      <DependentUpon>ProvidersSectionControl.xaml</DependentUpon>
     </ClCompile>
     <ClCompile Include="RuntimeSectionControl.xaml.cpp">
       <DependentUpon>RuntimeSectionControl.xaml</DependentUpon>

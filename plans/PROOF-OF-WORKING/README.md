@@ -17,19 +17,12 @@ specified artifacts. No self-reporting without receipts.
 - Browser admin URL serves HTML > 1KB.
 - All three statically link `MasterControlApp.lib` (proven via binary size diff).
 
-## Feature 2 — Auto-Connect AI providers
-**Receipt:** `02-auto-connect.md`
-**Contract:**
-- `POST /api/providers/auto-connect` with valid kind → HTTP 200.
-- Response `steps[]` contains all 7 stages with `succeeded:true`.
-- Response `succeeded:true`, `providerId` is non-empty, `totalLatencyMs > 0`.
-- DPAPI seal verified: `/api/dashboard` → `providerCredentialStatuses`
-  entry for the new provider has `configured:true`.
-- Role assignment: new provider has `providerAssignments` entry with
-  matching `targetId`.
-- Negative path: unknown `kind` → HTTP 400 with structured body.
-- Negative path: unknown `assignmentTargetIds` → HTTP 400, `succeeded:false`,
-  `errorMessage` populated.
+## Feature 2 — Auto-Connect AI providers — RETIRED (ADR-001 Phase 2)
+**Receipt:** removed (`02-auto-connect.md` deleted alongside the provider stack).
+**Status:** feature removed from the product. Replacement is the LAN client
+config bundle delivered by `GET /api/clients/{id}/config` in Phase 5 of
+`plans/remediation/01-gut-and-rebuild.md`. New proof artifact planned for
+Phase 9 as `11-lan-client-end-to-end.md`.
 
 ## Feature 3 — Live command stream
 **Receipt:** `03-command-stream.md`

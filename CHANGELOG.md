@@ -1,9 +1,476 @@
 # Changelog
 
-All notable changes to this repository are tracked here by the repository agents.
+All notable changes to this repository are tracked here. Entries follow the [Keep a Changelog](https://keepachangelog.com/) shape: each release lists Added / Changed / Removed / Fixed / Notes. Versions follow semantic versioning; minor bumps mark architectural changes.
+
+The release-management and doc-sync GitHub agents that previously generated parts of this file have been retired. CHANGELOG entries are now hand-authored alongside the change.
 
 ## [Unreleased]
-- Changes pushed to `main` are promoted into the next numbered release automatically.
+
+### Documentation overhaul + automation retirement (post-v0.5.0)
+
+A comprehensive rebuild of the wiki and a clean-out of the repository agents that previously regenerated documentation on every push. The change is documentation-only — no source, no schema, no route surface modified. Targets the next minor release.
+
+#### Removed
+
+- **`.github/workflows/repository-maintenance-agents.yml`** — the auto-pushing workflow that ran on every push to `main` and regenerated wiki pages, README, and CHANGELOG content as `github-actions[bot]`. The automation bypassed the AI Contributor Guard (bots are allowlisted), bumped patch versions on cosmetic edits, and steamrolled hand-authored content. With the workflow removed, every documentation edit is now an explicit operator action.
+- **`scripts/github_agents/sync_docs.py`** (89 KB wiki generator) — the doc-sync agent that produced wiki pages from `plans/` source. Generated content was templated and mechanical; the rebuilt wiki is hand-authored with mermaid/sequence/state diagrams the generator could not produce.
+- **`scripts/github_agents/release_manager.py`** — the release-bump agent that incremented patch versions on every commit landing in `main`. Real release decisions (patch / minor / major) require operator judgment; the commit-message parser could not reliably make that call.
+- **`scripts/github_agents/__pycache__/`** — Python bytecode cache for the deleted scripts.
+
+#### Kept
+
+- **`scripts/github_agents/check_no_ai_contributors.py`** + **`common.py`** — the **AI Contributor Guard** remains active. Every push and pull request to `main` runs the guard, rejecting any commit whose author / committer / trailer matches a known AI vendor name (`chatgpt`, `codex`, `claude`, `copilot`, `gemini`, `grok`, `openai`, `anthropic`, `deepseek`, `perplexity`, `x.ai`). The block list applies to identity, not product references — `LanClient` records with `clientType: "claude_code"` continue to be legitimate runtime data.
+
+#### Wiki — comprehensive rebuild
+
+Every wiki page was rewritten by hand. The rebuild adds visual depth (mermaid `flowchart` / `sequenceDiagram` / `stateDiagram-v2` / `classDiagram` / `gantt` blocks, ASCII art topology diagrams, badge banners, decision matrices, severity tables) and substantial worked-example content (curl, PowerShell, Python, TypeScript, Node) so each page stands on its own as a comprehensive reference.
+
+- **[`docs/wiki/Home.md`](docs/wiki/Home.md)** — hand-authored landing page with runtime topology mermaid diagram, three core invariants (Use is universal / Mutation is gated / Identity is by header), full site map across four categories, 5-minute walkthrough sequence diagram.
+- **[`docs/wiki/Architecture.md`](docs/wiki/Architecture.md)** — 12 numbered sections covering runtime topology, request lifecycle, the 16-module catalog, service container, `LanClientAccessModule` flowchart, CLU enforcement pipeline with rule branches, operator surfaces, activity ring, configuration shape, build composition, persistence paths, and what is intentionally out-of-scope.
+- **[`docs/wiki/API-Reference.md`](docs/wiki/API-Reference.md)** — 13 sections: identity model flowchart, read endpoints, LAN client identity routes, config bundle, shared fabric reads, runtime mutation with privilege/CLU mapping, governance routes, configuration mutation, platform services, install/import, status code reference, operation result envelope, end-to-end curl walkthrough.
+- **[`docs/wiki/LAN-Clients.md`](docs/wiki/LAN-Clients.md)** — mental model, data model class diagram, lifecycle state machine (`stateDiagram-v2`), identification flowchart with resolution outcomes table, heartbeat performance note, operator workflows, activity attribution table, two-client collaboration sequence diagram, FAQ.
+- **[`docs/wiki/Privileges.md`](docs/wiki/Privileges.md)** — privilege matrix flowchart with Mcp/Sub/Admin sub-graphs, the 9 flags severity table, gate flowchart with autonomous bypass, autonomous-mode action comparison, four capability bundles (read-only / tool author / sub-agent author / operator-equivalent / autonomous worker), decision matrix at a glance, read-modify-write workflow, common pitfalls.
+- **[`docs/wiki/Client-Config-Bundle.md`](docs/wiki/Client-Config-Bundle.md)** — mental model, end-to-end issue → consume sequence diagram, full schema reference for every field, server-side resolution flowchart (the never-`0.0.0.0` rule), agent consumption pseudocode in Bash / PowerShell / Python / TypeScript, bundle invariants, re-issue triggers diagram, schema versioning strategy.
+- **[`docs/wiki/Governance.md`](docs/wiki/Governance.md)** — mental model, doctrine (D1–D5), the two-stage gate sequence diagram, the 15 action kinds table, three outcomes flowchart, default outcomes per kind, autonomous-mode bypass scope, approval queue with state diagram, full CLU rule catalog (CLU-C001 through CLU-S002), worked examples for deferred policy edit / autonomous-create burst / blocked posture, audit trail, FAQ.
+- **[`docs/wiki/Remote-Client.md`](docs/wiki/Remote-Client.md)** — onboarding sequence diagram, nine numbered steps from discovery through agent operation, naming-convention recipe, recipes by role flowchart, autonomous-mode caveat, reference flows in Python / TypeScript / PowerShell, re-issue triggers, four failure-mode diagnoses, multi-client collaboration walkthrough, FAQ.
+- **[`docs/wiki/Sub-Agents.md`](docs/wiki/Sub-Agents.md)** — roster mermaid diagram with port assignments, specialization details for each of the seven (SENTINEL through WATCHTOWER), MCP-over-SSE transport with handshake sequence diagram and the three "easy to get wrong" rules, lifecycle state diagram, registration with privilege requirements, capability extension diagram, FAQ.
+- **[`docs/wiki/Operations.md`](docs/wiki/Operations.md)** — lifecycle map flowchart, build/test/Forsetti compliance commands, staging and packaging recipes, install entry points table with privilege requirements, lifecycle subcommands state diagram, deployment scripts table, installed runtime surfaces, first-run migration flowchart, standard operator flow, post-install verification checklist, backup/restore recipes, FAQ.
+- **[`docs/wiki/Infrastructure.md`](docs/wiki/Infrastructure.md)** — topology diagram, target hosts compatibility matrix, hardware minimums, network footprint diagram with port assignments and firewall rule recipes, persistence layout with backup priority table, packaging model, service identity table, browser dashboard composition, single-host rationale flowchart, validation focus, FAQ.
+- **[`docs/wiki/Troubleshooting.md`](docs/wiki/Troubleshooting.md)** — universal triage flowchart, one-shot health probe, fifteen symptom-keyed sections (403 unexpected, agent inheriting operator authority, unreachable `mcosServer`, 202 deferred mutations, blocked-posture refusals, blank dashboard, elevation failures, toolchain mismatches, log paths, activity-stream debugging, hung service, agent stale tags, Tron palette wrong), quick-reference symptom→section table.
+- **[`docs/wiki/Versions.md`](docs/wiki/Versions.md)** — current release banner, what-v0.5.0-ships flowchart, versioning scheme table, release timeline `gantt` diagram, v0.5.0 detail (added/removed/changed), upgrade notes from v0.4.x, release artifacts table, retired release-manager-agent rationale, operator runbook for cutting a release, FAQ.
+- **[`docs/wiki/Telemetry-and-Activity.md`](docs/wiki/Telemetry-and-Activity.md)** — producer/stream/consumer mental model, host telemetry sampling cadence diagram, activity ring properties, event lifecycle sequence diagram, full event-kind taxonomy across catch-all / LAN client lifecycle / catalog mutation / governance / module / heartbeat groups, color codes, polling and SSE consumption recipes, long-term retention diagram, capacity planning flowchart, code references, FAQ.
+- **[`docs/wiki/Tron-UI-Theme.md`](docs/wiki/Tron-UI-Theme.md)** — token catalog mental model, palette reference with hex codes, background composition diagram, typography table, hard rules R1–R5 with allowed/forbidden flowchart, shell consumption with App.xaml mapping, browser consumption with CSS variable mirror, component-states reference, activity-stream color wiring, spacing tokens, accessibility checklist, new-component decision flowchart.
+- **[`docs/wiki/Automation.md`](docs/wiki/Automation.md)** — already updated earlier in v0.5.0; documents the active workflow set (AI Contributor Guard, Forsetti Compliance, Windows Build/Test/Package), the retired set (DocSync, ReleaseAgent, WikiSync), the AI vendor block list, the allowed-bot identities.
+
+#### Wiki navigation chrome
+
+- **[`docs/wiki/_Sidebar.md`](docs/wiki/_Sidebar.md)** — rewritten to reflect the post-rebuild structure: LAN Client Control Plane category up top (LAN Clients, Privileges, Client Config Bundle, Governance, Remote Client), Architecture & internals (ADR-001, Architecture, API Reference, Sub-Agents, Telemetry & Activity), UI/UX (Tron UI Theme), Operations (Operations, Infrastructure, Troubleshooting), Project (Automation, Versions). The deleted Auto-Connect-AI link is gone; CLU-Governance is no longer linked because it's a superseded redirect.
+- **[`docs/wiki/_Footer.md`](docs/wiki/_Footer.md)** — replaces the "auto-generated by sync_docs.py" disclaimer with a hand-authored note pointing readers to the source markdown and reminding contributors that the AI Contributor Guard rejects AI-attributed commits.
+
+#### `README.md`
+
+- Already rewritten earlier in v0.5.0. Cross-references to the rebuilt wiki pages (LAN Clients / Privileges / Client Config Bundle / Governance / Remote Client) remain accurate.
+
+#### Notes
+
+- No source files modified. The CMake target list, the test suite, the route surface, the Forsetti module set, the CLU profile JSON, and the `VERSION.json` history are unchanged.
+- `Home.md` and `Versions.md` continue to advertise `v0.5.0` released `2026-04-25`. The next version cut should bump per the operator runbook in `Versions.md`.
+- Hand-authored content respects the no-AI-attribution rule throughout. Product references (e.g., `clientType: "claude_code"`, "Claude Code on host A" labels in diagrams) are runtime identifiers and not commit attribution; the AI Contributor Guard's vendor block list applies to commit author / committer / trailer fields only.
+
+## [0.5.0] - 2026-04-25
+
+### Phase 9 - Documentation refresh + end-to-end proof recipe (ADR-001)
+
+The final phase of the rebuild. Wiki pages catch up to the new architecture, an end-to-end verification recipe pins the original product intent in `PROOF-OF-WORKING`, and the version bumps from `0.4.5-rc.5` to `0.5.0` to mark the architectural change. Phases 1–9 of `plans/remediation/01-gut-and-rebuild.md` are now functionally complete.
+
+#### Added
+- Five new wiki pages covering the LAN client control plane:
+  - [`docs/wiki/LAN-Clients.md`](docs/wiki/LAN-Clients.md) — the data model, lifecycle endpoints, identification rules, heartbeat, operator workflows, activity events.
+  - [`docs/wiki/Privileges.md`](docs/wiki/Privileges.md) — the nine boolean flags, gate sites, autonomous-mode bypass, capability-driven privilege bundles.
+  - [`docs/wiki/Client-Config-Bundle.md`](docs/wiki/Client-Config-Bundle.md) — schemaVersion-1.0 bundle field reference, agent consumption flow, re-issue triggers.
+  - [`docs/wiki/Governance.md`](docs/wiki/Governance.md) — Forsetti-aligned doctrine, the two-stage gate, all 15 action kinds, default outcomes, autonomous-mode bypass, the operator approval queue.
+  - [`plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md`](plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md) — 13-step verification recipe with two simulated LAN clients (alpha autonomous, bravo no-privileges) hitting create/discover/deny/disable flows. Pass criteria and JSON-receipt instructions included so an operator can convert the recipe into a captured proof on their host.
+- New badges on `Home.md` reflecting `v0.5.0`, 16 modules, the LAN Client Control Plane summary.
+
+#### Rewritten
+- [`docs/wiki/Architecture.md`](docs/wiki/Architecture.md) — runtime topology updated with LAN clients flowing through the X-MCOS-Client-Id header, request-lifecycle three-gate description (identity / privilege / CLU), 16-module catalog table, ServiceContainer registration list including `ILanClientAccessService` and `IGovernanceApprovalQueueService`.
+- [`docs/wiki/API-Reference.md`](docs/wiki/API-Reference.md) — every route documented with privilege requirement and CLU action kind. New sections for LAN Client identity (Phase 3+4), Client Config Bundle (Phase 5), Shared fabric (Phase 6), Runtime inventory mutation with privilege/CLU mapping, Governance + approval queue (Phase 7).
+- [`docs/wiki/Remote-Client.md`](docs/wiki/Remote-Client.md) — bundle-driven onboarding flow with discover → register → grant privileges → download bundle → ship to agent → identify → heartbeat → mutate → re-issue triggers. Includes Python reference flow.
+- [`docs/wiki/Home.md`](docs/wiki/Home.md) — navigation reorganized around the LAN Client Control Plane category, mermaid diagram updated to show clients with X-MCOS-Client-Id header, three-line product pitch refreshed, quick-start curl block added.
+
+#### Marked superseded
+- [`docs/wiki/CLU-Governance.md`](docs/wiki/CLU-Governance.md) — collapsed to a redirect pointing at the new `Governance.md`. The provider-era governance scope (`ProviderExecution` / `ProviderAutonomyEnable`) is gone and the page would mislead readers if kept.
+
+#### Light updates
+- [`docs/wiki/Sub-Agents.md`](docs/wiki/Sub-Agents.md) — registration example now passes the `X-MCOS-Client-Id` header; new "Use is universal" callout points at ADR-001's shared-fabric rule; supersedes the link to CLU-Governance.
+- [`docs/wiki/Telemetry-and-Activity.md`](docs/wiki/Telemetry-and-Activity.md) — sample event payload uses the new `lan-client-privileges-changed` kind; new event-kinds table covers the lifecycle + governance events introduced in Phases 3–7.
+
+#### Versioning
+- `VERSION.json` advances `current_version` from `0.4.5-rc.5` to **`0.5.0`** with a fresh history entry summarizing the nine-phase rebuild. The bump is a deliberate minor (not patch) to mark the architectural change. Strategy field updated from `patch-on-main` to `minor-on-architecture-change`.
+
+#### Notes
+- The proof-of-working file is intentionally a verification **recipe**, not a captured run. Phases 1–9 were authored as code in this branch; running the build (`cmake --preset debug && cmake --build`), executing `ctest`, and capturing the live receipts is the operator's next step. The recipe is structured so that capture is a single sweep through 13 numbered curl steps plus a browser walkthrough.
+- The Forsetti compliance script (`scripts/check-mastercontrol-forsetti.ps1`) was already updated in Phase 2 to remove provider assertions; it should pass against the new module set.
+- The `MasterControlShell` (WinUI 3 desktop) remains in its Phase-2b deferred-cleanup state. A focused shell rewrite is queued as a post-`v0.5.0` follow-on.
+
+#### Phases summary
+
+| Phase | Status |
+| --- | --- |
+| 1: ADR-001 + removal inventory | ✓ |
+| 2 + 2b: Provider stack removal | ✓ |
+| 3: LAN client identity | ✓ |
+| 4: Privilege model | ✓ |
+| 5: Server-authored config bundle | ✓ |
+| 6: Identification middleware + privilege gates | ✓ |
+| 7: CLU governance expansion | ✓ |
+| 8: Browser dashboard pivot | ✓ |
+| 9: Documentation, tests, proof artifact | ✓ |
+
+The original product intent — multiple AI models on the LAN connecting to MCOS as governed users, sharing an MCP and sub-agent fabric, operating under per-client privileges with operator approval for high-impact mutations — is fully realized in the service tree.
+
+## [Unreleased]
+
+### Phase 8 - Browser dashboard pivot (ADR-001)
+
+The browser admin UI is rebuilt around the LAN client control plane. The 6411-line provider-era `app.js` is replaced with a focused 933-line vanilla-JS surface; the Phase 2b deferred 385 provider references are gone. Six destinations cover the locked product intent: Overview, LAN Clients, Governance, Shared Fabric, Activity, Exports.
+
+#### Added
+- **`resources/web/app.js` rewritten from scratch** (was 6411 lines / 385 provider refs; now 933 lines / 0 provider refs - the only "provider" string is the explanatory ADR-001 comment in the header). Single IIFE-scoped module, vanilla JS, no framework dependencies.
+- **Six destinations** in the new browser surface:
+  - **Overview** — CLU posture, LAN client counts, pending approvals, telemetry summary, recent activity strip.
+  - **LAN Clients** — sortable client table with privilege count, autonomous badge, last-seen; selection drawer with full lifecycle (download config bundle, disable/enable, remove), nine privilege checkboxes with Save/Reset, autonomous-mode toggle wired to the Phase-7 CLU enforcement (HTTP 409 surfaces in the drawer status when CLU-C009 blocks). New-client form with clientId/displayName/clientType/hostName.
+  - **Governance** — CLU posture stat, pending approvals with Approve/Reject buttons, decisions log (last 20), full rules listing keyed by ruleId.
+  - **Shared Fabric** — read-only listing of MCP servers and sub-agents in the universal-use catalog.
+  - **Activity** — full activity ring viewer with kind/actor/message columns and relative timestamps.
+  - **Exports** — server-authored artifact list with one-click download. LAN client config bundles (`lan-client-config:<clientId>` from Phase 5) appear here for enabled clients.
+- **Quick actions toolbar** on the home hero: "Register LAN Client", "Open Clients", "Governance Approvals". Replaces the deleted Auto-Connect / Sign-In / Validate Provider Routing buttons.
+- **Live polling**: `refreshAll()` fetches `/api/health`, `/api/dashboard`, `/api/clients`, `/api/clu/approvals`, `/api/exports`, `/api/activity` in parallel every 5 seconds.
+- **Config download flow**: drawer button calls `GET /api/clients/{id}/config`, blob-downloads the bundle as `lan-client-<clientId>.json` so the operator can drop it on the AI client's host.
+- **Approval queue UI**: pending rows show actor, action kind, target, reason, and elapsed time. Reject prompts for a reason and posts to `/api/clu/approvals/{id}/reject`.
+- **Phase 8 stylesheet block** appended to `resources/web/styles.css`. New rules cover the summary grid, navigation chips, panel blocks, big-stat tiles, kv-list, client table + drawer, privilege list, governance approval/decision/rule rows, runtime table, activity rows, error banner, and badge tones. Existing styles are untouched so the legacy panels keep their look until those panels are decommissioned.
+- **`index.html` subtitle** updated to "LAN client identity, the shared MCP and sub-agent fabric, CLU governance, and live telemetry".
+
+#### Removed
+- The entire provider-era browser surface: Providers destination, Auto-Connect form, Sign-in flow (Claude/Codex/Grok), `data-form-kind="provider-*"` form registrations, provider sign-in card grid, Auto-Connect progress and fallback panels, provider-related navigation pointers and toolbar items.
+- 6 of the 11 destinations from the old shell are intentionally not reproduced in Phase 8 (CLU panel, Imports, Exports detail, Settings, Security, Setup-Wizard). They will be added back as needed in follow-on tracks; the Phase 8 surface focuses on the locked product intent.
+
+#### Service compatibility
+- The browser depends only on Phase 1-7 endpoints; no Phase 9 endpoints required.
+- Operator-fallback context: when no `X-MCOS-Client-Id` header is present, the browser hits the admin API as the operator (full privileges) so the dashboard works without an operator-login flow.
+
+#### Verification
+- Open `http://127.0.0.1:7300/` in a browser. Health badge transitions from "Connecting" to "Online" within 5 seconds.
+- Use the "Register LAN Client" toolbar button to fill the form. The new client appears in the LAN Clients table after the registration completes.
+- Select the client, toggle privileges in the drawer, click Save Privileges. Activity stream shows the `lan-client-privileges-changed` event.
+- Click "Download config bundle". The browser downloads `lan-client-<clientId>.json` containing the Phase 5 schemaVersion-1.0 bundle.
+- Click "Enable autonomous". With `aiAutonomyEnabled=false` (default) the drawer status shows the CLU-C009 refusal text. After flipping `aiAutonomyEnabled` to true via `/api/config`, autonomous enables and the badge updates.
+- Trigger a `GovernancePolicyChange` (when an admin route for it lands) to see a deferred action arrive in the Governance destination's pending list. Approve or Reject and see it move to the decisions log.
+
+#### Out of scope for Phase 8 (lands in Phase 9)
+- A "Settings" destination for editing host config (bind address, beacon, resource allocation). Today these still need direct curl to `/api/config`.
+- Operator-login flow. Phase 8 keeps the operator-fallback context for browser ergonomics; multi-operator audit lands as a future track.
+- Migration of the WinUI 3 shell. The shell remains in its Phase-2b broken state and is queued for a dedicated track after Phase 9.
+- A documentation refresh covering the new surfaces (lands in Phase 9).
+
+### Phase 7 - CLU governance expansion, aligned to Forsetti (ADR-001)
+
+CLU's enforcement scope grows from three action kinds to fifteen, the autonomous-mode soft gate from Phase 4 lifts (CLU now governs the flip), and an operator approval queue lands for actions that defer. The governance profile is rewritten in Forsetti Framework terms with `LanClient` as a first-class governance role.
+
+#### Added
+- `GovernanceActionKind` enum expands to **15 values** (was 2 after the Phase 2 cleanup): `Unknown`, `ClientRegister`, `ClientPrivilegeChange`, `ClientAutonomousModeChange`, `ClientRevoke`, `McpServerCreate`, `McpServerModify`, `McpServerRemove`, `SubAgentCreate`, `SubAgentModify`, `SubAgentRemove`, `ModuleEnable`, `ModuleDisable`, `GovernancePolicyChange`, `RemoteInstall`.
+- `GovernanceDecisionOutcome { Allow, Block, RequiresOperatorApproval }` and the matching `to_string` / `fromString` / `to_json` / `from_json`.
+- `GovernanceEnforcementDecision` extended with `outcome` and `deferredActionId`. `allowed` stays for Phase-6 backward compatibility (Allow == true).
+- `GovernanceEnforcementRequest` extended with `actor` so deferred records identify who requested the change.
+- New `GovernanceDeferredAction` struct + `IGovernanceApprovalQueueService` interface in `include/MasterControl/MasterControlContracts.h`. The queue lives in process memory only (Phase 9 may add disk backing if long-running deferrals become a real workflow).
+- `GovernanceApprovalQueueService` in-memory implementation: `listPending`, `listAll`, `stage`, `approve`, `reject`. Emits activity events `governance-deferred`, `governance-approved`, `governance-rejected`.
+- New admin routes:
+  - `GET /api/clu/approvals` — full deferred-action list
+  - `POST /api/clu/approvals/{id}/approve` — operator approval (gated by `canChangeGovernancePolicy`)
+  - `POST /api/clu/approvals/{id}/reject` — operator rejection with optional `{ reason }` body
+- `enforceGovernance` lambda in `handleHttpRequest`: runs after the privilege gate and before the route's apply path. Returns `nullopt` for Allow, HTTP 403 for Block, HTTP 202 with deferred-action id for RequiresOperatorApproval.
+- `CommandLogicUnitService::enforceAction` rewritten as a switch over the full action enum:
+  - **RemoteInstall**: existing logic preserved (resource preflight + posture check).
+  - **McpServerCreate / McpServerModify / SubAgentCreate / SubAgentModify**: Allow when posture is fine, Block when posture is `blocked`.
+  - **McpServerRemove / SubAgentRemove**: same posture-aware allow/block. Future profile rules may flip these to RequiresOperatorApproval.
+  - **ClientRegister / ClientPrivilegeChange / ClientRevoke**: posture-gated.
+  - **ClientAutonomousModeChange**: source-aware. Disabling is always allowed; enabling requires posture-fine + `aiAutonomyEnabled` true (CLU-C009).
+  - **ModuleEnable / ModuleDisable**: posture-gated.
+  - **GovernancePolicyChange**: always RequiresOperatorApproval (CLU-C010). The deferred record carries the original payload verbatim.
+- Governance profile rewritten in Forsetti terms (`resources/clu/governance-profile.json`):
+  - Doctrine restated: contract before action, scope is binding, truthfulness, governance overrides convenience, no meaningful autonomous action without declared scope.
+  - `LanClient` added as a first-class governance role with declared responsibilities, forbidden actions, and required outputs. `mcos-runtime` added as the enforcement role.
+  - New documents: Shared Fabric Policy, Autonomous Mode Doctrine, Governance Policy Doctrine.
+  - New rules: CLU-C009 (autonomous mode requires global autonomy), CLU-C010 (profile edits require operator approval), CLU-S001 (shared fabric is universal for use), CLU-S002 (mutations attributed to actor).
+  - Provider-era rule CLU-C004 retired (replaced by CLU-S001/S002 + the privilege model).
+- Test coverage: full enum round-trip for `GovernanceActionKind` (14 values) and `GovernanceDecisionOutcome` (3 values), plus `GovernanceDeferredAction` JSON shape pinning.
+
+#### Removed
+- **Phase 4 autonomous-mode soft gate.** `LanClientAccessService::setAutonomousMode` no longer hard-rejects `enabled=true`; CLU now decides based on posture and `aiAutonomyEnabled`. The HTTP 409 path is retired in favor of CLU's structured Block/Allow decisions.
+- `LanClientAccessService::upsertClient` no longer rejects `autonomousMode=true` registrations. CLU enforces via `ClientAutonomousModeChange` (the upsert path emits the action implicitly when the operator sets autonomous mode at registration).
+
+#### Wiring
+- Every privileged mutation route now runs CLU after the privilege gate:
+  - MCP server upsert (Create or Modify based on existence) and remove
+  - Sub-agent upsert (Create or Modify) and remove
+  - Client roster: register, disable (ClientRevoke), enable (ClientRegister), DELETE (ClientRevoke)
+  - Client privileges (ClientPrivilegeChange)
+  - Client autonomous mode (ClientAutonomousModeChange with source `enable`/`disable`)
+  - Forsetti module state (ModuleEnable / ModuleDisable based on requested action)
+- Autonomous-mode bypass on Create paths preserved per ADR-001: a client with `autonomousMode = true` skips both the create privilege and CLU enforcement for `McpServerCreate` / `SubAgentCreate` (still subject to CLU at modify/remove paths).
+
+#### Verification
+- Enable global AI autonomy, then enable client autonomous mode:
+  ```
+  curl -X POST .../api/config -H "X-Confirm-Unsafe: 1" -d '{"aiAutonomyEnabled":true,...}'
+  curl -X POST .../api/clients/alpha/autonomous-mode -d '{"enabled":true}'
+  # → 200 (CLU-C009 allows when aiAutonomyEnabled is true)
+  ```
+- Disable global AI autonomy and try again:
+  ```
+  curl -X POST .../api/config -H "X-Confirm-Unsafe: 1" -d '{"aiAutonomyEnabled":false,...}'
+  curl -X POST .../api/clients/alpha/autonomous-mode -d '{"enabled":true}'
+  # → 403, ruleId CLU-C009, message "Enable global AI autonomy in configuration before granting client autonomous mode."
+  ```
+- Trigger the GovernancePolicyChange path (when a policy-edit endpoint is wired in Phase 8+, every change will return 202 with a `deferredActionId`):
+  ```
+  curl .../api/clu/approvals          # list staged
+  curl -X POST .../api/clu/approvals/deferred-1/approve
+  curl -X POST .../api/clu/approvals/deferred-1/reject -d '{"reason":"superseded"}'
+  ```
+- Autonomous client creates 10 MCP servers without approval:
+  ```
+  curl -X POST .../api/clients/alpha/privileges -d '{}'   # no privileges
+  curl -X POST .../api/clients/alpha/autonomous-mode -d '{"enabled":true}'
+  for i in 1..10: curl -X POST -H "X-MCOS-Client-Id: alpha" .../api/runtime/mcp-servers \
+    -d '{"id":"shared-${i}","displayName":"Shared ${i}","host":"127.0.0.1","port":9000,"protocol":"http","kind":"mcp_server"}'
+  # → all 200; create privileges and CLU bypass per ADR-001 autonomous semantics
+  ```
+- Same client tries to modify another client's server: 403 from privilege gate (canModifyMcpServers missing), CLU never runs.
+
+#### State of the rebuild
+- All seven phases scoped in `plans/remediation/01-gut-and-rebuild.md` are now functionally complete in the service tree:
+  1. ADR-001 + removal inventory ✓
+  2. Provider stack removal (with Phase 2b residual cleanup) ✓
+  3. LAN client identity ✓
+  4. Privilege model (autonomous-mode soft gate now lifted) ✓
+  5. Server-authored config bundle ✓
+  6. Client identification middleware + privilege gates ✓
+  7. CLU governance expansion ✓
+- Remaining: Phase 8 (browser dashboard surfaces) and Phase 9 (docs + end-to-end proof artifact).
+
+### Phase 6 - Client identification middleware and privilege enforcement (ADR-001)
+
+**Pivot moment.** The bundle issued in Phase 5 now has teeth. Every incoming request resolves to an `AuthenticatedRequestContext`, mutation routes are gated by per-client privileges, and a new `/api/client/*` shared-fabric read surface gives identified clients a discoverable view of MCOS without going through the admin API.
+
+#### Added
+- `include/MasterControl/AuthenticatedRequestContext.h` — per-request context type carrying the resolved `LanClient`, the privilege snapshot, the autonomous-mode flag, the actor label, and an `isOperatorFallback` diagnostic.
+- `makeOperatorContext()` factory — full-privilege synthetic context for missing or unknown header (so the browser dashboard and ad-hoc curl keep working unchanged).
+- Header-driven resolver inlined into `MasterControlApplication::Impl::handleHttpRequest`:
+  - Reads `X-MCOS-Client-Id` (case-insensitive per RFC 7230)
+  - Resolves via `ILanClientAccessService::getClient`
+  - On hit: populates context, calls `touchClient` for liveness
+  - On miss (unknown id): falls through to operator context
+  - On disabled client: returns HTTP 403 immediately, never enters route handlers
+- `requirePrivilege(granted, name)` lambda available across all routes inside `handleHttpRequest`. Returns `nullopt` when allowed, otherwise a 403 `HttpResponse` with `{ succeeded: false, errorMessage, actor, privilege }`.
+- Privilege gates on every mutation route:
+  - `POST /api/runtime/mcp-servers`: `canModifyMcpServers` when the id already exists, otherwise `canCreateMcpServers` (autonomous-mode bypass for the create path).
+  - `POST /api/runtime/mcp-servers/remove`: `canRemoveMcpServers`.
+  - `POST /api/runtime/subagents`: `canModifySubAgents` when the id exists, otherwise `canCreateSubAgents` (autonomous-mode bypass).
+  - `POST /api/runtime/subagents/remove`: `canRemoveSubAgents`.
+  - `POST /api/runtime/subagent-groups[/remove]`: `canModifySubAgents` (groups are organizational metadata over the existing roster).
+  - `POST /api/clients`, `POST /api/clients/{id}/{disable,enable,privileges,autonomous-mode}`, `DELETE /api/clients/{id}`: `canManageClients`.
+  - `POST /api/forsetti/modules/state`: `canManageModules`.
+- New `/api/client/*` shared-fabric read surface (matches the catalog URLs the bundle advertises):
+  - `GET /api/client/mcp-servers` — every non-template MCP endpoint, open to any identified client.
+  - `GET /api/client/sub-agents` — every non-template sub-agent endpoint.
+  - `GET /api/client/activity` — full activity ring snapshot. Phase 7 may filter to events scoped to the requester.
+  - `GET /api/client/governance/profile` — read-only governance summary keyed by Forsetti framework identity.
+  - `POST /api/client/governance/decisions` — Phase 6 stub returning HTTP 202 with `{ outcome: "deferred", message }`. Phase 7 wires this to the expanded `commandLogicUnitService_->enforceAction` for real Allow / Block / RequiresOperatorApproval pre-checks.
+  - `POST /api/client/heartbeat` — updates `lastSeenUtc` for the resolved client (no-op for the operator fallback). Returns the actor and operator-fallback flag so the client can detect identity drift.
+- Test coverage: `AuthenticatedRequestContext` defaults assertion + `makeOperatorContext` grants-all-privileges assertion.
+
+#### Notable design choices
+- **No auth, just identification.** Per ADR-001 the LAN is trusted. The `X-MCOS-Client-Id` header is the only identity claim; a missing or unknown header is *not* a denial - it's a fallback. This keeps dashboard ergonomics and lets one operator unblock themselves without juggling tokens.
+- **Disabled clients are denied at the door.** A header naming a registered-but-disabled client returns 403 before any route handler runs. This is the only way an operator can effectively shut a client out.
+- **Activity ring is shared.** Phase 6 deliberately exposes the same ring to LAN clients as the operator dashboard. Phase 7 may add per-client filtering once governance decisions emit events keyed to the actor.
+
+#### Verification
+- Two-client scenario:
+  ```
+  curl -X POST http://127.0.0.1:7300/api/clients \
+    -d '{"clientId":"alpha","displayName":"Alpha","clientType":"claude_code"}'
+  curl -X POST http://127.0.0.1:7300/api/clients \
+    -d '{"clientId":"bravo","displayName":"Bravo","clientType":"codex"}'
+  curl -X POST http://127.0.0.1:7300/api/clients/alpha/privileges \
+    -d '{"canCreateMcpServers":true}'
+  curl -X POST -H "X-MCOS-Client-Id: alpha" http://127.0.0.1:7300/api/runtime/mcp-servers \
+    -d '{"id":"shared-tool","displayName":"Shared Tool","host":"127.0.0.1","port":9000,"protocol":"http","kind":"mcp_server"}'
+  # → 200, alpha created the MCP server
+  curl -X POST -H "X-MCOS-Client-Id: bravo" http://127.0.0.1:7300/api/runtime/mcp-servers \
+    -d '{"id":"another-tool","displayName":"Another","host":"127.0.0.1","port":9001,"protocol":"http","kind":"mcp_server"}'
+  # → 403 with { errorMessage: "Required privilege missing: canCreateMcpServers.", privilege: "canCreateMcpServers", actor: "bravo" }
+  curl -H "X-MCOS-Client-Id: bravo" http://127.0.0.1:7300/api/client/mcp-servers
+  # → 200, bravo lists the shared-tool entry alpha created (use is universal)
+  ```
+- Disable a client and confirm rejection:
+  ```
+  curl -X POST http://127.0.0.1:7300/api/clients/alpha/disable
+  curl -H "X-MCOS-Client-Id: alpha" http://127.0.0.1:7300/api/client/mcp-servers
+  # → 403 with errorMessage: "LAN client is disabled: alpha"
+  ```
+- Heartbeat:
+  ```
+  curl -X POST -H "X-MCOS-Client-Id: bravo" http://127.0.0.1:7300/api/client/heartbeat
+  # → 200, lastSeenUtc on bravo updates (visible via GET /api/clients/bravo)
+  ```
+
+#### Out of scope for Phase 6 (lands in later phases)
+- Real CLU pre-check on `/api/client/governance/decisions` (Phase 7).
+- Approval queue for `RequiresOperatorApproval` deferred actions (Phase 7).
+- Per-client filtering of `/api/client/activity` (Phase 7).
+- Any browser dashboard surfaces for the new endpoints (Phase 8).
+- Periodic `lastSeenUtc` flush to disk (deliberately skipped to avoid hot-path thrash; Phase 9 may add a timer if last-seen survival across restarts becomes a hard requirement).
+
+### Phase 5 - Client configuration bundle (ADR-001)
+
+Delivers the onboarding primitive: a server-authored JSON bundle that an AI client downloads, drops onto its host, and uses to learn how to reach MCOS, what header to identify with, what privileges it carries, and what governance rules apply. This is the first user-visible piece that matches the original product intent ("multiple AI models on the LAN connect and use the MCOS").
+
+#### Added
+- `composeLanClientConfigBundle(client, configuration)` free function in `src/MasterControlApp/MasterControlRuntime.cpp` that emits the spec'd schemaVersion 1.0 bundle.
+- `resolveMcosServerHost(configuration)` helper. Substitutes `bindAddress` first, then `activeProfile.preferredBindAddress`, then `127.0.0.1`. **Never serves `0.0.0.0`** to remote clients (which can't route to the wildcard).
+- New admin route `GET /api/clients/{id}/config`. Returns 200 with the bundle for a registered client, 404 when the id is unknown. Placed before the bare `/api/clients/{id}` GET so the suffix doesn't collide.
+- Bundle shape (pinned, schema versioned):
+  - `schemaVersion`, `issuedAtUtc`
+  - `mcosServer` (fully-qualified `http://host:port`)
+  - `clientId`, `displayName`, `clientType`, `enabled`
+  - `identification` = `{ header: "X-MCOS-Client-Id", value: clientId }` (Phase 6 middleware reads this exact header)
+  - `privileges` (snapshot of the nine booleans from Phase 4)
+  - `autonomousMode` (always false until Phase 7 lifts the soft gate)
+  - `catalogs` = `{ mcpServers, subAgents, activity }` URL paths
+  - `governance` = `{ authority: "CLU", framework: "Forsetti Framework for Agentic Coding", profileEndpoint, decisionEndpoint }`
+  - `rules` array describing the shared-fabric semantics
+  - `instructions` for heartbeat, discovery, invocation, governance pre-check
+- `ExportService` now takes `ILanClientAccessService` and surfaces a per-client `lan-client-config:<clientId>` artifact in `/api/exports`. Disabled clients are deliberately omitted (their bundle would lie about reachability). File names follow `lan-client-<clientId>.json`.
+- Test coverage: bundle shape pinning + identification header invariant + the never-serve-0.0.0.0 guarantee.
+
+#### Verification
+- Register a client, then download its bundle:
+  ```
+  curl -X POST http://127.0.0.1:7300/api/clients \
+    -d '{"clientId":"claude-code-jdaley-wks","displayName":"Claude Code","clientType":"claude_code"}'
+  curl http://127.0.0.1:7300/api/clients/claude-code-jdaley-wks/config
+  ```
+  The response is the schemaVersion-1.0 bundle with `mcosServer` resolved to a reachable URL (never `0.0.0.0`).
+- Verify the bundle also surfaces in `/api/exports` once the client exists:
+  ```
+  curl http://127.0.0.1:7300/api/exports
+  ```
+  Look for `"id": "lan-client-config:claude-code-jdaley-wks"`.
+- Disable the client and re-fetch `/api/exports`: the disabled client's bundle is omitted from the export listing, while `GET /api/clients/{id}/config` still serves it (operators can still inspect a disabled client's last-issued bundle).
+
+#### Out of scope for Phase 5 (lands in later phases)
+- The `X-MCOS-Client-Id` header middleware that reads the bundle's `identification.value` and applies privilege gates (Phase 6).
+- The `/api/client/mcp-servers`, `/api/client/sub-agents`, `/api/client/activity`, `/api/client/governance/*`, and `/api/client/heartbeat` endpoints the bundle advertises (Phase 6).
+- CLU-driven approval queue + governance decision endpoint (Phase 7).
+- Browser dashboard "Download config" button (Phase 8).
+
+### Phase 4 - Privilege model (ADR-001)
+
+Fills the `LanClientPrivileges` shell with nine flat boolean toggles and exposes them on dedicated admin routes. Use is never gated; only creation, modification, and removal of MCP servers and sub-agents (plus client / module / governance management) are privilege-controlled. Locked decisions per ADR-001.
+
+#### Added
+- `LanClientPrivileges` boolean fields in `include/MasterControl/LanClient.h`:
+  - `canCreateMcpServers`, `canModifyMcpServers`, `canRemoveMcpServers`
+  - `canCreateSubAgents`, `canModifySubAgents`, `canRemoveSubAgents`
+  - `canManageClients` (register / modify / remove other LAN clients)
+  - `canManageModules` (enable / disable Forsetti modules)
+  - `canChangeGovernancePolicy` (edit CLU profile)
+  - All default to `false` so newly registered clients are read-only until an operator explicitly grants capability.
+- NLOHMANN macro on `LanClientPrivileges` enumerating the nine fields for JSON round-trip.
+- `ILanClientAccessService::setPrivileges(clientId, LanClientPrivileges)` and `setAutonomousMode(clientId, bool)` interface methods.
+- `LanClientAccessService` implementations of both, with the autonomous-mode soft gate.
+- Two new admin routes:
+  - `POST /api/clients/{id}/privileges` - replace the privilege struct atomically (read-modify-write through `GET /api/clients/{id}` for partial updates).
+  - `POST /api/clients/{id}/autonomous-mode` - toggle autonomous mode. Body shape: `{"enabled": true|false}`.
+- Activity events: `lan-client-privileges-changed`, `lan-client-autonomous-mode-changed`.
+- Test coverage: privilege defaults (all nine flags), privilege JSON round-trip with mixed true/false values.
+
+#### Changed
+- `upsertClient` now refuses any registration that sets `autonomousMode = true` until Phase 7 ships, returning the same 409-tier error message as the dedicated route.
+
+#### Soft gate (intentional, removed in Phase 7)
+- Enabling autonomous mode on any client returns HTTP 409 with message *"Autonomous mode cannot be enabled until CLU governance expansion ships in Phase 7."* Disabling autonomous mode is always allowed.
+- Rationale: per ADR-001 the autonomous-mode flag's runtime meaning is "bypass `canCreateMcpServers` / `canCreateSubAgents` privilege check + bypass CLU operator approval for those two action kinds." That semantic depends on the expanded `GovernanceActionKind` enum that lands in Phase 7. Allowing the flag to be set before the gate is wired would silently mean nothing.
+
+#### Verification
+- Set privileges: `curl -X POST http://127.0.0.1:7300/api/clients/claude-code-jdaley-wks/privileges -d '{"canCreateMcpServers":true,"canCreateSubAgents":true}'` returns `{"succeeded":true,"message":"LAN client privileges updated."}`.
+- Read back: `GET /api/clients/claude-code-jdaley-wks` shows the new flags in the `privileges` object.
+- Toggle autonomous mode off when already off: idempotent `{"succeeded":true,"message":"Autonomous mode was already disabled."}`.
+- Try to enable autonomous mode: `curl -X POST .../autonomous-mode -d '{"enabled":true}'` returns HTTP 409 with the soft-gate message.
+- Activity stream: `GET /api/activity` shows the `lan-client-privileges-changed` event keyed to the requested client.
+
+#### Out of scope for Phase 4 (lands in later phases)
+- Privilege enforcement at the `/api/runtime/mcp-servers` and `/api/runtime/subagents` mutation handlers (Phase 6 middleware).
+- CLU governance hooks for client-privilege changes and the autonomous-mode action kind (Phase 7).
+- Browser dashboard surface for the new toggles (Phase 8).
+
+### Phase 3 - LAN client identity model (ADR-001)
+
+First additive phase of the rebuild. Introduces the `LanClient` first-class identity that replaces the deleted `ProviderConnection`. Identity is by `clientId` alone; no tokens, no DPAPI secrets, no auth — the LAN is trusted per locked decisions in ADR-001.
+
+#### Added
+- `include/MasterControl/LanClient.h` — `LanClient` struct (clientId, displayName, clientType, hostName, networkAddress, enabled, privileges, autonomousMode, createdAtUtc, lastSeenUtc, disabledAtUtc) plus an empty `LanClientPrivileges` shell that Phase 4 fills in. NLOHMANN macros for both.
+- `include/MasterControl/ILanClientAccessService.h` — clean service interface: `listClients`, `getClient`, `upsertClient`, `disableClient`, `enableClient`, `removeClient`, `touchClient` (last-seen hot path for Phase 6 middleware).
+- `LanClientAccessService` implementation in `src/MasterControlApp/MasterControlRuntime.cpp` with case-normalized clientId lookups, alphabetized roster, on-disk persistence through `AppConfiguration::lanClients`, and activity events keyed `lan-client-created` / `lan-client-updated` / `lan-client-disabled` / `lan-client-enabled` / `lan-client-removed`.
+- `LanClientAccessModule` Forsetti module: declaration in `include/MasterControl/MasterControlModules.h`, implementation in `src/MasterControlModules/MasterControlModules.cpp`, manifest at `src/MasterControlModules/Resources/ForsettiManifests/LanClientAccessModule.json`. Not protected. Module id `com.mastercontrol.lan-client-access`. Capabilities: `storage`, `event_publishing`.
+- Default activation list grows from 15 modules to 16 (`LanClientAccessModule` slotted between `ExportModule` and `CommandLogicUnitModule`).
+- Six new admin API routes:
+  - `GET /api/clients` — list registered LAN clients
+  - `GET /api/clients/{id}` — single client lookup
+  - `POST /api/clients` — register or update a client
+  - `POST /api/clients/{id}/disable` — soft-disable a client (preserves the record, sets `disabledAtUtc`)
+  - `POST /api/clients/{id}/enable` — re-enable a previously disabled client
+  - `DELETE /api/clients/{id}` — remove a client from the roster
+- `AppConfiguration::lanClients` vector + NLOHMANN field entry.
+- `appendLanClientActivity` free-function shim so the LAN-client service can emit ring events without holding the full `ActivityEventRing` type at its point of definition.
+- Test coverage in `tests/MasterControlOrchestrationServerTests.cpp`: LanClient JSON round-trip, default-state assertions, AppConfiguration container round-trip.
+
+#### Verification
+- Register a client: `curl -X POST http://127.0.0.1:7300/api/clients -d '{"clientId":"claude-code-jdaley-wks","displayName":"Claude Code on Jdaley workstation","clientType":"claude_code","hostName":"PC-GAMING-R7-58"}'` returns `{"succeeded":true,"message":"LAN client registered."}`.
+- List: `GET /api/clients` shows the new client.
+- Restart the service and re-`GET /api/clients` — record persists.
+- Disable: `POST /api/clients/claude-code-jdaley-wks/disable` succeeds; subsequent `GET /api/clients/claude-code-jdaley-wks` shows `enabled:false` and a populated `disabledAtUtc`.
+- Activity stream: `GET /api/activity` shows the lifecycle events.
+
+#### Out of scope for Phase 3 (lands in later phases)
+- Privilege enforcement on creation/modification/removal of MCP servers and sub-agents (Phase 4 + Phase 6).
+- Configuration bundle `GET /api/clients/{id}/config` (Phase 5).
+- `X-MCOS-Client-Id` request middleware (Phase 6).
+- CLU governance hooks for client lifecycle (Phase 7).
+- Browser dashboard surfaces (Phase 8).
+
+### Major architectural remediation - Gut and Rebuild (Phase 2 of ADR-001)
+
+**Breaking:** The AI provider integration stack is removed in full per [ADR-001 - LAN Client Control Plane](docs/wiki/Architecture-Decisions/ADR-001-lan-client-control-plane.md). MCOS is being rebuilt as a LAN client control plane where external AI clients connect, receive a server-authored configuration bundle, and operate under per-client privileges enforced server-side.
+
+### Removed
+- Four Forsetti modules: `ProviderIntegrationModule`, `CodexProviderModule`, `ClaudeCodeProviderModule`, `XAIProviderModule` (source, manifests, runtime registrations, default activation entries, protected-set membership).
+- Provider data types: `ProviderConnection`, `ProviderCapabilityDescriptor`, `ProviderAssignment`, `ProviderAssignmentTarget`, `ProviderAssignmentTargetKind`, `ProviderKind`, `ProviderExecutionTransport`, `ProviderExecutionRegistration`, `ProviderExecutionRequest`, `ProviderExecutionRecord`, `ProviderCredentialStatus`, `ProviderCredentialUpdate`, `ProviderCredentialFieldDescriptor`, `ProviderCredentialFieldKind`, `ProviderExecutionStatus`, `DiscoveredModel`, `AutoConnectRequest`, `AutoConnectStep`, `AutoConnectResult`.
+- Provider service interfaces: `IProviderRegistry`, `IProviderCatalogService`, `IProviderCredentialStore`, `IProviderAssignmentService`, `IProviderExecutionCatalogService`, `IProviderExecutionService`.
+- Provider service implementations: `ProviderCatalogService`, `ProviderRegistryService`, `ProviderCredentialStore`, `ProviderCliSignInService`, `ProviderAssignmentService`, `ProviderExecutionCatalogService`, `ProviderExecutionService`.
+- Outbound AI transports: `executeClaudeCodeCli`, `executeCodexCli`, `executeOpenAICompatibleChat`. MCOS does not call AI models; AI clients call MCOS.
+- HTTP routes: `GET/POST /api/providers`, `/api/providers/credentials`, `/api/providers/auto-connect`, `/api/providers/signin/{register,start,status,installed}`, `/api/providers/groups[/remove]`, `/api/providers/assignments`, `/api/providers/execute`.
+- Sub-agent group routes renamed: `/api/providers/groups[/remove]` → `/api/runtime/subagent-groups[/remove]`.
+- Shell surface: `ProvidersSectionControl.xaml` and code-behind, associated IDL entries and project references.
+- Docs: `docs/wiki/Auto-Connect-AI.md`.
+- Proof artifacts: `plans/PROOF-OF-WORKING/02-auto-connect.md`, `plans/PROOF-OF-WORKING/11-ai-task-execution.md`.
+- Related provider constants, helper functions, readiness-snapshot provider tallies, starter-workflow provider references, Forsetti governance action kinds `ProviderExecution` / `ProviderAutonomyEnable`, activity-event kinds `ProviderExecution` / `AutoConnect`.
+
+### Added
+- `docs/wiki/Architecture-Decisions/ADR-001-lan-client-control-plane.md` - architectural decision record.
+- `plans/remediation/01-gut-and-rebuild.md` - full nine-phase remediation plan.
+- `plans/remediation/02-removal-inventory.md` - exhaustive Phase 2 checklist.
+
+### Phase 2b follow-up (service-tree cleanup complete)
+All five structural grep invariants return 0 across the service tree (`src/MasterControlApp`, `src/MasterControlModules`, `include`, `tests`):
+- Provider module class refs: 0
+- Provider data type refs (`ProviderConnection`, `ProviderAssignment`, `AutoConnectResult`, etc.): 0
+- Outbound CLI transport refs (`executeClaudeCodeCli`, etc.): 0
+- `/api/providers*` path refs: 0
+- Provider module id refs: 0
+
+Remaining `Provider` hits in the service tree are Forsetti framework's own `IEntitlementProvider` / `FileBackedEntitlementProvider` (unrelated to AI providers) plus a handful of comments explaining the removal.
+
+### Still deferred (non-service compile units, scheduled for later phases)
+- `src/MasterControlShell/ShellRuntime.cpp`, `MainWindow.xaml*` - shell is a separate compilation unit and the header-level cleanup in this phase removed `ShellProviderConnection` and sibling types. The `.cpp` files still reference those types; they will not compile until their remaining call sites are cleaned. A dedicated shell-track pass lands after Phase 8. The service compiles and runs without the shell.
+- `resources/web/app.js` - browser dashboard. Complete rewrite in Phase 8 per the plan.
+- `scripts/github_agents/sync_docs.py` - wiki doc generator. Rewritten in Phase 9 alongside the new doc set.
+
+### Notes
+- Default Forsetti activation drops from 19 modules to 15. Protected-module set drops from 5 to 4 (provider-integration removed).
+- Top-level inventory: 10 standalone file deletions, 6 headers cleaned, 3 `.cpp` files under `src/MasterControlApp` and `src/MasterControlModules` cleaned, 1 test suite replaced with skeleton, 1 compliance script cleaned, 2 key wiki pages banner-updated, CHANGELOG entry (this entry).
+- See `plans/remediation/02-removal-inventory.md` for the full checklist and follow-up grep invariants.
 
 ## [0.4.5-rc.5] - 2026-04-24
 ### Summary

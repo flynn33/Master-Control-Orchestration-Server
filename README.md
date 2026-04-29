@@ -1,75 +1,73 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.4.5--rc.5-00f6ff?style=flat-square) ![released](https://img.shields.io/badge/released-2026--04--24-031018?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows%2011%20/%20Server%202022-0a1018?style=flat-square) ![toolchain](https://img.shields.io/badge/toolchain-C++20%20·%20WinUI%203%20·%20CMake-00aacc?style=flat-square) ![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.5.0-00f6ff?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--04--25-031018?style=flat-square)
+![platform](https://img.shields.io/badge/platform-Windows%2011%20%E2%80%A2%20Server%202022-0a1018?style=flat-square)
+![toolchain](https://img.shields.io/badge/toolchain-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20CMake-00aacc?style=flat-square)
+![modules](https://img.shields.io/badge/Forsetti%20modules-16-1cf2c1?style=flat-square)
+![license](https://img.shields.io/badge/license-Proprietary-5a00e8?style=flat-square)
 
-> Forsetti-compliant Windows orchestration control plane for MCP services, AI provider routing, 
-> CLU governance, sub-agents, platform gateways, telemetry, and browser-based operations — 
-> all delivered as a single Tron-themed product.
+> A Windows-native **LAN client control plane** for shared MCP servers, sub-agents, and CLU-governed AI orchestration. External AI coding clients connect over the LAN under per-client privileges, share one catalog, and operate inside a Forsetti-aligned governance envelope.
+
+```
+                     ┌──────────────────────────────────────────────────┐
+                     │              Master Control Orchestration       │
+                     │              Server (MCOS) — host:7300          │
+                     └──────────┬─────────────────────┬─────────────────┘
+                                │                     │
+                  X-MCOS-Client-Id                Privilege gates
+                                │                     │   + CLU enforcement
+   ┌────────────────┐  ┌────────┴───────┐  ┌──────────┴──────────┐
+   │  AI agent A    │──┤  Identify on   ├──┤  Use shared MCP +   │
+   │  (Claude Code) │  │  every request │  │  sub-agent fabric   │
+   └────────────────┘  └────────────────┘  └─────────────────────┘
+   ┌────────────────┐                       ┌─────────────────────┐
+   │  AI agent B    │ ────────────────────▶ │  Mutate gated by    │
+   │  (Codex)       │                       │  per-client privs   │
+   └────────────────┘                       └─────────────────────┘
+                                            ┌─────────────────────┐
+                                            │ CLU defers high-    │
+                                            │ impact actions to   │
+                                            │ operator approval   │
+                                            └─────────────────────┘
+```
 
 - **Repository:** [`master-control-dashboard`](https://github.com/flynn33/Master-Control-Orchestration-Server)
-- **Current release:** `v0.4.5-rc.5` (2026-04-24)
-- **Forsetti modules:** 19
+- **Architecture decision:** [ADR-001 — LAN Client Control Plane](docs/wiki/Architecture-Decisions/ADR-001-lan-client-control-plane.md)
+- **Wiki:** [`docs/wiki/`](docs/wiki/) — **the canonical reference**, hand-authored with mermaid diagrams, worked examples, and decision matrices on every page
+- **End-to-end proof recipe:** [`plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md`](plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md)
+- **Changelog:** [`CHANGELOG.md`](CHANGELOG.md) — hand-authored entries, no automated bumps
 
 ---
 
-## Why this project exists
+## Why MCOS exists
 
-This project provides a Windows-native orchestration control plane for managing AI 
-providers, MCP services, sub-agents, and platform gateways on an internal LAN. It 
-brings together service hosting, a desktop operator shell, and a browser admin 
-surface — all backed by one shared in-process runtime.
+Multiple AI coding agents on the same trusted LAN need to share an MCP server and sub-agent fabric without each agent operating in isolation. MCOS is the orchestration plane:
 
-**Target audience:** Developers and operators running AI orchestration infrastructure 
-on a secure internal network. This is not a consumer-ready one-click product — it 
-requires a Windows build toolchain (Visual Studio 2022+, CMake 3.28+, vcpkg) or 
-the bootstrapper-assisted install path.
+1. **Operator registers each AI agent** as a `LanClient` with a slug-form `clientId`.
+2. **Operator grants privileges** — nine boolean flags covering create/modify/remove of MCP servers and sub-agents, plus client/module/governance management.
+3. **Operator downloads a server-authored config bundle** and ships it to the agent's host.
+4. **Agent identifies itself** on every request with the `X-MCOS-Client-Id` header.
+5. **MCOS enforces privileges and CLU governance** on every privileged mutation, attributes activity to the actor, and queues high-impact decisions for operator approval.
 
-### Architecture
+Use is universal — every authenticated client may invoke every MCP server and sub-agent in the catalog. Only mutations are gated.
 
-The product consists of multiple binaries sharing a single runtime library:
+---
 
-- **MasterControlServiceHost** — Windows service entry point (background daemon)
-- **MasterControlShell** — WinUI 3 desktop operator shell (local UI)
-- **Browser surface** — Vanilla JS admin dashboard served by the service host (host-local and remote operator access)
-- **MasterControlBootstrapper** — Lifecycle engine used for preflight/install/validate/upgrade/repair flows and MSI custom actions
+## Architecture at a glance
 
-### Highlights
-
-| | |
+| Surface | What it does |
 | --- | --- |
-| **Multi-binary control plane** | Windows service host, WinUI 3 desktop shell, and browser dashboard — all backed by the same in-process runtime |
-| **Auto-Connect AI providers** | Enter credentials, pick roles, runtime handles capability resolution, model discovery, DPAPI encryption, and assignment fan-out |
-| **Live command stream** | Every admin API request is captured by a 512-event ring buffer with millisecond timestamps, methods, targets, status codes, and latency |
-| **CLU governance** | First-class Forsetti service module for posture, rules, role routing, Apple operations, and platform governance execution |
-| **Cross-platform gateways** | Windows, macOS, and iOS gateway + governance lanes — Apple lanes route through SSH/companion-service Apple hosts |
-| **Repo-owned installer** | MSI-first release bundle plus bootstrapper-backed lifecycle tooling for preflight/install/validate/upgrade/repair/uninstall |
-| **Tron aesthetic, end-to-end** | Cyan-on-blue-black palette, Bahnschrift SemiCondensed type, zero corner radii, accent pulse animations, focus-visible outlines, prefers-reduced-motion respected |
+| **`MasterControlServiceHost.exe`** | Windows service entry point; hosts the runtime, the admin HTTP API on `:7300`, and the LAN beacon. |
+| **Browser admin UI** (`resources/web`) | Operator's primary surface. Six destinations: Overview, LAN Clients, Governance, Shared Fabric, Activity, Exports. |
+| **WinUI 3 desktop shell** (`src/MasterControlShell`) | Optional desktop operator surface. Currently in deferred-cleanup state from the architecture rebuild. |
+| **`MasterControlBootstrapper.exe`** | Lifecycle engine for preflight / install / validate / upgrade / repair. |
+
+The shared in-process **MCOS runtime** registers 16 Forsetti modules and exposes a single admin API consumed by the browser, the shell, and external AI clients.
 
 ---
 
-## Repository layout
-
-```
-master-control-dashboard/
-├── include/MasterControl/         # public contracts, models, defaults
-├── src/
-│   ├── MasterControlApp/          # shared runtime (~9k LOC core)
-│   ├── MasterControlServiceHost/  # Windows service entry point
-│   ├── MasterControlShell/        # WinUI 3 operator shell
-│   ├── MasterControlModules/      # Forsetti modules + JSON manifests
-│   └── MasterControlBootstrapper/ # lifecycle engine and packaged install helper
-├── resources/
-│   ├── web/                       # browser dashboard assets
-│   └── clu/                       # CLU governance profile
-├── scripts/                       # build, package, deploy, agents
-├── plans/                         # design + infrastructure notes
-├── docs/wiki/                     # wiki source pages (auto-generated)
-└── docs/versions/                 # release docs (auto-generated)
-```
-
----
-
-## Build, validate, and stage
+## Quick start
 
 ```powershell
 # Configure and build (Debug)
@@ -82,50 +80,126 @@ ctest --test-dir build\debug -C Debug --output-on-failure
 # Forsetti compliance + repo native checks
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-mastercontrol-forsetti.ps1
 
-# Stage installable payload
+# Stage the install payload
 cmake --install build\debug --config Debug --prefix dist\debug
 
 # Build a signed release package
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release
 ```
 
-See [Operations](docs/wiki/Operations.md) for the full deployment matrix, and 
-[Architecture](docs/wiki/Architecture.md) for the runtime composition diagram.
+Then visit [`http://127.0.0.1:7300/`](http://127.0.0.1:7300/) in a browser.
+
+---
+
+## Five-minute walkthrough
+
+```bash
+# 1. Operator registers an AI agent
+curl -X POST http://127.0.0.1:7300/api/clients \
+  -H "Content-Type: application/json" \
+  -d '{"clientId":"alpha","displayName":"Alpha","clientType":"claude_code"}'
+
+# 2. Operator grants privileges
+curl -X POST http://127.0.0.1:7300/api/clients/alpha/privileges \
+  -H "Content-Type: application/json" \
+  -d '{"canCreateMcpServers":true,"canCreateSubAgents":true}'
+
+# 3. Operator downloads the config bundle
+curl http://127.0.0.1:7300/api/clients/alpha/config > lan-client-alpha.json
+
+# 4. Drop the bundle on the AI agent's host. The agent uses it to identify
+#    itself on every outbound request:
+curl -H "X-MCOS-Client-Id: alpha" \
+     http://127.0.0.1:7300/api/client/mcp-servers
+```
+
+The full 13-step verification scenario lives in [`plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md`](plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md).
 
 ---
 
 ## Documentation
 
-| Page | What you get |
+The wiki is **hand-authored**, comprehensive, and the canonical reference. Every page carries:
+
+- A mental-model **mermaid diagram** at the top (flowchart, sequence diagram, state diagram, or class diagram)
+- A **field-by-field reference** for every data structure or route surface introduced
+- **Worked examples** in curl, PowerShell, Python, TypeScript, and/or Node where appropriate
+- A **decision matrix or comparison table** that summarizes the rules at a glance
+- A **common operator FAQ** at the bottom
+
+Pages are organized by topic:
+
+### LAN Client Control Plane
+
+| Page | Topic |
 | --- | --- |
-| [Home](docs/wiki/Home.md) | Project overview, current release, and navigation |
-| [Architecture](docs/wiki/Architecture.md) | Runtime composition, Forsetti modules, request flow diagrams |
-| [API Reference](docs/wiki/API-Reference.md) | Every admin API route with method, payload, and example responses |
-| [Auto-Connect AI](docs/wiki/Auto-Connect-AI.md) | The end-to-end automation pipeline for adding AI providers |
-| [CLU Governance](docs/wiki/CLU-Governance.md) | Command Logic Unit module, rules, roles, and platform governance lanes |
-| [Telemetry & Activity](docs/wiki/Telemetry-and-Activity.md) | Live telemetry pipeline + the activity ring buffer |
-| [Tron UI Theme](docs/wiki/Tron-UI-Theme.md) | Palette, typography, motion language, and component recipes |
-| [Sub-Agents](docs/wiki/Sub-Agents.md) | The 7-agent roster, ports, and shared platform gateway client |
-| [Operations](docs/wiki/Operations.md) | Build, package, install, upgrade, repair, uninstall flows |
-| [Infrastructure](docs/wiki/Infrastructure.md) | Deployment shape, packaging model, and target hosts |
-| [Remote Client](docs/wiki/Remote-Client.md) | Onboarding direction for Codex, Claude Code, and gateway discovery |
-| [Automation](docs/wiki/Automation.md) | The GitHub agents that maintain the repository |
-| [Versions](docs/wiki/Versions.md) | Release history and the versioning scheme |
-| [Troubleshooting](docs/wiki/Troubleshooting.md) | Common failure modes and how to diagnose them |
+| [LAN Clients](docs/wiki/LAN-Clients.md) | The data model, lifecycle endpoints, identification, heartbeat, activity events |
+| [Privileges](docs/wiki/Privileges.md) | Nine boolean flags, autonomous-mode bypass, capability bundles |
+| [Client Config Bundle](docs/wiki/Client-Config-Bundle.md) | The schemaVersion-1.0 bundle reference |
+| [Governance](docs/wiki/Governance.md) | CLU enforcement, the 15 action kinds, operator approval queue |
+| [Remote Client](docs/wiki/Remote-Client.md) | Onboarding an AI agent from another machine |
+
+### Architecture & internals
+
+| Page | Topic |
+| --- | --- |
+| [ADR-001](docs/wiki/Architecture-Decisions/ADR-001-lan-client-control-plane.md) | The architectural decision |
+| [Architecture](docs/wiki/Architecture.md) | Runtime composition, Forsetti modules, request lifecycle |
+| [API Reference](docs/wiki/API-Reference.md) | Every HTTP route exposed by the runtime |
+| [Sub-Agents](docs/wiki/Sub-Agents.md) | The 7-agent specialist roster |
+| [Telemetry & Activity](docs/wiki/Telemetry-and-Activity.md) | Live telemetry + activity ring |
+
+### Operations & deployment
+
+| Page | Topic |
+| --- | --- |
+| [Operations](docs/wiki/Operations.md) | Build, package, install, upgrade, uninstall |
+| [Infrastructure](docs/wiki/Infrastructure.md) | Deployment shape and target hosts |
+| [Troubleshooting](docs/wiki/Troubleshooting.md) | Common failures and diagnosis |
+
+### Project & release
+
+| Page | Topic |
+| --- | --- |
+| [Versions](docs/wiki/Versions.md) | Release history |
+| [Automation](docs/wiki/Automation.md) | GitHub workflows that protect the repository |
 
 ---
 
-## Current release
+## Contributing
 
-**`v0.4.5-rc.5` — 2026-04-24**
+This is a proprietary repository. Contributions follow these rules:
 
-Release candidate for the non-security remediation pass. Promotes the packaging, documentation, and shared-auth provider fixes from the remediation review into a clean RC while intentionally deferring security hardening to a later phase.
+1. **No AI contributor attribution.** The repository's `AI Contributor Guard` workflow rejects commits whose author, committer, or trailer matches an AI vendor name (`chatgpt`, `codex`, `claude`, `copilot`, `gemini`, `grok`, `openai`, `anthropic`, `deepseek`, `perplexity`, `x.ai`). Runtime references to AI products (e.g., `clientType: "claude_code"`) are legitimate and not affected.
+2. **Hand-authored documentation.** The previous DocSync / ReleaseAgent / WikiSync agents that auto-pushed wiki and README content as `github-actions[bot]` are **retired**. Every documentation edit is now an explicit operator action. The wiki source lives in [`docs/wiki/`](docs/wiki/) — edit the markdown directly and open a PR.
+3. **Forsetti compliance.** Every change runs through `scripts/check-mastercontrol-forsetti.ps1` in CI.
+4. **Windows product gate.** Releases require a successful `Windows Build, Test, and Package` run on the target commit.
+5. **Hand-authored CHANGELOG entries.** No automated bumps. Categorize the change (patch / minor / major) and write the entry with the same commit. See the operator runbook in [`docs/wiki/Versions.md`](docs/wiki/Versions.md).
 
-- fix(models): shared-auth metadata now keeps ChatGPT and Codex tied to the same OpenAI bridge and provider family across module registration, execution registration, and shell snapshots
-- test: MasterControlOrchestrationServerTests now asserts providerFamilyId and authBridgeId coverage for the shared OpenAI-backed providers
-- fix(shell/build): MasterControlShell now restores Windows App SDK packages into a repo-local .nuget cache, ignores that cache, and drops the tracked src/MasterControlShell/packages tree without breaking clean builds
-- fix(ci/docs): Windows packaging CI and operator docs now target dist/packages/release, validate version-badge sync, and describe the MSI-first host-versus-remote workflow accurately
-- release: cut the non-security remediation candidate as v0.4.5-rc.5 while deferring security remediation to a future phase
 ---
 
-Repository: https://github.com/flynn33/Master-Control-Orchestration-Server
+## Repository layout
+
+```
+master-control-dashboard/
+├── include/MasterControl/         # Public contracts, models, defaults
+├── src/
+│   ├── MasterControlApp/          # Shared in-process runtime
+│   ├── MasterControlServiceHost/  # Windows service entry point
+│   ├── MasterControlShell/        # WinUI 3 operator shell
+│   ├── MasterControlModules/      # Forsetti modules + JSON manifests
+│   └── MasterControlBootstrapper/ # Installer / repair lifecycle
+├── resources/
+│   ├── web/                       # Browser dashboard
+│   └── clu/                       # CLU governance profile
+├── scripts/                       # Build, package, CI helpers
+├── plans/                         # Architecture plans + proof-of-working
+├── tests/                         # Native test suite
+└── docs/wiki/                     # Hand-authored wiki
+```
+
+---
+
+## License
+
+Proprietary. © 2026 James Daley. All Rights Reserved.

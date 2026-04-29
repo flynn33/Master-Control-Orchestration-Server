@@ -53,39 +53,19 @@ public:
     void stop(Forsetti::ForsettiContext& context) override;
 };
 
-class ProviderIntegrationModule final : public Forsetti::IForsettiModule {
-public:
-    Forsetti::ModuleDescriptor descriptor() const override;
-    Forsetti::ModuleManifest manifest() const override;
-    void start(Forsetti::ForsettiContext& context) override;
-    void stop(Forsetti::ForsettiContext& context) override;
-};
-
-class CodexProviderModule final : public Forsetti::IForsettiModule {
-public:
-    Forsetti::ModuleDescriptor descriptor() const override;
-    Forsetti::ModuleManifest manifest() const override;
-    void start(Forsetti::ForsettiContext& context) override;
-    void stop(Forsetti::ForsettiContext& context) override;
-};
-
-class ClaudeCodeProviderModule final : public Forsetti::IForsettiModule {
-public:
-    Forsetti::ModuleDescriptor descriptor() const override;
-    Forsetti::ModuleManifest manifest() const override;
-    void start(Forsetti::ForsettiContext& context) override;
-    void stop(Forsetti::ForsettiContext& context) override;
-};
-
-class XAIProviderModule final : public Forsetti::IForsettiModule {
-public:
-    Forsetti::ModuleDescriptor descriptor() const override;
-    Forsetti::ModuleManifest manifest() const override;
-    void start(Forsetti::ForsettiContext& context) override;
-    void stop(Forsetti::ForsettiContext& context) override;
-};
-
 class ExportModule final : public Forsetti::IForsettiModule {
+public:
+    Forsetti::ModuleDescriptor descriptor() const override;
+    Forsetti::ModuleManifest manifest() const override;
+    void start(Forsetti::ForsettiContext& context) override;
+    void stop(Forsetti::ForsettiContext& context) override;
+};
+
+// Phase 3 of ADR-001 LAN Client Control Plane. Owns the LanClient roster,
+// emits activity events on lifecycle changes, and answers the /api/clients
+// admin routes. Not protected; can be disabled by an operator if MCOS is
+// running purely as an MCP/sub-agent host without external LAN clients.
+class LanClientAccessModule final : public Forsetti::IForsettiModule {
 public:
     Forsetti::ModuleDescriptor descriptor() const override;
     Forsetti::ModuleManifest manifest() const override;

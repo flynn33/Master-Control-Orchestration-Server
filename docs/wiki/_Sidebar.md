@@ -2,13 +2,19 @@
 
 **[🏠 Home](Home)**
 
-**Architecture**
+**LAN Client Control Plane**
+- [👥 LAN Clients](LAN-Clients)
+- [🔐 Privileges](Privileges)
+- [📦 Client Config Bundle](Client-Config-Bundle)
+- [⚖️ Governance](Governance)
+- [🔌 Remote Client](Remote-Client)
+
+**Architecture & internals**
+- [📜 ADR-001](Architecture-Decisions/ADR-001-lan-client-control-plane)
 - [🏗️ Architecture](Architecture)
 - [🌐 API Reference](API-Reference)
-- [🤖 Auto-Connect AI](Auto-Connect-AI)
-- [⚖️ CLU Governance](CLU-Governance)
-- [📡 Telemetry & Activity](Telemetry-and-Activity)
 - [🛰️ Sub-Agents](Sub-Agents)
+- [📡 Telemetry & Activity](Telemetry-and-Activity)
 
 **UI / UX**
 - [🎨 Tron UI Theme](Tron-UI-Theme)
@@ -16,7 +22,6 @@
 **Operations**
 - [🛠️ Operations](Operations)
 - [📦 Infrastructure](Infrastructure)
-- [🔌 Remote Client](Remote-Client)
 - [🚨 Troubleshooting](Troubleshooting)
 
 **Project**

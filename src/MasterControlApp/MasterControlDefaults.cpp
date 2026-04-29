@@ -328,7 +328,6 @@ AppPaths resolveAppPaths() {
     const auto installHistoryFile = dataDirectory / "state" / "install-history.json";
     const auto appleOperationHistoryFile = dataDirectory / "state" / "apple-operations.json";
     const auto entitlementsFile = dataDirectory / "state" / "entitlements.json";
-    const auto providerCredentialsFile = dataDirectory / "state" / "provider-credentials.json";
     const auto currentConfigurationFile = dataDirectory / "config" / "master-control-orchestration-server.json";
     const auto legacyConfigurationFile = dataDirectory / "config" / "master-control-program.json";
     const auto configurationFile = !std::filesystem::exists(currentConfigurationFile) && std::filesystem::exists(legacyConfigurationFile)
@@ -377,7 +376,6 @@ std::filesystem::path cluProfileFile;
         installHistoryFile,
         appleOperationHistoryFile,
         entitlementsFile,
-        providerCredentialsFile,
         manifestsDirectory,
         webRootDirectory,
         cluProfileFile,
@@ -387,14 +385,6 @@ std::filesystem::path cluProfileFile;
 
 std::vector<RuntimeEndpoint> buildDefaultSeededEndpoints() {
     return buildDefaultSeededEndpointsForHost(detectLocalEnvironment().preferredBindAddress);
-}
-
-std::vector<ProviderConnection> buildDefaultProviders() {
-    return {
-        ProviderConnection{ "codex", ProviderKind::Codex, "Codex", "https://api.openai.com/v1", "gpt-5.4", true, false, false, true },
-        ProviderConnection{ "claude-code", ProviderKind::ClaudeCode, "Claude Code", "https://api.anthropic.com", "", true, false, false, true },
-        ProviderConnection{ "xai-grok", ProviderKind::XAI, "xAI / Grok", "https://api.x.ai/v1", "grok-code-fast-1", true, false, false, true }
-    };
 }
 
 AppConfiguration buildDefaultConfiguration() {
@@ -413,7 +403,6 @@ AppConfiguration buildDefaultConfiguration() {
     configuration.security.allowTroubleshootingBypass = true;
     configuration.security.allowOpenLanAccess = true;
     configuration.security.securityProtocolsEnabled = true;
-    configuration.providers = buildDefaultProviders();
     configuration.activeProfile.environmentName = environment.hostName + " - " + environment.operatingSystem;
     configuration.activeProfile.preferredBindAddress = environment.preferredBindAddress;
     configuration.activeProfile.macAddress = environment.macAddress;

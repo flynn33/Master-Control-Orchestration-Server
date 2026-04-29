@@ -2,7 +2,13 @@
 
 **Build:** 48 (commit `d187951`) — **Probe date:** 2026-04-19 UTC — **Host:** Windows 11 Pro 10.0.26200 / PC-GAMING-R7-58
 
-This document concatenates the ten feature receipts under `plans/PROOF-OF-WORKING/`.
+> **Historical snapshot.** This document captured the feature set before the Phase 2 remediation
+> of ADR-001 removed the AI provider integration stack. Receipts `02-auto-connect.md` and
+> `11-ai-task-execution.md` reference features that no longer exist and have been deleted from
+> the repository (retained in git history). A new end-to-end proof for the LAN client model lands
+> in Phase 9 as `plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md`.
+
+This document concatenates the original feature receipts under `plans/PROOF-OF-WORKING/`.
 Each receipt was produced by a dedicated sub-agent with an explicit evidence
 contract (see `plans/PROOF-OF-WORKING/README.md`). The raw JSON / text receipts
 are saved under `G:/Claude/mcos_proof_*.json` and `mcos_proof_*.txt` so the
@@ -15,7 +21,7 @@ claims below can be audited offline.
 | # | Feature | Receipt | Verdict | Notes |
 |---|---------|---------|---------|-------|
 | 1 | Multi-binary control plane | `01-multi-binary.md` | ✅ VERIFIED | Service + Shell + browser-surface all confirmed from one runtime. |
-| 2 | Auto-Connect AI providers | `02-auto-connect.md` | ✅ VERIFIED | 7-stage pipeline + DPAPI seal + role fan-out + 3 negative paths all green. |
+| 2 | Auto-Connect AI providers | _(removed in ADR-001 Phase 2)_ | RETIRED | Feature removed; receipt deleted. See `plans/remediation/01-gut-and-rebuild.md`. |
 | 3 | Live command stream | `03-command-stream.md` | ✅ VERIFIED | 512 cap, monotonic ids, FIFO eviction, 3 excluded paths confirmed. |
 | 4 | CLU governance | `04-clu-governance.md` | ✅ VERIFIED | E2E: executed `forsetti.windows.module-boundary.inspect`, `recentExecutions` went 0→1. |
 | 5 | Cross-platform gateways | `05-platform-gateways.md` | ✅ VERIFIED | 10/10 including full Apple host lifecycle round-trip. |

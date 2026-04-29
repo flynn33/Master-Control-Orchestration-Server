@@ -24,16 +24,6 @@ enum class ShellInstallerKind {
     PowerShell
 };
 
-struct ShellProviderConnection final {
-    std::wstring id;
-    std::wstring kind;
-    std::wstring displayName;
-    std::wstring baseUrl;
-    std::wstring modelId;
-    bool enabled = true;
-    bool allowAutonomousControl = false;
-    bool credentialsConfigured = false;
-};
 
 struct ShellRuntimeEndpoint final {
     std::wstring id;
@@ -49,42 +39,8 @@ struct ShellRuntimeEndpoint final {
     bool userDefined = false;
 };
 
-struct ShellProviderCredentialField final {
-    std::wstring fieldId;
-    std::wstring label;
-    std::wstring kind;
-    std::wstring helpText;
-    std::wstring placeholder;
-    std::wstring environmentVariableHint;
-    std::wstring requirementGroup;
-    bool secret = false;
-    bool required = false;
-};
 
-struct ShellProviderCapability final {
-    std::wstring moduleId;
-    std::wstring providerId;
-    std::wstring providerFamilyId;
-    std::wstring authBridgeId;
-    std::wstring kind;
-    std::wstring displayName;
-    std::wstring description;
-    std::wstring defaultBaseUrl;
-    std::wstring recommendedModel;
-    std::vector<ShellProviderCredentialField> credentialFields;
-    std::vector<std::wstring> runtimeRequirements;
-    std::vector<std::wstring> supportedTargets;
-    bool supportsSharedMcpAccess = true;
-    bool supportsAutonomousControl = true;
-};
 
-struct ShellProviderCredentialStatus final {
-    std::wstring providerId;
-    bool configured = false;
-    std::vector<std::wstring> configuredFieldIds;
-    std::wstring updatedAtUtc;
-    std::wstring message;
-};
 
 struct ShellSubAgentGroupDefinition final {
     std::wstring groupId;
@@ -94,22 +50,9 @@ struct ShellSubAgentGroupDefinition final {
     std::wstring updatedAtUtc;
 };
 
-struct ShellProviderAssignmentTarget final {
-    std::wstring targetId;
-    std::wstring kind;
-    std::wstring displayName;
-    std::wstring description;
-    std::vector<std::wstring> memberTargetIds;
-};
 
-struct ShellProviderAssignment final {
-    std::wstring targetId;
-    std::wstring kind;
-    std::wstring providerId;
-    std::wstring updatedAtUtc;
-};
 
-// Live activity stream — every incoming admin API request, outbound provider
+// Live activity stream — every incoming admin API request, governance
 // execution, and governance decision flows through ActivityEventRing in the
 // service host. The shell polls /api/activity?since={id} to fetch the latest
 // events and render them in a scrolling command log.
@@ -136,83 +79,12 @@ struct ShellActivityStreamResult final {
 // Auto-Connect AI Model — the shell hands the runtime just the credentials
 // and optional role targets. Everything else (route id, display name, base
 // url, model discovery, dpapi encryption, assignment fan-out) is automated.
-struct ShellAutoConnectProviderRequest final {
-    std::wstring kind;                                    // e.g. "Codex", "ClaudeCode", "XAI"
-    std::wstring providerId;                              // concrete provider id (e.g. "chatgpt", "codex")
-    std::vector<std::pair<std::wstring, std::wstring>> credentials;
-    std::vector<std::wstring> assignmentTargetIds;        // roles, groups, or sub-agents
-    bool allowAutonomousControl = false;
-    bool discoverModels = true;
-    // Optional overrides for advanced operators — leave empty for fully
-    // automated defaults driven by the capability descriptor.
-    std::wstring displayNameOverride;
-    std::wstring baseUrlOverride;
-    std::wstring modelIdOverride;
-};
 
-struct ShellAutoConnectProviderStep final {
-    std::wstring stage;
-    bool succeeded = false;
-    std::wstring message;
-    int latencyMs = 0;
-};
 
-struct ShellAutoConnectProviderModel final {
-    std::wstring id;
-    std::wstring displayName;
-    std::wstring description;
-};
 
-struct ShellAutoConnectProviderResult final {
-    bool succeeded = false;
-    std::wstring providerId;
-    std::wstring displayName;
-    std::wstring baseUrl;
-    std::wstring selectedModelId;
-    std::wstring summary;
-    std::wstring errorMessage;
-    int totalLatencyMs = 0;
-    std::vector<ShellAutoConnectProviderModel> discoveredModels;
-    std::vector<ShellAutoConnectProviderStep> steps;
-    std::vector<std::wstring> assignmentsApplied;
-    std::vector<std::wstring> assignmentsFailed;
-};
 
-struct ShellProviderExecutionRegistration final {
-    std::wstring moduleId;
-    std::wstring providerId;
-    std::wstring providerFamilyId;
-    std::wstring authBridgeId;
-    std::wstring kind;
-    std::wstring displayName;
-    std::wstring transport;
-    bool supportsSharedMcpAccess = true;
-    bool supportsDirectMcpConfig = false;
-};
 
-struct ShellProviderExecutionRequest final {
-    std::wstring targetId;
-    std::wstring prompt;
-    bool allowToolAccess = true;
-    int maxTurns = 4;
-};
 
-struct ShellProviderExecutionRecord final {
-    std::wstring executionId;
-    std::wstring targetId;
-    std::wstring targetDisplayName;
-    std::wstring providerId;
-    std::wstring providerDisplayName;
-    std::wstring status;
-    std::wstring modelId;
-    std::vector<std::wstring> referencedMcpServerIds;
-    std::vector<std::wstring> toolEvents;
-    std::wstring outputText;
-    std::wstring rawResponse;
-    std::wstring startedAtUtc;
-    std::wstring completedAtUtc;
-    std::wstring errorMessage;
-};
 
 struct ShellSecuritySettings final {
     bool enableTls = false;
@@ -431,7 +303,6 @@ struct ShellSnapshot final {
     int bandwidthAllocationPercent = 50;
     int storageAllocationPercent = 50;
     size_t endpointCount = 0;
-    size_t providerCount = 0;
     size_t installCount = 0;
     size_t exportCount = 0;
     size_t governanceRoleCount = 0;
@@ -464,14 +335,7 @@ struct ShellSnapshot final {
     std::wstring governanceLastEvaluatedUtc;
     ShellSecuritySettings securitySettings;
     std::vector<ShellRuntimeEndpoint> endpoints;
-    std::vector<ShellProviderConnection> providers;
-    std::vector<ShellProviderCapability> providerCapabilities;
-    std::vector<ShellProviderCredentialStatus> providerCredentialStatuses;
     std::vector<ShellSubAgentGroupDefinition> subAgentGroups;
-    std::vector<ShellProviderAssignmentTarget> providerAssignmentTargets;
-    std::vector<ShellProviderAssignment> providerAssignments;
-    std::vector<ShellProviderExecutionRegistration> providerExecutionRegistrations;
-    std::vector<ShellProviderExecutionRecord> providerExecutionHistory;
     std::vector<ShellAppleRemoteHost> appleRemoteHosts;
     std::vector<ShellAppleOperationRecord> appleOperations;
     std::vector<ShellNavigationPointer> navigationPointers;
@@ -479,9 +343,6 @@ struct ShellSnapshot final {
     std::vector<ShellOverlayRoute> overlayRoutes;
     std::map<std::wstring, std::vector<ShellViewInjection>> viewInjectionsBySlot;
     std::vector<std::wstring> endpointRows;
-    std::vector<std::wstring> providerRows;
-    std::vector<std::wstring> providerCapabilityRows;
-    std::vector<std::wstring> providerAssignmentRows;
     std::vector<std::wstring> installRows;
     std::vector<std::wstring> exportRows;
     std::vector<std::wstring> governanceFindingRows;
@@ -508,56 +369,13 @@ public:
     [[nodiscard]] ShellOperationResult RemoveMcpServer(const std::wstring& mcpServerId) const;
     [[nodiscard]] ShellOperationResult UpsertSubAgent(const ShellRuntimeEndpoint& subAgent) const;
     [[nodiscard]] ShellOperationResult RemoveSubAgent(const std::wstring& subAgentId) const;
-    [[nodiscard]] ShellOperationResult UpsertProvider(const ShellProviderConnection& provider) const;
-    [[nodiscard]] ShellOperationResult UpsertProviderCredentials(
-        const std::wstring& providerId,
-        const std::vector<std::pair<std::wstring, std::wstring>>& values) const;
     [[nodiscard]] ShellOperationResult UpsertAppleRemoteHost(const ShellAppleRemoteHost& host) const;
     [[nodiscard]] ShellOperationResult RemoveAppleRemoteHost(const std::wstring& hostId) const;
     [[nodiscard]] ShellOperationResult UpsertSubAgentGroup(const ShellSubAgentGroupDefinition& group) const;
     [[nodiscard]] ShellOperationResult RemoveSubAgentGroup(const std::wstring& groupId) const;
-    [[nodiscard]] ShellOperationResult UpsertProviderAssignment(const ShellProviderAssignment& assignment) const;
-    // One-shot automation: pick a kind, hand over credentials, pick roles, done.
-    [[nodiscard]] ShellAutoConnectProviderResult AutoConnectProvider(const ShellAutoConnectProviderRequest& request) const;
 
-    // Account-only sign-in wizard: drives the CLI's own OAuth flow so no
-    // API keys are ever entered by the operator. StartCliSignIn spawns
-    // `claude login` / `codex login` on the host; GetCliSignInStatus polls
-    // the resulting session until it reports "complete" or "failed".
-    struct ShellCliSignInStartResult {
-        bool succeeded = false;
-        std::wstring message;
-        std::wstring sessionId;
-        std::wstring bridge;
-        bool cliInstalled = true;
-    };
-    struct ShellCliSignInStatusResult {
-        bool succeeded = false;
-        std::wstring status;   // "pending" | "complete" | "failed"
-        std::wstring message;
-        std::wstring bridge;
-        std::wstring providerId;
-        std::wstring accountLabel;
-    };
-    struct ShellCliSignInDetectEntry {
-        std::wstring bridge;
-        std::wstring displayName;
-        bool installed = false;
-        bool signedIn = false;
-    };
-    [[nodiscard]] ShellCliSignInStartResult StartCliSignIn(const std::wstring& bridge,
-                                                           const std::wstring& providerId) const;
-    [[nodiscard]] ShellCliSignInStatusResult GetCliSignInStatus(const std::wstring& sessionId) const;
-    [[nodiscard]] std::vector<ShellCliSignInDetectEntry> DetectCliSignInInstalled() const;
-    [[nodiscard]] ShellOperationResult RegisterCliSignedInProvider(const std::wstring& bridge,
-                                                                   const std::wstring& providerId) const;
-
-    // Install one of the provider CLIs on demand. `bridge` is the bridge id
-    // (`claude` or `codex`); we translate it into the matching dependency-
-    // catalog id and POST to /api/setup/dependencies/{id}/install, which
-    // invokes the catalog's preset `npm install -g` command. Blocks until
-    // the install finishes or errors; callers should dispatch on a
-    // background apartment to keep the UI responsive.
+    // Install a host-side AI CLI dependency (e.g. Claude Code CLI) on demand.
+    // `bridge` is the dependency id; POSTs to /api/setup/dependencies/{id}/install.
     struct ShellCliDependencyInstallResult {
         bool succeeded = false;
         std::wstring status;         // "ready" | "installable" | "failed"
@@ -577,7 +395,6 @@ public:
     [[nodiscard]] ShellForsettiModuleCatalogResult FetchForsettiModules() const;
     [[nodiscard]] ShellOperationResult ManageForsettiModule(const std::wstring& moduleId,
                                                            const std::wstring& action) const;
-    [[nodiscard]] ShellProviderExecutionRecord ExecuteProviderTask(const ShellProviderExecutionRequest& request) const;
     [[nodiscard]] ShellOperationResult ExecuteGovernanceTool(const std::wstring& platform,
                                                             const std::wstring& toolId,
                                                             const std::wstring& targetPath,

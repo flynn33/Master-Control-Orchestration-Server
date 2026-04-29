@@ -84,3 +84,14 @@ This makes the pure-stability verdict **INCONCLUSIVE**: the GETs never establish
 ```
 
 Latency outliers so far (POST /instantiate > 5 s): 4 calls between 9.2 s and 11.9 s (all returned 200).
+
+## T+10 snapshot
+
+```
+2026-04-19T10:44:50,12336,12.72,200,9
+2026-04-19T10:45:51,12336,12.84,200,9
+2026-04-19T10:46:51,12336,13,200,9
+2026-04-19T10:47:51,12336,13.05,200,9
+```
+
+Service has been on stable PID **12336** since 10:44. **No new failures recorded for ~4 minutes.** WorkingSet has grown 12.72 → 13.05 MB (+2.6 %, well under the 50 % red-flag threshold). Port 7300 listening consistently on 12336. Activity-ring verification: `/api/readiness` and `/api/providers/signin/installed` both appear in `/api/activity` events (highWaterMarkId increments as expected).

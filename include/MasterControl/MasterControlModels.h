@@ -5,6 +5,7 @@
 #pragma once
 
 #include "ForsettiCore/UIModels.h"
+#include "MasterControl/LanClient.h"
 
 #include <nlohmann/json.hpp>
 
@@ -31,40 +32,6 @@ enum class EndpointStatus {
     Offline,
     Degraded,
     Template
-};
-
-enum class ProviderKind {
-    Codex,
-    ClaudeCode,
-    OpenAI,
-    XAI,
-    Generic
-};
-
-enum class ProviderCredentialFieldKind {
-    ApiKey,
-    AuthToken,
-    Model,
-    Text
-};
-
-enum class ProviderAssignmentTargetKind {
-    Role,
-    SubAgentGroup,
-    SubAgent
-};
-
-enum class ProviderExecutionStatus {
-    Pending,
-    Running,
-    Succeeded,
-    Failed
-};
-
-enum class ProviderExecutionTransport {
-    OpenAICompatibleChat,
-    ClaudeCodeCli,
-    CodexCli
 };
 
 enum class InstallerKind {
@@ -111,9 +78,26 @@ enum class AppleOperationStatus {
 
 enum class GovernanceActionKind {
     Unknown,
-    ProviderExecution,
-    ProviderAutonomyEnable,
+    ClientRegister,
+    ClientPrivilegeChange,
+    ClientAutonomousModeChange,
+    ClientRevoke,
+    McpServerCreate,
+    McpServerModify,
+    McpServerRemove,
+    SubAgentCreate,
+    SubAgentModify,
+    SubAgentRemove,
+    ModuleEnable,
+    ModuleDisable,
+    GovernancePolicyChange,
     RemoteInstall
+};
+
+enum class GovernanceDecisionOutcome {
+    Allow,
+    Block,
+    RequiresOperatorApproval
 };
 
 struct HostTelemetrySnapshot final {
@@ -172,82 +156,6 @@ struct ResourceAllocationProfile final {
     int storagePercent = 50;
 };
 
-struct ProviderConnection final {
-    std::string id;
-    ProviderKind kind = ProviderKind::Generic;
-    std::string displayName;
-    std::string baseUrl;
-    std::string modelId;
-    bool enabled = true;
-    bool allowAutonomousControl = false;
-    bool credentialsConfigured = false;
-    bool isTemplate = false;
-};
-
-struct ProviderCredentialFieldDescriptor final {
-    std::string fieldId;
-    std::string label;
-    ProviderCredentialFieldKind kind = ProviderCredentialFieldKind::Text;
-    std::string helpText;
-    std::string placeholder;
-    std::string environmentVariableHint;
-    std::string requirementGroup;
-    bool secret = false;
-    bool required = false;
-};
-
-struct ProviderCapabilityDescriptor final {
-    std::string moduleId;
-    std::string providerId;
-    // Stable family identifier for distinct providers that belong to the same
-    // vendor/auth surface (for example ChatGPT + Codex).
-    std::string providerFamilyId;
-    // Shared authentication bridge identifier. This stays separate from
-    // providerId so multiple logical providers can reuse one sign-in flow.
-    std::string authBridgeId;
-    ProviderKind kind = ProviderKind::Generic;
-    std::string displayName;
-    std::string description;
-    std::string defaultBaseUrl;
-    std::string recommendedModel;
-    std::vector<ProviderCredentialFieldDescriptor> credentialFields;
-    std::vector<std::string> runtimeRequirements;
-    std::vector<std::string> supportedTargets;
-    bool supportsSharedMcpAccess = true;
-    bool supportsAutonomousControl = true;
-    // OAuth support flag — when true, the UI presents "Sign in with [Provider]"
-    // as the primary auth flow. When false, falls back to API key entry.
-    bool supportsOAuth = false;
-    // OAuth configuration (populated only when supportsOAuth is true).
-    std::string oauthAuthorizeUrl;
-    std::string oauthClientId;
-    std::string oauthScope;
-    // CLI sign-in bridge. When non-empty, the "Add AI Model" wizard offers
-    // a no-API-key sign-in path by spawning this CLI's `login` subcommand
-    // (e.g., `claude login`, `codex login`). The CLI's own OAuth flow
-    // stores tokens in its native location and execution then routes
-    // through the CLI with no credentials passed by us. Values: "", "claude",
-    // "codex". Empty disables the sign-in button and falls back to API-key
-    // entry.
-    std::string cliBridgeCommand;
-    // Human-readable sub-label shown under the sign-in button (e.g.
-    // "Claude Pro / Max / Team subscription"). Empty = no sub-label.
-    std::string cliBridgeAccountLabel;
-};
-
-struct ProviderCredentialStatus final {
-    std::string providerId;
-    bool configured = false;
-    std::vector<std::string> configuredFieldIds;
-    std::string updatedAtUtc;
-    std::string message;
-};
-
-struct ProviderCredentialUpdate final {
-    std::string providerId;
-    std::map<std::string, std::string> values;
-};
-
 struct SubAgentGroupDefinition final {
     std::string groupId;
     std::string displayName;
@@ -268,119 +176,6 @@ struct SubAgentGroupRemovalRequest final {
     std::string groupId;
 };
 
-struct ProviderAssignmentTarget final {
-    std::string targetId;
-    ProviderAssignmentTargetKind kind = ProviderAssignmentTargetKind::Role;
-    std::string displayName;
-    std::string description;
-    std::vector<std::string> memberTargetIds;
-};
-
-struct ProviderAssignment final {
-    std::string targetId;
-    ProviderAssignmentTargetKind kind = ProviderAssignmentTargetKind::Role;
-    std::string providerId;
-    std::string updatedAtUtc;
-    std::string sourceGroupId;
-};
-
-struct ProviderExecutionRegistration final {
-    std::string moduleId;
-    std::string providerId;
-    std::string providerFamilyId;
-    std::string authBridgeId;
-    ProviderKind kind = ProviderKind::Generic;
-    std::string displayName;
-    ProviderExecutionTransport transport = ProviderExecutionTransport::OpenAICompatibleChat;
-    bool supportsSharedMcpAccess = true;
-    bool supportsDirectMcpConfig = false;
-};
-
-struct ProviderExecutionRequest final {
-    std::string targetId;
-    std::string prompt;
-    std::vector<std::string> preferredMcpServerIds;
-    std::string workingDirectory;
-    bool allowToolAccess = true;
-    int maxTurns = 4;
-};
-
-struct ProviderExecutionRecord final {
-    std::string executionId;
-    std::string targetId;
-    std::string targetDisplayName;
-    std::string providerId;
-    ProviderKind providerKind = ProviderKind::Generic;
-    std::string providerDisplayName;
-    ProviderExecutionStatus status = ProviderExecutionStatus::Pending;
-    std::string modelId;
-    std::vector<std::string> referencedMcpServerIds;
-    std::vector<std::string> toolEvents;
-    std::string outputText;
-    std::string rawResponse;
-    std::string startedAtUtc;
-    std::string completedAtUtc;
-    std::string errorMessage;
-};
-
-// ---------------------------------------------------------------------------
-// Auto-Connect AI Model
-// ---------------------------------------------------------------------------
-// The user-facing surface for adding an AI model is reduced to:
-//   (1) pick a provider kind, (2) enter credentials, (3) choose role targets.
-// Everything else — route id generation, display name, base URL, recommended
-// model selection, HTTP connectivity probe, remote model discovery, credential
-// encryption, provider registration, and role fan-out — is performed by the
-// runtime via AutoConnectProvider(). The result reports every step so the
-// shell and browser surfaces can render a transparent progress log.
-// ---------------------------------------------------------------------------
-
-struct AutoConnectRequest final {
-    ProviderKind kind = ProviderKind::Generic;
-    std::string providerId;
-    std::map<std::string, std::string> credentials;
-    // Optional overrides — leave empty to use capability defaults.
-    std::string displayNameOverride;
-    std::string baseUrlOverride;
-    std::string modelIdOverride;
-    // Role/group/sub-agent targets to assign this provider to on creation.
-    // Each entry must be a valid ProviderAssignmentTarget::targetId.
-    std::vector<std::string> assignmentTargetIds;
-    bool allowAutonomousControl = false;
-    // When true, the runtime will call the provider's models endpoint to
-    // discover available models. When false, capability.recommendedModel is
-    // used directly without a network call.
-    bool discoverModels = true;
-};
-
-struct DiscoveredModel final {
-    std::string id;
-    std::string displayName;
-    std::string description;
-};
-
-struct AutoConnectStep final {
-    std::string stage;       // e.g. "resolve-capability", "probe", "discover-models"
-    bool succeeded = false;
-    std::string message;
-    int latencyMs = 0;
-};
-
-struct AutoConnectResult final {
-    bool succeeded = false;
-    std::string providerId;
-    std::string displayName;
-    std::string baseUrl;
-    std::string selectedModelId;
-    std::vector<DiscoveredModel> discoveredModels;
-    std::vector<AutoConnectStep> steps;
-    std::vector<std::string> assignmentsApplied;
-    std::vector<std::string> assignmentsFailed;
-    int totalLatencyMs = 0;
-    std::string errorMessage;
-    std::string summary; // human-readable one-liner
-};
-
 // ---------------------------------------------------------------------------
 // First-Run Setup & Readiness
 // ---------------------------------------------------------------------------
@@ -392,20 +187,18 @@ struct AutoConnectResult final {
 // ---------------------------------------------------------------------------
 
 struct ReadinessIssue final {
-    std::string id;                     // stable issue id (e.g. "providers.none-ready")
-    std::string category;               // "providers" | "mcp" | "workflows" | "specialists"
+    std::string id;                     // stable issue id (e.g. "clients.none-registered")
+    std::string category;               // "clients" | "mcp" | "workflows" | "specialists"
     std::string severity;               // "info" | "warning" | "blocking"
     std::string title;                  // plain-language short phrase
     std::string detail;                 // one-sentence explanation
-    std::string remediationDestination; // e.g. "providers" | "runtime" | "setup/providers"
-    std::string remediationLabel;       // button label e.g. "Connect a provider"
+    std::string remediationDestination; // e.g. "clients" | "runtime" | "setup/clients"
+    std::string remediationLabel;       // button label e.g. "Register a LAN client"
 };
 
 struct ReadinessSnapshot final {
     bool setupStarted = false;
     bool firstRunCompleted = false;
-    int providersReadyCount = 0;
-    int providersMissingCount = 0;
     int mcpReadyCount = 0;
     int mcpMissingCount = 0;
     int workflowsReadyCount = 0;
@@ -413,17 +206,19 @@ struct ReadinessSnapshot final {
     int specialistsReadyCount = 0;
     int specialistsMissingCount = 0;
     std::vector<ReadinessIssue> blockingIssues;
-    // "connect-first-provider" | "add-mcp" | "create-specialist" |
+    // "register-first-client" | "add-mcp" | "create-specialist" |
     // "create-starter-workflow" | "review" | "complete"
     std::string recommendedNextStep;
     std::string updatedAtUtc;
 };
 
 // ---------------------------------------------------------------------------
-// Setup Dependencies (WS4 Provider Install Automation)
+// Setup Dependencies
 // ---------------------------------------------------------------------------
-// Used for provider-ecosystem dependency orchestration such as the Claude
-// Code CLI. Each dependency follows an explicit three-branch preflight:
+// Used for optional host-side dependency installation (for example, an AI CLI
+// that operators may want staged locally so a LAN client machine can invoke
+// it after retrieving its MCOS configuration bundle). Each dependency follows
+// an explicit three-branch preflight:
 //   ready           — the dependency is installed and callable
 //   installable     — the dependency is missing but its prerequisite (npm)
 //                     is present, so an install command can run safely
@@ -443,7 +238,7 @@ struct SupportedDependency final {
     // Optional prerequisite probe: if non-empty and exits non-zero, the install
     // is blocked with preflight="prerequisite-missing". Historically the
     // handler hardcoded `npm --version` as the prerequisite for every
-    // dependency, which prevented installing the provider of npm itself
+    // dependency, which prevented installing the source of npm itself
     // (Node.js). Keep empty for dependencies that have no prerequisites
     // (e.g. nodejs via winget).
     std::string prerequisiteProbeCommand;
@@ -479,7 +274,7 @@ struct StarterWorkflowTemplate final {
     std::string id;
     std::string displayName;
     std::string description;
-    int requiresProviders = 0;
+    int requiresClients = 0;
     int requiresMcp = 0;
     int requiresSpecialists = 0;
 };
@@ -497,18 +292,16 @@ struct StarterWorkflowInstantiateResult final {
 // ---------------------------------------------------------------------------
 // Live Activity Stream
 // ---------------------------------------------------------------------------
-// Every incoming admin API request, outgoing provider execution, governance
-// decision, and auto-connect step is appended to an in-memory ring buffer
-// (ActivityEventRing) so the shell can render a live command/request stream.
+// Every incoming admin API request, client-facing mutation, and governance
+// decision is appended to an in-memory ring buffer (ActivityEventRing) so the
+// shell and browser dashboard can render a live command/request stream.
 // Events are also surfaced via GET /api/activity so the browser dashboard and
 // remote observers can subscribe.
 // ---------------------------------------------------------------------------
 
 enum class ActivityEventKind {
     AdminApiRequest,
-    ProviderExecution,
     GovernanceDecision,
-    AutoConnect,
     ServiceLifecycle,
     Telemetry
 };
@@ -519,7 +312,7 @@ struct ActivityEvent final {
     std::string timestampUtc;
     std::string actor;              // "shell", "dashboard", "cli", etc.
     std::string method;             // HTTP verb or operation verb
-    std::string target;             // path, provider id, rule id, etc.
+    std::string target;             // path, client id, rule id, etc.
     int statusCode = 0;             // HTTP status or custom numeric outcome
     int latencyMs = 0;
     std::string message;            // short human-readable summary
@@ -771,18 +564,42 @@ struct AppleOperationCancelRequest final {
 struct GovernanceEnforcementRequest final {
     GovernanceActionKind action = GovernanceActionKind::Unknown;
     std::string targetId;
-    std::string providerId;
     std::string source;
     bool allowUntrustedExecution = false;
+    // Phase 7: actor of the proposed action. Operator-fallback context
+    // sets this to "operator"; identified LAN clients set their clientId.
+    // Persisted into deferred-action records so the operator approval UI
+    // can show who asked for the change.
+    std::string actor;
 };
 
 struct GovernanceEnforcementDecision final {
     GovernanceActionKind action = GovernanceActionKind::Unknown;
-    bool allowed = true;
+    GovernanceDecisionOutcome outcome = GovernanceDecisionOutcome::Allow;
+    bool allowed = true;          // Phase 6 callers still consult this; Allow == true.
     std::string posture = "pass";
     std::string message;
     std::string ruleId;
     std::vector<std::string> blockingFindings;
+    // When outcome == RequiresOperatorApproval the deferred record is
+    // staged in the approval queue; the id is returned so the HTTP layer
+    // can hand it back to the caller in a 202 response.
+    std::string deferredActionId;
+};
+
+// Phase 7: actions whose CLU outcome is RequiresOperatorApproval are
+// staged here until an operator approves or rejects them.
+struct GovernanceDeferredAction final {
+    std::string id;
+    GovernanceActionKind action = GovernanceActionKind::Unknown;
+    std::string actor;
+    std::string targetId;
+    std::string payload;          // JSON body of the original mutation, opaque to CLU
+    std::string status = "pending"; // "pending" | "approved" | "rejected"
+    std::string reason;
+    std::string createdAtUtc;
+    std::string decidedAtUtc;
+    std::string decidedBy;        // "operator" by default in Phase 7
 };
 
 struct GovernanceSnapshot final {
@@ -857,14 +674,7 @@ struct BeaconAdvertisement final {
 struct DashboardSnapshot final {
     HostTelemetrySnapshot telemetry;
     std::vector<RuntimeEndpoint> endpoints;
-    std::vector<ProviderConnection> providers;
-    std::vector<ProviderCapabilityDescriptor> providerCapabilities;
-    std::vector<ProviderCredentialStatus> providerCredentialStatuses;
     std::vector<SubAgentGroupDefinition> subAgentGroups;
-    std::vector<ProviderAssignmentTarget> providerAssignmentTargets;
-    std::vector<ProviderAssignment> providerAssignments;
-    std::vector<ProviderExecutionRegistration> providerExecutionRegistrations;
-    std::vector<ProviderExecutionRecord> providerExecutionHistory;
     ResourceAllocationProfile resourceAllocation;
     SecuritySettings security;
     std::vector<InstallProvenance> installHistory;
@@ -891,20 +701,14 @@ struct AppConfiguration final {
     std::vector<std::string> firstRunSkippedSteps;
     SecuritySettings security;
     ResourceAllocationProfile resourceAllocation;
-    std::vector<ProviderConnection> providers;
     std::vector<SubAgentGroupDefinition> subAgentGroups;
-    std::vector<ProviderAssignment> providerAssignments;
+    std::vector<LanClient> lanClients;
     std::vector<AppleRemoteHost> appleRemoteHosts;
     ManagedNodeProfile activeProfile;
 };
 
 std::string to_string(EndpointKind value);
 std::string to_string(EndpointStatus value);
-std::string to_string(ProviderKind value);
-std::string to_string(ProviderCredentialFieldKind value);
-std::string to_string(ProviderAssignmentTargetKind value);
-std::string to_string(ProviderExecutionStatus value);
-std::string to_string(ProviderExecutionTransport value);
 std::string to_string(InstallerKind value);
 std::string to_string(ControlSurfaceToolbarAction value);
 std::string to_string(PlatformTarget value);
@@ -912,14 +716,10 @@ std::string to_string(AppleRemoteTransport value);
 std::string to_string(GovernanceToolStatus value);
 std::string to_string(AppleOperationStatus value);
 std::string to_string(GovernanceActionKind value);
+std::string to_string(GovernanceDecisionOutcome value);
 
 EndpointKind endpointKindFromString(const std::string& value);
 EndpointStatus endpointStatusFromString(const std::string& value);
-ProviderKind providerKindFromString(const std::string& value);
-ProviderCredentialFieldKind providerCredentialFieldKindFromString(const std::string& value);
-ProviderAssignmentTargetKind providerAssignmentTargetKindFromString(const std::string& value);
-ProviderExecutionStatus providerExecutionStatusFromString(const std::string& value);
-ProviderExecutionTransport providerExecutionTransportFromString(const std::string& value);
 InstallerKind installerKindFromString(const std::string& value);
 ControlSurfaceToolbarAction controlSurfaceToolbarActionFromString(const std::string& value);
 PlatformTarget platformTargetFromString(const std::string& value);
@@ -927,27 +727,13 @@ AppleRemoteTransport appleRemoteTransportFromString(const std::string& value);
 GovernanceToolStatus governanceToolStatusFromString(const std::string& value);
 AppleOperationStatus appleOperationStatusFromString(const std::string& value);
 GovernanceActionKind governanceActionKindFromString(const std::string& value);
+GovernanceDecisionOutcome governanceDecisionOutcomeFromString(const std::string& value);
 
 void to_json(nlohmann::json& json, EndpointKind value);
 void from_json(const nlohmann::json& json, EndpointKind& value);
 
 void to_json(nlohmann::json& json, EndpointStatus value);
 void from_json(const nlohmann::json& json, EndpointStatus& value);
-
-void to_json(nlohmann::json& json, ProviderKind value);
-void from_json(const nlohmann::json& json, ProviderKind& value);
-
-void to_json(nlohmann::json& json, ProviderCredentialFieldKind value);
-void from_json(const nlohmann::json& json, ProviderCredentialFieldKind& value);
-
-void to_json(nlohmann::json& json, ProviderAssignmentTargetKind value);
-void from_json(const nlohmann::json& json, ProviderAssignmentTargetKind& value);
-
-void to_json(nlohmann::json& json, ProviderExecutionStatus value);
-void from_json(const nlohmann::json& json, ProviderExecutionStatus& value);
-
-void to_json(nlohmann::json& json, ProviderExecutionTransport value);
-void from_json(const nlohmann::json& json, ProviderExecutionTransport& value);
 
 void to_json(nlohmann::json& json, InstallerKind value);
 void from_json(const nlohmann::json& json, InstallerKind& value);
@@ -969,6 +755,9 @@ void from_json(const nlohmann::json& json, AppleOperationStatus& value);
 
 void to_json(nlohmann::json& json, GovernanceActionKind value);
 void from_json(const nlohmann::json& json, GovernanceActionKind& value);
+
+void to_json(nlohmann::json& json, GovernanceDecisionOutcome value);
+void from_json(const nlohmann::json& json, GovernanceDecisionOutcome& value);
 
 std::string toPrettyJson(const nlohmann::json& json);
 std::string timestampNowUtc();
@@ -1030,66 +819,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     storagePercent)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    ProviderConnection,
-    id,
-    kind,
-    displayName,
-    baseUrl,
-    modelId,
-    enabled,
-    allowAutonomousControl,
-    credentialsConfigured,
-    isTemplate)
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    ProviderCredentialFieldDescriptor,
-    fieldId,
-    label,
-    kind,
-    helpText,
-    placeholder,
-    environmentVariableHint,
-    requirementGroup,
-    secret,
-    required)
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    ProviderCapabilityDescriptor,
-    moduleId,
-    providerId,
-    providerFamilyId,
-    authBridgeId,
-    kind,
-    displayName,
-    description,
-    defaultBaseUrl,
-    recommendedModel,
-    credentialFields,
-    runtimeRequirements,
-    supportedTargets,
-    supportsSharedMcpAccess,
-    supportsAutonomousControl,
-    supportsOAuth,
-    oauthAuthorizeUrl,
-    oauthClientId,
-    oauthScope,
-    cliBridgeCommand,
-    cliBridgeAccountLabel)
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    ProviderCredentialStatus,
-    providerId,
-    configured,
-    configuredFieldIds,
-    updatedAtUtc,
-    message)
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    ProviderCredentialUpdate,
-    providerId,
-    values)
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     SubAgentGroupDefinition,
     groupId,
     displayName,
@@ -1110,101 +839,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     groupId)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    ProviderAssignmentTarget,
-    targetId,
-    kind,
-    displayName,
-    description,
-    memberTargetIds)
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    ProviderAssignment,
-    targetId,
-    kind,
-    providerId,
-    updatedAtUtc,
-    sourceGroupId)
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    ProviderExecutionRegistration,
-    moduleId,
-    providerId,
-    providerFamilyId,
-    authBridgeId,
-    kind,
-    displayName,
-    transport,
-    supportsSharedMcpAccess,
-    supportsDirectMcpConfig)
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    ProviderExecutionRequest,
-    targetId,
-    prompt,
-    preferredMcpServerIds,
-    workingDirectory,
-    allowToolAccess,
-    maxTurns)
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    ProviderExecutionRecord,
-    executionId,
-    targetId,
-    targetDisplayName,
-    providerId,
-    providerKind,
-    providerDisplayName,
-    status,
-    modelId,
-    referencedMcpServerIds,
-    toolEvents,
-    outputText,
-    rawResponse,
-    startedAtUtc,
-    completedAtUtc,
-    errorMessage)
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    AutoConnectRequest,
-    kind,
-    providerId,
-    credentials,
-    displayNameOverride,
-    baseUrlOverride,
-    modelIdOverride,
-    assignmentTargetIds,
-    allowAutonomousControl,
-    discoverModels)
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    DiscoveredModel,
-    id,
-    displayName,
-    description)
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    AutoConnectStep,
-    stage,
-    succeeded,
-    message,
-    latencyMs)
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
-    AutoConnectResult,
-    succeeded,
-    providerId,
-    displayName,
-    baseUrl,
-    selectedModelId,
-    discoveredModels,
-    steps,
-    assignmentsApplied,
-    assignmentsFailed,
-    totalLatencyMs,
-    errorMessage,
-    summary)
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ReadinessIssue,
     id,
     category,
@@ -1218,8 +852,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ReadinessSnapshot,
     setupStarted,
     firstRunCompleted,
-    providersReadyCount,
-    providersMissingCount,
     mcpReadyCount,
     mcpMissingCount,
     workflowsReadyCount,
@@ -1267,7 +899,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     id,
     displayName,
     description,
-    requiresProviders,
+    requiresClients,
     requiresMcp,
     requiresSpecialists)
 
@@ -1511,18 +1143,33 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GovernanceEnforcementRequest,
     action,
     targetId,
-    providerId,
     source,
-    allowUntrustedExecution)
+    allowUntrustedExecution,
+    actor)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GovernanceEnforcementDecision,
     action,
+    outcome,
     allowed,
     posture,
     message,
     ruleId,
-    blockingFindings)
+    blockingFindings,
+    deferredActionId)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceDeferredAction,
+    id,
+    action,
+    actor,
+    targetId,
+    payload,
+    status,
+    reason,
+    createdAtUtc,
+    decidedAtUtc,
+    decidedBy)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GovernanceSnapshot,
@@ -1626,14 +1273,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     DashboardSnapshot,
     telemetry,
     endpoints,
-    providers,
-    providerCapabilities,
-    providerCredentialStatuses,
     subAgentGroups,
-    providerAssignmentTargets,
-    providerAssignments,
-    providerExecutionRegistrations,
-    providerExecutionHistory,
     resourceAllocation,
     security,
     installHistory,
@@ -1660,9 +1300,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     firstRunSkippedSteps,
     security,
     resourceAllocation,
-    providers,
     subAgentGroups,
-    providerAssignments,
+    lanClients,
     appleRemoteHosts,
     activeProfile)
 
