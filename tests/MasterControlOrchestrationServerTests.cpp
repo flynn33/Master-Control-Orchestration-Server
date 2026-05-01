@@ -551,6 +551,84 @@ bool testGatewayEnumRoundTrips() {
 // shape, the required fields, and the JSON round-trip so /.well-known/mcos.json
 // stays compatible with discovery-document.schema.json.
 
+// PHASE-04 (ADR-002 §5): Onboarding profile shape tests. The runtime's
+// OnboardingProfileService lives inside the MasterControlRuntime translation
+// unit; these tests pin the public schema contract by constructing
+// OnboardingProfile values directly and asserting their JSON shape matches
+// docs/implementation/schemas/onboarding-profile.schema.json.
+
+bool testOnboardingProfileDefaultsAreLanTrust() {
+    MasterControl::OnboardingProfile profile;
+    bool ok = true;
+    ok &= expect(profile.authRequired == false,
+                 "OnboardingProfile defaults authRequired=false (schema const).");
+    ok &= expect(profile.trust == "lan",
+                 "OnboardingProfile defaults trust=lan.");
+    ok &= expect(profile.transport == "streamable_http",
+                 "OnboardingProfile defaults transport=streamable_http.");
+    return ok;
+}
+
+bool testOnboardingProfileJsonRequiredFields() {
+    MasterControl::OnboardingProfile profile;
+    profile.clientType = "claude-code";
+    profile.displayName = "Claude Code";
+    profile.gatewayMcpUrl = "http://192.168.1.10:8080/mcp";
+    profile.governanceBundleUrl = "http://192.168.1.10:7300/api/governance/bundles/windows";
+
+    nlohmann::json serialized = profile;
+    bool ok = true;
+    const std::vector<std::string> required = {
+        "clientType", "gatewayMcpUrl", "transport", "authRequired", "governanceBundleUrl"
+    };
+    for (const auto& key : required) {
+        ok &= expect(serialized.contains(key),
+                     "Onboarding profile JSON includes schema-required key.");
+    }
+    ok &= expect(serialized["authRequired"].get<bool>() == false,
+                 "authRequired serializes as false (schema const).");
+    ok &= expect(serialized["transport"].get<std::string>() == "streamable_http",
+                 "transport serializes as a schema-allowed enum value.");
+    return ok;
+}
+
+bool testOnboardingConfigSnippetRoundTrip() {
+    MasterControl::OnboardingConfigSnippet snippet;
+    snippet.format = "json";
+    snippet.filename = ".mcp.json";
+    snippet.description = "Drop into Claude Code's mcpServers map.";
+    snippet.content = nlohmann::json{ { "mcpServers", { { "mcos", { { "url", "http://192.168.1.10:8080/mcp" } } } } } };
+
+    nlohmann::json serialized = snippet;
+    bool ok = true;
+    ok &= expect(serialized["format"].get<std::string>() == "json",
+                 "Snippet serializes format.");
+    ok &= expect(serialized["content"].is_object(),
+                 "Snippet serializes content as a structured JSON object.");
+
+    auto restored = serialized.get<MasterControl::OnboardingConfigSnippet>();
+    ok &= expect(restored.format == snippet.format,
+                 "Snippet round-trips format.");
+    ok &= expect(restored.content == snippet.content,
+                 "Snippet round-trips content verbatim.");
+    return ok;
+}
+
+bool testOnboardingProfileTransportEnum() {
+    bool ok = true;
+    for (const std::string& transport : { "streamable_http", "stdio_bridge", "sse_compat" }) {
+        MasterControl::OnboardingProfile profile;
+        profile.clientType = "test";
+        profile.gatewayMcpUrl = "http://localhost:8080/mcp";
+        profile.governanceBundleUrl = "http://localhost:7300/api/governance/bundles/windows";
+        profile.transport = transport;
+        nlohmann::json serialized = profile;
+        ok &= expect(serialized["transport"].get<std::string>() == transport,
+                     "Transport enum value serializes literally.");
+    }
+    return ok;
+}
+
 bool testDiscoveryDocumentDefaultShape() {
     MasterControl::DiscoveryDocument doc;
     bool ok = true;
@@ -841,5 +919,10 @@ int main() {
     ok &= testDiscoveryDocumentJsonRoundTrip();
     ok &= testWellKnownDocumentMatchesSchemaRequiredFields();
     ok &= testInstanceIdGeneration();
+    // PHASE-04 onboarding profile tests
+    ok &= testOnboardingProfileDefaultsAreLanTrust();
+    ok &= testOnboardingProfileJsonRequiredFields();
+    ok &= testOnboardingConfigSnippetRoundTrip();
+    ok &= testOnboardingProfileTransportEnum();
     return ok ? 0 : 1;
 }

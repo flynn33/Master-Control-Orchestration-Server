@@ -769,6 +769,34 @@ struct DeregistrationResult final {
     std::string serverName;
 };
 
+// PHASE-04 (ADR-002 §5): Per-client onboarding profile. Schema:
+// docs/implementation/schemas/onboarding-profile.schema.json. Each
+// profile points clients at exactly one MCP gateway URL with
+// authRequired=false (LAN trust) and links the governance bundle.
+// PHASE-09 will hydrate the dashboard's setup view from these.
+struct OnboardingConfigSnippet final {
+    std::string format;             // "json" | "toml" | "shell" | "powershell"
+    std::string filename;           // optional default filename hint
+    nlohmann::json content;         // structured content (object or string)
+    std::string description;        // human-readable purpose
+};
+
+struct OnboardingProfile final {
+    std::string clientType;
+    std::string displayName;
+    std::string gatewayMcpUrl;
+    std::string transport = "streamable_http"; // streamable_http | stdio_bridge | sse_compat
+    bool authRequired = false;       // schema const: must be false
+    std::string trust = "lan";
+    std::string governanceBundleUrl;
+    std::string discoveryUrl;
+    std::string instanceId;
+    std::vector<OnboardingConfigSnippet> configSnippets;
+    std::vector<std::string> manualInstructions;
+    std::vector<std::string> verificationSteps;
+    std::vector<std::string> caveats;
+};
+
 // PHASE-03 (ADR-002 §4): MCOS Discovery Document. Served at
 // /.well-known/mcos.json and /api/discovery, broadcast via UDP beacon.
 // DNS-SD TXT advertisement carries a flattened subset of these fields.
@@ -1576,5 +1604,28 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     generatedAtUtc,
     serverIpAddress,
     instanceName)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    OnboardingConfigSnippet,
+    format,
+    filename,
+    content,
+    description)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    OnboardingProfile,
+    clientType,
+    displayName,
+    gatewayMcpUrl,
+    transport,
+    authRequired,
+    trust,
+    governanceBundleUrl,
+    discoveryUrl,
+    instanceId,
+    configSnippets,
+    manualInstructions,
+    verificationSteps,
+    caveats)
 
 } // namespace MasterControl

@@ -7399,6 +7399,221 @@ private:
     std::vector<Registration> registrations_;
 };
 
+// PHASE-04 (ADR-002 §5): Onboarding Profile Service. Composes a per-client
+// profile from the discovery document (gateway URL + governance bundle URL)
+// and known per-clientType configuration shape. The generic profile is the
+// fallback for any unrecognized clientType. ChatGPT is documented as a
+// connector-edge case with caveats explaining LAN reachability constraints.
+class OnboardingProfileService final : public IOnboardingProfileService {
+public:
+    OnboardingProfileService(std::shared_ptr<IConfigurationService> configurationService,
+                             std::shared_ptr<IDiscoveryService> discoveryService)
+        : configurationService_(std::move(configurationService))
+        , discoveryService_(std::move(discoveryService)) {}
+
+    std::vector<std::string> knownClientTypes() const override {
+        return { "claude-code", "codex", "grok", "chatgpt", "generic" };
+    }
+
+    OnboardingProfile profileFor(const std::string& clientType) const override {
+        const std::string normalized = normalizeClientType(clientType);
+        const auto document = discoveryService_
+            ? discoveryService_->currentDocument()
+            : DiscoveryDocument{};
+        const auto configuration = configurationService_->current();
+        std::string lanIp = document.serverIpAddress;
+        if (lanIp.empty() || lanIp == "0.0.0.0") {
+            lanIp = "127.0.0.1";
+        }
+        const std::string adminBase = "http://" + lanIp + ":" + std::to_string(configuration.browserPort);
+
+        OnboardingProfile profile;
+        profile.clientType = normalized;
+        profile.gatewayMcpUrl = document.gateway.mcpUrl;
+        profile.transport = "streamable_http";
+        profile.authRequired = false;       // schema const; ADR-002 §1 invariant
+        profile.trust = "lan";
+        profile.governanceBundleUrl = adminBase + "/api/governance/bundles/windows";
+        profile.discoveryUrl = adminBase + "/.well-known/mcos.json";
+        profile.instanceId = document.instanceId;
+
+        if (normalized == "claude-code") {
+            populateClaudeCode(profile);
+        } else if (normalized == "codex") {
+            populateCodex(profile);
+        } else if (normalized == "grok") {
+            populateGrok(profile);
+        } else if (normalized == "chatgpt") {
+            populateChatGpt(profile);
+        } else {
+            populateGeneric(profile);
+        }
+        return profile;
+    }
+
+private:
+    static std::string normalizeClientType(const std::string& clientType) {
+        std::string lowered;
+        lowered.reserve(clientType.size());
+        for (const auto ch : clientType) {
+            lowered.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+        }
+        if (lowered == "claude-code" || lowered == "claude_code" || lowered == "claudecode") {
+            return "claude-code";
+        }
+        if (lowered == "codex") return "codex";
+        if (lowered == "grok" || lowered == "xai" || lowered == "xai-grok") return "grok";
+        if (lowered == "chatgpt" || lowered == "openai") return "chatgpt";
+        return "generic";
+    }
+
+    static OnboardingConfigSnippet jsonSnippet(std::string format,
+                                               std::string description,
+                                               std::string filename,
+                                               nlohmann::json content) {
+        OnboardingConfigSnippet snippet;
+        snippet.format = std::move(format);
+        snippet.description = std::move(description);
+        snippet.filename = std::move(filename);
+        snippet.content = std::move(content);
+        return snippet;
+    }
+
+    void populateClaudeCode(OnboardingProfile& profile) const {
+        profile.displayName = "Claude Code (Anthropic)";
+        profile.configSnippets.push_back(jsonSnippet(
+            "json",
+            "Add MCOS as a Streamable HTTP MCP server in Claude Code's user settings. Drop this fragment into the mcpServers map of your config.",
+            ".mcp.json",
+            { { "mcpServers", { { "mcos", {
+                { "url", profile.gatewayMcpUrl },
+                { "transport", "streamable_http" }
+            } } } } }));
+        profile.manualInstructions = {
+            "Open Claude Code settings and add the MCOS MCP server using the JSON fragment above.",
+            "No bearer token or app-layer login is required on the trusted LAN gateway.",
+            "Load the CLU/Forsetti governance bundle from the URL above before granting Claude Code mutating access."
+        };
+        profile.verificationSteps = {
+            "Restart Claude Code so it picks up the new MCP server entry.",
+            "Run `mcp__mcos__list_tools` (or the equivalent slash command) to confirm tool aggregation.",
+            "Confirm GET /.well-known/mcos.json reports gateway.state=running.",
+        };
+        profile.caveats = {
+            "Claude Code consumes Streamable HTTP MCP servers natively; no companion utility is required."
+        };
+    }
+
+    void populateCodex(OnboardingProfile& profile) const {
+        profile.displayName = "Codex CLI (OpenAI)";
+        profile.configSnippets.push_back(jsonSnippet(
+            "json",
+            "Codex 0.4+ accepts MCP servers in its config. Add this fragment to the codex config under mcpServers.",
+            "codex.config.json",
+            { { "mcpServers", { { "mcos", {
+                { "url", profile.gatewayMcpUrl },
+                { "transport", "streamable_http" }
+            } } } } }));
+        profile.manualInstructions = {
+            "Add MCOS to Codex's MCP config and restart the CLI.",
+            "Authenticate Codex with OpenAI as you normally would; no MCOS-side credentials are needed.",
+            "MCOS does not collect or proxy your OpenAI credentials. The gateway carries tool calls only."
+        };
+        profile.verificationSteps = {
+            "Run a Codex session and ask it to list available MCP tools.",
+            "Confirm tool calls land at the MCOS gateway URL above.",
+            "Verify governance bundle retrieval before granting mutating tool access."
+        };
+        profile.caveats = {
+            "Codex builds older than 0.4 may require the companion utility to write the config file."
+        };
+    }
+
+    void populateGrok(OnboardingProfile& profile) const {
+        profile.displayName = "Grok (xAI)";
+        profile.configSnippets.push_back(jsonSnippet(
+            "json",
+            "Grok consumes MCP servers via its agent SDK. Provide the gateway URL as a Streamable HTTP MCP backend.",
+            "grok.mcp.json",
+            { { "mcpServers", { { "mcos", {
+                { "url", profile.gatewayMcpUrl },
+                { "transport", "streamable_http" }
+            } } } } }));
+        profile.manualInstructions = {
+            "Configure your Grok agent to point at the MCOS gateway URL.",
+            "MCOS does not collect or proxy your xAI API key.",
+            "Apply the LAN-trust mode: no bearer token is sent on the gateway connection."
+        };
+        profile.verificationSteps = {
+            "Confirm Grok's tool listing returns the MCOS-aggregated set.",
+            "Verify governance bundle retrieval.",
+            "Run a low-impact tool call to confirm round-trip."
+        };
+        profile.caveats = {
+            "Grok agent runtimes vary; if your runtime cannot consume Streamable HTTP, use the companion utility's stdio bridge."
+        };
+    }
+
+    void populateChatGpt(OnboardingProfile& profile) const {
+        profile.displayName = "ChatGPT (Connector-Edge)";
+        // ChatGPT does not consume LAN-only MCP servers directly; the
+        // recommended path is the connector-edge pattern where a
+        // user-side companion exposes the LAN gateway through the
+        // ChatGPT Connectors surface. The profile still documents the
+        // MCOS gateway URL for completeness.
+        profile.configSnippets.push_back(jsonSnippet(
+            "json",
+            "ChatGPT does not natively consume LAN MCP servers. The companion utility (PHASE-04 deferred) is the recommended bridge — see caveats below.",
+            "chatgpt-connector-edge-notes.json",
+            { { "mcosGatewayUrl", profile.gatewayMcpUrl },
+              { "discoveryUrl", profile.discoveryUrl },
+              { "connectorEdgeRecommended", true } }));
+        profile.manualInstructions = {
+            "ChatGPT runs in OpenAI's hosted environment and cannot reach a LAN-only MCP gateway directly.",
+            "Use the companion utility (or a connector-edge proxy) on a host that has both ChatGPT connectivity and LAN access to MCOS.",
+            "MCOS does not collect or proxy ChatGPT credentials. The gateway carries tool calls only when reached via a connector-edge proxy."
+        };
+        profile.verificationSteps = {
+            "Confirm the connector-edge proxy is running and reachable from ChatGPT.",
+            "Confirm the proxy can resolve MCOS via /.well-known/mcos.json.",
+            "Run a low-impact tool call from ChatGPT and verify it lands at the MCOS gateway."
+        };
+        profile.caveats = {
+            "ChatGPT's MCP support is connector-edge / optional. LAN-only deployments without a connector-edge proxy cannot reach MCOS from ChatGPT.",
+            "When the connector-edge proxy is configured, MCOS still treats the inbound traffic as LAN-trusted; do not expose the gateway port to the public internet."
+        };
+    }
+
+    void populateGeneric(OnboardingProfile& profile) const {
+        profile.clientType = "generic";
+        profile.displayName = "Generic MCP Client";
+        profile.configSnippets.push_back(jsonSnippet(
+            "json",
+            "Generic Streamable HTTP MCP server registration. Drop this into your client's MCP server config.",
+            ".mcp.json",
+            { { "mcpServers", { { "mcos", {
+                { "url", profile.gatewayMcpUrl }
+            } } } } }));
+        profile.manualInstructions = {
+            "Add the MCOS gateway MCP URL to your MCP client.",
+            "No bearer token or app-layer login is required on the trusted LAN surface.",
+            "Load the CLU/Forsetti governance bundle for your platform."
+        };
+        profile.verificationSteps = {
+            "Resolve MCOS discovery document.",
+            "Connect to gateway MCP URL.",
+            "List tools through the gateway.",
+            "Confirm governance bundle retrieval."
+        };
+        profile.caveats = {
+            "Unknown client types fall through to this profile; replace it with a typed profile if your client has a documented MCP setup."
+        };
+    }
+
+    std::shared_ptr<IConfigurationService> configurationService_;
+    std::shared_ptr<IDiscoveryService> discoveryService_;
+};
+
 class BeaconService final : public IBeaconService {
 public:
     BeaconService(std::shared_ptr<IConfigurationService> configurationService,
@@ -8135,6 +8350,7 @@ private:
     std::shared_ptr<IBeaconService> beaconService_;
     std::shared_ptr<IMcpGateway> mcpGateway_;
     std::shared_ptr<IDiscoveryService> discoveryService_;
+    std::shared_ptr<IOnboardingProfileService> onboardingProfileService_;
     std::shared_ptr<IAdminApiService> adminApiService_;
     std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager_;
     std::shared_ptr<Forsetti::IEntitlementProvider> entitlementProvider_;
@@ -8189,6 +8405,13 @@ bool MasterControlApplication::Impl::initialize() {
     discoveryService_ = discoveryService;
     beaconService_ = std::make_shared<BeaconService>(
         configurationService_, telemetryService_, platformServiceCatalogService_, discoveryService);
+
+    // PHASE-04 (ADR-002 §5): construct the per-client onboarding profile
+    // service. Profiles compose against the live discovery document so any
+    // gateway URL change (PHASE-11 native gateway swap) automatically
+    // propagates to client onboarding without separate plumbing.
+    onboardingProfileService_ = std::make_shared<OnboardingProfileService>(
+        configurationService_, discoveryService);
 
     // PHASE-02: register one stable logical MCP endpoint with the gateway
     // adapter so subsequent phases (PHASE-06 worker pools, PHASE-07 lease
@@ -8855,6 +9078,26 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "GET" && request.path == "/api/discovery") {
             return jsonResponse(discoveryService_ ? discoveryService_->currentDocument() : DiscoveryDocument{});
+        }
+        // -------------------------------------------------------------------
+        // PHASE-04 (ADR-002 §5): per-client onboarding profile surface.
+        // /api/onboarding -> list known client types (generic + four
+        // recognized typed clients).
+        // /api/onboarding/{clientType} -> typed profile, falling through
+        // to "generic" for unrecognized client types.
+        if (request.method == "GET" && request.path == "/api/onboarding") {
+            nlohmann::json response = nlohmann::json::object();
+            response["clientTypes"] = onboardingProfileService_
+                ? onboardingProfileService_->knownClientTypes()
+                : std::vector<std::string>{};
+            return jsonResponse(response);
+        }
+        if (request.method == "GET" && startsWith(request.path, "/api/onboarding/")) {
+            const auto prefix = std::string("/api/onboarding/");
+            const std::string clientType = request.path.substr(prefix.size());
+            return jsonResponse(onboardingProfileService_
+                ? onboardingProfileService_->profileFor(clientType)
+                : OnboardingProfile{});
         }
         // -------------------------------------------------------------------
         // /api/gateway/* — MCP Gateway adapter surface (PHASE-02 of ADR-002).

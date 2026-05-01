@@ -93,6 +93,17 @@ git grep -nE '"auth"\s*:\s*"(bearer|basic|cookie)"' -- src/
 
 Expected: zero matches. The discovery document's `auth`/`trust` fields are constants — only `auth=none` and `trust=lan` are valid assignments in the gateway-first model.
 
+### 1.7b Onboarding profile auth invariants (PHASE-04, ADR-002 §1, §5)
+
+The onboarding profile schema declares `authRequired` as a `const false`. Any code path that emits an onboarding profile with `authRequired=true` is a regression of ADR-002 §1's "no app-layer auth on the AI-client surface" rule.
+
+```bash
+git grep -nE 'authRequired\s*=\s*true|profile\.authRequired\s*=\s*true' -- src/
+git grep -nE '"authRequired"\s*:\s*true' -- src/
+```
+
+Expected: zero matches. The `OnboardingProfile.authRequired` default is `false` and no production code path overrides it.
+
 ### 1.7 Browser and shell provider-era surfaces
 
 ```bash

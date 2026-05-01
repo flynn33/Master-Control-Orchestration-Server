@@ -191,6 +191,18 @@ public:
     virtual ~IPlatformServiceCatalogService() = default;
 };
 
+// PHASE-04 (ADR-002 §5): Onboarding Profile Service. Composes
+// per-client-type configuration profiles consumed by AI clients
+// (Claude Code, Codex, Grok, ChatGPT connector-edge) and by the
+// generic MCP fallback. Each profile points at the single MCOS
+// gateway URL surfaced by IDiscoveryService and IMcpGateway.
+class IOnboardingProfileService {
+public:
+    virtual OnboardingProfile profileFor(const std::string& clientType) const = 0;
+    virtual std::vector<std::string> knownClientTypes() const = 0;
+    virtual ~IOnboardingProfileService() = default;
+};
+
 // PHASE-03 (ADR-002 §4): LAN Discovery Service. Owns DNS-SD/mDNS
 // registration of `_mcos._tcp.local`, `_mcos-mcp._tcp.local`, and
 // `_mcos-onboarding._tcp.local` plus composition of the discovery

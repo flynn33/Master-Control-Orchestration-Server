@@ -38,14 +38,15 @@ Working tree: `master-control-dashboard-main`, post-overlay-install commit `1c5d
 | Gateway HTTP routes | **Landed PHASE-02.** `GET /api/gateway/{status,health,tools}` and `POST /api/gateway/{start,stop}` served by the runtime. Surfaced into `DashboardSnapshot.{mcpGatewayStatus,mcpGatewayHealth,mcpGatewayTools}`. | Surface gateway health through the runtime API; populate the dashboard's gateway panel. | PHASE-02 done; PHASE-09 wires UI panel. | done (API), pending (UI) |
 | Logical pool registration with gateway | **Landed PHASE-02.** Runtime registers one logical MCP server (`mcos-default-pool`) with the adapter at boot. PHASE-06 will replace this single registration with per-pool registrations once `ManagedEndpointPool` lands. | Each pool registers exactly one logical server; autoscaled instances are NOT registered separately. | PHASE-02 (path), PHASE-06 (pools) | path done, pools pending |
 
-## C. Onboarding profile surface
+## C. Onboarding profile surface (PHASE-04 resolution)
 
 | Surface | Today | Realignment target | Resolves in | Action |
 |---|---|---|---|---|
-| `GET /api/platform-services/config/{platform}` at `MasterControlRuntime.cpp:8985–8987`, helper at `:1391` | Server-generated configuration bundle keyed by platform (`windows`, `macos`, `ios`). Already proves the "server emits client config" pattern. | Subsumed by `/api/onboarding/{clientType}` keyed on the AI client (`claude-code`, `codex`, `grok`, `chatgpt`, `generic`). Each profile points at one MCP gateway URL, declares `authRequired=false`, links the governance bundle. Schema: `onboarding-profile.schema.json`. | PHASE-04 | subsume |
-| `/api/clients/{id}/config` at `MasterControlRuntime.cpp:3532` (per ADR-001) | Per-LanClient bundle download for X-MCOS-Client-Id-style integration. | Stays on the operator surface for clients that opt into the per-client privilege model; no longer the AI-client onboarding path. | PHASE-04 | split |
-| Browser onboarding UI (`resources/web/app.js`) | Lan-clients flow with X-MCOS-Client-Id assumptions. | Shows per-client-type onboarding cards backed by `/api/onboarding/*`; preserves manual/import paths as first-class options. | PHASE-04, PHASE-09 | extend |
-| Companion utility | None. | Optional small utility documented in PHASE-04 that browses DNS-SD, fetches `/api/onboarding/{clientType}`, writes/prints the client config, verifies connectivity. May be deferred. | PHASE-04 | replace (new) |
+| `GET /api/onboarding`, `GET /api/onboarding/{clientType}` | **Landed PHASE-04.** The runtime serves a typed profile for `claude-code`, `codex`, `grok`, `chatgpt`, and falls through to `generic` for unknown client types. Each profile carries the live `gatewayMcpUrl` from the discovery document, `authRequired=false`, `trust=lan`, the governance bundle URL, the discovery URL, the instance id, and per-client config snippets / manual instructions / verification steps / caveats. | Replaced — schema-conformant per `onboarding-profile.schema.json`. | PHASE-04 | done |
+| Existing `/api/platform-services/config/{platform}` | Unchanged. The platform-services endpoint stays for Forsetti platform-services callers; AI-client onboarding now flows through `/api/onboarding/{clientType}`. | Coexists; the new endpoint is the documented AI-client onboarding path. | PHASE-04 | split (keep legacy + add new) |
+| `/api/clients/{id}/config` (ADR-001) | Unchanged. Per-LanClient operator-surface bundle download remains for the privilege-flag integration model. | Stays on operator surface; not the AI-client path. | — | keep |
+| Browser onboarding UI (`resources/web/app.js`) | Existing operator dashboard; not yet pointed at `/api/onboarding/*`. | PHASE-09 (Tron dashboard realignment) wires the UI. Profiles are content-stable today and ready for that consumer. | PHASE-09 | pending |
+| Companion utility for ChatGPT connector-edge | Profile documents the connector-edge constraint via `caveats`. The actual companion binary is not shipped in PHASE-04. | Documented in `caveats` and `manualInstructions`; the binary lands later if needed. | PHASE-04 docs done; binary deferred | deferred |
 
 ## D. Governance bundle surface
 
