@@ -1,5 +1,12 @@
 name: Windows Build, Test, and Package
 
+# PHASE-10 release-gate hard rule (ADR-002 §10):
+# This workflow is the same-SHA product gate. It MUST stay triggered by
+# `push` and `pull_request` only. DO NOT add `workflow_dispatch` here —
+# manual dispatch would let an operator bypass a failing CI run by re-running
+# from a clean state. The release workflow (.github/workflows/release.yml)
+# explicitly verifies that this workflow succeeded on the same SHA before
+# any artifact ships. FORBIDDEN-CONTRACT §6.2 greps for the bypass pattern.
 on:
   push:
     branches: [main]
@@ -8,6 +15,12 @@ on:
 
 permissions:
   contents: read
+
+# Cancel an older same-SHA run when a newer commit lands; prevents racing
+# builds from publishing inconsistent artifacts under the same package name.
+concurrency:
+  group: windows-product-gate-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   windows-product-gate:
@@ -21,6 +34,30 @@ jobs:
         with:
           fetch-depth: 0
 
+      # PHASE-10 acceptance criterion: "Release version stamped before
+      # configure/build/package." VERSION.json is the single source of truth
+      # (`scripts/Sync-RepositoryVersionBadges.ps1`). This step reads it,
+      # exposes the value as $env:MASTERCONTROL_VERSION for every later step,
+      # and fails the gate if the file is malformed or absent. The badge
+      # check below confirms README + vcpkg.json are in sync with this same
+      # value before configure runs.
+      - name: Stamp release version from VERSION.json
+        shell: pwsh
+        run: |
+          $versionPath = Join-Path $env:GITHUB_WORKSPACE 'VERSION.json'
+          if (-not (Test-Path $versionPath)) {
+            Write-Error "VERSION.json not found at $versionPath"
+            exit 1
+          }
+          $version = Get-Content -Path $versionPath -Raw | ConvertFrom-Json
+          if (-not $version.current_version) {
+            Write-Error "VERSION.json missing current_version"
+            exit 1
+          }
+          Write-Host "Release version: $($version.current_version) ($($version.released_at))"
+          "MASTERCONTROL_VERSION=$($version.current_version)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "MASTERCONTROL_RELEASED_AT=$($version.released_at)"  | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Discover and document toolchain
         shell: pwsh
         run: |
@@ -31,6 +68,12 @@ jobs:
           $vsVersion = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
             -latest -products * -property installationVersion
           Write-Host "Visual Studio version: $vsVersion"
+          # PHASE-10: ADR-002 §10 forbids hardcoded VS Enterprise paths
+          # in workflow steps and resolver scripts. vswhere is the only
+          # supported discovery path.
+          if ($vsInstall -match 'Enterprise') {
+            Write-Warning "vswhere resolved to a VS Enterprise install. The toolchain works on Enterprise too, but workflow steps must never hardcode the Enterprise edition path."
+          }
           cmake --version
           Write-Host "vcpkg: $(vcpkg version 2>&1 | Select-Object -First 1)"
 

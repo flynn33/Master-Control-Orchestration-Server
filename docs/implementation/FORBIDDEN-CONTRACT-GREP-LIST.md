@@ -303,6 +303,57 @@ git grep -nE 'Microsoft Visual Studio[/\\][0-9]+[/\\]Enterprise' \
 
 Expected: zero matches in workflows/scripts/CMake. PHASE-10 acceptance: toolchain discovery via `vswhere`/preset/`setup-msbuild`.
 
+### 6.2 No `workflow_dispatch` bypass on the product gate or release workflow (PHASE-10)
+
+```bash
+git grep -nE '^[[:space:]]+workflow_dispatch:' \
+  -- .github/workflows/windows-build-test-package.yml \
+     .github/workflows/release.yml
+```
+
+Expected: zero matches. ADR-002 §10: "Manual dispatch cannot bypass successful same-SHA build." Adding `workflow_dispatch:` as a YAML trigger to either workflow defeats the same-SHA gate. The grep matches the YAML trigger key specifically (indented, with colon) rather than the bare word, so file-level comments documenting the rule do not false-positive. The advisory workflows (`forsetti-compliance.yml`, `ai-contributor-guard.yml`) MAY have `workflow_dispatch` because they are not release-blocking; this grep is scoped to the two release-blocking workflows specifically.
+
+### 6.3 No hardcoded VS edition path in workflow files (PHASE-10)
+
+```bash
+git grep -nE '\\Enterprise\\|/Enterprise/' \
+  -- .github/workflows
+```
+
+Expected: zero matches. Defense-in-depth above §6.1. The grep matches `\Enterprise\` or `/Enterprise/` as path segments, not the literal word `Enterprise` in comments or warning strings. The product-gate workflow's "Discover and document toolchain" step contains a deliberate `if ($vsInstall -match 'Enterprise')` warning — this is a runtime check, not a hardcoded path, and is allowed.
+
+### 6.4 Process execution 7-step compliance (PHASE-10)
+
+ADR-002 §10 requires synchronous external-process invocations to follow:
+
+> Start → drain stdout/stderr concurrently → WaitForSingleObject with timeout → Kill process tree on timeout if needed → Join drain threads → GetExitCodeProcess → Cleanup handles.
+
+The canonical reference implementation lives at `src/MasterControlApp/MasterControlRuntime.cpp` lines 914-1110 (`runHostedExecutable`). New synchronous-process paths must follow the same shape. This grep flags any naive `WaitForSingleObject(..., INFINITE)` without an accompanying timeout-and-kill path:
+
+```bash
+git grep -nE 'WaitForSingleObject\([^,]+,\s*INFINITE' \
+  -- src/MasterControlApp src/MasterControlModules src/MasterControlServiceHost src/MasterControlBootstrapper
+```
+
+Expected matches:
+- `src/MasterControlBootstrapper/main.cpp:637` — `runProcess` (no captured I/O; PHASE-10 known-issue, see comment at the call site).
+- `src/MasterControlBootstrapper/main.cpp:690` — `runProcessCapture` (classic single-pipe deadlock risk; PHASE-10 known-issue, see comment at the call site).
+
+These two pre-existing sites are flagged with `// PHASE-10 known-issue:` source comments and are listed in `handoff/realignment/PHASE-10-completion-report.md` deferred work. Any **new** match outside these two lines is a regression.
+
+`WorkerSupervisor` and `McpJungleGatewayAdapter` legitimately wait without timeout for their long-running supervised processes — Job Object containment (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) owns the kill path, and they don't appear in this grep because they don't call `WaitForSingleObject` on supervised children.
+
+### 6.5 Version stamping before configure (PHASE-10)
+
+The product-gate workflow MUST read `VERSION.json` before any configure/build/package step. The "Stamp release version from VERSION.json" step must precede "Configure (Release)":
+
+```bash
+awk '/Stamp release version from VERSION.json/{stamp=NR} /Configure \(Release\)/{config=NR} END{ if (stamp == 0 || config == 0 || stamp >= config) print "VIOLATION"; else print "OK"; }' \
+  .github/workflows/windows-build-test-package.yml
+```
+
+Expected: `OK`. PHASE-10 acceptance: "Release version stamped before configure/build/package."
+
 ### 6.2 `workflow_dispatch` release bypass
 
 ```bash

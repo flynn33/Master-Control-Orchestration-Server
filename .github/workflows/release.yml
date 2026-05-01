@@ -1,0 +1,139 @@
+name: Release
+
+# PHASE-10 release-gate hard rule (ADR-002 §10):
+# Releases ship ONLY when:
+#   1. A version tag (vX.Y.Z) was pushed.
+#   2. The same-SHA `Windows Build, Test, and Package` workflow succeeded.
+# This workflow MUST NOT be made `workflow_dispatch`-able. Manual dispatch
+# would let an operator publish a release without a passing build.
+# FORBIDDEN-CONTRACT §6.2 greps for the bypass pattern in this file.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-and-publish:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository at the tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read VERSION.json and assert it matches the tag
+        id: version
+        shell: pwsh
+        run: |
+          $versionPath = Join-Path $env:GITHUB_WORKSPACE 'VERSION.json'
+          if (-not (Test-Path $versionPath)) {
+            Write-Error "VERSION.json not found at $versionPath"
+            exit 1
+          }
+          $version = Get-Content -Path $versionPath -Raw | ConvertFrom-Json
+          if (-not $version.current_version) {
+            Write-Error "VERSION.json missing current_version"
+            exit 1
+          }
+          # github.ref looks like 'refs/tags/v0.6.0'; strip the prefix.
+          $tag = $env:GITHUB_REF -replace '^refs/tags/', ''
+          $expectedTag = "v$($version.current_version)"
+          if ($tag -ne $expectedTag) {
+            Write-Error "Tag '$tag' does not match VERSION.json's expected '$expectedTag'. Refusing to release."
+            exit 1
+          }
+          Write-Host "Tag and VERSION.json agree: $tag"
+          "version=$($version.current_version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=$tag"                            | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # PHASE-10 acceptance criterion: "Manual dispatch cannot bypass
+      # successful same-SHA build." The product gate (push/pull_request) is
+      # the source of truth. This step queries the GitHub API for runs of
+      # `windows-build-test-package.yml` matching the tag's commit SHA and
+      # demands a `success` conclusion. If no run exists or the run failed,
+      # the release is refused. This is the no-bypass enforcement.
+      - name: Verify same-SHA Windows product gate succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $sha = $env:GITHUB_SHA
+          Write-Host "Verifying Windows product gate for SHA $sha"
+          $apiUrl = "/repos/$($env:GITHUB_REPOSITORY)/actions/workflows/windows-build-test-package.yml/runs?head_sha=$sha"
+          $runsJson = gh api $apiUrl
+          $runs = $runsJson | ConvertFrom-Json
+          if (-not $runs.workflow_runs -or $runs.workflow_runs.Count -eq 0) {
+            Write-Error "No Windows product gate run found for SHA $sha. Release refused."
+            exit 1
+          }
+          $latest = $runs.workflow_runs | Sort-Object -Property created_at -Descending | Select-Object -First 1
+          Write-Host "Latest run: id=$($latest.id) status=$($latest.status) conclusion=$($latest.conclusion) at $($latest.created_at)"
+          if ($latest.status -ne 'completed') {
+            Write-Error "Windows product gate has not completed for SHA $sha (status=$($latest.status)). Release refused."
+            exit 1
+          }
+          if ($latest.conclusion -ne 'success') {
+            Write-Error "Windows product gate failed for SHA $sha (conclusion=$($latest.conclusion)). Release refused."
+            exit 1
+          }
+          Write-Host "Windows product gate passed for SHA $sha. Proceeding with release."
+          "gate_run_id=$($latest.id)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Download release artifact from the gating run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $runId = (gh api "/repos/$($env:GITHUB_REPOSITORY)/actions/workflows/windows-build-test-package.yml/runs?head_sha=$($env:GITHUB_SHA)" | ConvertFrom-Json).workflow_runs[0].id
+          $stage = Join-Path $env:GITHUB_WORKSPACE 'release-stage'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          gh run download $runId --name mastercontrol-release-package --dir $stage
+          Get-ChildItem -Path $stage -Recurse -File |
+            Select-Object FullName, Length, LastWriteTime |
+            Format-Table -AutoSize | Out-String | Write-Host
+
+      - name: Verify release artifact contents
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:GITHUB_WORKSPACE 'release-stage'
+          $required = @(
+            'MasterControlServiceHost.exe',
+            'MasterControlBootstrapper.exe'
+          )
+          foreach ($name in $required) {
+            $found = Get-ChildItem -Path $stage -Recurse -Filter $name -ErrorAction SilentlyContinue
+            if (-not $found) {
+              Write-Error "Release artifact is missing required binary: $name"
+              exit 1
+            }
+            Write-Host "Found: $($found[0].FullName)"
+          }
+          $msi = Get-ChildItem -Path $stage -Recurse -Filter '*.msi' -ErrorAction SilentlyContinue
+          if (-not $msi) {
+            Write-Warning "No MSI in artifact. Release proceeds, but the MSI build step in the gate may need attention."
+          } else {
+            Write-Host "MSI: $($msi[0].FullName)"
+          }
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:GITHUB_WORKSPACE 'release-stage'
+          $tag = '${{ steps.version.outputs.tag }}'
+          $assets = @(Get-ChildItem -Path $stage -Recurse -File | ForEach-Object { $_.FullName })
+          $assetArgs = $assets -join ' '
+          Write-Host "Publishing release $tag with $($assets.Count) asset(s)."
+          # If a release for this tag already exists (e.g., manual edit)
+          # `gh release create` will fail; that's the right behavior — we do
+          # not silently overwrite an existing release.
+          gh release create $tag --title "MCOS $tag" --notes-file VERSION.json --verify-tag $assets

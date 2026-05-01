@@ -1,11 +1,33 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.5.0",
-  "current_tag": "v0.5.0",
-  "released_at": "2026-04-25",
+  "current_version": "0.6.0",
+  "current_tag": "v0.6.0",
+  "released_at": "2026-05-01",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.6.0",
+      "tag": "v0.6.0",
+      "released_at": "2026-05-01",
+      "commit": "pending",
+      "summary": "Gateway-first MCP realignment (ADR-002, PHASE-00 through PHASE-10). MCOS is no longer a direct AI executor; it is a Windows-native LAN MCP Gateway host. AI clients connect to one advertised MCP endpoint and consume server-generated onboarding profiles, governance bundles, and supervised worker pools. Strategy=minor-on-architecture-change applies because the public AI-client surface fundamentally changed but the operator surface from ADR-001 (LAN Client Control Plane) is preserved as a coexisting operator path.",
+      "entries": [
+        "feat(adr): adopt ADR-002 gateway-first realignment superseding ADR-001 in part",
+        "feat(phase-01): remove provider-era direct AI integration residue from WinUI shell",
+        "feat(phase-02): MCP Gateway spike with replaceable IMcpGateway + McpJungleGatewayAdapter; gateway HTTP routes; supervised-mock fallback when no binary configured",
+        "feat(phase-03): Bonjour-style LAN discovery (DNS-SD service types _mcos._tcp.local / _mcos-mcp / _mcos-onboarding); /.well-known/mcos.json; /api/discovery; UDP beacon serializing the new DiscoveryDocument",
+        "feat(phase-04): model-specific onboarding profiles for claude-code, codex, grok, chatgpt, generic-mcp; /api/onboarding/{clientType}; authRequired=false / trust=lan / streamable_http defaults",
+        "feat(phase-05): CLU/Forsetti governance bundle distribution; /api/governance/bundles/{windows|macos|ios}; sha256 checksums; bcrypt link",
+        "feat(phase-06): managed MCP/sub-agent worker pools; 7-state lifecycle (Configured/Starting/Ready/Busy/Draining/Failed/Stopped); WorkerSupervisor with Job Object containment (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE); pool admin routes",
+        "feat(phase-07): autoscaling + lease routing; ILeaseRouter with sticky-session for stateful + least-loaded for stateless + same-type scale-out under saturation; lease admin routes; FORBIDDEN-CONTRACT no-hot-migration grep",
+        "feat(phase-08): real-time telemetry model; ITelemetryAggregator separating events / clients / gateway / heartbeat; ClientHeartbeat -1.0 unavailable sentinel (ADR-002 §9 honesty rule); telemetry HTTP routes; ring-buffer cap 1024",
+        "feat(phase-09): Tron dashboard realignment; eleven gateway-first destinations; formatMetric() honesty helper; per-pool saturation cards; onboarding panel with copy-snippet; discovery doc; two-ring activity stream; governance bundle downloads",
+        "feat(phase-10): Windows hardening / CI / packaging / release gate; explicit version stamping before configure; concurrency cancel-in-progress; new release.yml that verifies same-SHA Windows-product-gate before publishing; vswhere-driven toolchain (no hardcoded VS Enterprise); Windows-Firewall-LAN-Mode + Packaging + Release-Gate operations docs",
+        "docs(realignment): ARCHITECTURE-DRIFT-INVENTORY closed; FORBIDDEN-CONTRACT grep list grew to eight groups (provider-era forbidden, gateway abstraction, trust model, telemetry honesty, Forsetti vendoring, CI/release-gate integrity, phase scope, dashboard honesty)",
+        "docs(version): bump 0.5.0 → 0.6.0 (first allowed bump per manifest noBumpUntilPhaseTen)"
+      ]
+    },
     {
       "version": "0.5.0",
       "tag": "v0.5.0",

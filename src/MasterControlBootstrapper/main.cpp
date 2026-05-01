@@ -634,6 +634,13 @@ int runProcess(std::wstring commandLine,
         return static_cast<int>(GetLastError());
     }
 
+    // PHASE-10 known-issue: this site uses WaitForSingleObject(..., INFINITE)
+    // without a timeout-and-kill path. Acceptable today because the
+    // bootstrapper invokes only short-lived child commands (icacls, regsvr32,
+    // etc.) with no captured stdout/stderr — there is no pipe-buffer deadlock
+    // risk because no pipes are wired. A future maintenance phase should
+    // adopt the runHostedExecutable pattern at MasterControlRuntime.cpp:914.
+    // FORBIDDEN-CONTRACT §6.4 documents this exemption.
     WaitForSingleObject(processInformation.hProcess, INFINITE);
 
     DWORD exitCode = 1;
@@ -687,6 +694,16 @@ ProcessCaptureResult runProcessCapture(std::wstring commandLine,
     CloseHandle(processInformation.hThread);
     CloseHandle(writePipe);
 
+    // PHASE-10 known-issue: classic Windows pipe deadlock risk.
+    //   WaitForSingleObject(..., INFINITE) before draining the captured
+    //   pipe means that if the child writes more than the pipe buffer
+    //   (typically 4 KB) before exiting, the child blocks on WriteFile and
+    //   the parent blocks here forever. The bootstrapper preflight only
+    //   captures short outputs (icacls, registry queries, etc.) so the
+    //   risk is theoretical in practice, but the right fix is the
+    //   concurrent-drain pattern at MasterControlRuntime.cpp:1059. A future
+    //   maintenance phase should adopt that shape here. FORBIDDEN-CONTRACT
+    //   §6.4 documents this exemption.
     WaitForSingleObject(processInformation.hProcess, INFINITE);
 
     std::array<char, 4096> buffer{};

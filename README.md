@@ -1,7 +1,7 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.5.0-00f6ff?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--04--25-031018?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.6.0-00f6ff?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--05--01-031018?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%E2%80%A2%20Server%202022-0a1018?style=flat-square)
 ![toolchain](https://img.shields.io/badge/toolchain-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20CMake-00aacc?style=flat-square)
 ![modules](https://img.shields.io/badge/Forsetti%20modules-16-1cf2c1?style=flat-square)
