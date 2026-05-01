@@ -551,6 +551,114 @@ bool testGatewayEnumRoundTrips() {
 // shape, the required fields, and the JSON round-trip so /.well-known/mcos.json
 // stays compatible with discovery-document.schema.json.
 
+// PHASE-06 (ADR-002 §7): Managed worker pool shape tests. The runtime's
+// WorkerSupervisor lives inside the MasterControlRuntime translation
+// unit; these tests pin the public model contract by constructing
+// pool/instance/policy values directly.
+
+bool testEndpointPoolKindEnumRoundTrip() {
+    bool ok = true;
+    ok &= expect(MasterControl::to_string(MasterControl::EndpointPoolKind::McpServer) == "mcp-server",
+                 "EndpointPoolKind serializes mcp-server.");
+    ok &= expect(MasterControl::to_string(MasterControl::EndpointPoolKind::SubAgent) == "sub-agent",
+                 "EndpointPoolKind serializes sub-agent.");
+    ok &= expect(MasterControl::endpointPoolKindFromString("sub-agent") == MasterControl::EndpointPoolKind::SubAgent,
+                 "EndpointPoolKind deserializes sub-agent.");
+    return ok;
+}
+
+bool testEndpointInstanceStateAllSevenLifecycleStates() {
+    using State = MasterControl::EndpointInstanceState;
+    bool ok = true;
+    const std::pair<State, const char*> samples[] = {
+        { State::Configured, "configured" },
+        { State::Starting,   "starting" },
+        { State::Ready,      "ready" },
+        { State::Busy,       "busy" },
+        { State::Draining,   "draining" },
+        { State::Failed,     "failed" },
+        { State::Stopped,    "stopped" }
+    };
+    for (const auto& [value, expected] : samples) {
+        const auto serialized = MasterControl::to_string(value);
+        ok &= expect(serialized == expected,
+                     "EndpointInstanceState serializes to its documented slug.");
+        const auto restored = MasterControl::endpointInstanceStateFromString(serialized);
+        ok &= expect(restored == value,
+                     "EndpointInstanceState round-trips through fromString.");
+    }
+    return ok;
+}
+
+bool testManagedEndpointPoolJsonRequiredFields() {
+    MasterControl::ManagedEndpointPool pool;
+    pool.poolId = "test-pool-001";
+    pool.kind = MasterControl::EndpointPoolKind::McpServer;
+    pool.logicalMcpUrl = "http://127.0.0.1:7300/mcp/pools/test-pool-001/mcp";
+    pool.template_.executable = "C:\\path\\to\\backend.exe";
+    pool.template_.transport = "streamable_http";
+    pool.scalePolicy.minInstances = 0;
+    pool.scalePolicy.maxInstances = 4;
+
+    nlohmann::json serialized = pool;
+    bool ok = true;
+    const std::vector<std::string> required = {
+        "poolId", "kind", "logicalMcpUrl", "template", "scalePolicy"
+    };
+    for (const auto& key : required) {
+        ok &= expect(serialized.contains(key),
+                     "ManagedEndpointPool JSON includes schema-required key.");
+    }
+    ok &= expect(serialized["kind"].get<std::string>() == "mcp-server",
+                 "kind serializes literally.");
+    ok &= expect(serialized["template"]["transport"].get<std::string>() == "streamable_http",
+                 "template.transport serializes literally.");
+    ok &= expect(serialized["scalePolicy"]["maxInstances"].get<int>() == 4,
+                 "scalePolicy.maxInstances round-trips.");
+    return ok;
+}
+
+bool testEndpointInstanceJsonShape() {
+    MasterControl::EndpointInstance instance;
+    instance.instanceId = "test-pool-001#1";
+    instance.poolId = "test-pool-001";
+    instance.state = MasterControl::EndpointInstanceState::Ready;
+    instance.processId = 1234;
+    instance.supervised = true;
+    instance.statusMessage = "Instance started under MCOS Job Object supervision.";
+    instance.telemetry.activeLeases = 1;
+    instance.telemetry.queueDepth = 0;
+
+    nlohmann::json serialized = instance;
+    bool ok = true;
+    ok &= expect(serialized["state"].get<std::string>() == "ready",
+                 "Instance state serializes to lifecycle slug.");
+    ok &= expect(serialized["supervised"].get<bool>() == true,
+                 "Supervised flag round-trips.");
+    ok &= expect(serialized["telemetry"]["activeLeases"].get<int>() == 1,
+                 "Nested telemetry round-trips activeLeases.");
+
+    auto restored = serialized.get<MasterControl::EndpointInstance>();
+    ok &= expect(restored.state == instance.state,
+                 "Instance state round-trips through JSON.");
+    ok &= expect(restored.processId == instance.processId,
+                 "Process id round-trips.");
+    return ok;
+}
+
+bool testManagedPoolEmptyByDefault() {
+    // ADR-002 §9: no fake live infrastructure. A default-constructed pool
+    // has zero instances and stays that way until upserted into a
+    // supervisor and explicitly scaled.
+    MasterControl::ManagedEndpointPool pool;
+    bool ok = true;
+    ok &= expect(pool.instances.empty(),
+                 "Default-constructed pool has no instances (no fake infrastructure).");
+    ok &= expect(pool.scalePolicy.minInstances == 0,
+                 "Default scalePolicy.minInstances is 0 (must opt in to live processes).");
+    return ok;
+}
+
 // PHASE-05 (ADR-002 §6): Governance bundle shape tests. The runtime's
 // GovernanceBundleService lives inside the MasterControlRuntime translation
 // unit; these tests pin the public schema contract (per
@@ -1019,5 +1127,11 @@ int main() {
     ok &= testGovernanceBundleAllPlatformsRecognized();
     ok &= testGovernanceProfileSummaryJsonRoundTrip();
     ok &= testOnboardingProfileLinksToGovernanceBundleUrl();
+    // PHASE-06 managed worker pool tests
+    ok &= testEndpointPoolKindEnumRoundTrip();
+    ok &= testEndpointInstanceStateAllSevenLifecycleStates();
+    ok &= testManagedEndpointPoolJsonRequiredFields();
+    ok &= testEndpointInstanceJsonShape();
+    ok &= testManagedPoolEmptyByDefault();
     return ok ? 0 : 1;
 }

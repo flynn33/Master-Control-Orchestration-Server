@@ -7,6 +7,7 @@
 #include "MasterControl/MasterControlModels.h"
 
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -189,6 +190,26 @@ public:
     virtual void removeGovernanceServer(const std::string& moduleId) = 0;
     virtual std::vector<GovernanceServerDescriptor> listGovernanceServers() const = 0;
     virtual ~IPlatformServiceCatalogService() = default;
+};
+
+// PHASE-06 (ADR-002 §7): Worker Supervisor. Owns the lifecycle of
+// `ManagedEndpointPool` records and their `EndpointInstance` children.
+// Supervised process trees are contained with Windows Job Objects so
+// the supervisor can terminate the entire tree atomically. PHASE-07
+// adds the lease router; PHASE-08 wires per-instance telemetry.
+//
+// In-memory only at PHASE-06. Persistence across restarts is intentional
+// later work (PHASE-08/PHASE-09 may add disk backing).
+class IWorkerSupervisor {
+public:
+    virtual std::vector<ManagedEndpointPool> listPools() const = 0;
+    virtual std::optional<ManagedEndpointPool> findPool(const std::string& poolId) const = 0;
+    virtual OperationResult upsertPool(ManagedEndpointPool pool) = 0;
+    virtual OperationResult removePool(const std::string& poolId) = 0;
+    virtual OperationResult ensureMinInstances(const std::string& poolId) = 0;
+    virtual OperationResult drainPool(const std::string& poolId) = 0;
+    virtual OperationResult shutdownAll() = 0;
+    virtual ~IWorkerSupervisor() = default;
 };
 
 // PHASE-05 (ADR-002 §6): Governance Bundle Service. Composes per-platform

@@ -7402,6 +7402,251 @@ private:
     std::vector<Registration> registrations_;
 };
 
+// PHASE-06 (ADR-002 §7): WorkerSupervisor. Manages `ManagedEndpointPool`
+// records and their `EndpointInstance` children. Process trees are
+// contained with Windows Job Objects (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
+// so the supervisor's destructor reaps the whole tree atomically.
+//
+// PHASE-06 implements the lifecycle state machine and the
+// upsert/remove/ensureMin/drain/shutdown surface. PHASE-07 layers leases
+// + autoscale; PHASE-08 wires per-instance telemetry. Empty pools and
+// pools whose template is missing must NOT spawn children -- ADR-002 §9
+// ("no fake live infrastructure"). The supervised-mock path reports
+// supervised=false and statusMessage="Supervised-mock mode".
+class WorkerSupervisor final : public IWorkerSupervisor {
+public:
+    ~WorkerSupervisor() override {
+        (void)shutdownAll();
+    }
+
+    std::vector<ManagedEndpointPool> listPools() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<ManagedEndpointPool> result;
+        result.reserve(pools_.size());
+        for (const auto& [_, pool] : pools_) {
+            result.push_back(pool);
+        }
+        std::sort(result.begin(), result.end(),
+                  [](const ManagedEndpointPool& a, const ManagedEndpointPool& b) {
+                      return a.poolId < b.poolId;
+                  });
+        return result;
+    }
+
+    std::optional<ManagedEndpointPool> findPool(const std::string& poolId) const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto iterator = pools_.find(poolId);
+        if (iterator == pools_.end()) {
+            return std::nullopt;
+        }
+        return iterator->second;
+    }
+
+    OperationResult upsertPool(ManagedEndpointPool pool) override {
+        if (pool.poolId.empty()) {
+            return OperationResult{ false, false, "Pool id is required." };
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto now = timestampNowUtc();
+        auto iterator = pools_.find(pool.poolId);
+        if (iterator == pools_.end()) {
+            pool.createdAtUtc = now;
+            pool.updatedAtUtc = now;
+            pool.instances = {};
+            pools_[pool.poolId] = std::move(pool);
+        } else {
+            pool.createdAtUtc = iterator->second.createdAtUtc;
+            pool.updatedAtUtc = now;
+            pool.instances = iterator->second.instances;
+            iterator->second = std::move(pool);
+        }
+        return OperationResult{ true, false, "Pool registered." };
+    }
+
+    OperationResult removePool(const std::string& poolId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto iterator = pools_.find(poolId);
+        if (iterator == pools_.end()) {
+            return OperationResult{ false, false, "Unknown pool id." };
+        }
+        terminateInstancesLocked(iterator->second);
+        pools_.erase(iterator);
+        return OperationResult{ true, false, "Pool removed." };
+    }
+
+    OperationResult ensureMinInstances(const std::string& poolId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto iterator = pools_.find(poolId);
+        if (iterator == pools_.end()) {
+            return OperationResult{ false, false, "Unknown pool id." };
+        }
+        ManagedEndpointPool& pool = iterator->second;
+        // Parenthesize std::max to bypass the Windows.h max() macro
+        // collision when NOMINMAX isn't reached for this TU.
+        const int desired = (std::max)(0, pool.scalePolicy.minInstances);
+        const int current = static_cast<int>(pool.instances.size());
+        if (current >= desired) {
+            return OperationResult{ true, false, "Pool already at or above minInstances." };
+        }
+        for (int spawned = current; spawned < desired; ++spawned) {
+            EndpointInstance instance = startInstanceLocked(pool);
+            pool.instances.push_back(std::move(instance));
+        }
+        pool.updatedAtUtc = timestampNowUtc();
+        return OperationResult{ true, false, "Pool scaled to minInstances." };
+    }
+
+    OperationResult drainPool(const std::string& poolId) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto iterator = pools_.find(poolId);
+        if (iterator == pools_.end()) {
+            return OperationResult{ false, false, "Unknown pool id." };
+        }
+        for (auto& instance : iterator->second.instances) {
+            transitionInstanceLocked(instance, EndpointInstanceState::Draining,
+                                     "Drain requested by supervisor.");
+        }
+        return OperationResult{ true, false, "Pool draining." };
+    }
+
+    OperationResult shutdownAll() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& [_, pool] : pools_) {
+            terminateInstancesLocked(pool);
+        }
+        return OperationResult{ true, false, "All pools shut down." };
+    }
+
+private:
+    struct ChildProcess final {
+#if defined(_WIN32)
+        HANDLE jobObject = nullptr;
+        PROCESS_INFORMATION processInfo{};
+#endif
+        bool active = false;
+    };
+
+    EndpointInstance startInstanceLocked(ManagedEndpointPool& pool) {
+        EndpointInstance instance;
+        instance.poolId = pool.poolId;
+        instance.instanceId = pool.poolId + "#" + std::to_string(nextInstanceSerial_++);
+        instance.state = EndpointInstanceState::Starting;
+        instance.startedAtUtc = timestampNowUtc();
+        instance.lastTransitionAtUtc = instance.startedAtUtc;
+        instance.statusMessage = "Instance starting.";
+
+        if (pool.template_.executable.empty()
+            || !std::filesystem::exists(std::filesystem::path(pool.template_.executable))) {
+            // Supervised-mock path. State machine still advances so callers
+            // can exercise the contract; the instance reports supervised=false
+            // until a real binary is configured. Honors ADR-002 §9 by NOT
+            // claiming live process infrastructure when none exists.
+            instance.supervised = false;
+            transitionInstanceLocked(instance, EndpointInstanceState::Ready,
+                                     "Supervised-mock mode (no binary configured).");
+            return instance;
+        }
+
+#if defined(_WIN32)
+        ChildProcess child;
+        child.jobObject = CreateJobObjectW(nullptr, nullptr);
+        if (child.jobObject != nullptr) {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(child.jobObject, JobObjectExtendedLimitInformation,
+                                    &limits, sizeof(limits));
+        }
+
+        std::wstring commandLine = L"\"" + wideFromUtf8(pool.template_.executable) + L"\"";
+        for (const auto& arg : pool.template_.args) {
+            commandLine += L" " + wideFromUtf8(arg);
+        }
+        std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
+        mutableCommandLine.push_back(L'\0');
+
+        STARTUPINFOW startupInfo{};
+        startupInfo.cb = sizeof(startupInfo);
+        startupInfo.dwFlags = STARTF_USESHOWWINDOW;
+        startupInfo.wShowWindow = SW_HIDE;
+
+        PROCESS_INFORMATION processInfo{};
+        std::wstring workingDir = wideFromUtf8(pool.template_.workingDirectory);
+        const BOOL launched = CreateProcessW(
+            nullptr,
+            mutableCommandLine.data(),
+            nullptr, nullptr,
+            FALSE,
+            CREATE_NO_WINDOW | CREATE_SUSPENDED,
+            nullptr,
+            workingDir.empty() ? nullptr : workingDir.c_str(),
+            &startupInfo,
+            &processInfo);
+        if (!launched) {
+            if (child.jobObject) {
+                CloseHandle(child.jobObject);
+            }
+            transitionInstanceLocked(instance, EndpointInstanceState::Failed,
+                                     "CreateProcessW failed for the configured pool template.");
+            return instance;
+        }
+        if (child.jobObject) {
+            AssignProcessToJobObject(child.jobObject, processInfo.hProcess);
+        }
+        ResumeThread(processInfo.hThread);
+        child.processInfo = processInfo;
+        child.active = true;
+
+        instance.processId = processInfo.dwProcessId;
+        instance.supervised = true;
+        children_.emplace(instance.instanceId, std::move(child));
+        transitionInstanceLocked(instance, EndpointInstanceState::Ready,
+                                 "Instance started under MCOS Job Object supervision.");
+#else
+        transitionInstanceLocked(instance, EndpointInstanceState::Failed,
+                                 "Process supervision requires Windows.");
+#endif
+        return instance;
+    }
+
+    void transitionInstanceLocked(EndpointInstance& instance,
+                                   EndpointInstanceState target,
+                                   const std::string& message) {
+        instance.state = target;
+        instance.lastTransitionAtUtc = timestampNowUtc();
+        instance.statusMessage = message;
+    }
+
+    void terminateInstancesLocked(ManagedEndpointPool& pool) {
+        for (auto& instance : pool.instances) {
+#if defined(_WIN32)
+            const auto childIterator = children_.find(instance.instanceId);
+            if (childIterator != children_.end()) {
+                ChildProcess& child = childIterator->second;
+                if (child.jobObject != nullptr) {
+                    CloseHandle(child.jobObject);
+                    child.jobObject = nullptr;
+                }
+                if (child.processInfo.hProcess != nullptr) {
+                    CloseHandle(child.processInfo.hProcess);
+                }
+                if (child.processInfo.hThread != nullptr) {
+                    CloseHandle(child.processInfo.hThread);
+                }
+                children_.erase(childIterator);
+            }
+#endif
+            transitionInstanceLocked(instance, EndpointInstanceState::Stopped,
+                                     "Instance stopped by supervisor.");
+        }
+        pool.instances.clear();
+    }
+
+    mutable std::mutex mutex_;
+    std::map<std::string, ManagedEndpointPool> pools_;
+    std::map<std::string, ChildProcess> children_;
+    std::atomic<uint64_t> nextInstanceSerial_{ 1 };
+};
+
 // PHASE-05 (ADR-002 §6): Governance Bundle Service. Composes per-platform
 // governance bundles served at /api/governance/bundles/{windows|macos|ios}.
 // Hydrates rules from resources/clu/governance-profile.json (the source of
@@ -8576,6 +8821,7 @@ private:
     std::shared_ptr<IDiscoveryService> discoveryService_;
     std::shared_ptr<IOnboardingProfileService> onboardingProfileService_;
     std::shared_ptr<IGovernanceBundleService> governanceBundleService_;
+    std::shared_ptr<IWorkerSupervisor> workerSupervisor_;
     std::shared_ptr<IAdminApiService> adminApiService_;
     std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager_;
     std::shared_ptr<Forsetti::IEntitlementProvider> entitlementProvider_;
@@ -8645,6 +8891,13 @@ bool MasterControlApplication::Impl::initialize() {
     // across requests for unchanged content.
     governanceBundleService_ = std::make_shared<GovernanceBundleService>(
         paths_.cluProfileFile, paths_.forsettiInstructionsFile);
+
+    // PHASE-06 (ADR-002 §7): construct the worker supervisor. PHASE-06
+    // ships in-memory pool registration + Job Object child supervision;
+    // PHASE-07 layers leases + autoscale on top. Empty supervisor at
+    // boot — operators register pools via POST /api/pools or future
+    // module manifests.
+    workerSupervisor_ = std::make_shared<WorkerSupervisor>();
 
     // PHASE-02: register one stable logical MCP endpoint with the gateway
     // adapter so subsequent phases (PHASE-06 worker pools, PHASE-07 lease
@@ -8729,6 +8982,9 @@ void MasterControlApplication::Impl::shutdown() {
     }
     if (discoveryService_) {
         discoveryService_->stop();
+    }
+    if (workerSupervisor_) {
+        (void)workerSupervisor_->shutdownAll();
     }
     if (mcpGateway_) {
         mcpGateway_->Stop();
@@ -9367,8 +9623,65 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             response["method"] = "POST";
             response["expects"] = "GovernanceEnforcementRequest";
             response["returns"] = "GovernanceEnforcementDecision";
-            response["note"] = "POST handler lands in PHASE-06/07 alongside the managed worker pool surface.";
+            response["note"] = "POST handler lands in PHASE-07 alongside the lease router.";
             return jsonResponse(response);
+        }
+        // -------------------------------------------------------------------
+        // PHASE-06 (ADR-002 §7): managed worker pool surface.
+        // GET /api/pools                  -> list pools
+        // GET /api/pools/{poolId}         -> typed pool record
+        // POST /api/pools                 -> upsert a pool (JSON body)
+        // POST /api/pools/{poolId}/remove -> deregister + reap children
+        // POST /api/pools/{poolId}/scale  -> ensureMinInstances
+        // POST /api/pools/{poolId}/drain  -> mark all instances Draining
+        if (request.method == "GET" && request.path == "/api/pools") {
+            return jsonResponse(workerSupervisor_
+                ? workerSupervisor_->listPools()
+                : std::vector<ManagedEndpointPool>{});
+        }
+        if (request.method == "GET" && startsWith(request.path, "/api/pools/")) {
+            const auto prefix = std::string("/api/pools/");
+            const std::string poolId = request.path.substr(prefix.size());
+            const auto pool = workerSupervisor_
+                ? workerSupervisor_->findPool(poolId)
+                : std::optional<ManagedEndpointPool>{};
+            if (!pool.has_value()) {
+                return jsonResponse(OperationResult{ false, false, "Unknown pool id." });
+            }
+            return jsonResponse(*pool);
+        }
+        if (request.method == "POST" && request.path == "/api/pools") {
+            try {
+                auto pool = nlohmann::json::parse(request.body).get<ManagedEndpointPool>();
+                return jsonResponse(workerSupervisor_
+                    ? workerSupervisor_->upsertPool(std::move(pool))
+                    : OperationResult{ false, false, "Worker supervisor is not running." });
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false, std::string("Invalid pool JSON: ") + ex.what() });
+            }
+        }
+        if (request.method == "POST" && startsWith(request.path, "/api/pools/")) {
+            const auto prefix = std::string("/api/pools/");
+            const std::string suffix = request.path.substr(prefix.size());
+            const auto slash = suffix.find('/');
+            if (slash == std::string::npos) {
+                return jsonResponse(OperationResult{ false, false, "Pool action route is /api/pools/{poolId}/{remove|scale|drain}." });
+            }
+            const std::string poolId = suffix.substr(0, slash);
+            const std::string action = suffix.substr(slash + 1);
+            if (!workerSupervisor_) {
+                return jsonResponse(OperationResult{ false, false, "Worker supervisor is not running." });
+            }
+            if (action == "remove") {
+                return jsonResponse(workerSupervisor_->removePool(poolId));
+            }
+            if (action == "scale") {
+                return jsonResponse(workerSupervisor_->ensureMinInstances(poolId));
+            }
+            if (action == "drain") {
+                return jsonResponse(workerSupervisor_->drainPool(poolId));
+            }
+            return jsonResponse(OperationResult{ false, false, "Unknown pool action; expected remove|scale|drain." });
         }
         // -------------------------------------------------------------------
         // /api/gateway/* — MCP Gateway adapter surface (PHASE-02 of ADR-002).

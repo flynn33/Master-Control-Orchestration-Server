@@ -144,6 +144,18 @@ git grep -nE 'mcpjungle|MCPJungle|McpJungle' \
 
 Expected: zero matches as of PHASE-02. The substring is allowed inside the adapter (`include/MasterControl/McpGatewayAdapters.h`, `src/MasterControlApp/McpGatewayAdapters.cpp`), the enum string tables (`src/MasterControlApp/MasterControlModels.cpp`), default-config seeding (`MasterControlDefaults.cpp`), and the `GatewayType::MCPJungle` declaration. Anywhere else is a coupling regression.
 
+### 2.1a Worker process tree containment (PHASE-06, ADR-002 §7)
+
+Every supervised child must be wrapped in a Windows Job Object so the supervisor's destructor can reap the entire tree atomically. `CreateProcessW` calls without an `AssignProcessToJobObject` follow-up risk orphaned process trees.
+
+```bash
+git grep -nE 'CreateProcessW' -- src/MasterControlApp src/MasterControlServiceHost src/MasterControlBootstrapper \
+  ':!src/MasterControlApp/MasterControlRuntime.cpp' \
+  ':!src/MasterControlApp/McpGatewayAdapters.cpp'
+```
+
+Expected: zero matches outside the two known supervised-process-tree call sites (`WorkerSupervisor::startInstanceLocked` in `MasterControlRuntime.cpp` and `McpJungleGatewayAdapter::Start` in `McpGatewayAdapters.cpp`). Both already pair `CreateProcessW` with `AssignProcessToJobObject` and `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
+
 ### 2.2 Autoscaled clones registered as separate public MCP tools
 
 ```bash

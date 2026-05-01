@@ -769,6 +769,96 @@ struct DeregistrationResult final {
     std::string serverName;
 };
 
+// PHASE-06 (ADR-002 §7): Managed endpoint pools. MCP servers and
+// sub-agents become supervised process pools behind stable logical
+// endpoints. Lifecycle: configured -> starting -> ready -> busy ->
+// draining -> stopped, with `failed` reachable from any non-terminal
+// state. Worker process trees are contained with Windows Job Objects
+// (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) so terminating the supervisor
+// kills the entire tree atomically. PHASE-07 layers leases + autoscale.
+//
+// Schema: docs/implementation/schemas/managed-endpoint-pool.schema.json
+enum class EndpointPoolKind {
+    McpServer,
+    SubAgent
+};
+
+enum class EndpointInstanceState {
+    Configured,
+    Starting,
+    Ready,
+    Busy,
+    Draining,
+    Failed,
+    Stopped
+};
+
+struct ScalePolicy final {
+    int minInstances = 0;
+    int maxInstances = 1;
+    int maxActiveLeasesPerInstance = 1;
+    int scaleOutQueueWaitMs = 1500;
+    int scaleInIdleSeconds = 300;
+};
+
+struct DrainPolicy final {
+    int drainTimeoutSeconds = 30;
+    bool drainStickySessions = true;
+    bool routeNewSessionsToReplacement = true;
+};
+
+struct HealthProbeSpec final {
+    std::string transport;       // "http" | "stdio_handshake" | "none"
+    std::string path;
+    int intervalMs = 5000;
+    int timeoutMs = 1500;
+    int unhealthyThreshold = 3;
+};
+
+struct EndpointTemplate final {
+    std::string executable;
+    std::vector<std::string> args;
+    std::string workingDirectory;
+    std::map<std::string, std::string> environment;
+    std::string transport = "streamable_http";
+    HealthProbeSpec healthProbe;
+};
+
+struct WorkerTelemetry final {
+    int activeLeases = 0;
+    int queueDepth = 0;
+    int inflightCalls = 0;
+    double cpuPercent = -1.0;
+    double memoryMbytes = -1.0;
+    std::string lastProbedAtUtc;
+    std::string lastHealthMessage;
+};
+
+struct EndpointInstance final {
+    std::string instanceId;
+    std::string poolId;
+    EndpointInstanceState state = EndpointInstanceState::Configured;
+    uint32_t processId = 0;
+    bool supervised = false;
+    std::string startedAtUtc;
+    std::string lastTransitionAtUtc;
+    std::string statusMessage;
+    WorkerTelemetry telemetry;
+};
+
+struct ManagedEndpointPool final {
+    std::string poolId;
+    EndpointPoolKind kind = EndpointPoolKind::McpServer;
+    std::string displayName;
+    std::string logicalMcpUrl;
+    EndpointTemplate template_;
+    ScalePolicy scalePolicy;
+    DrainPolicy drainPolicy;
+    std::vector<EndpointInstance> instances;
+    std::string createdAtUtc;
+    std::string updatedAtUtc;
+};
+
 // PHASE-05 (ADR-002 §6): Per-platform CLU/Forsetti governance bundle.
 // Contract: docs/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md.
 // Each bundle wraps the Forsetti Framework + Forsetti Framework for
@@ -924,6 +1014,8 @@ std::string to_string(GatewayType value);
 std::string to_string(GatewayState value);
 std::string to_string(GatewayHealthStatus value);
 std::string to_string(McpServerTransport value);
+std::string to_string(EndpointPoolKind value);
+std::string to_string(EndpointInstanceState value);
 
 EndpointKind endpointKindFromString(const std::string& value);
 EndpointStatus endpointStatusFromString(const std::string& value);
@@ -939,6 +1031,8 @@ GatewayType gatewayTypeFromString(const std::string& value);
 GatewayState gatewayStateFromString(const std::string& value);
 GatewayHealthStatus gatewayHealthStatusFromString(const std::string& value);
 McpServerTransport mcpServerTransportFromString(const std::string& value);
+EndpointPoolKind endpointPoolKindFromString(const std::string& value);
+EndpointInstanceState endpointInstanceStateFromString(const std::string& value);
 
 void to_json(nlohmann::json& json, EndpointKind value);
 void from_json(const nlohmann::json& json, EndpointKind& value);
@@ -981,6 +1075,12 @@ void from_json(const nlohmann::json& json, GatewayHealthStatus& value);
 
 void to_json(nlohmann::json& json, McpServerTransport value);
 void from_json(const nlohmann::json& json, McpServerTransport& value);
+
+void to_json(nlohmann::json& json, EndpointPoolKind value);
+void from_json(const nlohmann::json& json, EndpointPoolKind& value);
+
+void to_json(nlohmann::json& json, EndpointInstanceState value);
+void from_json(const nlohmann::json& json, EndpointInstanceState& value);
 
 std::string toPrettyJson(const nlohmann::json& json);
 std::string timestampNowUtc();
@@ -1678,5 +1778,91 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     roleIds,
     ruleIds,
     generatedAt)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ScalePolicy,
+    minInstances,
+    maxInstances,
+    maxActiveLeasesPerInstance,
+    scaleOutQueueWaitMs,
+    scaleInIdleSeconds)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    DrainPolicy,
+    drainTimeoutSeconds,
+    drainStickySessions,
+    routeNewSessionsToReplacement)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    HealthProbeSpec,
+    transport,
+    path,
+    intervalMs,
+    timeoutMs,
+    unhealthyThreshold)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    EndpointTemplate,
+    executable,
+    args,
+    workingDirectory,
+    environment,
+    transport,
+    healthProbe)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    WorkerTelemetry,
+    activeLeases,
+    queueDepth,
+    inflightCalls,
+    cpuPercent,
+    memoryMbytes,
+    lastProbedAtUtc,
+    lastHealthMessage)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    EndpointInstance,
+    instanceId,
+    poolId,
+    state,
+    processId,
+    supervised,
+    startedAtUtc,
+    lastTransitionAtUtc,
+    statusMessage,
+    telemetry)
+
+// ManagedEndpointPool uses an explicit serializer because the
+// EndpointTemplate field is named `template_` to avoid the `template`
+// reserved word; the JSON key remains `template` for schema fidelity.
+inline void to_json(nlohmann::json& json, const ManagedEndpointPool& pool) {
+    json = {
+        { "poolId", pool.poolId },
+        { "kind", to_string(pool.kind) },
+        { "displayName", pool.displayName },
+        { "logicalMcpUrl", pool.logicalMcpUrl },
+        { "template", pool.template_ },
+        { "scalePolicy", pool.scalePolicy },
+        { "drainPolicy", pool.drainPolicy },
+        { "instances", pool.instances },
+        { "createdAtUtc", pool.createdAtUtc },
+        { "updatedAtUtc", pool.updatedAtUtc }
+    };
+}
+
+inline void from_json(const nlohmann::json& json, ManagedEndpointPool& pool) {
+    pool.poolId = json.value("poolId", std::string{});
+    pool.kind = endpointPoolKindFromString(json.value("kind", std::string("mcp-server")));
+    pool.displayName = json.value("displayName", std::string{});
+    pool.logicalMcpUrl = json.value("logicalMcpUrl", std::string{});
+    if (json.contains("template")) {
+        pool.template_ = json.at("template").get<EndpointTemplate>();
+    }
+    pool.scalePolicy = json.value("scalePolicy", ScalePolicy{});
+    pool.drainPolicy = json.value("drainPolicy", DrainPolicy{});
+    pool.instances = json.value("instances", std::vector<EndpointInstance>{});
+    pool.createdAtUtc = json.value("createdAtUtc", std::string{});
+    pool.updatedAtUtc = json.value("updatedAtUtc", std::string{});
+}
 
 } // namespace MasterControl

@@ -60,15 +60,17 @@ Working tree: `master-control-dashboard-main`, post-overlay-install commit `1c5d
 | `GovernanceActionKind` enum | Unchanged. 14 action kinds (post-PHASE-01 cleanup of provider-era kinds). | Stays. | — | keep |
 | `scripts/check-mastercontrol-forsetti.ps1` | **Updated PHASE-05.** Six stale assertions about `resources/web/app.js`'s Forsetti-surface bootstrap (relics of pre-ADR-001 browser shape) retired. New assertions enforce: no provider-era sign-in cards, no provider-era API calls, no hardcoded CLU surface keys. Script now passes (`Master Control Forsetti checks passed.`). | Compliance gate green. | PHASE-05 | done |
 
-## E. Worker pool / supervision / autoscaling surface
+## E. Worker pool / supervision / autoscaling surface (PHASE-06 resolution)
 
 | Surface | Today | Realignment target | Resolves in | Action |
 |---|---|---|---|---|
-| Managed endpoint pool model | Not present. Sub-agents and MCP servers exist as catalog entries (per ADR-001) but not as supervised process pools. | Introduce `EndpointTemplate`, `EndpointInstance`, `ManagedEndpointPool`, `WorkerSupervisor`, `HealthProbe`, `WorkerTelemetry`. Lifecycle: `configured/starting/ready/busy/draining/failed/stopped`. Schema: `managed-endpoint-pool.schema.json`. | PHASE-06 | replace (new) |
-| Worker process supervision | Sub-agent fleet is documented as out-of-repo at `D:\Sub-Agents\` per ADR-001; no in-repo supervisor. | Worker process trees contained in Windows Job Objects; deterministic terminate/drain on shutdown. | PHASE-06 | replace (new) |
-| Lease routing | Not present. | `EndpointLease`, `LeaseRouter` assigning sessions to instances behind stable logical pool endpoints. Sticky for stateful sessions. | PHASE-07 | replace (new) |
-| Autoscaling | Not present. | `ScalePolicy` / `DrainPolicy` with thresholds (`minInstances`, `maxInstances`, `maxActiveLeasesPerInstance`, `scaleOutQueueWaitMs`, `scaleInIdleSeconds`). New leases route to new instances; active sessions drain. | PHASE-07 | replace (new) |
-| `/api/runtime/mcp-servers`, `/api/runtime/subagents`, `/api/runtime/subagent-groups` (and `/remove` siblings) at `MasterControlRuntime.cpp:9073–9210` | Operator-facing CRUD over the catalog with privilege checks. | Stays on the operator surface as the way operators register backends; pool runtime state is added alongside (utilization, lease counts, etc). | PHASE-06, PHASE-07 | extend |
+| Managed endpoint pool model | **Landed PHASE-06.** `EndpointTemplate` / `EndpointInstance` / `ManagedEndpointPool` / `ScalePolicy` / `DrainPolicy` / `HealthProbeSpec` / `WorkerTelemetry` types in `MasterControlModels.h` matching `managed-endpoint-pool.schema.json`. Full JSON round-trip with explicit `template_`/`template` JSON-key alias. | Replaced. | PHASE-06 | done |
+| 7-state instance lifecycle | **Landed PHASE-06.** `EndpointInstanceState::{Configured,Starting,Ready,Busy,Draining,Failed,Stopped}` enum with full to_string / fromString / to_json / from_json. `testEndpointInstanceStateAllSevenLifecycleStates` pins each slug. | Replaced. | PHASE-06 | done |
+| Worker process supervision | **Landed PHASE-06.** `WorkerSupervisor` class spawns children via `CreateProcessW` + `AssignProcessToJobObject` with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; supervisor destructor + runtime `shutdown()` reap the tree atomically. Supervised-mock fallback when binary is missing (ADR-002 §9: no fake live infrastructure). | Replaced. | PHASE-06 | done |
+| Pool admin surface | **Landed PHASE-06.** `GET /api/pools`, `GET /api/pools/{poolId}`, `POST /api/pools` (upsert), `POST /api/pools/{poolId}/{remove\|scale\|drain}` wired through `IWorkerSupervisor`. | Replaced. | PHASE-06 | done |
+| Lease routing | Not present. | `EndpointLease`, `LeaseRouter` assigning sessions to instances behind stable logical pool endpoints. Sticky for stateful sessions. | PHASE-07 | pending |
+| Autoscaling | Scale policy fields exist on the model; the policy is not yet enforced. | `ScalePolicy` / `DrainPolicy` thresholds enforced via the lease router; new leases route to new instances; active sessions drain. | PHASE-07 | pending |
+| `/api/runtime/mcp-servers`, `/api/runtime/subagents`, `/api/runtime/subagent-groups` | Unchanged operator-facing catalog CRUD. | Stays on the operator surface as the way operators register backends; per-pool runtime state is added alongside via `/api/pools`. | PHASE-06 / PHASE-07 | extended |
 
 ## F. Telemetry surface
 

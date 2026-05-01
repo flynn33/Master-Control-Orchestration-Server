@@ -181,6 +181,25 @@ std::string to_string(McpServerTransport value) {
     });
 }
 
+std::string to_string(EndpointPoolKind value) {
+    return enumToString(value, {
+        { EndpointPoolKind::McpServer, "mcp-server" },
+        { EndpointPoolKind::SubAgent, "sub-agent" }
+    });
+}
+
+std::string to_string(EndpointInstanceState value) {
+    return enumToString(value, {
+        { EndpointInstanceState::Configured, "configured" },
+        { EndpointInstanceState::Starting, "starting" },
+        { EndpointInstanceState::Ready, "ready" },
+        { EndpointInstanceState::Busy, "busy" },
+        { EndpointInstanceState::Draining, "draining" },
+        { EndpointInstanceState::Failed, "failed" },
+        { EndpointInstanceState::Stopped, "stopped" }
+    });
+}
+
 EndpointKind endpointKindFromString(const std::string& value) {
     return enumFromString<EndpointKind>(value, {
         { EndpointKind::Host, "host" },
@@ -319,6 +338,25 @@ McpServerTransport mcpServerTransportFromString(const std::string& value) {
     });
 }
 
+EndpointPoolKind endpointPoolKindFromString(const std::string& value) {
+    return enumFromString<EndpointPoolKind>(value, {
+        { EndpointPoolKind::McpServer, "mcp-server" },
+        { EndpointPoolKind::SubAgent, "sub-agent" }
+    });
+}
+
+EndpointInstanceState endpointInstanceStateFromString(const std::string& value) {
+    return enumFromString<EndpointInstanceState>(value, {
+        { EndpointInstanceState::Configured, "configured" },
+        { EndpointInstanceState::Starting, "starting" },
+        { EndpointInstanceState::Ready, "ready" },
+        { EndpointInstanceState::Busy, "busy" },
+        { EndpointInstanceState::Draining, "draining" },
+        { EndpointInstanceState::Failed, "failed" },
+        { EndpointInstanceState::Stopped, "stopped" }
+    });
+}
+
 void to_json(nlohmann::json& json, EndpointKind value) {
     json = to_string(value);
 }
@@ -430,6 +468,22 @@ void to_json(nlohmann::json& json, McpServerTransport value) {
 
 void from_json(const nlohmann::json& json, McpServerTransport& value) {
     value = mcpServerTransportFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, EndpointPoolKind value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, EndpointPoolKind& value) {
+    value = endpointPoolKindFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, EndpointInstanceState value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, EndpointInstanceState& value) {
+    value = endpointInstanceStateFromString(json.get<std::string>());
 }
 
 std::string toPrettyJson(const nlohmann::json& json) {
