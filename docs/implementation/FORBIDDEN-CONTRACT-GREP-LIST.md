@@ -51,27 +51,24 @@ Expected: zero matches. ADR-001 §2: "MCOS never calls out to AI models. The out
 
 ```bash
 git grep -nE '/api/providers([/?]|$)' \
-  -- src/MasterControlApp src/MasterControlModules src/MasterControlServiceHost src/MasterControlBootstrapper tests resources/web
+  -- src/ tests resources/web
 git grep -nE '/api/provider-assignment-targets' \
-  -- src/MasterControlApp src/MasterControlModules src/MasterControlServiceHost src/MasterControlBootstrapper tests resources/web
+  -- src/ tests resources/web
 ```
 
-Expected: zero matches.
-
-Allowed in `src/MasterControlShell/` until PHASE-01 deletes the shell residue (`ShellRuntime.cpp` lines 1495, 2391, 2405).
+Expected: zero matches across the entire `src/` tree (PHASE-01 widened the scope to include `src/MasterControlShell/`). Allowed elsewhere only in `CHANGELOG.md`, `VERSION.json`, `docs/wiki/Versions.md`, ADR-001/ADR-002, `docs/implementation/PROVIDER-ERA-REMOVAL-MAP.md`, and `plans/`.
 
 ### 1.5 Provider data types and AutoConnect family
 
 ```bash
 git grep -nE 'ProviderConnection|ProviderAssignment|ProviderExecutionRegistration|ProviderExecutionRecord|ProviderCapability|ProviderCredentialStatus|ProviderAssignmentTarget' \
-  -- src/MasterControlApp src/MasterControlModules src/MasterControlServiceHost src/MasterControlBootstrapper tests resources/web include
+  -- src/ tests resources/web include
 git grep -nE 'AutoConnect[A-Z]' \
-  -- src/MasterControlApp src/MasterControlModules src/MasterControlServiceHost src/MasterControlBootstrapper tests resources/web include
+  -- src/ tests resources/web include
+git grep -nE 'ShellProvider' -- src/ include
 ```
 
-Expected: zero matches.
-
-Allowed in `src/MasterControlShell/` until PHASE-01 (`ShellRuntime.cpp` `ShellProvider*` types).
+Expected: zero matches across the entire `src/` tree. PHASE-01 deleted the shell residue (`ShellProvider*` types, `postProviderToAdminApi`, the three `ShowProvider*WizardAsync` methods, `kProvidersDestination`/`kProvidersView`, and the `Providers` browser+shell destination).
 
 ### 1.6 Provider-era governance and activity event kinds
 
@@ -84,14 +81,16 @@ git grep -nE '\bAutoConnect\b' \
 
 Expected: zero matches.
 
-### 1.7 Browser provider-era surfaces
+### 1.7 Browser and shell provider-era surfaces
 
 ```bash
-git grep -nE 'renderSignInCards|providers-surface|kProvidersDestination|kProvidersView|ProvidersSectionView' \
-  -- resources/web
+git grep -nE 'renderSignInCards|providers-surface|kProvidersDestination|kProvidersView|ProvidersSectionView|ProvidersSectionControl|ProviderAssignmentOptions|GuidedProviderAssignmentWizard|GuidedProviderExecutionWizard|ShowProviderWizardAsync|ShowProviderAssignmentWizardAsync|ShowProviderExecutionWizardAsync|ProviderCountText|ProviderCountDetailText' \
+  -- src/ resources/web
+git grep -nE '\bconnect-model\b|\bassign-responsibility\b|\bguided-provider-execution\b' \
+  -- src/ resources/web
 ```
 
-Expected: zero matches. (Shell allowed until PHASE-01.)
+Expected: zero matches across `src/` and `resources/web`. PHASE-01 removed all of these.
 
 ---
 

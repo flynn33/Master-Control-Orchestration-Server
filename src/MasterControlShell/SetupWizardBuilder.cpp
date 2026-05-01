@@ -147,12 +147,12 @@ FrameworkElement BuildSetupWizardEntryView(
     root.Children().Append(buildEntryCard(
         L"GUIDED",
         L"Guided Setup",
-        L"Step-by-step assistant. Connect providers, add MCP servers, "
-        L"create specialists, pick a starter workflow, and review readiness.",
+        L"Step-by-step assistant. Add MCP servers, create specialists, "
+        L"pick a starter workflow, and review readiness.",
         [callbacks]() {
-            // Route to the providers section with the guided connect workflow.
+            // Route to the runtime surface with the guided MCP server workflow.
             if (callbacks.startGuidedWorkflow) {
-                callbacks.startGuidedWorkflow(L"connect-model");
+                callbacks.startGuidedWorkflow(L"new-mcp");
             }
         }));
 
@@ -196,18 +196,8 @@ FrameworkElement BuildSetupReadinessView(
     root.Children().Append(makeTitle(
         firstRunCompleted ? L"Setup Complete" : L"Review and Complete Setup"));
 
-    // Count readiness from the snapshot data. Shell types don't carry
-    // isTemplate, so we use credentialsConfigured+enabled as the ready
-    // signal for providers. MCP readiness uses the online status.
-    int providersReady = 0, providersMissing = 0;
-    for (const auto& provider : snapshot.providers) {
-        if (provider.credentialsConfigured && provider.enabled) {
-            ++providersReady;
-        } else {
-            ++providersMissing;
-        }
-    }
-
+    // Count readiness from the snapshot data. MCP readiness uses the online
+    // status on the shared endpoint catalog.
     int mcpReady = 0, mcpMissing = 0;
     for (const auto& endpoint : snapshot.endpoints) {
         const auto& kindStr = endpoint.kind;
@@ -226,7 +216,6 @@ FrameworkElement BuildSetupReadinessView(
     // Readiness tiles
     StackPanel tiles;
     tiles.Spacing(8);
-    tiles.Children().Append(buildReadinessTile(L"Providers", providersReady, providersMissing, L"providers", fixHandler));
     tiles.Children().Append(buildReadinessTile(L"MCP Servers", mcpReady, mcpMissing, L"runtime", fixHandler));
     root.Children().Append(tiles);
 

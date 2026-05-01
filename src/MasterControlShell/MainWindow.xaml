@@ -42,7 +42,7 @@
 
                             <StackPanel Spacing="4">
                                 <TextBlock Text="MASTER CONTROL ORCHESTRATION SERVER" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                                <TextBlock Text="Windows application for guided setup, telemetry, MCP orchestration, provider routing, governance, and runtime control." Style="{StaticResource ShellLabelTextStyle}" />
+                                <TextBlock Text="Windows application for guided setup, telemetry, MCP orchestration, governance, and runtime control." Style="{StaticResource ShellLabelTextStyle}" />
                             </StackPanel>
                         </StackPanel>
 
@@ -119,7 +119,7 @@
                                     <StackPanel Spacing="14">
                                         <TextBlock x:Name="CurrentViewEyebrowText" Text="OVERVIEW" Style="{StaticResource ShellEyebrowTextStyle}" />
                                         <TextBlock x:Name="CurrentViewTitleText" Text="Command Deck" Style="{StaticResource ShellHeroTitleTextStyle}" />
-                                        <TextBlock x:Name="CurrentViewDescriptionText" MaxWidth="560" Style="{StaticResource ShellBodyTextStyle}" Text="Navigate operational surfaces for telemetry, runtime orchestration, provider routing, and secure configuration." />
+                                        <TextBlock x:Name="CurrentViewDescriptionText" MaxWidth="560" Style="{StaticResource ShellBodyTextStyle}" Text="Navigate operational surfaces for telemetry, runtime orchestration, and secure configuration." />
 
                                         <Border Background="#1000DFFF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0" Padding="10,8">
                                             <StackPanel Spacing="12">
@@ -212,30 +212,27 @@
                                                     <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="Auto" />
-                                                    <RowDefinition Height="Auto" />
                                                 </Grid.RowDefinitions>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*" />
                                                     <ColumnDefinition Width="*" />
                                                 </Grid.ColumnDefinitions>
 
-                                                <Button x:Name="GuidedProviderAssignmentWizardButton" Grid.ColumnSpan="2" Click="GuidedProviderAssignmentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Assign Responsibility" />
-                                                <Button x:Name="GuidedMcpWizardButton" Grid.Row="1" Click="GuidedMcpWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New MCP Server" />
-                                                <Button x:Name="GuidedRuntimeMaintenanceWizardButton" Grid.Row="1" Grid.Column="1" Click="GuidedRuntimeMaintenanceWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Runtime Lanes" />
-                                                <Button x:Name="GuidedSubAgentWizardButton" Grid.Row="2" Click="GuidedSubAgentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent" />
-                                                <Button x:Name="GuidedSubAgentGroupWizardButton" Grid.Row="2" Grid.Column="1" Click="GuidedSubAgentGroupWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent Group" />
-                                                <Button x:Name="GuidedAppleHostWizardButton" Grid.Row="3" Click="GuidedAppleHostWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Apple Host" />
-                                                <Button x:Name="GuidedForsettiModuleWizardButton" Grid.Row="3" Grid.Column="1" Click="GuidedForsettiModuleWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Forsetti Modules" />
-                                                <Button x:Name="GuidedImportWizardButton" Grid.Row="4" Click="GuidedImportWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Guided Import" />
-                                                <Button x:Name="GuidedProviderExecutionWizardButton" Grid.Row="4" Grid.Column="1" Click="GuidedProviderExecutionWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Validate Provider Routing" />
-                                                <Button x:Name="GuidedSecurityWizardButton" Grid.Row="5" Click="GuidedSecurityWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Security Hardening" />
-                                                <Button x:Name="GuidedSettingsWizardButton" Grid.Row="5" Grid.Column="1" Click="GuidedSettingsWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Host Settings" />
+                                                <Button x:Name="GuidedMcpWizardButton" Click="GuidedMcpWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New MCP Server" />
+                                                <Button x:Name="GuidedRuntimeMaintenanceWizardButton" Grid.Column="1" Click="GuidedRuntimeMaintenanceWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Runtime Lanes" />
+                                                <Button x:Name="GuidedSubAgentWizardButton" Grid.Row="1" Click="GuidedSubAgentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent" />
+                                                <Button x:Name="GuidedSubAgentGroupWizardButton" Grid.Row="1" Grid.Column="1" Click="GuidedSubAgentGroupWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent Group" />
+                                                <Button x:Name="GuidedAppleHostWizardButton" Grid.Row="2" Click="GuidedAppleHostWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Apple Host" />
+                                                <Button x:Name="GuidedForsettiModuleWizardButton" Grid.Row="2" Grid.Column="1" Click="GuidedForsettiModuleWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Forsetti Modules" />
+                                                <Button x:Name="GuidedImportWizardButton" Grid.Row="3" Click="GuidedImportWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Guided Import" />
+                                                <Button x:Name="GuidedSecurityWizardButton" Grid.Row="3" Grid.Column="1" Click="GuidedSecurityWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Security Hardening" />
+                                                <Button x:Name="GuidedSettingsWizardButton" Grid.Row="4" Grid.ColumnSpan="2" Click="GuidedSettingsWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Host Settings" />
 
-                                                <Border Grid.Row="6" Grid.ColumnSpan="2" Padding="10,8" Background="#1000DFFF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0">
+                                                <Border Grid.Row="5" Grid.ColumnSpan="2" Padding="10,8" Background="#1000DFFF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0">
                                                     <TextBlock
                                                         x:Name="GuidedWorkflowStatusText"
                                                         Style="{StaticResource ShellLabelTextStyle}"
-                                                        Text="Use guided setup to connect models, assign orchestration responsibilities, validate provider routing, deploy and maintain runtime lanes, harden security, shape host settings, and manage Forsetti modules without digging through raw admin forms."
+                                                        Text="Use guided setup to deploy and maintain runtime lanes, harden security, shape host settings, and manage Forsetti modules without digging through raw admin forms."
                                                         TextWrapping="WrapWholeWords" />
                                                 </Border>
                                             </Grid>
@@ -278,21 +275,18 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
 
                                 <Border Style="{StaticResource ShellMetricTileStyle}"><StackPanel Spacing="6"><TextBlock Text="SERVICE" Style="{StaticResource ShellLabelTextStyle}" /><TextBlock x:Name="ServiceStateText" Style="{StaticResource ShellValueTextStyle}" Text="Unknown" /></StackPanel></Border>
                                 <Border Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}"><StackPanel Spacing="6"><TextBlock Text="ADMIN API" Style="{StaticResource ShellLabelTextStyle}" /><TextBlock x:Name="ApiStateText" Style="{StaticResource ShellValueTextStyle}" Text="Unknown" /></StackPanel></Border>
                                 <Border Grid.Column="2" Style="{StaticResource ShellMetricTileStyle}"><StackPanel Spacing="6"><TextBlock Text="RUNTIME LANES" Style="{StaticResource ShellLabelTextStyle}" /><TextBlock x:Name="EndpointCountText" Style="{StaticResource ShellValueTextStyle}" Text="0" /></StackPanel></Border>
-                                <Border Grid.Column="3" Style="{StaticResource ShellMetricTileStyle}"><StackPanel Spacing="6"><TextBlock Text="PROVIDERS" Style="{StaticResource ShellLabelTextStyle}" /><TextBlock x:Name="ProviderCountText" Style="{StaticResource ShellValueTextStyle}" Text="0" /></StackPanel></Border>
                             </Grid>
 
                             <!-- LIVE COMMAND/REQUEST STREAM
                                  Always-visible scrolling log of every admin API request,
-                                 provider execution, governance decision, and auto-connect
-                                 event flowing through the service host. Populated by
-                                 RefreshActivityStreamAsync polling /api/activity?since={id}
-                                 on a one-second cadence. -->
+                                 governance decision, and lifecycle event flowing through
+                                 the service host. Populated by RefreshActivityStreamAsync
+                                 polling /api/activity?since={id} on a one-second cadence. -->
                             <Border Grid.Row="2" Margin="0,14,0,0" Style="{StaticResource ShellCardStyle}" BorderBrush="{StaticResource ShellAccentBrush}">
                                 <Grid RowSpacing="10">
                                     <Grid.RowDefinitions>
@@ -381,7 +375,7 @@
                                             <Border Grid.Column="5" Style="{StaticResource ShellSubAgentBadgeStyle}">
                                                 <StackPanel Spacing="3">
                                                     <TextBlock Text="NEXUS" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
-                                                    <TextBlock Text="provider routing" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
+                                                    <TextBlock Text="orchestration" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
                                                 </StackPanel>
                                             </Border>
                                             <Border Grid.Column="6" Style="{StaticResource ShellSubAgentBadgeStyle}">

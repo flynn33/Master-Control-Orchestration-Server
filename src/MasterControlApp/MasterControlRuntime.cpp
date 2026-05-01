@@ -7377,7 +7377,6 @@ public:
             const auto decision = commandLogicUnitService_->enforceAction(GovernanceEnforcementRequest{
                 GovernanceActionKind::RemoteInstall,
                 {},
-                {},
                 !spec.source.empty() ? spec.source : spec.localPath,
                 spec.allowUntrustedExecution
             });
@@ -7394,7 +7393,6 @@ public:
             const auto decision = commandLogicUnitService_->enforceAction(GovernanceEnforcementRequest{
                 GovernanceActionKind::RemoteInstall,
                 {},
-                {},
                 spec.repositoryUrl,
                 spec.allowUntrustedExecution
             });
@@ -7410,7 +7408,6 @@ public:
         if (commandLogicUnitService_) {
             const auto decision = commandLogicUnitService_->enforceAction(GovernanceEnforcementRequest{
                 GovernanceActionKind::RemoteInstall,
-                {},
                 {},
                 spec.source,
                 false

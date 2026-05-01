@@ -64,17 +64,6 @@ inline std::wstring formatRuntimeNarrative(const ShellSnapshot& snapshot) {
     return stream.str();
 }
 
-inline std::wstring formatProvidersNarrative(const ShellSnapshot& snapshot) {
-    std::wostringstream stream;
-    stream << L"Provider routing currently exposes "
-           << pluralize(snapshot.providerCount, L"connection", L"connections")
-           << L". AI autonomy is "
-           << (snapshot.aiAutonomyEnabled ? L"enabled" : L"disabled")
-           << L", so operator intent remains "
-           << (snapshot.aiAutonomyEnabled ? L"shared with automation." : L"anchored to explicit human control.");
-    return stream.str();
-}
-
 inline std::wstring formatImportsNarrative(const ShellSnapshot& snapshot) {
     std::wostringstream stream;
     stream << L"The import ledger currently shows "

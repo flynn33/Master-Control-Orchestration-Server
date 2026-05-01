@@ -100,9 +100,7 @@ void CommandLogicUnitSectionControl::ApplySnapshot(const ::MasterControlShell::S
     CluGovernanceServerCountText().Text(winrt::hstring(std::to_wstring(snapshot.governanceServerCount)));
     CluEvaluatedText().Text(winrt::hstring(L"Last evaluated: " + snapshot.governanceLastEvaluatedUtc));
     CluActionSummaryText().Text(winrt::hstring(
-        L"Connected models " + std::to_wstring(snapshot.providers.size()) +
-        L" | Responsibility lanes " + std::to_wstring(snapshot.providerAssignments.size()) +
-        L" | Sub-agent groups " + std::to_wstring(snapshot.subAgentGroups.size()) +
+        L"Sub-agent groups " + std::to_wstring(snapshot.subAgentGroups.size()) +
         L" | MCP lanes " + std::to_wstring(snapshot.endpoints.size()) +
         L" | Forsetti actions available from CLU quick controls."));
     CluNarrativeText().Text(winrt::hstring(snapshot.governanceNarrative));

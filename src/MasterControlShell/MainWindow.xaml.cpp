@@ -16,8 +16,6 @@
 #include "../../include/MasterControl/DeploymentLogPaths.h"
 #include "microsoft.ui.xaml.window.h"
 #include "OverviewSectionControl.xaml.h"
-#include "ProviderAssignmentOptions.h"
-#include "ProvidersSectionControl.xaml.h"
 #include "RuntimeSectionControl.xaml.h"
 #include "ShellFormatting.h"
 #include "SecuritySectionControl.xaml.h"
@@ -46,7 +44,6 @@ constexpr wchar_t kOverviewDestination[] = L"overview";
 constexpr wchar_t kTelemetryDestination[] = L"telemetry";
 constexpr wchar_t kRuntimeDestination[] = L"runtime";
 constexpr wchar_t kCluDestination[] = L"clu";
-constexpr wchar_t kProvidersDestination[] = L"providers";
 constexpr wchar_t kImportsDestination[] = L"imports";
 constexpr wchar_t kExportsDestination[] = L"exports";
 constexpr wchar_t kSecurityDestination[] = L"security";
@@ -58,7 +55,6 @@ constexpr wchar_t kOverviewView[] = L"OverviewSectionView";
 constexpr wchar_t kTelemetryView[] = L"TelemetrySectionView";
 constexpr wchar_t kRuntimeView[] = L"RuntimeSectionView";
 constexpr wchar_t kCluView[] = L"CommandLogicUnitSectionView";
-constexpr wchar_t kProvidersView[] = L"ProvidersSectionView";
 constexpr wchar_t kImportsView[] = L"ImportsSectionView";
 constexpr wchar_t kExportsView[] = L"ExportsSectionView";
 constexpr wchar_t kSecurityView[] = L"SecuritySectionView";
@@ -67,15 +63,13 @@ constexpr wchar_t kSetupWizardView[] = L"SetupWizardView";
 constexpr wchar_t kSetupReadinessView[] = L"SetupReadinessView";
 
 static bool isInteractiveFormSection(const std::wstring& viewId) {
-    return viewId == kProvidersView
-        || viewId == kSecurityView
+    return viewId == kSecurityView
         || viewId == kSettingsView
         || viewId == kImportsView;
 }
 
 static bool isInteractiveDestination(const std::wstring& destinationId) {
-    return destinationId == kProvidersDestination
-        || destinationId == kSecurityDestination
+    return destinationId == kSecurityDestination
         || destinationId == kSettingsDestination
         || destinationId == kImportsDestination;
 }
@@ -191,9 +185,6 @@ std::wstring labelForDestination(const std::wstring& destinationId) {
     if (destinationId == kCluDestination) {
         return L"Command Logic Unit";
     }
-    if (destinationId == kProvidersDestination) {
-        return L"AI Integrations";
-    }
     if (destinationId == kImportsDestination) {
         return L"Imports";
     }
@@ -218,9 +209,6 @@ std::wstring destinationForViewId(const std::wstring& viewId) {
     }
     if (viewId == kCluView) {
         return kCluDestination;
-    }
-    if (viewId == kProvidersView) {
-        return kProvidersDestination;
     }
     if (viewId == kImportsView) {
         return kImportsDestination;
@@ -247,9 +235,6 @@ SectionMetadata metadataForDestination(const std::wstring& destinationId, const 
     if (destinationId == kCluDestination) {
         return { L"CLU", title, L"Inspect the Command Logic Unit governance profile, launch guided setup wizards, and manage Apple production operations plus operator-visible control rules." };
     }
-    if (destinationId == kProvidersDestination) {
-        return { L"PROVIDERS", title, L"Connect ChatGPT, Codex, Claude Code, and Grok, then assign planner, coding, architect, and auditor ownership without dropping into raw route editors." };
-    }
     if (destinationId == kImportsDestination) {
         return { L"IMPORTS", title, L"Audit installer provenance, trusted-source flows, and the current software onboarding trail." };
     }
@@ -267,10 +252,7 @@ SectionMetadata metadataForDestination(const std::wstring& destinationId, const 
 
 std::wstring guidedFollowThroughForDestination(const std::wstring& destinationId) {
     if (destinationId == kRuntimeDestination) {
-        return L"Next:\n- Review the Runtime surface to confirm the lane or host details.\n- If this lane should own orchestration work, use Assign Responsibility next.";
-    }
-    if (destinationId == kProvidersDestination) {
-        return L"Next:\n- Review the Providers surface to confirm routing or ownership.\n- Run Validate Provider Routing next if you want an operator-safe execution check.";
+        return L"Next:\n- Review the Runtime surface to confirm the lane or host details.";
     }
     if (destinationId == kCluDestination) {
         return L"Next:\n- Review CLU posture and module state.\n- Confirm the module action matches the current governance plan.";
@@ -293,7 +275,6 @@ std::vector<::MasterControlShell::ShellNavigationPointer> bootstrapNavigationPoi
         { L"telemetry-nav", L"Telemetry", kTelemetryDestination },
         { L"runtime-nav", L"Runtime", kRuntimeDestination },
         { L"clu-nav", L"CLU", kCluDestination },
-        { L"providers-nav", L"AI Integrations", kProvidersDestination },
         { L"imports-nav", L"Imports", kImportsDestination },
         { L"exports-nav", L"Exports", kExportsDestination },
         { L"security-nav", L"Security", kSecurityDestination },
@@ -328,7 +309,6 @@ std::map<std::wstring, std::vector<::MasterControlShell::ShellViewInjection>> bo
         { kTelemetryDestination, { { L"telemetry-surface", kTelemetryDestination, kTelemetryView, 100 } } },
         { kRuntimeDestination, { { L"runtime-surface", kRuntimeDestination, kRuntimeView, 100 } } },
         { kCluDestination, { { L"clu-surface", kCluDestination, kCluView, 100 } } },
-        { kProvidersDestination, { { L"providers-surface", kProvidersDestination, kProvidersView, 100 } } },
         { kImportsDestination, { { L"imports-surface", kImportsDestination, kImportsView, 100 } } },
         { kExportsDestination, { { L"exports-surface", kExportsDestination, kExportsView, 100 } } },
         { kSecurityDestination, { { L"security-surface", kSecurityDestination, kSecurityView, 100 } } },
@@ -425,14 +405,6 @@ void attachInteractiveRuntime(const FrameworkElement& view,
             std::move(actionRequested));
         return;
     }
-    if (viewId == kProvidersView) {
-        const auto typed = view.as<winrt::MasterControlShell::ProvidersSectionControl>();
-        winrt::get_self<winrt::MasterControlShell::implementation::ProvidersSectionControl>(typed)->AttachRuntime(
-            &runtime,
-            std::move(refreshRequested),
-            std::move(actionRequested));
-        return;
-    }
     if (viewId == kImportsView) {
         const auto typed = view.as<winrt::MasterControlShell::ImportsSectionControl>();
         winrt::get_self<winrt::MasterControlShell::implementation::ImportsSectionControl>(typed)->AttachRuntime(&runtime, std::move(refreshRequested));
@@ -481,11 +453,6 @@ void applySnapshotToView(const FrameworkElement& view,
     if (viewId == kCluView) {
         const auto typed = view.as<winrt::MasterControlShell::CommandLogicUnitSectionControl>();
         winrt::get_self<winrt::MasterControlShell::implementation::CommandLogicUnitSectionControl>(typed)->ApplySnapshot(snapshot);
-        return;
-    }
-    if (viewId == kProvidersView) {
-        const auto typed = view.as<winrt::MasterControlShell::ProvidersSectionControl>();
-        winrt::get_self<winrt::MasterControlShell::implementation::ProvidersSectionControl>(typed)->ApplySnapshot(snapshot);
         return;
     }
     if (viewId == kImportsView) {
@@ -596,10 +563,6 @@ void MainWindow::GuidedAppleHostWizardButton_Click(IInspectable const&, RoutedEv
     StartGuidedWorkflow(L"new-apple-host");
 }
 
-void MainWindow::GuidedProviderAssignmentWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
-    StartGuidedWorkflow(L"assign-responsibility");
-}
-
 void MainWindow::GuidedForsettiModuleWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
     StartGuidedWorkflow(L"manage-forsetti-modules");
 }
@@ -614,10 +577,6 @@ void MainWindow::GuidedSecurityWizardButton_Click(IInspectable const&, RoutedEve
 
 void MainWindow::GuidedSettingsWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
     StartGuidedWorkflow(L"guided-settings");
-}
-
-void MainWindow::GuidedProviderExecutionWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
-    StartGuidedWorkflow(L"guided-provider-execution");
 }
 
 void MainWindow::GuidedRuntimeMaintenanceWizardButton_Click(IInspectable const&, RoutedEventArgs const&) {
@@ -638,12 +597,7 @@ void MainWindow::StartGuidedWorkflow(std::wstring const& workflowId) {
         }
     };
 
-    if (workflowId == L"connect-model") {
-        navigateToDestination(kProvidersDestination);
-        GuidedWorkflowStatusText().Text(L"Connect AI Model now opens the Providers surface directly. Use the provider section to connect ChatGPT, Codex, Claude Code, or Grok without a cramped modal dialog.");
-        UpdateStatusBar(L"Provider connection now happens directly on the Providers surface.", InfoBarSeverity::Informational);
-        return;
-    } else if (workflowId == L"new-mcp") {
+    if (workflowId == L"new-mcp") {
         navigateToDestination(kRuntimeDestination);
         GuidedWorkflowStatusText().Text(L"New MCP Server now opens on the Runtime surface so you can create and review runtime lanes without a cramped modal dialog.");
         UpdateStatusBar(L"Use the Runtime surface to create or maintain MCP runtime lanes.", InfoBarSeverity::Informational);
@@ -654,19 +608,14 @@ void MainWindow::StartGuidedWorkflow(std::wstring const& workflowId) {
         UpdateStatusBar(L"Use the Runtime surface to create new sub-agent lanes directly.", InfoBarSeverity::Informational);
         return;
     } else if (workflowId == L"new-subagent-group") {
-        navigateToDestination(kProvidersDestination);
-        GuidedWorkflowStatusText().Text(L"New Sub-Agent Group now opens on the Providers surface so you can select members and ownership lanes in the main app window.");
-        UpdateStatusBar(L"Use the Providers surface to create and maintain sub-agent groups.", InfoBarSeverity::Informational);
+        navigateToDestination(kRuntimeDestination);
+        GuidedWorkflowStatusText().Text(L"New Sub-Agent Group now opens on the Runtime surface so you can review the sub-agent catalog directly.");
+        UpdateStatusBar(L"Use the Runtime surface to review sub-agent groups.", InfoBarSeverity::Informational);
         return;
     } else if (workflowId == L"new-apple-host") {
         navigateToDestination(kRuntimeDestination);
         GuidedWorkflowStatusText().Text(L"New Apple Host now opens on the Runtime surface so you can add and inspect remote build hosts without a cramped modal dialog.");
         UpdateStatusBar(L"Use the Runtime surface to add or update Apple hosts.", InfoBarSeverity::Informational);
-        return;
-    } else if (workflowId == L"assign-responsibility") {
-        navigateToDestination(kProvidersDestination);
-        GuidedWorkflowStatusText().Text(L"Assign Responsibility now opens directly on the Providers surface so you can route planner, coder, and auditor ownership in the main app window.");
-        UpdateStatusBar(L"Use the Providers surface to assign orchestration ownership directly.", InfoBarSeverity::Informational);
         return;
     } else if (workflowId == L"manage-forsetti-modules") {
         navigateToDestination(kCluDestination);
@@ -687,11 +636,6 @@ void MainWindow::StartGuidedWorkflow(std::wstring const& workflowId) {
         navigateToDestination(kSettingsDestination);
         GuidedWorkflowStatusText().Text(L"Host Settings now opens directly on the Settings surface so the main window can be resized while you work.");
         UpdateStatusBar(L"Use the Settings surface to edit and apply host settings directly.", InfoBarSeverity::Informational);
-        return;
-    } else if (workflowId == L"guided-provider-execution") {
-        navigateToDestination(kProvidersDestination);
-        GuidedWorkflowStatusText().Text(L"Validate Provider Routing now opens on the Providers surface so you can run and inspect provider tasks in the main app window.");
-        UpdateStatusBar(L"Use the Providers surface to validate provider routing directly.", InfoBarSeverity::Informational);
         return;
     } else if (workflowId == L"guided-runtime-maintenance") {
         navigateToDestination(kRuntimeDestination);
@@ -884,10 +828,10 @@ void MainWindow::ConfigureTimer() {
     // incoming command/request in real time.
     //
     // Extension of the v0.2.12 fix: the 1Hz tick is also suppressed while the
-    // operator is editing Providers/Security/Settings/Imports, because those
-    // views share the UI thread with our collection mutations. We do still
-    // update the cursor on navigation-away so the operator does not see a
-    // large backlog of pre-edit events when they switch back.
+    // operator is editing Security/Settings/Imports, because those views
+    // share the UI thread with our collection mutations. We do still update
+    // the cursor on navigation-away so the operator does not see a large
+    // backlog of pre-edit events when they switch back.
     try {
         activityStreamTimer_ = dispatcher.CreateTimer();
         // 2-second cadence: /api/activity can take 2+ seconds to return on
@@ -994,11 +938,11 @@ void MainWindow::SetCurrentDestination(const std::wstring& destinationId) {
             }
         }
 
-        // Bring the section content into view so clicking Connect AI Model /
-        // Assign Responsibility / etc. actually reveals the Providers section
-        // instead of silently updating a ContentPresenter that's below the
-        // fold. On Overview, skip the scroll so the hero stays pinned at the
-        // top as the command deck.
+        // Bring the section content into view so guided wizard buttons
+        // actually reveal the destination surface instead of silently
+        // updating a ContentPresenter that's below the fold. On Overview,
+        // skip the scroll so the hero stays pinned at the top as the
+        // command deck.
         if (currentDestination_ != kOverviewDestination) {
             try {
                 const auto host = SectionContentHost();
@@ -1184,8 +1128,6 @@ FrameworkElement MainWindow::CreateViewForViewId(const std::wstring& viewId, con
         view = winrt::MasterControlShell::RuntimeSectionControl();
     } else if (viewId == kCluView) {
         view = winrt::MasterControlShell::CommandLogicUnitSectionControl();
-    } else if (viewId == kProvidersView) {
-        view = winrt::MasterControlShell::ProvidersSectionControl();
     } else if (viewId == kImportsView) {
         view = winrt::MasterControlShell::ImportsSectionControl();
     } else if (viewId == kExportsView) {
@@ -1229,7 +1171,7 @@ FrameworkElement MainWindow::CreateViewForViewId(const std::wstring& viewId, con
             winrt::hstring(std::wstring(L"The shell does not have a renderer registered for ") + viewId));
     }
 
-    if (viewId == kRuntimeView || viewId == kCluView || viewId == kProvidersView || viewId == kImportsView || viewId == kExportsView || viewId == kSecurityView) {
+    if (viewId == kRuntimeView || viewId == kCluView || viewId == kImportsView || viewId == kExportsView || viewId == kSecurityView) {
         const auto weakThis = get_weak();
         attachInteractiveRuntime(
             view,
@@ -1290,19 +1232,9 @@ void MainWindow::ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapsh
     ApplySurfaceToolbar(snapshot);
     ApplyCachedSectionSnapshots(snapshot);
 
-    // NOTE: Auto-navigating to AI Integrations on startup was attempted
-    // multiple ways (direct SetCurrentDestination, deferred
-    // SetCurrentDestination via TryEnqueue, SelectedItem assignment) and
-    // all three paths threw E_NOINTERFACE during first-paint tree
-    // materialization on this WinUI 3 SDK version. The operator reaches
-    // AI Integrations by clicking the "AI Integrations" tab at the top
-    // (now labeled per MainWindow.xaml.cpp:295); once there, the
-    // ProvidersSectionControl renders Install + Sign-In cards as normal.
-
     // Fallback first-run routing: if setup hasn't been completed yet and
     // the user hasn't navigated away from the default, route to the setup
-    // wizard automatically. Runs when the providers slot isn't registered
-    // yet (typical when the service hasn't finished its first health pass).
+    // wizard automatically.
     if (!snapshot.firstRunCompleted
         && currentDestination_ == kOverviewDestination
         && !firstRunWizardDismissed_) {
@@ -1375,7 +1307,6 @@ void MainWindow::ApplyHeroSnapshot(const ::MasterControlShell::ShellSnapshot& sn
     ServiceStateText().Text(winrt::hstring(serviceStateLabel(snapshot.serviceState)));
     ApiStateText().Text(snapshot.apiHealthy ? L"Reachable" : L"Offline");
     EndpointCountText().Text(winrt::hstring(std::to_wstring(snapshot.endpointCount)));
-    ProviderCountText().Text(winrt::hstring(std::to_wstring(snapshot.providerCount)));
     HeroCpuProgressBar().Value(snapshot.cpuPercent);
     HeroMemoryProgressBar().Value(snapshot.memoryPercent);
     HeroDiskProgressBar().Value(snapshot.diskPercent);
@@ -1439,8 +1370,6 @@ void MainWindow::ApplyHeroSnapshot(const ::MasterControlShell::ShellSnapshot& sn
 
     std::wostringstream ledger;
     ledger << L"Routes " << snapshot.endpointCount
-           << L"  |  Providers " << snapshot.providerCount
-           << L"\nAssignments " << snapshot.providerAssignments.size()
            << L"  |  Gateways " << snapshot.platformGatewayCount
            << L"\nApple hosts " << snapshot.appleRemoteHostCount
            << L"  |  Findings " << snapshot.governanceFindingCount;
@@ -2001,21 +1930,21 @@ IAsyncAction MainWindow::ShowSubAgentGroupWizardAsync() {
     memberSelector.Background(Application::Current().Resources().Lookup(box_value(L"ShellPanelDeepBrush")).try_as<Brush>());
 
     size_t eligibleMemberCount = 0;
-    for (const auto& target : currentSnapshot_.providerAssignmentTargets) {
-        const auto normalizedKind = uppercase(target.kind);
+    for (const auto& endpoint : currentSnapshot_.endpoints) {
+        const auto normalizedKind = uppercase(endpoint.kind);
         if (normalizedKind.find(L"SUB") == std::wstring::npos) {
             continue;
         }
 
         Microsoft::UI::Xaml::Controls::ListBoxItem item;
-        std::wstring label = target.displayName.empty() ? target.targetId : target.displayName;
-        if (!target.description.empty()) {
-            label += L"  |  " + target.description;
-        } else if (!target.kind.empty()) {
-            label += L"  |  " + target.kind;
+        std::wstring label = endpoint.displayName.empty() ? endpoint.id : endpoint.displayName;
+        if (!endpoint.description.empty()) {
+            label += L"  |  " + endpoint.description;
+        } else if (!endpoint.kind.empty()) {
+            label += L"  |  " + endpoint.kind;
         }
         item.Content(box_value(winrt::hstring(label)));
-        item.Tag(box_value(winrt::hstring(target.targetId)));
+        item.Tag(box_value(winrt::hstring(endpoint.id)));
         memberSelector.Items().Append(item);
         ++eligibleMemberCount;
     }
@@ -2095,7 +2024,7 @@ IAsyncAction MainWindow::ShowSubAgentGroupWizardAsync() {
             GuidedWorkflowStatusText().Text(winrt::hstring(L"Created sub-agent group '" + displayName + L"' for CLU routing and model responsibility mapping."));
             const auto completionMessage = GuidedWorkflowStatusText().Text();
             dialog.Hide();
-            co_await CompleteGuidedWorkflowAsync(completionMessage, kProvidersDestination);
+            co_await CompleteGuidedWorkflowAsync(completionMessage, kRuntimeDestination);
         }();
         (void)ignored;
     });
@@ -2283,314 +2212,6 @@ IAsyncAction MainWindow::ShowMcpServerWizardAsync() {
             const auto completionMessage = GuidedWorkflowStatusText().Text();
             dialog.Hide();
             co_await CompleteGuidedWorkflowAsync(completionMessage, kRuntimeDestination);
-        }();
-        (void)ignored;
-    });
-
-    co_await dialog.ShowAsync();
-}
-
-IAsyncAction MainWindow::ShowProviderWizardAsync() {
-    ContentDialog dialog;
-    dialog.Title(box_value(L"Connect AI Model Wizard"));
-    dialog.CloseButtonText(L"Close");
-    dialog.XamlRoot(RootGrid().XamlRoot());
-
-    ScrollViewer scrollViewer;
-    scrollViewer.HorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
-    scrollViewer.VerticalScrollBarVisibility(ScrollBarVisibility::Auto);
-    scrollViewer.MaxHeight(640);
-
-    StackPanel root;
-    root.Spacing(14);
-    root.Width(560);
-
-    TextBlock intro;
-    intro.Style(Application::Current().Resources().Lookup(box_value(L"ShellBodyTextStyle")).try_as<Style>());
-    intro.Text(L"Step 1: choose the AI model connector. Step 2: confirm the route identity and defaults. Step 3: add credentials and optionally assign that model to a planning, coding, or specialist responsibility lane.");
-    intro.TextWrapping(TextWrapping::WrapWholeWords);
-    root.Children().Append(intro);
-
-    const auto addLabel = [&root](std::wstring const& text) {
-        TextBlock label;
-        label.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
-        label.Text(winrt::hstring(text));
-        root.Children().Append(label);
-    };
-
-    ComboBox capabilitySelector;
-    for (const auto& capability : currentSnapshot_.providerCapabilities) {
-        ComboBoxItem item;
-        item.Content(box_value(winrt::hstring(capability.displayName.empty() ? capability.providerId : capability.displayName)));
-        item.Tag(box_value(winrt::hstring(capability.providerId)));
-        capabilitySelector.Items().Append(item);
-    }
-    if (capabilitySelector.Items().Size() > 0) {
-        capabilitySelector.SelectedIndex(0);
-    }
-    root.Children().Append([&]() {
-        addLabel(L"Step 1. AI Model Connector");
-        return capabilitySelector;
-    }());
-
-    TextBox idBox;
-    idBox.PlaceholderText(L"codex");
-    root.Children().Append([&]() {
-        addLabel(L"Route ID");
-        return idBox;
-    }());
-
-    TextBox displayNameBox;
-    displayNameBox.PlaceholderText(L"Codex");
-    root.Children().Append([&]() {
-        addLabel(L"Display Name");
-        return displayNameBox;
-    }());
-
-    TextBox baseUrlBox;
-    baseUrlBox.PlaceholderText(L"https://api.openai.com/v1");
-    root.Children().Append([&]() {
-        addLabel(L"Step 2. Base URL");
-        return baseUrlBox;
-    }());
-
-    TextBox modelIdBox;
-    modelIdBox.PlaceholderText(L"gpt-5.4");
-    root.Children().Append([&]() {
-        addLabel(L"Recommended Model");
-        return modelIdBox;
-    }());
-
-    ToggleSwitch enabledToggle;
-    enabledToggle.Header(box_value(L"Route enabled"));
-    enabledToggle.IsOn(true);
-    root.Children().Append(enabledToggle);
-
-    ToggleSwitch autonomousToggle;
-    autonomousToggle.Header(box_value(L"Allow autonomous control"));
-    autonomousToggle.IsOn(false);
-    root.Children().Append(autonomousToggle);
-
-    ComboBox assignmentSelector;
-    ComboBoxItem unassignedItem;
-    unassignedItem.Content(box_value(L"(Leave unassigned)"));
-    assignmentSelector.Items().Append(unassignedItem);
-    for (const auto& target : currentSnapshot_.providerAssignmentTargets) {
-        ComboBoxItem item;
-        std::wstring label = target.displayName.empty() ? target.targetId : target.displayName;
-        if (!target.kind.empty()) {
-            label += L"  |  " + target.kind;
-        }
-        item.Content(box_value(winrt::hstring(label)));
-        item.Tag(box_value(winrt::hstring(target.targetId)));
-        assignmentSelector.Items().Append(item);
-    }
-    assignmentSelector.SelectedIndex(0);
-    root.Children().Append([&]() {
-        addLabel(L"Step 3. Assign this model to");
-        return assignmentSelector;
-    }());
-
-    TextBlock credentialOneLabel;
-    credentialOneLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
-    PasswordBox credentialOneBox;
-    credentialOneBox.PlaceholderText(L"Credential value");
-    TextBlock credentialOneHint;
-    credentialOneHint.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
-    credentialOneHint.TextWrapping(TextWrapping::WrapWholeWords);
-
-    TextBlock credentialTwoLabel;
-    credentialTwoLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
-    PasswordBox credentialTwoBox;
-    credentialTwoBox.PlaceholderText(L"Credential value");
-    TextBlock credentialTwoHint;
-    credentialTwoHint.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
-    credentialTwoHint.TextWrapping(TextWrapping::WrapWholeWords);
-
-    StackPanel credentialPanel;
-    credentialPanel.Spacing(8);
-    addLabel(L"Credentials");
-    credentialPanel.Children().Append(credentialOneLabel);
-    credentialPanel.Children().Append(credentialOneBox);
-    credentialPanel.Children().Append(credentialOneHint);
-    credentialPanel.Children().Append(credentialTwoLabel);
-    credentialPanel.Children().Append(credentialTwoBox);
-    credentialPanel.Children().Append(credentialTwoHint);
-    root.Children().Append(credentialPanel);
-
-    TextBlock statusText;
-    statusText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
-    statusText.Text(L"Connect one or more model routes here, then let CLU and provider assignments split planning, coding, review, and specialist work between them.");
-    statusText.TextWrapping(TextWrapping::WrapWholeWords);
-    root.Children().Append(statusText);
-
-    Button createButton;
-    createButton.Content(box_value(L"Connect AI Model"));
-    createButton.Style(Application::Current().Resources().Lookup(box_value(L"ShellCommandButtonStyle")).try_as<Style>());
-    root.Children().Append(createButton);
-
-    const auto updateCapabilityForm = [&, this]() {
-        const auto index = capabilitySelector.SelectedIndex();
-        if (index < 0 || index >= static_cast<int>(currentSnapshot_.providerCapabilities.size())) {
-            credentialOneLabel.Text(L"Credential");
-            credentialOneHint.Text(L"No provider capability is selected.");
-            credentialTwoLabel.Text(L"");
-            credentialTwoHint.Text(L"");
-            return;
-        }
-
-        const auto& capability = currentSnapshot_.providerCapabilities[static_cast<size_t>(index)];
-        if (idBox.Text().empty()) {
-            idBox.Text(winrt::hstring(capability.providerId));
-        }
-        if (displayNameBox.Text().empty()) {
-            displayNameBox.Text(winrt::hstring(capability.displayName));
-        }
-        baseUrlBox.Text(winrt::hstring(capability.defaultBaseUrl));
-        modelIdBox.Text(winrt::hstring(capability.recommendedModel));
-        autonomousToggle.IsOn(capability.supportsAutonomousControl);
-
-        const auto setCredential = [](const TextBlock& label,
-                                      const PasswordBox& box,
-                                      const TextBlock& hint,
-                                      const std::optional<::MasterControlShell::ShellProviderCredentialField>& field) {
-            if (!field.has_value()) {
-                label.Text(L"");
-                box.Visibility(Visibility::Collapsed);
-                hint.Text(L"");
-                hint.Visibility(Visibility::Collapsed);
-                return;
-            }
-
-            box.Visibility(Visibility::Visible);
-            hint.Visibility(Visibility::Visible);
-            label.Text(winrt::hstring(field->label));
-            box.PlaceholderText(winrt::hstring(field->placeholder.empty() ? L"Credential value" : field->placeholder));
-
-            std::wstring hintText = field->helpText;
-            if (!field->environmentVariableHint.empty()) {
-                if (!hintText.empty()) {
-                    hintText += L" ";
-                }
-                hintText += L"Env: " + field->environmentVariableHint;
-            }
-            hint.Text(winrt::hstring(hintText));
-        };
-
-        std::optional<::MasterControlShell::ShellProviderCredentialField> fieldOne;
-        std::optional<::MasterControlShell::ShellProviderCredentialField> fieldTwo;
-        if (!capability.credentialFields.empty()) {
-            fieldOne = capability.credentialFields[0];
-        }
-        if (capability.credentialFields.size() > 1U) {
-            fieldTwo = capability.credentialFields[1];
-        }
-        setCredential(credentialOneLabel, credentialOneBox, credentialOneHint, fieldOne);
-        setCredential(credentialTwoLabel, credentialTwoBox, credentialTwoHint, fieldTwo);
-    };
-
-    capabilitySelector.SelectionChanged([&](IInspectable const&, Controls::SelectionChangedEventArgs const&) {
-        updateCapabilityForm();
-    });
-    updateCapabilityForm();
-
-    scrollViewer.Content(root);
-    dialog.Content(scrollViewer);
-
-    createButton.Click([this, dialog, createButton, statusText, capabilitySelector, idBox, displayNameBox, baseUrlBox, modelIdBox, enabledToggle, autonomousToggle, assignmentSelector, credentialOneBox, credentialTwoBox](IInspectable const&, RoutedEventArgs const&) {
-        auto ignored = [this, dialog, createButton, statusText, capabilitySelector, idBox, displayNameBox, baseUrlBox, modelIdBox, enabledToggle, autonomousToggle, assignmentSelector, credentialOneBox, credentialTwoBox]() -> IAsyncAction {
-            const auto capabilityIndex = capabilitySelector.SelectedIndex();
-            if (capabilityIndex < 0 || capabilityIndex >= static_cast<int>(currentSnapshot_.providerCapabilities.size())) {
-                statusText.Text(L"Select a provider module before creating the route.");
-                co_return;
-            }
-
-            const auto& capability = currentSnapshot_.providerCapabilities[static_cast<size_t>(capabilityIndex)];
-            const auto id = trimCopy(std::wstring(idBox.Text().c_str()));
-            const auto displayName = trimCopy(std::wstring(displayNameBox.Text().c_str()));
-            const auto baseUrl = trimCopy(std::wstring(baseUrlBox.Text().c_str()));
-            const auto modelId = trimCopy(std::wstring(modelIdBox.Text().c_str()));
-            if (id.empty() || displayName.empty() || baseUrl.empty()) {
-                statusText.Text(L"Provider route ID, display name, and base URL are required.");
-                co_return;
-            }
-
-            ::MasterControlShell::ShellProviderConnection provider{
-                id,
-                capability.kind.empty() ? L"generic" : capability.kind,
-                displayName,
-                baseUrl,
-                modelId,
-                enabledToggle.IsOn(),
-                autonomousToggle.IsOn(),
-                false
-            };
-
-            std::vector<std::pair<std::wstring, std::wstring>> credentialValues;
-            if (!capability.credentialFields.empty()) {
-                const auto value = std::wstring(credentialOneBox.Password().c_str());
-                if (!value.empty()) {
-                    credentialValues.emplace_back(capability.credentialFields[0].fieldId, value);
-                }
-            }
-            if (capability.credentialFields.size() > 1U) {
-                const auto value = std::wstring(credentialTwoBox.Password().c_str());
-                if (!value.empty()) {
-                    credentialValues.emplace_back(capability.credentialFields[1].fieldId, value);
-                }
-            }
-
-            std::optional<::MasterControlShell::ShellProviderAssignment> assignment;
-            const auto assignmentIndex = assignmentSelector.SelectedIndex();
-            if (assignmentIndex > 0) {
-                const auto targetIndex = static_cast<size_t>(assignmentIndex - 1);
-                if (targetIndex < currentSnapshot_.providerAssignmentTargets.size()) {
-                    const auto& target = currentSnapshot_.providerAssignmentTargets[targetIndex];
-                    assignment = ::MasterControlShell::ShellProviderAssignment{ target.targetId, target.kind, provider.id, L"" };
-                }
-            }
-
-            createButton.IsEnabled(false);
-            statusText.Text(L"Connecting the AI model route through the local admin API.");
-
-            winrt::apartment_context uiThread;
-            co_await winrt::resume_background();
-            const auto providerResult = runtime_.UpsertProvider(provider);
-            if (!providerResult.succeeded) {
-                co_await uiThread;
-                statusText.Text(winrt::hstring(providerResult.message));
-                createButton.IsEnabled(true);
-                GuidedWorkflowStatusText().Text(L"AI model connection wizard needs attention. Review the wizard message and try again.");
-                co_return;
-            }
-
-            if (!credentialValues.empty()) {
-                const auto credentialsResult = runtime_.UpsertProviderCredentials(provider.id, credentialValues);
-                if (!credentialsResult.succeeded) {
-                    co_await uiThread;
-                    statusText.Text(winrt::hstring(credentialsResult.message));
-                    createButton.IsEnabled(true);
-                    GuidedWorkflowStatusText().Text(L"AI model route was connected, but credential setup still needs attention.");
-                    co_return;
-                }
-            }
-
-            if (assignment.has_value()) {
-                const auto assignmentResult = runtime_.UpsertProviderAssignment(*assignment);
-                if (!assignmentResult.succeeded) {
-                    co_await uiThread;
-                    statusText.Text(winrt::hstring(assignmentResult.message));
-                    createButton.IsEnabled(true);
-                    GuidedWorkflowStatusText().Text(L"AI model route was connected, but responsibility assignment still needs attention.");
-                    co_return;
-                }
-            }
-            co_await uiThread;
-
-            GuidedWorkflowStatusText().Text(winrt::hstring(L"Connected AI model route '" + displayName + L"'."));
-            const auto completionMessage = GuidedWorkflowStatusText().Text();
-            dialog.Hide();
-            co_await CompleteGuidedWorkflowAsync(completionMessage, kProvidersDestination);
         }();
         (void)ignored;
     });
@@ -2929,204 +2550,6 @@ IAsyncAction MainWindow::ShowAppleHostWizardAsync() {
             const auto completionMessage = GuidedWorkflowStatusText().Text();
             dialog.Hide();
             co_await CompleteGuidedWorkflowAsync(completionMessage, kRuntimeDestination);
-        }();
-        (void)ignored;
-    });
-
-    co_await dialog.ShowAsync();
-}
-
-IAsyncAction MainWindow::ShowProviderAssignmentWizardAsync() {
-    ContentDialog dialog;
-    dialog.Title(box_value(L"Assign Responsibility Wizard"));
-    dialog.CloseButtonText(L"Close");
-    dialog.XamlRoot(RootGrid().XamlRoot());
-
-    ScrollViewer scrollViewer;
-    scrollViewer.HorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
-    scrollViewer.VerticalScrollBarVisibility(ScrollBarVisibility::Auto);
-    scrollViewer.MaxHeight(560);
-
-    StackPanel root;
-    root.Spacing(14);
-    root.Width(540);
-
-    TextBlock intro;
-    intro.Style(Application::Current().Resources().Lookup(box_value(L"ShellBodyTextStyle")).try_as<Style>());
-    intro.Text(L"Step 1: choose the connected AI model. Step 2: choose the planning, coding, review, or specialist lane that should own it. Step 3: save the responsibility mapping so CLU and provider execution agree on routing.");
-    intro.TextWrapping(TextWrapping::WrapWholeWords);
-    root.Children().Append(intro);
-
-    const auto addLabel = [&root](std::wstring const& text) {
-        TextBlock label;
-        label.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
-        label.Text(winrt::hstring(text));
-        root.Children().Append(label);
-    };
-
-    ComboBox providerSelector;
-    root.Children().Append([&]() {
-        addLabel(L"Step 1. Connected AI Model");
-        return providerSelector;
-    }());
-
-    ComboBox targetSelector;
-    for (const auto& target : currentSnapshot_.providerAssignmentTargets) {
-        ComboBoxItem item;
-        std::wstring label = target.displayName.empty() ? target.targetId : target.displayName;
-        if (!target.kind.empty()) {
-            label += L"  |  " + target.kind;
-        }
-        item.Content(box_value(winrt::hstring(label)));
-        item.Tag(box_value(winrt::hstring(target.targetId)));
-        targetSelector.Items().Append(item);
-    }
-    if (targetSelector.Items().Size() > 0) {
-        targetSelector.SelectedIndex(0);
-    }
-    root.Children().Append([&]() {
-        addLabel(L"Step 2. Responsibility Lane");
-        return targetSelector;
-    }());
-
-    TextBlock summaryText;
-    summaryText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
-    summaryText.TextWrapping(TextWrapping::WrapWholeWords);
-    root.Children().Append(summaryText);
-
-    TextBlock statusText;
-    statusText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
-    statusText.Text(L"Use this wizard when you want ChatGPT on planning, Claude Code on coding, or any other model-to-responsibility split across CLU lanes.");
-    statusText.TextWrapping(TextWrapping::WrapWholeWords);
-    root.Children().Append(statusText);
-
-    Button createButton;
-    createButton.Content(box_value(L"Assign Responsibility"));
-    createButton.Style(Application::Current().Resources().Lookup(box_value(L"ShellCommandButtonStyle")).try_as<Style>());
-    root.Children().Append(createButton);
-
-    std::vector<::MasterControlShell::AssignableProviderOption> assignableProviders;
-    const auto refreshProviderSelector = [&, this]() {
-        std::wstring previousProviderId;
-        if (providerSelector.SelectedIndex() >= 0 &&
-            providerSelector.SelectedIndex() < static_cast<int>(assignableProviders.size())) {
-            previousProviderId = assignableProviders[static_cast<size_t>(providerSelector.SelectedIndex())].providerId;
-        }
-
-        providerSelector.Items().Clear();
-        assignableProviders.clear();
-        if (targetSelector.SelectedIndex() >= 0 &&
-            targetSelector.SelectedIndex() < static_cast<int>(currentSnapshot_.providerAssignmentTargets.size())) {
-            assignableProviders = ::MasterControlShell::buildAssignableProviderOptions(
-                currentSnapshot_.providers,
-                currentSnapshot_.providerCapabilities,
-                currentSnapshot_.providerCredentialStatuses,
-                currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(targetSelector.SelectedIndex())]);
-        }
-
-        for (const auto& option : assignableProviders) {
-            ComboBoxItem item;
-            item.Content(box_value(winrt::hstring(option.displayName)));
-            item.Tag(box_value(winrt::hstring(option.providerId)));
-            providerSelector.Items().Append(item);
-        }
-
-        const auto preferredIndex = ::MasterControlShell::findPreferredAssignableProviderIndex(
-            assignableProviders,
-            previousProviderId,
-            L"");
-        if (preferredIndex.has_value()) {
-            providerSelector.SelectedIndex(static_cast<int>(*preferredIndex));
-        } else if (providerSelector.Items().Size() > 0) {
-            providerSelector.SelectedIndex(0);
-        } else {
-            providerSelector.SelectedIndex(-1);
-        }
-    };
-
-    const auto updateSummary = [&, this]() {
-        if (targetSelector.SelectedIndex() < 0 ||
-            currentSnapshot_.providerAssignmentTargets.empty()) {
-            summaryText.Text(L"Create at least one orchestration target before assigning ownership.");
-            return;
-        }
-        if (providerSelector.SelectedIndex() < 0 || assignableProviders.empty()) {
-            summaryText.Text(L"Connect a provider with active credentials for this lane before assigning ownership.");
-            return;
-        }
-
-        const auto& provider = assignableProviders[static_cast<size_t>(providerSelector.SelectedIndex())];
-        const auto& target = currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(targetSelector.SelectedIndex())];
-        std::wstring summary = L"This will assign AI model ";
-        summary += provider.displayName.empty() ? provider.providerId : provider.displayName;
-        summary += L" to responsibility lane ";
-        summary += target.displayName.empty() ? target.targetId : target.displayName;
-        if (!target.kind.empty()) {
-            summary += L" (" + target.kind + L")";
-        }
-        summaryText.Text(winrt::hstring(summary));
-    };
-
-    providerSelector.SelectionChanged([&](IInspectable const&, Controls::SelectionChangedEventArgs const&) {
-        updateSummary();
-    });
-    targetSelector.SelectionChanged([&](IInspectable const&, Controls::SelectionChangedEventArgs const&) {
-        refreshProviderSelector();
-        updateSummary();
-    });
-    refreshProviderSelector();
-    updateSummary();
-
-    scrollViewer.Content(root);
-    dialog.Content(scrollViewer);
-
-    createButton.Click([this, dialog, createButton, statusText, providerSelector, targetSelector](IInspectable const&, RoutedEventArgs const&) {
-        auto ignored = [this, dialog, createButton, statusText, providerSelector, targetSelector]() -> IAsyncAction {
-            if (targetSelector.SelectedIndex() < 0 || targetSelector.SelectedIndex() >= static_cast<int>(currentSnapshot_.providerAssignmentTargets.size())) {
-                statusText.Text(L"Select an orchestration target before saving an assignment.");
-                co_return;
-            }
-            const auto assignableProviders = ::MasterControlShell::buildAssignableProviderOptions(
-                currentSnapshot_.providers,
-                currentSnapshot_.providerCapabilities,
-                currentSnapshot_.providerCredentialStatuses,
-                currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(targetSelector.SelectedIndex())]);
-            if (providerSelector.SelectedIndex() < 0 ||
-                providerSelector.SelectedIndex() >= static_cast<int>(assignableProviders.size())) {
-                statusText.Text(L"Connect a provider with active credentials for this lane before saving an assignment.");
-                co_return;
-            }
-
-            const auto& provider = assignableProviders[static_cast<size_t>(providerSelector.SelectedIndex())];
-            const auto& target = currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(targetSelector.SelectedIndex())];
-
-            createButton.IsEnabled(false);
-            statusText.Text(L"Saving model responsibility through the local admin API.");
-
-            winrt::apartment_context uiThread;
-            co_await winrt::resume_background();
-            const auto result = runtime_.UpsertProviderAssignment(::MasterControlShell::ShellProviderAssignment{
-                target.targetId,
-                target.kind,
-                provider.providerId,
-                L""
-            });
-            co_await uiThread;
-
-            statusText.Text(winrt::hstring(result.message));
-            if (!result.succeeded) {
-                createButton.IsEnabled(true);
-                GuidedWorkflowStatusText().Text(L"Responsibility assignment wizard needs attention. Review the message inside the wizard and try again.");
-                co_return;
-            }
-
-            GuidedWorkflowStatusText().Text(winrt::hstring(L"Assigned AI model '" +
-                (provider.displayName.empty() ? provider.providerId : provider.displayName) +
-                L"' to " +
-                (target.displayName.empty() ? target.targetId : target.displayName) + L"."));
-            const auto completionMessage = GuidedWorkflowStatusText().Text();
-            dialog.Hide();
-            co_await CompleteGuidedWorkflowAsync(completionMessage, kProvidersDestination);
         }();
         (void)ignored;
     });
@@ -4044,242 +3467,6 @@ IAsyncAction MainWindow::ShowSettingsWizardAsync() {
             const auto completionMessage = GuidedWorkflowStatusText().Text();
             dialog.Hide();
             co_await CompleteGuidedWorkflowAsync(completionMessage, kSettingsDestination);
-        }();
-        (void)ignored;
-    });
-
-    co_await dialog.ShowAsync();
-}
-
-IAsyncAction MainWindow::ShowProviderExecutionWizardAsync() {
-    ContentDialog dialog;
-    dialog.Title(box_value(L"Guided Provider Routing Validation"));
-    dialog.CloseButtonText(L"Close");
-    dialog.XamlRoot(RootGrid().XamlRoot());
-
-    ScrollViewer scrollViewer;
-    scrollViewer.HorizontalScrollBarVisibility(ScrollBarVisibility::Disabled);
-    scrollViewer.VerticalScrollBarVisibility(ScrollBarVisibility::Auto);
-    scrollViewer.MaxHeight(700);
-
-    StackPanel root;
-    root.Spacing(14);
-    root.Width(580);
-
-    TextBlock intro;
-    intro.Style(Application::Current().Resources().Lookup(box_value(L"ShellBodyTextStyle")).try_as<Style>());
-    intro.Text(L"Step 1: choose the orchestration lane you want to validate. Step 2: choose the kind of routing check you want the assigned provider to perform. Step 3: dispatch the guided validation through the local admin API and review the result in provider execution history.");
-    intro.TextWrapping(TextWrapping::WrapWholeWords);
-    root.Children().Append(intro);
-
-    const auto addLabel = [&root](std::wstring const& text) {
-        TextBlock label;
-        label.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
-        label.Text(winrt::hstring(text));
-        root.Children().Append(label);
-    };
-
-    ComboBox targetSelector;
-    targetSelector.PlaceholderText(L"Choose a role or sub-agent lane");
-    for (const auto& target : currentSnapshot_.providerAssignmentTargets) {
-        ComboBoxItem item;
-        std::wstring label = target.displayName.empty() ? target.targetId : target.displayName;
-        if (!target.kind.empty()) {
-            label += L"  |  ";
-            label += target.kind;
-        }
-        item.Content(box_value(winrt::hstring(label)));
-        targetSelector.Items().Append(item);
-    }
-    if (targetSelector.Items().Size() > 0) {
-        targetSelector.SelectedIndex(0);
-    }
-    root.Children().Append([&]() {
-        addLabel(L"Step 1. Validation Target");
-        return targetSelector;
-    }());
-
-    const std::vector<std::pair<std::wstring, std::wstring>> promptTemplates{
-        {L"Planning Check", L"Create a concise plan for this orchestration lane and explain the first action you would take."},
-        {L"Coding Check", L"Describe how you would implement the next coding task for this lane and note any MCP tools you would need."},
-        {L"Review Check", L"Review the current state of this lane, identify the highest-risk issue, and recommend the next operator action."},
-        {L"Specialist Coordination", L"Summarize how this lane would coordinate with related specialists and what inputs it needs before execution."},
-        {L"Custom Prompt", L""}
-    };
-
-    ComboBox templateSelector;
-    templateSelector.PlaceholderText(L"Choose a validation pattern");
-    for (const auto& templateEntry : promptTemplates) {
-        ComboBoxItem item;
-        item.Content(box_value(winrt::hstring(templateEntry.first)));
-        templateSelector.Items().Append(item);
-    }
-    if (templateSelector.Items().Size() > 0) {
-        templateSelector.SelectedIndex(0);
-    }
-    root.Children().Append([&]() {
-        addLabel(L"Step 2. Validation Pattern");
-        return templateSelector;
-    }());
-
-    Grid optionGrid;
-    optionGrid.ColumnSpacing(12);
-    optionGrid.ColumnDefinitions().Append(ColumnDefinition());
-    optionGrid.ColumnDefinitions().Append(ColumnDefinition());
-
-    ToggleSwitch toolAccessToggle;
-    toolAccessToggle.Header(box_value(L"Allow shared MCP access"));
-    toolAccessToggle.IsOn(true);
-
-    StackPanel maxTurnsPanel;
-    maxTurnsPanel.Spacing(6);
-    TextBlock maxTurnsLabel;
-    maxTurnsLabel.Style(Application::Current().Resources().Lookup(box_value(L"ShellLabelTextStyle")).try_as<Style>());
-    maxTurnsLabel.Text(L"Max Turns");
-    TextBox maxTurnsBox;
-    maxTurnsBox.Text(L"4");
-    maxTurnsPanel.Children().Append(maxTurnsLabel);
-    maxTurnsPanel.Children().Append(maxTurnsBox);
-
-    Grid::SetColumn(toolAccessToggle, 0);
-    Grid::SetColumn(maxTurnsPanel, 1);
-    optionGrid.Children().Append(toolAccessToggle);
-    optionGrid.Children().Append(maxTurnsPanel);
-    root.Children().Append(optionGrid);
-
-    TextBox promptBox;
-    promptBox.AcceptsReturn(true);
-    promptBox.Height(140);
-    promptBox.TextWrapping(TextWrapping::WrapWholeWords);
-    promptBox.PlaceholderText(L"Ask the assigned provider to work within its orchestration lane.");
-    promptBox.Text(winrt::hstring(promptTemplates.front().second));
-    root.Children().Append([&]() {
-        addLabel(L"Step 3. Prompt");
-        return promptBox;
-    }());
-
-    TextBlock summaryText;
-    summaryText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
-    summaryText.TextWrapping(TextWrapping::WrapWholeWords);
-    root.Children().Append(summaryText);
-
-    TextBlock statusText;
-    statusText.Style(Application::Current().Resources().Lookup(box_value(L"ShellDataTextStyle")).try_as<Style>());
-    statusText.TextWrapping(TextWrapping::WrapWholeWords);
-    statusText.Text(currentSnapshot_.providerAssignmentTargets.empty()
-        ? L"No provider ownership lanes are published yet. Connect a model and assign responsibility before using this wizard."
-        : L"Use this wizard when you want to validate routing, ownership, credentials, and MCP access without manually filling the provider execution console.");
-    root.Children().Append(statusText);
-
-    Button runButton;
-    runButton.Content(box_value(L"Run Guided Validation"));
-    runButton.Style(Application::Current().Resources().Lookup(box_value(L"ShellCommandButtonStyle")).try_as<Style>());
-    runButton.IsEnabled(!currentSnapshot_.providerAssignmentTargets.empty());
-    root.Children().Append(runButton);
-
-    const auto updatePromptFromTemplate = [templateSelector, promptBox, promptTemplates]() {
-        const auto index = templateSelector.SelectedIndex();
-        if (index < 0 || index >= static_cast<int>(promptTemplates.size())) {
-            return;
-        }
-        const auto& templatePrompt = promptTemplates[static_cast<size_t>(index)].second;
-        if (!templatePrompt.empty()) {
-            promptBox.Text(winrt::hstring(templatePrompt));
-        }
-    };
-
-    const auto updateSummary = [&, this]() {
-        std::wstring targetLabel = L"No target selected";
-        if (const auto index = targetSelector.SelectedIndex();
-            index >= 0 && index < static_cast<int>(currentSnapshot_.providerAssignmentTargets.size())) {
-            const auto& target = currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(index)];
-            targetLabel = target.displayName.empty() ? target.targetId : target.displayName;
-            if (!target.kind.empty()) {
-                targetLabel += L"  |  ";
-                targetLabel += target.kind;
-            }
-        }
-
-        std::wstring templateLabel = L"Custom Prompt";
-        if (const auto index = templateSelector.SelectedIndex();
-            index >= 0 && index < static_cast<int>(promptTemplates.size())) {
-            templateLabel = promptTemplates[static_cast<size_t>(index)].first;
-        }
-
-        std::wstring summary = L"Validate ";
-        summary += targetLabel;
-        summary += L" using ";
-        summary += templateLabel;
-        summary += L" | Shared MCP ";
-        summary += toolAccessToggle.IsOn() ? L"enabled" : L"disabled";
-        summary += L" | Max turns ";
-        summary += trimCopy(std::wstring(maxTurnsBox.Text().c_str())).empty()
-            ? L"4"
-            : trimCopy(std::wstring(maxTurnsBox.Text().c_str()));
-        summaryText.Text(winrt::hstring(summary));
-    };
-
-    templateSelector.SelectionChanged([&](IInspectable const&, Controls::SelectionChangedEventArgs const&) {
-        updatePromptFromTemplate();
-        updateSummary();
-    });
-    targetSelector.SelectionChanged([&](IInspectable const&, Controls::SelectionChangedEventArgs const&) { updateSummary(); });
-    toolAccessToggle.Toggled([&](IInspectable const&, RoutedEventArgs const&) { updateSummary(); });
-    maxTurnsBox.TextChanged([&](IInspectable const&, Controls::TextChangedEventArgs const&) { updateSummary(); });
-    promptBox.TextChanged([&](IInspectable const&, Controls::TextChangedEventArgs const&) { updateSummary(); });
-    updateSummary();
-
-    scrollViewer.Content(root);
-    dialog.Content(scrollViewer);
-
-    runButton.Click([this, dialog, runButton, statusText, targetSelector, toolAccessToggle, maxTurnsBox, promptBox](IInspectable const&, RoutedEventArgs const&) {
-        auto ignored = [this, dialog, runButton, statusText, targetSelector, toolAccessToggle, maxTurnsBox, promptBox]() -> IAsyncAction {
-            if (targetSelector.SelectedIndex() < 0 ||
-                targetSelector.SelectedIndex() >= static_cast<int>(currentSnapshot_.providerAssignmentTargets.size())) {
-                statusText.Text(L"Choose a role or sub-agent lane before running guided validation.");
-                co_return;
-            }
-
-            const auto maxTurns = parseInteger(std::wstring(maxTurnsBox.Text().c_str()), 1, 12);
-            if (!maxTurns.has_value()) {
-                statusText.Text(L"Max turns must be between 1 and 12.");
-                co_return;
-            }
-
-            const auto prompt = trimCopy(std::wstring(promptBox.Text().c_str()));
-            if (prompt.empty()) {
-                statusText.Text(L"Enter a prompt before running guided validation.");
-                co_return;
-            }
-
-            const auto& target = currentSnapshot_.providerAssignmentTargets[static_cast<size_t>(targetSelector.SelectedIndex())];
-            runButton.IsEnabled(false);
-            statusText.Text(L"Dispatching guided provider validation through the local admin API.");
-
-            winrt::apartment_context uiThread;
-            co_await winrt::resume_background();
-            const auto record = runtime_.ExecuteProviderTask(::MasterControlShell::ShellProviderExecutionRequest{
-                target.targetId,
-                prompt,
-                toolAccessToggle.IsOn(),
-                *maxTurns
-            });
-            co_await uiThread;
-
-            const auto output = !record.outputText.empty() ? record.outputText : record.rawResponse;
-            if (!record.errorMessage.empty() || record.status == L"failed") {
-                statusText.Text(winrt::hstring(
-                    record.errorMessage.empty() ? L"Provider validation failed. Review execution history for details." : record.errorMessage));
-                runButton.IsEnabled(true);
-                GuidedWorkflowStatusText().Text(L"Provider routing validation needs attention. Review the wizard message and try again.");
-                co_return;
-            }
-
-            statusText.Text(winrt::hstring(output.empty() ? L"Provider routing validation completed." : output));
-            GuidedWorkflowStatusText().Text(L"Completed guided provider routing validation and refreshed provider history.");
-            const auto completionMessage = GuidedWorkflowStatusText().Text();
-            dialog.Hide();
-            co_await CompleteGuidedWorkflowAsync(completionMessage, kProvidersDestination);
         }();
         (void)ignored;
     });

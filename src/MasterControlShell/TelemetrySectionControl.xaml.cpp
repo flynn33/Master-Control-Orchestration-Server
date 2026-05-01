@@ -89,17 +89,15 @@ void TelemetrySectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
     StorageAllocationValueText().Text(winrt::hstring(std::to_wstring(snapshot.storageAllocationPercent) + L"%"));
     CpuAllocationDetailText().Text(winrt::hstring(snapshot.cpuAllocationPercent <= 0 ? L"Governed launches blocked." : L"Planner and worker CPU budget."));
     MemoryAllocationDetailText().Text(winrt::hstring(snapshot.memoryAllocationPercent <= 0 ? L"Governed launches blocked." : L"Managed memory ceiling."));
-    BandwidthAllocationDetailText().Text(winrt::hstring(snapshot.bandwidthAllocationPercent <= 0 ? L"Network lanes blocked." : L"Provider and Apple traffic budget."));
+    BandwidthAllocationDetailText().Text(winrt::hstring(snapshot.bandwidthAllocationPercent <= 0 ? L"Network lanes blocked." : L"Network lane traffic budget."));
     StorageAllocationDetailText().Text(winrt::hstring(snapshot.storageAllocationPercent <= 0 ? L"Artifact lanes blocked." : L"Exports and staging budget."));
 
     EndpointCountText().Text(winrt::hstring(formatCountValue(snapshot.endpointCount)));
-    ProviderCountText().Text(winrt::hstring(formatCountValue(snapshot.providerCount)));
     GovernanceFindingCountText().Text(winrt::hstring(formatCountValue(snapshot.governanceFindingCount)));
     AppleOperationCountText().Text(winrt::hstring(formatCountValue(snapshot.appleOperationCount)));
     PlatformGatewayCountText().Text(winrt::hstring(formatCountValue(snapshot.platformGatewayCount)));
     GovernanceServerCountText().Text(winrt::hstring(formatCountValue(snapshot.governanceServerCount)));
     EndpointCountDetailText().Text(winrt::hstring(pluralize(snapshot.endpointCount, L"published lane", L"published lanes")));
-    ProviderCountDetailText().Text(winrt::hstring(pluralize(snapshot.providerCount, L"connected provider", L"connected providers")));
     GovernanceFindingDetailText().Text(winrt::hstring(pluralize(snapshot.governanceFindingCount, L"live finding", L"live findings")));
     AppleOperationDetailText().Text(winrt::hstring(pluralize(snapshot.appleOperationCount, L"tracked Apple job", L"tracked Apple jobs")));
     PlatformGatewayDetailText().Text(winrt::hstring(pluralize(snapshot.platformGatewayCount, L"gateway lane", L"gateway lanes")));
@@ -154,7 +152,6 @@ void TelemetrySectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
 
     std::wostringstream telemetryRouting;
     telemetryRouting << L"Runtime lanes: " << snapshot.endpointCount << L'\n'
-                     << L"Providers: " << snapshot.providerCount << L'\n'
                      << L"Governance executions: " << snapshot.governanceExecutionCount << L'\n'
                      << L"Gateway lanes: " << snapshot.platformGatewayCount << L'\n'
                      << L"Governance servers: " << snapshot.governanceServerCount << L'\n'

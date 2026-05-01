@@ -192,21 +192,13 @@
 
                                 <Border Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="6">
-                                        <TextBlock Text="PROVIDERS" Style="{StaticResource ShellLabelTextStyle}" />
-                                        <TextBlock x:Name="ProviderCountText" Style="{StaticResource ShellValueTextStyle}" />
-                                        <TextBlock x:Name="ProviderCountDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Connected AI provider lanes." />
-                                    </StackPanel>
-                                </Border>
-
-                                <Border Grid.Column="2" Style="{StaticResource ShellMetricTileStyle}">
-                                    <StackPanel Spacing="6">
                                         <TextBlock Text="GOVERNANCE FINDINGS" Style="{StaticResource ShellLabelTextStyle}" />
                                         <TextBlock x:Name="GovernanceFindingCountText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="GovernanceFindingDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Live CLU posture findings." />
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Row="1" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border Grid.Column="2" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="6">
                                         <TextBlock Text="APPLE OPERATIONS" Style="{StaticResource ShellLabelTextStyle}" />
                                         <TextBlock x:Name="AppleOperationCountText" Style="{StaticResource ShellValueTextStyle}" />
@@ -214,7 +206,7 @@
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border Grid.Row="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="6">
                                         <TextBlock Text="PLATFORM GATEWAYS" Style="{StaticResource ShellLabelTextStyle}" />
                                         <TextBlock x:Name="PlatformGatewayCountText" Style="{StaticResource ShellValueTextStyle}" />
@@ -222,7 +214,7 @@
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Row="1" Grid.Column="2" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="6">
                                         <TextBlock Text="GOVERNANCE SERVERS" Style="{StaticResource ShellLabelTextStyle}" />
                                         <TextBlock x:Name="GovernanceServerCountText" Style="{StaticResource ShellValueTextStyle}" />

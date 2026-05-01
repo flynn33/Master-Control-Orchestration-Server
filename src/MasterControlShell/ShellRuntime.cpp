@@ -202,24 +202,6 @@ std::optional<std::string> readFileUtf8(const std::filesystem::path& filePath) {
     return content;
 }
 
-struct LocalCliSignInSession final {
-    std::wstring sessionId;
-    std::wstring bridge;
-    std::wstring providerId;
-    std::wstring status = L"pending";
-    std::wstring message;
-    std::wstring accountLabel;
-    std::filesystem::path authFilePath;
-    HANDLE processHandle = nullptr;
-    bool registrationInProgress = false;
-    bool awaitingAuthFile = false;
-    std::chrono::steady_clock::time_point authFileDeadline{};
-};
-
-std::mutex gCliSignInMutex;
-std::map<std::wstring, LocalCliSignInSession> gCliSignInSessions;
-std::atomic<uint64_t> gCliSignInCounter{ 0 };
-
 std::wstring quoteWindowsArgument(const std::wstring& argument) {
     if (argument.empty()) {
         return L"\"\"";
@@ -392,12 +374,6 @@ bool usesCmdShim(const std::filesystem::path& executablePath) {
         _wcsicmp(extension.c_str(), L".bat") == 0;
 }
 
-std::wstring generateCliSignInSessionId() {
-    const auto now = std::chrono::system_clock::now().time_since_epoch();
-    const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(now).count();
-    return L"signin-" + std::to_wstring(micros) + L"-" + std::to_wstring(gCliSignInCounter.fetch_add(1));
-}
-
 std::wstring serviceStateLabel(const ServiceState state) {
     switch (state) {
         case ServiceState::Missing: return L"Missing";
@@ -473,10 +449,10 @@ std::optional<HttpResponse> httpRequest(const std::string& host,
     // run WPAD/PAC detection on every request and — on a machine whose
     // corp-managed proxy config lists localhost as *not* bypassed, or where
     // the proxy service is transiently slow — the dashboard probe was
-    // dropping through the 4s receive timeout, leaving providerCapabilities_
-    // empty (observed: dropdown blank, "Assign Roles" empty, "API OFFLINE"
-    // chip shown even though service is running and /api/health returns
-    // HTTP 200 to curl). Going direct fixes both.
+    // dropping through the 4s receive timeout, leaving live snapshot
+    // collections empty (observed: "API OFFLINE" chip shown even though
+    // service is running and /api/health returns HTTP 200 to curl).
+    // Going direct fixes both.
     HINTERNET session = WinHttpOpen(
         L"MasterControlShell/2.0",
         WINHTTP_ACCESS_TYPE_NO_PROXY,
@@ -491,10 +467,9 @@ std::optional<HttpResponse> httpRequest(const std::string& host,
     // Fail fast on DNS/connect when the service is dead (500ms is plenty
     // for localhost). Bumped the receive timeout from 4s -> 10s because
     // /api/dashboard on a real box with governance state + Apple operations
-    // + execution history + Forsetti module catalog can legitimately take
-    // 3-5 seconds to serialize — the old 4s ceiling was clipping snapshots
-    // mid-flight and emptying providerCapabilities_. Values tuned for
-    // "fail fast on dead, patient on slow-but-alive".
+    // + Forsetti module catalog can legitimately take 3-5 seconds to
+    // serialize — the old 4s ceiling was clipping snapshots mid-flight.
+    // Values tuned for "fail fast on dead, patient on slow-but-alive".
     WinHttpSetTimeouts(session, 500, 500, 500, 10000);
 
     HINTERNET connection = WinHttpConnect(session, wideFromUtf8(host).c_str(), port, 0);
@@ -1076,90 +1051,6 @@ std::wstring runtimeEndpointRow(const ShellRuntimeEndpoint& endpoint) {
     return stream.str();
 }
 
-std::wstring providerRow(const JsonObject& object) {
-    std::wostringstream stream;
-    stream << wideFromUtf8(jsonStringOr(object, L"displayName", "provider"))
-           << L"  |  "
-           << wideFromUtf8(jsonStringOr(object, L"baseUrl", ""))
-           << L"  |  model="
-           << wideFromUtf8(jsonStringOr(object, L"modelId", "default"))
-           << L"  |  autonomous="
-           << boolLabel(jsonBoolOr(object, L"allowAutonomousControl"))
-           << L"  |  credentials="
-           << boolLabel(jsonBoolOr(object, L"credentialsConfigured"));
-    return stream.str();
-}
-
-std::wstring providerConnectionRow(const ShellProviderConnection& provider) {
-    std::wostringstream stream;
-    stream << (provider.displayName.empty() ? provider.id : provider.displayName)
-           << L"  |  "
-           << provider.baseUrl
-           << L"  |  model="
-           << (provider.modelId.empty() ? L"default" : provider.modelId)
-           << L"  |  autonomous="
-           << boolLabel(provider.allowAutonomousControl)
-           << L"  |  credentials="
-           << boolLabel(provider.credentialsConfigured);
-    return stream.str();
-}
-
-std::wstring providerCapabilityRow(const ShellProviderCapability& capability) {
-    std::wostringstream stream;
-    stream << capability.displayName
-           << L"  |  targets="
-           << (capability.supportedTargets.empty() ? L"none" : std::to_wstring(capability.supportedTargets.size()))
-           << L"  |  model="
-           << (capability.recommendedModel.empty() ? L"optional" : capability.recommendedModel);
-    return stream.str();
-}
-
-std::wstring providerAssignmentRow(const ShellProviderAssignment& assignment,
-                                   const std::vector<ShellProviderAssignmentTarget>& targets,
-                                   const std::vector<ShellProviderConnection>& providers) {
-    const auto targetIterator = std::find_if(
-        targets.begin(),
-        targets.end(),
-        [&assignment](const ShellProviderAssignmentTarget& target) { return target.targetId == assignment.targetId; });
-    const auto providerIterator = std::find_if(
-        providers.begin(),
-        providers.end(),
-        [&assignment](const ShellProviderConnection& provider) { return provider.id == assignment.providerId; });
-
-    std::wostringstream stream;
-    stream << (targetIterator == targets.end() ? assignment.targetId : targetIterator->displayName)
-           << L"  |  "
-           << (providerIterator == providers.end() ? assignment.providerId : providerIterator->displayName)
-           << L"  |  "
-           << assignment.updatedAtUtc;
-    return stream.str();
-}
-
-std::wstring providerExecutionRegistrationRow(const ShellProviderExecutionRegistration& registration) {
-    std::wostringstream stream;
-    stream << (registration.displayName.empty() ? registration.providerId : registration.displayName)
-           << L"  |  "
-           << registration.transport
-           << L"  |  shared MCP "
-           << boolLabel(registration.supportsSharedMcpAccess);
-    if (registration.supportsDirectMcpConfig) {
-        stream << L"  |  direct config";
-    }
-    return stream.str();
-}
-
-std::wstring providerExecutionHistoryRow(const ShellProviderExecutionRecord& record) {
-    std::wostringstream stream;
-    stream << L"[" << record.status << L"] "
-           << (record.targetDisplayName.empty() ? record.targetId : record.targetDisplayName)
-           << L"  |  "
-           << (record.providerDisplayName.empty() ? record.providerId : record.providerDisplayName);
-    if (!record.completedAtUtc.empty()) {
-        stream << L"  |  " << record.completedAtUtc;
-    }
-    return stream.str();
-}
-
 std::wstring installRow(const JsonObject& object) {
     std::wostringstream stream;
     stream << wideFromUtf8(jsonStringOr(object, L"source", "import"))
@@ -1484,25 +1375,6 @@ ShellOperationResult postConfigurationToAdminApi(const std::filesystem::path& co
     return operationResultFromResponse(*response);
 }
 
-ShellOperationResult postProviderToAdminApi(const std::filesystem::path& configurationFile,
-                                            const ShellProviderConnection& provider) {
-    std::wstring errorMessage;
-    const auto [host, port] = adminApiEndpoint(configurationFile);
-    const auto response = httpRequest(
-        host,
-        port,
-        L"POST",
-        L"/api/providers",
-        narrowFromWide(providerToJson(provider).Stringify().c_str()),
-        {},
-        errorMessage);
-    if (!response.has_value()) {
-        return ShellOperationResult{ false, false, errorMessage.empty() ? L"Unable to update provider settings through the local admin API." : errorMessage };
-    }
-
-    return operationResultFromResponse(*response);
-}
-
 ShellOperationResult postJsonObjectToAdminApi(const std::filesystem::path& configurationFile,
                                               const std::wstring& endpoint,
                                               const JsonObject& payload,
@@ -1662,14 +1534,7 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     bool openLanAccess = true;
     ShellSecuritySettings securitySettings;
     std::vector<ShellRuntimeEndpoint> endpoints;
-    std::vector<ShellProviderConnection> providers;
-    std::vector<ShellProviderCapability> providerCapabilities;
-    std::vector<ShellProviderCredentialStatus> providerCredentialStatuses;
     std::vector<ShellSubAgentGroupDefinition> subAgentGroups;
-    std::vector<ShellProviderAssignmentTarget> providerAssignmentTargets;
-    std::vector<ShellProviderAssignment> providerAssignments;
-    std::vector<ShellProviderExecutionRegistration> providerExecutionRegistrations;
-    std::vector<ShellProviderExecutionRecord> providerExecutionHistory;
     std::vector<ShellAppleRemoteHost> appleRemoteHosts;
     std::vector<ShellAppleOperationRecord> appleOperations;
     int cpuPercent = 50;
@@ -1716,14 +1581,6 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
             advancedMode = jsonBoolOr(*configuration, L"advancedMode", advancedMode);
             firstRunCompleted = jsonBoolOr(*configuration, L"firstRunCompleted", firstRunCompleted);
 
-            if (configuration->HasKey(L"providers")) {
-                for (const auto& value : configuration->GetNamedArray(L"providers", JsonArray())) {
-                    if (value.ValueType() == JsonValueType::Object) {
-                        providers.push_back(providerFromJson(value.GetObject()));
-                    }
-                }
-            }
-
             if (configuration->HasKey(L"subAgentGroups")) {
                 for (const auto& value : configuration->GetNamedArray(L"subAgentGroups", JsonArray())) {
                     if (value.ValueType() == JsonValueType::Object) {
@@ -1745,11 +1602,6 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     std::vector<ShellOverlayRoute> overlayRoutes;
     std::map<std::wstring, std::vector<ShellViewInjection>> viewInjectionsBySlot;
     std::vector<std::wstring> endpointRows;
-    std::vector<std::wstring> providerRows;
-    std::vector<std::wstring> providerCapabilityRows;
-    std::vector<std::wstring> providerAssignmentRows;
-    std::vector<std::wstring> providerExecutionRegistrationRows;
-    std::vector<std::wstring> providerExecutionHistoryRows;
     std::vector<std::wstring> installRows;
     std::vector<std::wstring> exportRows;
     std::wstring governancePosture = L"Pending";
@@ -1818,31 +1670,6 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                         endpoints.push_back(runtimeEndpointFromJson(value.GetObject()));
                     }
                 }
-                appendJsonArrayRows(
-                    dashboardJson->GetNamedArray(L"providers", JsonArray()),
-                    providerRow,
-                    providerRows);
-                std::vector<ShellProviderConnection> liveProviders;
-                for (const auto& value : dashboardJson->GetNamedArray(L"providers", JsonArray())) {
-                    if (value.ValueType() == JsonValueType::Object) {
-                        liveProviders.push_back(providerFromJson(value.GetObject()));
-                    }
-                }
-                providers = mergeAuthoritativeSnapshotCollection(
-                    providers,
-                    std::move(liveProviders),
-                    dashboardJson->HasKey(L"providers"),
-                    [](const ShellProviderConnection& provider) { return provider.id; });
-                for (const auto& value : dashboardJson->GetNamedArray(L"providerCapabilities", JsonArray())) {
-                    if (value.ValueType() == JsonValueType::Object) {
-                        providerCapabilities.push_back(providerCapabilityFromJson(value.GetObject()));
-                    }
-                }
-                for (const auto& value : dashboardJson->GetNamedArray(L"providerCredentialStatuses", JsonArray())) {
-                    if (value.ValueType() == JsonValueType::Object) {
-                        providerCredentialStatuses.push_back(providerCredentialStatusFromJson(value.GetObject()));
-                    }
-                }
                 std::vector<ShellSubAgentGroupDefinition> liveSubAgentGroups;
                 for (const auto& value : dashboardJson->GetNamedArray(L"subAgentGroups", JsonArray())) {
                     if (value.ValueType() == JsonValueType::Object) {
@@ -1854,26 +1681,6 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                     std::move(liveSubAgentGroups),
                     dashboardJson->HasKey(L"subAgentGroups"),
                     [](const ShellSubAgentGroupDefinition& group) { return group.groupId; });
-                for (const auto& value : dashboardJson->GetNamedArray(L"providerAssignmentTargets", JsonArray())) {
-                    if (value.ValueType() == JsonValueType::Object) {
-                        providerAssignmentTargets.push_back(providerAssignmentTargetFromJson(value.GetObject()));
-                    }
-                }
-                for (const auto& value : dashboardJson->GetNamedArray(L"providerAssignments", JsonArray())) {
-                    if (value.ValueType() == JsonValueType::Object) {
-                        providerAssignments.push_back(providerAssignmentFromJson(value.GetObject()));
-                    }
-                }
-                for (const auto& value : dashboardJson->GetNamedArray(L"providerExecutionRegistrations", JsonArray())) {
-                    if (value.ValueType() == JsonValueType::Object) {
-                        providerExecutionRegistrations.push_back(providerExecutionRegistrationFromJson(value.GetObject()));
-                    }
-                }
-                for (const auto& value : dashboardJson->GetNamedArray(L"providerExecutionHistory", JsonArray())) {
-                    if (value.ValueType() == JsonValueType::Object) {
-                        providerExecutionHistory.push_back(providerExecutionRecordFromJson(value.GetObject()));
-                    }
-                }
                 appendJsonArrayRows(
                     dashboardJson->GetNamedArray(L"installHistory", JsonArray()),
                     installRow,
@@ -1996,31 +1803,6 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
         }
     }
 
-    if (providerRows.empty() && !providers.empty()) {
-        for (const auto& provider : providers) {
-            providerRows.push_back(providerConnectionRow(provider));
-        }
-    }
-    if (providerCapabilityRows.empty() && !providerCapabilities.empty()) {
-        for (const auto& capability : providerCapabilities) {
-            providerCapabilityRows.push_back(providerCapabilityRow(capability));
-        }
-    }
-    if (providerAssignmentRows.empty() && !providerAssignments.empty()) {
-        for (const auto& assignment : providerAssignments) {
-            providerAssignmentRows.push_back(providerAssignmentRow(assignment, providerAssignmentTargets, providers));
-        }
-    }
-    if (providerExecutionRegistrationRows.empty() && !providerExecutionRegistrations.empty()) {
-        for (const auto& registration : providerExecutionRegistrations) {
-            providerExecutionRegistrationRows.push_back(providerExecutionRegistrationRow(registration));
-        }
-    }
-    if (providerExecutionHistoryRows.empty() && !providerExecutionHistory.empty()) {
-        for (const auto& record : providerExecutionHistory) {
-            providerExecutionHistoryRows.push_back(providerExecutionHistoryRow(record));
-        }
-    }
     if (endpointRows.empty() && !endpoints.empty()) {
         for (const auto& endpoint : endpoints) {
             endpointRows.push_back(runtimeEndpointRow(endpoint));
@@ -2028,7 +1810,6 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     }
 
     snapshot.endpointCount = endpointRows.size();
-    snapshot.providerCount = providers.empty() ? providerRows.size() : providers.size();
     snapshot.installCount = installRows.size();
     snapshot.exportCount = exportRows.size();
     snapshot.governanceRoleCount = governanceRoleRows.size();
@@ -2043,21 +1824,6 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
 
     if (endpointRows.empty()) {
         endpointRows.push_back(L"No endpoint snapshot is available yet.");
-    }
-    if (providerRows.empty()) {
-        providerRows.push_back(L"No provider connections have been loaded yet.");
-    }
-    if (providerCapabilityRows.empty()) {
-        providerCapabilityRows.push_back(L"No provider modules have published capability descriptors yet.");
-    }
-    if (providerAssignmentRows.empty()) {
-        providerAssignmentRows.push_back(L"No orchestration roles or sub-agents have provider ownership yet.");
-    }
-    if (providerExecutionRegistrationRows.empty()) {
-        providerExecutionRegistrationRows.push_back(L"No provider execution modules have registered transports yet.");
-    }
-    if (providerExecutionHistoryRows.empty()) {
-        providerExecutionHistoryRows.push_back(L"No provider execution history has been recorded yet.");
     }
     if (installRows.empty()) {
         installRows.push_back(L"No installer provenance has been recorded yet.");
@@ -2182,14 +1948,7 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.primaryMacAddress = wideFromUtf8(macAddress);
     snapshot.instanceName = wideFromUtf8(instanceName);
     snapshot.bindAddress = wideFromUtf8(bindAddress);
-    snapshot.providers = std::move(providers);
-    snapshot.providerCapabilities = std::move(providerCapabilities);
-    snapshot.providerCredentialStatuses = std::move(providerCredentialStatuses);
     snapshot.subAgentGroups = std::move(subAgentGroups);
-    snapshot.providerAssignmentTargets = std::move(providerAssignmentTargets);
-    snapshot.providerAssignments = std::move(providerAssignments);
-    snapshot.providerExecutionRegistrations = std::move(providerExecutionRegistrations);
-    snapshot.providerExecutionHistory = std::move(providerExecutionHistory);
     snapshot.appleRemoteHosts = std::move(appleRemoteHosts);
     snapshot.appleOperations = std::move(appleOperations);
     snapshot.navigationPointers = std::move(navigationPointers);
@@ -2197,9 +1956,6 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.overlayRoutes = std::move(overlayRoutes);
     snapshot.viewInjectionsBySlot = std::move(viewInjectionsBySlot);
     snapshot.endpointRows = std::move(endpointRows);
-    snapshot.providerRows = std::move(providerRows);
-    snapshot.providerCapabilityRows = std::move(providerCapabilityRows);
-    snapshot.providerAssignmentRows = std::move(providerAssignmentRows);
     snapshot.installRows = std::move(installRows);
     snapshot.exportRows = std::move(exportRows);
     snapshot.governanceFindingRows = std::move(governanceFindingRows);
@@ -2388,7 +2144,7 @@ ShellOperationResult ShellRuntime::UpsertSubAgentGroup(const ShellSubAgentGroupD
     }
     return postJsonObjectToAdminApi(
         ResolveConfigurationFile(),
-        L"/api/providers/groups",
+        L"/api/runtime/subagent-groups",
         subAgentGroupToJson(group),
         L"Unable to update the sub-agent group through the local admin API.");
 }
@@ -2402,7 +2158,7 @@ ShellOperationResult ShellRuntime::RemoveSubAgentGroup(const std::wstring& group
     payload.SetNamedValue(L"groupId", JsonValue::CreateStringValue(groupId));
     return postJsonObjectToAdminApi(
         ResolveConfigurationFile(),
-        L"/api/providers/groups/remove",
+        L"/api/runtime/subagent-groups/remove",
         payload,
         L"Unable to remove the sub-agent group through the local admin API.");
 }
