@@ -339,6 +339,56 @@ For each PHASE, the completion report lists files changed; reviewers compare aga
 
 ---
 
+## Group 8 — Dashboard honesty (forbidden by ADR-002 §9, PHASE-09)
+
+### 8.1 Dashboard must render `-1.0` self-reported metrics as "unavailable" (PHASE-09)
+
+Self-reported metrics from `ClientHeartbeat` (PHASE-08) and `WorkerTelemetry` (PHASE-06) use `-1.0` as the unavailable sentinel. The dashboard MUST route every such render through the `formatMetric()` helper in `resources/web/app.js`. Direct `.toFixed(...) + '%'` patterns at heartbeat / worker-telemetry sites are forbidden — they would silently turn `-1` into `-1%` or worse, into `0%` after a coercion bug.
+
+```bash
+git grep -nE 'hb\.(cpuPercent|memoryPercent|gpuPercent|gpuMemoryMb)\.toFixed' \
+  -- resources/web
+git grep -nE '(tel|telemetry)\.(cpuPercent|memoryMbytes|memoryPercent|gpuPercent|gpuMemoryMb)\.toFixed' \
+  -- resources/web
+git grep -nE 'lastHeartbeat\.[a-zA-Z]+\.toFixed' \
+  -- resources/web
+```
+
+Expected: zero matches.
+
+Allowed (NOT a violation): `t.cpuPercent.toFixed(0) + '%'`, `t.memoryPercent.toFixed(0) + '%'`, `t.diskPercent.toFixed(0) + '%'` where `t` is the legacy `HostTelemetrySnapshot`. Host metrics are PDH-derived (directly measured), so `0%` is genuinely "idle". The `-1.0` sentinel applies only to client-supplied / worker-reported telemetry.
+
+### 8.2 No legacy hardcoded surface IDs in `index.html` (PHASE-09)
+
+```bash
+git grep -nE 'id="(telemetryGrid|endpointTable)"' \
+  -- resources/web/index.html
+```
+
+Expected: zero matches. Forsetti compliance also enforces this; the grep is the second line of defense.
+
+### 8.3 No provider-era residue in `app.js` (PHASE-09 reaffirmation of PHASE-01)
+
+```bash
+git grep -nE 'renderSignInCards|/api/providers|dashboard-clu|clu-nav|clu-surface' \
+  -- resources/web/app.js
+```
+
+Expected: zero matches. ADR-001 §1 + ADR-002 §1 forbid provider-era browser surfaces; PHASE-05 forbade hardcoded CLU bootstrap. The Forsetti compliance script asserts this; this grep mirrors the assertion.
+
+### 8.4 Dashboard must not call removed routes (PHASE-09)
+
+```bash
+git grep -nE "fetch\\(['\"]/api/providers" \
+  -- resources/web
+git grep -nE "loadJson\\(['\"]/api/providers" \
+  -- resources/web
+```
+
+Expected: zero matches. Provider-era routes are gone; any reintroduction is a regression.
+
+---
+
 ## Maintenance
 
 This list is updated at the end of each phase to reflect:

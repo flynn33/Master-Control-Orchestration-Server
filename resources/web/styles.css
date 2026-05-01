@@ -1372,3 +1372,149 @@ dialog:focus-visible {
 @media (max-width: 1100px) {
   .clients-shell { grid-template-columns: 1fr; }
 }
+
+/* PHASE-09 gateway-first panels */
+
+.gateway-grid,
+.activity-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+}
+.gateway-grid .wide,
+.activity-grid .wide { grid-column: span 3; }
+
+.pools-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+}
+.pool-card { padding: 18px; }
+.pool-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 12px;
+}
+.pool-card-policy {
+  display: flex;
+  gap: 14px;
+}
+.pool-policy-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+  font-size: 0.78rem;
+}
+.pool-policy-cell span {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.62rem;
+}
+.pool-policy-cell strong {
+  color: var(--text);
+  font-size: 1.08rem;
+}
+.pool-card-meter {
+  margin: 12px 0 14px 0;
+}
+.meter-bar {
+  width: 100%;
+  height: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.meter-fill {
+  height: 100%;
+  transition: width 240ms ease-out;
+}
+.meter-fill.ok   { background: linear-gradient(90deg, rgba(91, 255, 179, 0.9), rgba(0, 242, 255, 0.9)); }
+.meter-fill.warn { background: linear-gradient(90deg, rgba(255, 200, 100, 0.9), rgba(255, 160, 80, 0.9)); }
+.meter-fill.bad  { background: linear-gradient(90deg, rgba(255, 122, 144, 0.9), rgba(255, 90, 110, 0.95)); }
+.pool-card-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+}
+.pool-leases-details {
+  margin-top: 12px;
+}
+.pool-leases-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+}
+
+.onboarding-panel { padding: 22px; }
+.onboarding-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.onboarding-summary {
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  background: rgba(0, 242, 255, 0.04);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+}
+.onboarding-instructions {
+  padding-left: 22px;
+  line-height: 1.55;
+}
+.onboarding-snippet {
+  margin: 12px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
+}
+.onboarding-snippet summary {
+  cursor: pointer;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.onboarding-code {
+  margin: 10px 0;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+.onboarding-caveats {
+  padding-left: 22px;
+  color: var(--muted);
+}
+
+.discovery-doc { padding: 22px; }
+.discovery-doc h3 { margin-top: 18px; }
+
+.activity-row[data-tone="warning"]  { color: rgba(255, 200, 100, 0.92); }
+.activity-row[data-tone="error"]    { color: rgba(255, 140, 150, 0.95); }
+.activity-row[data-tone="critical"] {
+  color: rgba(255, 140, 150, 1);
+  font-weight: 600;
+}
+
+@media (max-width: 1100px) {
+  .gateway-grid,
+  .activity-grid { grid-template-columns: 1fr; }
+  .gateway-grid .wide,
+  .activity-grid .wide { grid-column: span 1; }
+  .pool-card-header { flex-direction: column; }
+  .pool-card-policy { align-self: flex-start; }
+}
