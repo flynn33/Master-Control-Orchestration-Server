@@ -191,6 +191,18 @@ public:
     virtual ~IPlatformServiceCatalogService() = default;
 };
 
+// PHASE-03 (ADR-002 §4): LAN Discovery Service. Owns DNS-SD/mDNS
+// registration of `_mcos._tcp.local`, `_mcos-mcp._tcp.local`, and
+// `_mcos-onboarding._tcp.local` plus composition of the discovery
+// document served at /.well-known/mcos.json and broadcast over UDP.
+class IDiscoveryService {
+public:
+    virtual DiscoveryDocument currentDocument() const = 0;
+    virtual void start() = 0;
+    virtual void stop() = 0;
+    virtual ~IDiscoveryService() = default;
+};
+
 // PHASE-02 (ADR-002 §2): MCP Gateway abstraction. Implementations include
 // `McpJungleGatewayAdapter` (supervises MCPJungle as a child process) and
 // `FakeMcpGatewayAdapter` (used by tests). PHASE-11 evaluates a native

@@ -769,6 +769,48 @@ struct DeregistrationResult final {
     std::string serverName;
 };
 
+// PHASE-03 (ADR-002 §4): MCOS Discovery Document. Served at
+// /.well-known/mcos.json and /api/discovery, broadcast via UDP beacon.
+// DNS-SD TXT advertisement carries a flattened subset of these fields.
+// Schema: docs/implementation/schemas/discovery-document.schema.json
+struct DiscoveryGateway final {
+    std::string type;        // "mcpjungle" | "native" | "fake"
+    std::string mcpUrl;      // e.g. http://192.168.1.10:8080/mcp
+    std::string healthUrl;   // e.g. http://192.168.1.10:8080/health
+    std::string state;       // GatewayState slug
+};
+
+struct DiscoveryOnboarding final {
+    std::string generic;      // /api/onboarding/generic
+    std::string claudeCode;   // /api/onboarding/claude-code
+    std::string codex;        // /api/onboarding/codex
+    std::string grok;         // /api/onboarding/grok
+    std::string chatgpt;      // /api/onboarding/chatgpt
+};
+
+struct DiscoveryGovernance final {
+    std::string bundleBaseUrl;   // /api/governance/bundles
+    std::string cluProfileUrl;   // /api/governance/profile
+    std::string decisionsUrl;    // /api/governance/decisions
+};
+
+struct DiscoveryDocument final {
+    std::string product = "MCOS";
+    std::string role = "mcp-gateway-host";
+    std::string version;
+    std::string instanceId;
+    std::string trust = "lan";
+    std::string auth = "none";
+    DiscoveryGateway gateway;
+    DiscoveryOnboarding onboarding;
+    DiscoveryGovernance governance;
+    std::vector<std::string> capabilities;
+    // Beacon-only metadata (omitted from /.well-known by convention).
+    std::string generatedAtUtc;
+    std::string serverIpAddress;
+    std::string instanceName;
+};
+
 struct DashboardSnapshot final {
     HostTelemetrySnapshot telemetry;
     std::vector<RuntimeEndpoint> endpoints;
@@ -785,10 +827,12 @@ struct DashboardSnapshot final {
     GatewayStatus mcpGatewayStatus;
     GatewayHealth mcpGatewayHealth;
     std::vector<McpToolDescriptor> mcpGatewayTools;
+    DiscoveryDocument discovery;
 };
 
 struct AppConfiguration final {
     std::string instanceName = "Master Control Orchestration Server";
+    std::string instanceId;          // PHASE-03: stable per-host id, generated on first run
     std::string bindAddress = "0.0.0.0";
     uint16_t browserPort = 7300;
     uint16_t beaconPort = 7301;
@@ -1407,11 +1451,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     surface,
     mcpGatewayStatus,
     mcpGatewayHealth,
-    mcpGatewayTools)
+    mcpGatewayTools,
+    discovery)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     AppConfiguration,
     instanceName,
+    instanceId,
     bindAddress,
     browserPort,
     beaconPort,
@@ -1493,5 +1539,42 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     succeeded,
     message,
     serverName)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    DiscoveryGateway,
+    type,
+    mcpUrl,
+    healthUrl,
+    state)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    DiscoveryOnboarding,
+    generic,
+    claudeCode,
+    codex,
+    grok,
+    chatgpt)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    DiscoveryGovernance,
+    bundleBaseUrl,
+    cluProfileUrl,
+    decisionsUrl)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    DiscoveryDocument,
+    product,
+    role,
+    version,
+    instanceId,
+    trust,
+    auth,
+    gateway,
+    onboarding,
+    governance,
+    capabilities,
+    generatedAtUtc,
+    serverIpAddress,
+    instanceName)
 
 } // namespace MasterControl

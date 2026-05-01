@@ -81,6 +81,18 @@ git grep -nE '\bAutoConnect\b' \
 
 Expected: zero matches.
 
+### 1.7a Discovery document integrity (PHASE-03, ADR-002 §4)
+
+The discovery document at `/.well-known/mcos.json` and `/api/discovery` MUST always advertise `auth=none` and `trust=lan`. Regression here would either reintroduce app-layer auth on the AI-client surface (ADR-001 §3 supersession violation) or weaken the LAN trust assertion.
+
+```bash
+git grep -nE 'document\.auth\s*=\s*"(?!none\b)' -- src/
+git grep -nE 'document\.trust\s*=\s*"(?!lan\b)' -- src/
+git grep -nE '"auth"\s*:\s*"(bearer|basic|cookie)"' -- src/
+```
+
+Expected: zero matches. The discovery document's `auth`/`trust` fields are constants — only `auth=none` and `trust=lan` are valid assignments in the gateway-first model.
+
 ### 1.7 Browser and shell provider-era surfaces
 
 ```bash

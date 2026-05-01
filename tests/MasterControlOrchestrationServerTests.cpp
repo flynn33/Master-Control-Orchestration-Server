@@ -547,6 +547,127 @@ bool testGatewayEnumRoundTrips() {
     return ok;
 }
 
+// PHASE-03 (ADR-002 §4): LAN Discovery Document tests. Pin the schema
+// shape, the required fields, and the JSON round-trip so /.well-known/mcos.json
+// stays compatible with discovery-document.schema.json.
+
+bool testDiscoveryDocumentDefaultShape() {
+    MasterControl::DiscoveryDocument doc;
+    bool ok = true;
+    ok &= expect(doc.product == "MCOS",
+                 "DiscoveryDocument default product is MCOS.");
+    ok &= expect(doc.role == "mcp-gateway-host",
+                 "DiscoveryDocument default role is mcp-gateway-host.");
+    ok &= expect(doc.trust == "lan",
+                 "DiscoveryDocument default trust is lan.");
+    ok &= expect(doc.auth == "none",
+                 "DiscoveryDocument default auth is none.");
+    return ok;
+}
+
+bool testDiscoveryDocumentJsonRoundTrip() {
+    MasterControl::DiscoveryDocument original;
+    original.version = "0.5.0";
+    original.instanceId = "mcos-test-id-001";
+    original.instanceName = "Test MCOS";
+    original.gateway.type = "mcpjungle";
+    original.gateway.mcpUrl = "http://192.168.1.10:8080/mcp";
+    original.gateway.healthUrl = "http://192.168.1.10:8080/health";
+    original.gateway.state = "running";
+    original.onboarding.generic = "http://192.168.1.10:7300/api/onboarding/generic";
+    original.onboarding.claudeCode = "http://192.168.1.10:7300/api/onboarding/claude-code";
+    original.onboarding.codex = "http://192.168.1.10:7300/api/onboarding/codex";
+    original.onboarding.grok = "http://192.168.1.10:7300/api/onboarding/grok";
+    original.onboarding.chatgpt = "http://192.168.1.10:7300/api/onboarding/chatgpt";
+    original.governance.bundleBaseUrl = "http://192.168.1.10:7300/api/governance/bundles";
+    original.governance.cluProfileUrl = "http://192.168.1.10:7300/api/governance/profile";
+    original.governance.decisionsUrl = "http://192.168.1.10:7300/api/governance/decisions";
+    original.capabilities = { "mcp-gateway", "mcpjungle-adapter", "dns-sd", "udp-beacon", "forsetti-governance", "clu" };
+    original.serverIpAddress = "192.168.1.10";
+    original.generatedAtUtc = "2026-05-01T00:00:00Z";
+
+    nlohmann::json serialized = original;
+    bool ok = true;
+    ok &= expect(serialized["product"].get<std::string>() == "MCOS",
+                 "Discovery JSON pins product=MCOS.");
+    ok &= expect(serialized["role"].get<std::string>() == "mcp-gateway-host",
+                 "Discovery JSON pins role=mcp-gateway-host.");
+    ok &= expect(serialized["trust"].get<std::string>() == "lan",
+                 "Discovery JSON pins trust=lan.");
+    ok &= expect(serialized["auth"].get<std::string>() == "none",
+                 "Discovery JSON pins auth=none.");
+    ok &= expect(serialized["gateway"]["mcpUrl"].get<std::string>() == "http://192.168.1.10:8080/mcp",
+                 "Discovery JSON exposes gateway.mcpUrl.");
+    ok &= expect(serialized["onboarding"]["claudeCode"].get<std::string>().find("/api/onboarding/claude-code") != std::string::npos,
+                 "Discovery JSON exposes claudeCode onboarding URL.");
+    ok &= expect(serialized["governance"]["bundleBaseUrl"].get<std::string>().find("/api/governance/bundles") != std::string::npos,
+                 "Discovery JSON exposes governance.bundleBaseUrl.");
+    ok &= expect(serialized["capabilities"].is_array() && !serialized["capabilities"].empty(),
+                 "Discovery JSON capabilities is a non-empty array.");
+
+    auto restored = serialized.get<MasterControl::DiscoveryDocument>();
+    ok &= expect(restored.gateway.mcpUrl == original.gateway.mcpUrl,
+                 "Discovery doc round-trips gateway.mcpUrl.");
+    ok &= expect(restored.onboarding.codex == original.onboarding.codex,
+                 "Discovery doc round-trips onboarding.codex.");
+    ok &= expect(restored.governance.cluProfileUrl == original.governance.cluProfileUrl,
+                 "Discovery doc round-trips governance.cluProfileUrl.");
+    ok &= expect(restored.capabilities.size() == original.capabilities.size(),
+                 "Discovery doc round-trips capabilities count.");
+    ok &= expect(restored.instanceId == original.instanceId,
+                 "Discovery doc round-trips instanceId.");
+    return ok;
+}
+
+bool testWellKnownDocumentMatchesSchemaRequiredFields() {
+    // The /.well-known/mcos.json shape strips beacon-only fields. The
+    // remaining required keys per discovery-document.schema.json are:
+    // product, role, instanceId, trust, auth, gateway, onboarding,
+    // governance, capabilities. This test pins the JSON-after-erase
+    // matches that requirement set.
+    MasterControl::DiscoveryDocument doc;
+    doc.instanceId = "mcos-test";
+    doc.version = "0.5.0";
+    doc.gateway.type = "mcpjungle";
+    doc.gateway.mcpUrl = "http://127.0.0.1:8080/mcp";
+    doc.capabilities = { "mcp-gateway" };
+
+    nlohmann::json wellKnown = doc;
+    wellKnown.erase("generatedAtUtc");
+    wellKnown.erase("serverIpAddress");
+    wellKnown.erase("instanceName");
+
+    const std::vector<std::string> required = {
+        "product", "role", "instanceId", "trust", "auth",
+        "gateway", "onboarding", "governance", "capabilities"
+    };
+    bool ok = true;
+    for (const auto& key : required) {
+        ok &= expect(wellKnown.contains(key),
+                     "/.well-known/mcos.json contains required key (per schema).");
+    }
+    ok &= expect(!wellKnown.contains("generatedAtUtc"),
+                 "/.well-known/mcos.json strips beacon-only generatedAtUtc.");
+    ok &= expect(!wellKnown.contains("serverIpAddress"),
+                 "/.well-known/mcos.json strips beacon-only serverIpAddress.");
+    ok &= expect(!wellKnown.contains("instanceName"),
+                 "/.well-known/mcos.json strips beacon-only instanceName.");
+    return ok;
+}
+
+bool testInstanceIdGeneration() {
+    const auto first = MasterControl::buildDefaultConfiguration();
+    const auto second = MasterControl::buildDefaultConfiguration();
+    bool ok = true;
+    ok &= expect(!first.instanceId.empty(),
+                 "Default configuration generates a non-empty instanceId.");
+    ok &= expect(first.instanceId.rfind("mcos-", 0) == 0,
+                 "Generated instanceId is prefixed with 'mcos-' for grep-friendly identification.");
+    ok &= expect(first.instanceId != second.instanceId,
+                 "Generated instanceId is unique per configuration build (UuidCreate-backed).");
+    return ok;
+}
+
 bool testGatewayConfigJsonRoundTrip() {
     MasterControl::McpGatewayConfiguration original;
     original.type = MasterControl::GatewayType::MCPJungle;
@@ -715,5 +836,10 @@ int main() {
     ok &= testRealAdapterRegistrationSurvivesAcrossStartStop();
     ok &= testGatewayEnumRoundTrips();
     ok &= testGatewayConfigJsonRoundTrip();
+    // PHASE-03 LAN discovery tests
+    ok &= testDiscoveryDocumentDefaultShape();
+    ok &= testDiscoveryDocumentJsonRoundTrip();
+    ok &= testWellKnownDocumentMatchesSchemaRequiredFields();
+    ok &= testInstanceIdGeneration();
     return ok ? 0 : 1;
 }

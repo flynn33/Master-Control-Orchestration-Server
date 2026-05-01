@@ -10,6 +10,7 @@
 #include <iphlpapi.h>
 #include <ShlObj.h>
 #include <Windows.h>
+#include <rpc.h>
 
 #include <algorithm>
 #include <array>
@@ -387,11 +388,36 @@ std::vector<RuntimeEndpoint> buildDefaultSeededEndpoints() {
     return buildDefaultSeededEndpointsForHost(detectLocalEnvironment().preferredBindAddress);
 }
 
+namespace {
+
+// PHASE-03 (ADR-002 §4): generate a stable instance id for the discovery
+// document. Uses Win32 UuidCreate (rpcrt4) and lowercases the canonical
+// 36-char form. Operators can override by editing AppConfiguration.instanceId
+// in mcos.json — the field round-trips like every other configuration key.
+std::string generateInstanceIdUtf8() {
+    UUID uuid{};
+    if (UuidCreate(&uuid) != RPC_S_OK) {
+        return "";
+    }
+    RPC_CSTR uuidString = nullptr;
+    if (UuidToStringA(&uuid, &uuidString) != RPC_S_OK || uuidString == nullptr) {
+        return "";
+    }
+    std::string canonical(reinterpret_cast<char*>(uuidString));
+    RpcStringFreeA(&uuidString);
+    std::transform(canonical.begin(), canonical.end(), canonical.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return "mcos-" + canonical;
+}
+
+} // namespace
+
 AppConfiguration buildDefaultConfiguration() {
     const auto environment = detectLocalEnvironment();
 
     AppConfiguration configuration;
     configuration.instanceName = "Master Control Orchestration Server";
+    configuration.instanceId = generateInstanceIdUtf8();
     configuration.bindAddress = "0.0.0.0";
     configuration.browserPort = 7300;
     configuration.beaconPort = 7301;

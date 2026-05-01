@@ -32,6 +32,7 @@ target_link_libraries(MasterControlApp
         shell32
         userenv
         wtsapi32
+        rpcrt4
 )
 
 target_compile_definitions(MasterControlApp PUBLIC

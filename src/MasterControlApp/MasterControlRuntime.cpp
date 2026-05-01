@@ -22,6 +22,7 @@
 #include "MasterControl/ILanClientAccessService.h"
 #include "MasterControl/MasterControlDefaults.h"
 #include "MasterControl/MasterControlModules.h"
+#include "MasterControl/MasterControlVersion.h"
 #include "MasterControl/McpGatewayAdapters.h"
 
 #include <winsock2.h>
@@ -7131,14 +7132,283 @@ private:
     std::thread worker_;
 };
 
+// PHASE-03 (ADR-002 §4): LAN Discovery Service. Composes the gateway-first
+// discovery document, registers the three MCOS DNS-SD service types
+// (`_mcos._tcp`, `_mcos-mcp._tcp`, `_mcos-onboarding._tcp`), and exposes the
+// document to BeaconService for UDP broadcast and to the admin API for
+// `/.well-known/mcos.json` and `/api/discovery` consumption.
+class DiscoveryService final : public IDiscoveryService {
+public:
+    DiscoveryService(std::shared_ptr<IConfigurationService> configurationService,
+                     std::shared_ptr<ITelemetryService> telemetryService,
+                     std::shared_ptr<IMcpGateway> mcpGateway)
+        : configurationService_(std::move(configurationService))
+        , telemetryService_(std::move(telemetryService))
+        , mcpGateway_(std::move(mcpGateway)) {}
+
+    ~DiscoveryService() override {
+        stop();
+    }
+
+    DiscoveryDocument currentDocument() const override {
+        const auto configuration = configurationService_->current();
+        const auto snapshot = telemetryService_->captureSnapshot();
+
+        std::string lanIp = snapshot.primaryIpAddress;
+        if (lanIp.empty() || lanIp == "0.0.0.0") {
+            lanIp = configuration.bindAddress;
+        }
+        if (lanIp.empty() || lanIp == "0.0.0.0") {
+            lanIp = "127.0.0.1";
+        }
+
+        const std::string adminBase = "http://" + lanIp + ":" + std::to_string(configuration.browserPort);
+
+        DiscoveryDocument document;
+        document.product = "MCOS";
+        document.role = "mcp-gateway-host";
+        document.version = MASTERCONTROL_VERSION;
+        document.instanceId = configuration.instanceId.empty()
+            ? std::string("mcos-unidentified")
+            : configuration.instanceId;
+        document.instanceName = configuration.instanceName;
+        document.trust = "lan";
+        document.auth = "none";
+
+        const auto& gatewayConfig = configuration.mcpGateway;
+        std::string gatewayHost = gatewayConfig.listenHost;
+        if (gatewayHost.empty() || gatewayHost == "0.0.0.0") {
+            gatewayHost = lanIp;
+        }
+        document.gateway.type = mcpGateway_ ? mcpGateway_->AdapterType() : to_string(gatewayConfig.type);
+        document.gateway.mcpUrl = mcpGateway_ ? mcpGateway_->GatewayMcpUrl()
+                                              : ("http://" + gatewayHost + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.mcpPath);
+        document.gateway.healthUrl = "http://" + gatewayHost + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.healthPath;
+        document.gateway.state = mcpGateway_ ? to_string(mcpGateway_->CurrentStatus().state) : "disabled";
+
+        document.onboarding.generic = adminBase + "/api/onboarding/generic";
+        document.onboarding.claudeCode = adminBase + "/api/onboarding/claude-code";
+        document.onboarding.codex = adminBase + "/api/onboarding/codex";
+        document.onboarding.grok = adminBase + "/api/onboarding/grok";
+        document.onboarding.chatgpt = adminBase + "/api/onboarding/chatgpt";
+
+        document.governance.bundleBaseUrl = adminBase + "/api/governance/bundles";
+        document.governance.cluProfileUrl = adminBase + "/api/governance/profile";
+        document.governance.decisionsUrl = adminBase + "/api/governance/decisions";
+
+        document.capabilities = {
+            "mcp-gateway",
+            std::string(document.gateway.type) + "-adapter",
+            "dns-sd",
+            "udp-beacon",
+            "forsetti-governance",
+            "clu"
+        };
+        document.serverIpAddress = lanIp;
+        document.generatedAtUtc = timestampNowUtc();
+        return document;
+    }
+
+    void start() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (started_) {
+            return;
+        }
+        started_ = true;
+        registerAllInstancesLocked();
+    }
+
+    void stop() override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!started_) {
+            return;
+        }
+        deregisterAllInstancesLocked();
+        started_ = false;
+    }
+
+    // Public list of TXT key/value pairs for the DNS-SD records. Test code
+    // and the `/api/discovery` route both consume this for completeness.
+    std::map<std::string, std::string> dnsTxtFields() const {
+        const auto configuration = configurationService_->current();
+        const auto& gatewayConfig = configuration.mcpGateway;
+        std::map<std::string, std::string> txt;
+        txt["product"] = "MCOS";
+        txt["role"] = "mcp-gateway";
+        txt["gateway"] = mcpGateway_ ? mcpGateway_->AdapterType() : to_string(gatewayConfig.type);
+        txt["mcp_path"] = gatewayConfig.mcpPath;
+        txt["config_path"] = "/api/onboarding";
+        txt["governance_path"] = "/api/governance/bundles";
+        txt["protovers"] = "2025-03-26";
+        txt["auth"] = "none";
+        txt["trust"] = "lan";
+        txt["clu"] = "true";
+        txt["forsetti"] = "true";
+        return txt;
+    }
+
+private:
+    struct Registration final {
+        std::string serviceType;
+        std::string instanceLabel;
+        uint16_t port = 0;
+        DNS_SERVICE_REGISTER_REQUEST request{};
+        PDNS_SERVICE_INSTANCE instance = nullptr;
+        bool registered = false;
+        std::string status; // "advertised" | "registration_failed" | "disabled"
+        std::string lastError;
+    };
+
+    void registerAllInstancesLocked() {
+        const auto configuration = configurationService_->current();
+        const auto snapshot = telemetryService_->captureSnapshot();
+
+        const std::string adminInstance = configuration.instanceName;
+        registrations_.clear();
+
+        struct Plan {
+            const char* serviceType;
+            std::string instanceSuffix;
+            uint16_t port;
+        };
+        const Plan plans[] = {
+            { "_mcos._tcp.local",            std::string{},               configuration.browserPort },
+            { "_mcos-mcp._tcp.local",        std::string(" MCP"),         configuration.mcpGateway.listenPort },
+            { "_mcos-onboarding._tcp.local", std::string(" Onboarding"),  configuration.browserPort }
+        };
+
+        for (const auto& plan : plans) {
+            Registration registration;
+            registration.serviceType = plan.serviceType;
+            registration.instanceLabel = adminInstance + plan.instanceSuffix;
+            registration.port = plan.port;
+            registerOneLocked(registration, snapshot);
+            registrations_.push_back(std::move(registration));
+        }
+    }
+
+    void registerOneLocked(Registration& registration, const HostTelemetrySnapshot& snapshot) {
+        const auto configuration = configurationService_->current();
+        const auto txt = dnsTxtFields();
+
+        std::vector<std::wstring> keysWide;
+        std::vector<std::wstring> valuesWide;
+        keysWide.reserve(txt.size());
+        valuesWide.reserve(txt.size());
+        for (const auto& [key, value] : txt) {
+            keysWide.push_back(wideFromUtf8(key));
+            valuesWide.push_back(wideFromUtf8(value));
+        }
+        std::vector<PCWSTR> keyPointers;
+        std::vector<PCWSTR> valuePointers;
+        keyPointers.reserve(keysWide.size());
+        valuePointers.reserve(valuesWide.size());
+        for (size_t i = 0; i < keysWide.size(); ++i) {
+            keyPointers.push_back(keysWide[i].c_str());
+            valuePointers.push_back(valuesWide[i].c_str());
+        }
+
+        const auto instanceName = wideFromUtf8(registration.instanceLabel + "." + registration.serviceType);
+        const auto hostName = wideFromUtf8(dotLocalHostName(snapshot.hostName));
+
+        std::string lanIp = snapshot.primaryIpAddress;
+        if (lanIp.empty() || lanIp == "0.0.0.0") {
+            lanIp = configuration.bindAddress;
+        }
+        if (lanIp.empty() || lanIp == "0.0.0.0") {
+            lanIp = "127.0.0.1";
+        }
+
+        IP4_ADDRESS ipv4Address = 0;
+        PIP4_ADDRESS ipv4Pointer = nullptr;
+        IN_ADDR parsedV4{};
+        IP6_ADDRESS ipv6Address{};
+        PIP6_ADDRESS ipv6Pointer = nullptr;
+        IN6_ADDR parsedV6{};
+        const auto wideIp = wideFromUtf8(lanIp);
+        if (InetPtonW(AF_INET, wideIp.c_str(), &parsedV4) == 1) {
+            ipv4Address = parsedV4.S_un.S_addr;
+            ipv4Pointer = &ipv4Address;
+        } else if (InetPtonW(AF_INET6, wideIp.c_str(), &parsedV6) == 1) {
+            std::memcpy(&ipv6Address, &parsedV6, sizeof(ipv6Address));
+            ipv6Pointer = &ipv6Address;
+        } else {
+            parsedV4.S_un.S_addr = htonl(INADDR_LOOPBACK);
+            ipv4Address = parsedV4.S_un.S_addr;
+            ipv4Pointer = &ipv4Address;
+        }
+
+        registration.instance = DnsServiceConstructInstance(
+            instanceName.c_str(),
+            hostName.c_str(),
+            ipv4Pointer, ipv6Pointer,
+            registration.port,
+            0, 0,
+            static_cast<DWORD>(keyPointers.size()),
+            keyPointers.empty() ? nullptr : keyPointers.data(),
+            valuePointers.empty() ? nullptr : valuePointers.data());
+
+        if (registration.instance == nullptr) {
+            registration.status = "registration_failed";
+            registration.lastError = "DnsServiceConstructInstance returned NULL";
+            return;
+        }
+
+        DNS_SERVICE_REGISTER_REQUEST request{};
+        request.Version = 1;
+        request.InterfaceIndex = 0;
+        request.pServiceInstance = registration.instance;
+        request.pRegisterCompletionCallback = nullptr;
+        request.pQueryContext = nullptr;
+        request.hCredentials = nullptr;
+        request.unicastEnabled = FALSE;
+
+        const auto status = DnsServiceRegister(&request, nullptr);
+        registration.request = request;
+        registration.registered = (status == ERROR_SUCCESS);
+        if (registration.registered) {
+            registration.status = "advertised";
+        } else {
+            registration.status = "registration_failed";
+            char errBuf[32]{};
+            std::snprintf(errBuf, sizeof(errBuf), "0x%08X", static_cast<unsigned>(status));
+            registration.lastError = errBuf;
+        }
+    }
+
+    void deregisterAllInstancesLocked() {
+        for (auto& registration : registrations_) {
+            if (registration.instance == nullptr) {
+                continue;
+            }
+            if (registration.registered) {
+                DnsServiceDeRegister(&registration.request, nullptr);
+                registration.registered = false;
+            }
+            DnsServiceFreeInstance(registration.instance);
+            registration.instance = nullptr;
+        }
+        registrations_.clear();
+    }
+
+    std::shared_ptr<IConfigurationService> configurationService_;
+    std::shared_ptr<ITelemetryService> telemetryService_;
+    std::shared_ptr<IMcpGateway> mcpGateway_;
+    mutable std::mutex mutex_;
+    bool started_ = false;
+    std::vector<Registration> registrations_;
+};
+
 class BeaconService final : public IBeaconService {
 public:
     BeaconService(std::shared_ptr<IConfigurationService> configurationService,
                   std::shared_ptr<ITelemetryService> telemetryService,
-                  std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService)
+                  std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService,
+                  std::shared_ptr<DiscoveryService> discoveryService)
         : configurationService_(std::move(configurationService))
         , telemetryService_(std::move(telemetryService))
-        , platformServiceCatalogService_(std::move(platformServiceCatalogService)) {}
+        , platformServiceCatalogService_(std::move(platformServiceCatalogService))
+        , discoveryService_(std::move(discoveryService)) {}
 
     BeaconAdvertisement currentAdvertisement() const override {
         const auto configuration = configurationService_->current();
@@ -7164,6 +7434,7 @@ private:
     std::shared_ptr<IConfigurationService> configurationService_;
     std::shared_ptr<ITelemetryService> telemetryService_;
     std::shared_ptr<IPlatformServiceCatalogService> platformServiceCatalogService_;
+    std::shared_ptr<DiscoveryService> discoveryService_;
     std::atomic<bool> running_{ false };
     std::thread worker_;
 };
@@ -7195,7 +7466,14 @@ void BeaconService::start() {
             address.sin_port = htons(configuration.beaconPort);
             address.sin_addr.s_addr = INADDR_BROADCAST;
 
-            const auto payload = nlohmann::json(currentAdvertisement()).dump();
+            // PHASE-03: UDP beacon now broadcasts the gateway-first
+            // DiscoveryDocument JSON instead of the legacy provider-era
+            // BeaconAdvertisement. /api/beacon still returns the legacy
+            // shape for browsers that haven't migrated; /api/discovery
+            // and /.well-known/mcos.json are the primary surfaces.
+            const auto payload = discoveryService_
+                ? nlohmann::json(discoveryService_->currentDocument()).dump()
+                : nlohmann::json(currentAdvertisement()).dump();
             sendto(socketHandle, payload.c_str(), static_cast<int>(payload.size()), 0, reinterpret_cast<sockaddr*>(&address), sizeof(address));
             std::this_thread::sleep_for(std::chrono::seconds(configuration.beaconBroadcastIntervalSeconds));
         }
@@ -7227,7 +7505,8 @@ public:
                     std::shared_ptr<IExportService> exportService,
                     std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService,
                     std::shared_ptr<IForsettiSurfaceService> surfaceService,
-                    std::shared_ptr<IMcpGateway> mcpGateway)
+                    std::shared_ptr<IMcpGateway> mcpGateway,
+                    std::shared_ptr<IDiscoveryService> discoveryService)
         : telemetryService_(std::move(telemetryService))
         , inventoryService_(std::move(inventoryService))
         , configurationService_(std::move(configurationService))
@@ -7242,7 +7521,8 @@ public:
         , exportService_(std::move(exportService))
         , commandLogicUnitService_(std::move(commandLogicUnitService))
         , surfaceService_(std::move(surfaceService))
-        , mcpGateway_(std::move(mcpGateway)) {}
+        , mcpGateway_(std::move(mcpGateway))
+        , discoveryService_(std::move(discoveryService)) {}
 
     DashboardSnapshot snapshot() override {
         // Use synchronous refresh so the snapshot always reflects the latest
@@ -7273,6 +7553,9 @@ public:
             snapshot.mcpGatewayStatus = mcpGateway_->CurrentStatus();
             snapshot.mcpGatewayHealth = mcpGateway_->Probe();
             snapshot.mcpGatewayTools = mcpGateway_->ListTools();
+        }
+        if (discoveryService_) {
+            snapshot.discovery = discoveryService_->currentDocument();
         }
         for (const auto& gateway : snapshot.platformGateways) {
             snapshot.endpoints.push_back(RuntimeEndpoint{
@@ -7443,6 +7726,7 @@ private:
     std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService_;
     std::shared_ptr<IForsettiSurfaceService> surfaceService_;
     std::shared_ptr<IMcpGateway> mcpGateway_;
+    std::shared_ptr<IDiscoveryService> discoveryService_;
 };
 
 struct HttpRequest final {
@@ -7850,6 +8134,7 @@ private:
     std::shared_ptr<IForsettiSurfaceService> surfaceService_;
     std::shared_ptr<IBeaconService> beaconService_;
     std::shared_ptr<IMcpGateway> mcpGateway_;
+    std::shared_ptr<IDiscoveryService> discoveryService_;
     std::shared_ptr<IAdminApiService> adminApiService_;
     std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager_;
     std::shared_ptr<Forsetti::IEntitlementProvider> entitlementProvider_;
@@ -7888,7 +8173,6 @@ bool MasterControlApplication::Impl::initialize() {
         platformServiceCatalogService_,
         platformGovernanceToolService_);
     controlSurfaceService_ = std::make_shared<ModuleControlSurfaceService>();
-    beaconService_ = std::make_shared<BeaconService>(configurationService_, telemetryService_, platformServiceCatalogService_);
     registerConfigurationDefaults();
     createForsettiRuntime();
 
@@ -7897,6 +8181,14 @@ bool MasterControlApplication::Impl::initialize() {
     // mcpGateway.enabled=true once an MCPJungle binary is installed.
     mcpGateway_ = std::make_shared<McpJungleGatewayAdapter>(
         configurationService_->current().mcpGateway);
+
+    // PHASE-03 (ADR-002 §4): construct the LAN Discovery Service that owns
+    // DNS-SD registration and the canonical DiscoveryDocument shape.
+    auto discoveryService = std::make_shared<DiscoveryService>(
+        configurationService_, telemetryService_, mcpGateway_);
+    discoveryService_ = discoveryService;
+    beaconService_ = std::make_shared<BeaconService>(
+        configurationService_, telemetryService_, platformServiceCatalogService_, discoveryService);
 
     // PHASE-02: register one stable logical MCP endpoint with the gateway
     // adapter so subsequent phases (PHASE-06 worker pools, PHASE-07 lease
@@ -7929,7 +8221,8 @@ bool MasterControlApplication::Impl::initialize() {
         exportService_,
         commandLogicUnitService_,
         surfaceService_,
-        mcpGateway_);
+        mcpGateway_,
+        discoveryService_);
 
     runtime_->boot();
     if (entitlementProvider_) {
@@ -7942,6 +8235,9 @@ bool MasterControlApplication::Impl::initialize() {
     }
     activateDefaultModules();
 
+    if (discoveryService_) {
+        discoveryService_->start();
+    }
     if (configurationService_->current().beaconEnabled) {
         beaconService_->start();
     }
@@ -7974,6 +8270,9 @@ void MasterControlApplication::Impl::shutdown() {
     }
     if (beaconService_) {
         beaconService_->stop();
+    }
+    if (discoveryService_) {
+        discoveryService_->stop();
     }
     if (mcpGateway_) {
         mcpGateway_->Stop();
@@ -8536,6 +8835,26 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "GET" && request.path == "/api/beacon") {
             return jsonResponse(beaconService_->currentAdvertisement());
+        }
+        // -------------------------------------------------------------------
+        // PHASE-03 (ADR-002 §4): LAN discovery surface.
+        // /.well-known/mcos.json: strict schema-conformant discovery doc;
+        //   beacon-only fields (generatedAtUtc, serverIpAddress, instanceName)
+        //   stripped per docs/implementation/MCP-GATEWAY-DISCOVERY-CONTRACT.md.
+        // /api/discovery: full document including beacon metadata for
+        //   diagnostics and dashboard consumption.
+        if (request.method == "GET" && request.path == "/.well-known/mcos.json") {
+            if (!discoveryService_) {
+                return jsonResponse(nlohmann::json::object());
+            }
+            nlohmann::json document = discoveryService_->currentDocument();
+            document.erase("generatedAtUtc");
+            document.erase("serverIpAddress");
+            document.erase("instanceName");
+            return jsonResponse(document);
+        }
+        if (request.method == "GET" && request.path == "/api/discovery") {
+            return jsonResponse(discoveryService_ ? discoveryService_->currentDocument() : DiscoveryDocument{});
         }
         // -------------------------------------------------------------------
         // /api/gateway/* — MCP Gateway adapter surface (PHASE-02 of ADR-002).
