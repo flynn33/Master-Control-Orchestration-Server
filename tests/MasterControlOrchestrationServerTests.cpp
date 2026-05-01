@@ -551,6 +551,96 @@ bool testGatewayEnumRoundTrips() {
 // shape, the required fields, and the JSON round-trip so /.well-known/mcos.json
 // stays compatible with discovery-document.schema.json.
 
+// PHASE-05 (ADR-002 §6): Governance bundle shape tests. The runtime's
+// GovernanceBundleService lives inside the MasterControlRuntime translation
+// unit; these tests pin the public schema contract (per
+// docs/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md) by constructing
+// GovernanceBundle values directly and asserting their JSON shape.
+
+bool testGovernanceBundleJsonRequiredFields() {
+    MasterControl::GovernanceBundle bundle;
+    bundle.platform = "windows";
+    bundle.forsettiFrameworkVersion = "1.0";
+    bundle.agenticCodingFrameworkVersion = "1.0";
+    bundle.cluSchemaVersion = "1.0";
+    bundle.instructionsMarkdown = "# Test\n";
+    bundle.rulesJson = nlohmann::json::object();
+    bundle.decisionPolicy = "Mutating actions pass through CLU.";
+    bundle.checksum = "sha256:0000";
+    bundle.generatedAt = "2026-05-01T00:00:00Z";
+
+    nlohmann::json serialized = bundle;
+    bool ok = true;
+    const std::vector<std::string> required = {
+        "platform", "forsettiFrameworkVersion", "agenticCodingFrameworkVersion",
+        "cluSchemaVersion", "instructionsMarkdown", "rulesJson",
+        "decisionPolicy", "checksum", "generatedAt"
+    };
+    for (const auto& key : required) {
+        ok &= expect(serialized.contains(key),
+                     "Governance bundle JSON includes contract-required key.");
+    }
+    ok &= expect(serialized["platform"].get<std::string>() == "windows",
+                 "Bundle serializes platform.");
+    ok &= expect(serialized["checksum"].get<std::string>().rfind("sha256:", 0) == 0,
+                 "Checksum is sha256-prefixed.");
+    return ok;
+}
+
+bool testGovernanceBundleAllPlatformsRecognized() {
+    bool ok = true;
+    for (const std::string& platform : { "windows", "macos", "ios" }) {
+        MasterControl::GovernanceBundle bundle;
+        bundle.platform = platform;
+        nlohmann::json serialized = bundle;
+        ok &= expect(serialized["platform"].get<std::string>() == platform,
+                     "Each contract-supported platform serializes literally.");
+    }
+    return ok;
+}
+
+bool testGovernanceProfileSummaryJsonRoundTrip() {
+    MasterControl::GovernanceProfileSummary summary;
+    summary.unitName = "Command Logic Unit";
+    summary.doctrine = "Governance is not assumed.";
+    summary.cluSchemaVersion = "1.0";
+    summary.documentIds = { "clu-constitution", "clu-shared-fabric" };
+    summary.roleIds = { "operator", "lan-client" };
+    summary.ruleIds = { "no-untracked-mutations" };
+    summary.generatedAt = "2026-05-01T00:00:00Z";
+
+    nlohmann::json serialized = summary;
+    bool ok = true;
+    ok &= expect(serialized["unitName"].get<std::string>() == "Command Logic Unit",
+                 "Profile summary serializes unitName.");
+    ok &= expect(serialized["documentIds"].is_array() && serialized["documentIds"].size() == 2,
+                 "Profile summary documentIds is a non-empty array.");
+
+    auto restored = serialized.get<MasterControl::GovernanceProfileSummary>();
+    ok &= expect(restored.documentIds.size() == 2,
+                 "Profile summary round-trips documentIds.");
+    ok &= expect(restored.roleIds == summary.roleIds,
+                 "Profile summary round-trips roleIds verbatim.");
+    return ok;
+}
+
+bool testOnboardingProfileLinksToGovernanceBundleUrl() {
+    // The onboarding profile must always carry a governanceBundleUrl
+    // (PHASE-04 schema-required field). PHASE-05 promotes that URL to a
+    // real /api/governance/bundles/{platform} endpoint.
+    MasterControl::OnboardingProfile profile;
+    profile.clientType = "claude-code";
+    profile.gatewayMcpUrl = "http://192.168.1.10:8080/mcp";
+    profile.governanceBundleUrl = "http://192.168.1.10:7300/api/governance/bundles/windows";
+    nlohmann::json serialized = profile;
+    bool ok = true;
+    ok &= expect(serialized.contains("governanceBundleUrl"),
+                 "Onboarding profile JSON exposes governanceBundleUrl.");
+    ok &= expect(serialized["governanceBundleUrl"].get<std::string>().find("/api/governance/bundles/") != std::string::npos,
+                 "governanceBundleUrl points at the per-platform PHASE-05 endpoint.");
+    return ok;
+}
+
 // PHASE-04 (ADR-002 §5): Onboarding profile shape tests. The runtime's
 // OnboardingProfileService lives inside the MasterControlRuntime translation
 // unit; these tests pin the public schema contract by constructing
@@ -924,5 +1014,10 @@ int main() {
     ok &= testOnboardingProfileJsonRequiredFields();
     ok &= testOnboardingConfigSnippetRoundTrip();
     ok &= testOnboardingProfileTransportEnum();
+    // PHASE-05 governance bundle tests
+    ok &= testGovernanceBundleJsonRequiredFields();
+    ok &= testGovernanceBundleAllPlatformsRecognized();
+    ok &= testGovernanceProfileSummaryJsonRoundTrip();
+    ok &= testOnboardingProfileLinksToGovernanceBundleUrl();
     return ok ? 0 : 1;
 }

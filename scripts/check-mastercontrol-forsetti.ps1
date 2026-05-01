@@ -153,15 +153,27 @@ if (-not (Test-Path $webAppPath)) {
     $violations += "resources/web/app.js is missing."
 } else {
     $webApp = Get-Content $webAppPath -Raw
-    Assert-Contains $webApp 'ensureBootstrapSurface' "resources/web/app.js must bootstrap the Forsetti browser surface."
-    Assert-Contains $webApp 'renderSurfaceNavigation' "resources/web/app.js must rebuild browser navigation from Forsetti surface state."
-    Assert-Contains $webApp 'renderSurfaceToolbar' "resources/web/app.js must rebuild the browser toolbar from Forsetti surface state."
-    Assert-Contains $webApp 'resolvePrimaryViewForDestination' "resources/web/app.js must resolve browser content from Forsetti view injections."
-    Assert-Contains $webApp 'openOverlayRoute' "resources/web/app.js must host Forsetti overlay routes."
-    Assert-Contains $webApp 'CommandLogicUnitSectionView' "resources/web/app.js must expose a renderer for the CLU view when Forsetti publishes it."
+
+    # PHASE-05 (ADR-002 §6) compliance update: ADR-001 §1's browser
+    # rebuild dropped the provider-era Forsetti surface bootstrap in
+    # favor of a hand-authored LAN-client dashboard. The earlier
+    # Forsetti-bootstrap assertions (ensureBootstrapSurface,
+    # renderSurfaceNavigation, renderSurfaceToolbar,
+    # resolvePrimaryViewForDestination, openOverlayRoute,
+    # CommandLogicUnitSectionView) are retired here. PHASE-09 (Tron
+    # dashboard realignment) will reintroduce a gateway-first dashboard;
+    # at that point, the assertions for the new surface land here.
+    #
+    # Until then, the rule is content-shape: app.js must remain the
+    # post-ADR-001 LAN-client dashboard (no Forsetti-surface hardcoding,
+    # no provider-era surfaces).
     Assert-NotContains $webApp "dashboard-clu" "resources/web/app.js must not hardcode the CLU toolbar item in bootstrap surface data."
     Assert-NotContains $webApp "clu-nav" "resources/web/app.js must not hardcode the CLU navigation pointer in bootstrap surface data."
     Assert-NotContains $webApp "clu-surface" "resources/web/app.js must not hardcode the CLU view injection in bootstrap surface data."
+
+    # PHASE-01 supersession: provider-era browser surfaces stay forbidden.
+    Assert-NotContains $webApp "renderSignInCards" "resources/web/app.js must not host the provider-era sign-in cards (PHASE-01)."
+    Assert-NotContains $webApp "/api/providers" "resources/web/app.js must not call the provider-era API."
 }
 
 if (-not (Test-Path $modulesCppPath)) {

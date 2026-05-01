@@ -48,16 +48,17 @@ Working tree: `master-control-dashboard-main`, post-overlay-install commit `1c5d
 | Browser onboarding UI (`resources/web/app.js`) | Existing operator dashboard; not yet pointed at `/api/onboarding/*`. | PHASE-09 (Tron dashboard realignment) wires the UI. Profiles are content-stable today and ready for that consumer. | PHASE-09 | pending |
 | Companion utility for ChatGPT connector-edge | Profile documents the connector-edge constraint via `caveats`. The actual companion binary is not shipped in PHASE-04. | Documented in `caveats` and `manualInstructions`; the binary lands later if needed. | PHASE-04 docs done; binary deferred | deferred |
 
-## D. Governance bundle surface
+## D. Governance bundle surface (PHASE-05 resolution)
 
 | Surface | Today | Realignment target | Resolves in | Action |
 |---|---|---|---|---|
-| `resources/clu/governance-profile.json` | Single profile defining CLU doctrine, policies, action kinds. | Stays as the source of truth for CLU policy text; gets folded into platform-specific governance bundles served at `/api/governance/bundles/{platform}`. | PHASE-05 | extend |
-| `GET /api/clu`, `GET /api/clu/tools`, `GET /api/clu/apple-operations` (`MasterControlRuntime.cpp:8486, 8489, 8492`) | Operator-facing CLU surface used by the browser dashboard. | Stays on the operator surface. | PHASE-05 | keep |
-| `GET /api/client/governance/profile`, `POST /api/client/governance/decisions` (`MasterControlRuntime.cpp:8552, 8568`) | Per-LanClient governance read/decide path with X-MCOS-Client-Id. | Stays on the operator-side per-client surface. The new AI-client governance path is the bundle URL embedded in the onboarding profile, not a per-request governance check. | PHASE-05 | split |
-| `/api/governance/bundles/{windows|macos|ios}`, `/api/governance/profile`, `/api/governance/decisions` | Not present. | New endpoints serving bundles with `platform`, `forsettiFrameworkVersion`, `agenticCodingFrameworkVersion`, `cluSchemaVersion`, `instructionsMarkdown`, `rulesJson`, `decisionPolicy`, `checksum`, `generatedAt`. Contract: `CLU-GOVERNANCE-BUNDLE-CONTRACT.md`. | PHASE-05 | replace (new) |
-| `GovernanceActionKind` enum | Expanded to 15 action kinds in ADR-001. | Stays. PHASE-05 may add bundle-distribution-related decision points but does not retract existing kinds. | PHASE-05 | keep |
-| `scripts/check-mastercontrol-forsetti.ps1` | Forsetti compliance script. Currently asserts the post-ADR-001 module shape. | Updated when architecture changes invalidate its assertions; the gateway-first changes likely require new assertions for gateway/pool/discovery modules. | PHASE-05 (or PHASE-10) | extend |
+| `resources/clu/governance-profile.json` | Unchanged. Source of truth for CLU doctrine, policies, action kinds, roles, rules. `GovernanceBundleService` reads this on every bundle request so operator edits propagate without restart. | Source of truth honored. | PHASE-05 | done |
+| `GET /api/clu`, `GET /api/clu/tools`, `GET /api/clu/apple-operations` | Unchanged. Operator-facing CLU surface preserved. | Stays on the operator surface. | — | keep |
+| `GET /api/client/governance/profile`, `POST /api/client/governance/decisions` | Unchanged. Per-LanClient governance read/decide path remains for operator-flagged clients. | Stays. The new AI-client governance path is the bundle URL embedded in the onboarding profile (PHASE-04 + PHASE-05). | — | keep |
+| `GET /api/governance/bundles/{windows|macos|ios}`, `GET /api/governance/profile`, `GET /api/governance/decisions`, `GET /api/governance/bundles` | **Landed PHASE-05.** All four routes wired through `IGovernanceBundleService`. Bundles carry `platform` / `forsettiFrameworkVersion` / `agenticCodingFrameworkVersion` / `cluSchemaVersion` / `instructionsMarkdown` / `rulesJson` / `decisionPolicy` / `checksum` (sha256) / `generatedAt`. `/api/governance/decisions` advertises the POST contract; the live POST handler lands in PHASE-06/07. | Replaced. | PHASE-05 | done |
+| Vendored Forsetti instructions (`Forsetti-Framework-Windows-main/.../forsetti-instructions.json`) | **Read-only consumer.** `GovernanceBundleService::loadForsettiInstructions()` reads the file at request time to populate `forsettiFrameworkVersion`. Vendored content is not modified (per `.claude/rules/20-forsetti-clu-governance.md`). | Honored. | PHASE-05 | done (read-only) |
+| `GovernanceActionKind` enum | Unchanged. 14 action kinds (post-PHASE-01 cleanup of provider-era kinds). | Stays. | — | keep |
+| `scripts/check-mastercontrol-forsetti.ps1` | **Updated PHASE-05.** Six stale assertions about `resources/web/app.js`'s Forsetti-surface bootstrap (relics of pre-ADR-001 browser shape) retired. New assertions enforce: no provider-era sign-in cards, no provider-era API calls, no hardcoded CLU surface keys. Script now passes (`Master Control Forsetti checks passed.`). | Compliance gate green. | PHASE-05 | done |
 
 ## E. Worker pool / supervision / autoscaling surface
 

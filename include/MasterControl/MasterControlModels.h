@@ -769,6 +769,35 @@ struct DeregistrationResult final {
     std::string serverName;
 };
 
+// PHASE-05 (ADR-002 §6): Per-platform CLU/Forsetti governance bundle.
+// Contract: docs/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md.
+// Each bundle wraps the Forsetti Framework + Forsetti Framework for
+// Agentic Coding guidance for one client platform (Windows / macOS /
+// iOS) plus CLU's machine-readable rules and decision policy. The
+// bundle URL is embedded in OnboardingProfile.governanceBundleUrl
+// (PHASE-04) so AI clients can fetch it during onboarding.
+struct GovernanceBundle final {
+    std::string platform;                       // "windows" | "macos" | "ios"
+    std::string forsettiFrameworkVersion;
+    std::string agenticCodingFrameworkVersion;
+    std::string cluSchemaVersion;
+    std::string instructionsMarkdown;
+    nlohmann::json rulesJson;
+    std::string decisionPolicy;
+    std::string checksum;
+    std::string generatedAt;
+};
+
+struct GovernanceProfileSummary final {
+    std::string unitName;
+    std::string doctrine;
+    std::string cluSchemaVersion;
+    std::vector<std::string> documentIds;
+    std::vector<std::string> roleIds;
+    std::vector<std::string> ruleIds;
+    std::string generatedAt;
+};
+
 // PHASE-04 (ADR-002 §5): Per-client onboarding profile. Schema:
 // docs/implementation/schemas/onboarding-profile.schema.json. Each
 // profile points clients at exactly one MCP gateway URL with
@@ -1627,5 +1656,27 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     manualInstructions,
     verificationSteps,
     caveats)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceBundle,
+    platform,
+    forsettiFrameworkVersion,
+    agenticCodingFrameworkVersion,
+    cluSchemaVersion,
+    instructionsMarkdown,
+    rulesJson,
+    decisionPolicy,
+    checksum,
+    generatedAt)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GovernanceProfileSummary,
+    unitName,
+    doctrine,
+    cluSchemaVersion,
+    documentIds,
+    roleIds,
+    ruleIds,
+    generatedAt)
 
 } // namespace MasterControl

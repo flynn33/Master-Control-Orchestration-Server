@@ -366,6 +366,14 @@ std::filesystem::path cluProfileFile;
         cluProfileFile = std::filesystem::path(MASTERCONTROL_SOURCE_CLU_RESOURCES_DIR) / "governance-profile.json";
     }
 
+    // PHASE-05: vendored Forsetti instructions live alongside the source
+    // tree at compile time. The path is recorded so GovernanceBundleService
+    // can read forsettiFrameworkVersion at request time without re-deriving
+    // the vendor layout. Production deployments that ship the file under
+    // <executable>/share/forsetti/ can override via the resource dir, but
+    // the source path is the canonical fallback per ADR-001 vendoring rules.
+    auto forsettiInstructionsFile = std::filesystem::path(MASTERCONTROL_SOURCE_FORSETTI_INSTRUCTIONS_FILE);
+
     std::filesystem::create_directories(dataDirectory / "state");
     std::filesystem::create_directories(dataDirectory / "config");
     std::filesystem::create_directories(workDirectory);
@@ -380,7 +388,8 @@ std::filesystem::path cluProfileFile;
         manifestsDirectory,
         webRootDirectory,
         cluProfileFile,
-        workDirectory
+        workDirectory,
+        forsettiInstructionsFile
     };
 }
 

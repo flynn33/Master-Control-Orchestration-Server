@@ -30,6 +30,10 @@ struct AppPaths final {
     std::filesystem::path webRootDirectory;
     std::filesystem::path cluProfileFile;
     std::filesystem::path workDirectory;
+    // PHASE-05 (ADR-002 §6): vendored Forsetti instructions file. Used by
+    // GovernanceBundleService to populate forsettiFrameworkVersion. Vendored
+    // content is read-only per .claude/rules/20-forsetti-clu-governance.md.
+    std::filesystem::path forsettiInstructionsFile;
 };
 
 DiscoveredEnvironment detectLocalEnvironment();

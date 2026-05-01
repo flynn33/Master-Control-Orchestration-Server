@@ -102,6 +102,16 @@ git grep -nE 'authRequired\s*=\s*true|profile\.authRequired\s*=\s*true' -- src/
 git grep -nE '"authRequired"\s*:\s*true' -- src/
 ```
 
+### 1.7c Forsetti vendoring integrity (PHASE-05, ADR-002 §11)
+
+The vendored Forsetti tree at `Forsetti-Framework-Windows-main/` is read-only per `.claude/rules/20-forsetti-clu-governance.md`. PHASE-05 reads `forsetti-instructions.json` for `forsettiFrameworkVersion` but does not modify it.
+
+```bash
+git diff --name-only 2f802c8 HEAD -- 'Forsetti-Framework-Windows-main/**'
+```
+
+Expected: empty output. The directory must remain byte-identical to the baseline commit (`2f802c8`).
+
 Expected: zero matches. The `OnboardingProfile.authRequired` default is `false` and no production code path overrides it.
 
 ### 1.7 Browser and shell provider-era surfaces

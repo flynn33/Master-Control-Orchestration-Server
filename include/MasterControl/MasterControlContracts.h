@@ -191,6 +191,20 @@ public:
     virtual ~IPlatformServiceCatalogService() = default;
 };
 
+// PHASE-05 (ADR-002 §6): Governance Bundle Service. Composes per-platform
+// (windows / macos / ios) CLU + Forsetti governance bundles served at
+// /api/governance/bundles/{platform}. Hydrates rules/instructions from the
+// existing CLU profile (resources/clu/governance-profile.json) and the
+// vendored Forsetti-Framework-Windows-main metadata. Vendored Forsetti
+// content is read-only (per .claude/rules/20-forsetti-clu-governance.md).
+class IGovernanceBundleService {
+public:
+    virtual GovernanceBundle bundleFor(const std::string& platform) const = 0;
+    virtual GovernanceProfileSummary profileSummary() const = 0;
+    virtual std::vector<std::string> supportedPlatforms() const = 0;
+    virtual ~IGovernanceBundleService() = default;
+};
+
 // PHASE-04 (ADR-002 §5): Onboarding Profile Service. Composes
 // per-client-type configuration profiles consumed by AI clients
 // (Claude Code, Codex, Grok, ChatGPT connector-edge) and by the

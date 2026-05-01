@@ -23,6 +23,9 @@
 #include "MasterControl/MasterControlDefaults.h"
 #include "MasterControl/MasterControlModules.h"
 #include "MasterControl/MasterControlVersion.h"
+
+#include <bcrypt.h>
+#include <iomanip>
 #include "MasterControl/McpGatewayAdapters.h"
 
 #include <winsock2.h>
@@ -7399,6 +7402,227 @@ private:
     std::vector<Registration> registrations_;
 };
 
+// PHASE-05 (ADR-002 §6): Governance Bundle Service. Composes per-platform
+// governance bundles served at /api/governance/bundles/{windows|macos|ios}.
+// Hydrates rules from resources/clu/governance-profile.json (the source of
+// truth) and forsettiFrameworkVersion from the vendored Forsetti
+// instructions JSON. Checksum is SHA-256 over canonical content (excludes
+// the checksum and timestamp fields so the digest is stable).
+class GovernanceBundleService final : public IGovernanceBundleService {
+public:
+    GovernanceBundleService(std::filesystem::path cluProfileFile,
+                            std::filesystem::path forsettiInstructionsFile)
+        : cluProfileFile_(std::move(cluProfileFile))
+        , forsettiInstructionsFile_(std::move(forsettiInstructionsFile)) {}
+
+    std::vector<std::string> supportedPlatforms() const override {
+        return { "windows", "macos", "ios" };
+    }
+
+    GovernanceBundle bundleFor(const std::string& platform) const override {
+        const std::string normalized = normalizePlatform(platform);
+        const auto cluProfile = loadCluProfile();
+        const auto forsetti = loadForsettiInstructions();
+
+        GovernanceBundle bundle;
+        bundle.platform = normalized;
+        bundle.forsettiFrameworkVersion = jsonStringOrEmpty(forsetti, "schemaVersion");
+        if (bundle.forsettiFrameworkVersion.empty()) {
+            bundle.forsettiFrameworkVersion = "unknown";
+        }
+        bundle.agenticCodingFrameworkVersion = "1.0";
+        bundle.cluSchemaVersion = "1.0";
+        bundle.decisionPolicy =
+            "Mutating actions pass through CLU enforceAction. Outcomes: Allow / Block / "
+            "RequiresOperatorApproval. RequiresOperatorApproval stages the action in the "
+            "operator approval queue with the original payload preserved.";
+        bundle.rulesJson = composeRulesJson(cluProfile, normalized);
+        bundle.instructionsMarkdown = composeInstructionsMarkdown(cluProfile, forsetti, normalized);
+        bundle.checksum = sha256Hex(canonicalSerialization(bundle));
+        bundle.generatedAt = timestampNowUtc();
+        return bundle;
+    }
+
+    GovernanceProfileSummary profileSummary() const override {
+        const auto cluProfile = loadCluProfile();
+        GovernanceProfileSummary summary;
+        summary.unitName = jsonStringOrEmpty(cluProfile, "unitName");
+        summary.doctrine = jsonStringOrEmpty(cluProfile, "doctrine");
+        summary.cluSchemaVersion = "1.0";
+        summary.generatedAt = timestampNowUtc();
+        if (cluProfile.contains("documents") && cluProfile["documents"].is_array()) {
+            for (const auto& doc : cluProfile["documents"]) {
+                if (doc.contains("id") && doc["id"].is_string()) {
+                    summary.documentIds.push_back(doc["id"].get<std::string>());
+                }
+            }
+        }
+        if (cluProfile.contains("roles") && cluProfile["roles"].is_array()) {
+            for (const auto& role : cluProfile["roles"]) {
+                if (role.contains("roleId") && role["roleId"].is_string()) {
+                    summary.roleIds.push_back(role["roleId"].get<std::string>());
+                }
+            }
+        }
+        if (cluProfile.contains("rules") && cluProfile["rules"].is_array()) {
+            for (const auto& rule : cluProfile["rules"]) {
+                if (rule.contains("ruleId") && rule["ruleId"].is_string()) {
+                    summary.ruleIds.push_back(rule["ruleId"].get<std::string>());
+                }
+            }
+        }
+        return summary;
+    }
+
+private:
+    static std::string normalizePlatform(const std::string& platform) {
+        std::string lowered;
+        lowered.reserve(platform.size());
+        for (const auto ch : platform) {
+            lowered.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+        }
+        if (lowered == "windows") return "windows";
+        if (lowered == "macos" || lowered == "mac" || lowered == "osx") return "macos";
+        if (lowered == "ios" || lowered == "iphoneos") return "ios";
+        return "windows";
+    }
+
+    static std::string jsonStringOrEmpty(const nlohmann::json& object, const char* key) {
+        if (!object.is_object()) {
+            return std::string();
+        }
+        const auto iterator = object.find(key);
+        if (iterator == object.end() || !iterator->is_string()) {
+            return std::string();
+        }
+        return iterator->get<std::string>();
+    }
+
+    nlohmann::json loadCluProfile() const {
+        try {
+            if (!std::filesystem::exists(cluProfileFile_)) {
+                return nlohmann::json::object();
+            }
+            std::ifstream stream(cluProfileFile_, std::ios::binary);
+            if (!stream) {
+                return nlohmann::json::object();
+            }
+            return nlohmann::json::parse(stream, nullptr, /*allow_exceptions=*/false);
+        } catch (...) {
+            return nlohmann::json::object();
+        }
+    }
+
+    nlohmann::json loadForsettiInstructions() const {
+        try {
+            if (!std::filesystem::exists(forsettiInstructionsFile_)) {
+                return nlohmann::json::object();
+            }
+            std::ifstream stream(forsettiInstructionsFile_, std::ios::binary);
+            if (!stream) {
+                return nlohmann::json::object();
+            }
+            return nlohmann::json::parse(stream, nullptr, /*allow_exceptions=*/false);
+        } catch (...) {
+            return nlohmann::json::object();
+        }
+    }
+
+    nlohmann::json composeRulesJson(const nlohmann::json& cluProfile, const std::string& platform) const {
+        nlohmann::json rules = nlohmann::json::object();
+        rules["platform"] = platform;
+        rules["doctrine"] = jsonStringOrEmpty(cluProfile, "doctrine");
+        rules["unitName"] = jsonStringOrEmpty(cluProfile, "unitName");
+        rules["documents"] = cluProfile.value("documents", nlohmann::json::array());
+        rules["roles"] = cluProfile.value("roles", nlohmann::json::array());
+        rules["rules"] = cluProfile.value("rules", nlohmann::json::array());
+        rules["actionKinds"] = cluProfile.value("actionKinds", nlohmann::json::array());
+        return rules;
+    }
+
+    std::string composeInstructionsMarkdown(const nlohmann::json& cluProfile,
+                                             const nlohmann::json& forsetti,
+                                             const std::string& platform) const {
+        std::ostringstream md;
+        md << "# CLU Governance Bundle - " << platform << "\n\n";
+        md << "## Doctrine\n\n";
+        md << jsonStringOrEmpty(cluProfile, "doctrine") << "\n\n";
+        md << "## Forsetti framework\n\n";
+        md << "- Project: " << jsonStringOrEmpty(forsetti, "projectName") << "\n";
+        md << "- Schema version: " << jsonStringOrEmpty(forsetti, "schemaVersion") << "\n";
+        md << "- Owner: " << jsonStringOrEmpty(forsetti, "owner") << "\n\n";
+        md << "## Forsetti Framework for Agentic Coding\n\n";
+        md << "- Contract before action.\n";
+        md << "- Scope is binding.\n";
+        md << "- Truthfulness is mandatory.\n";
+        md << "- Governance overrides convenience.\n";
+        md << "- No meaningful autonomous action without declared scope.\n\n";
+        md << "## Client guidance\n\n";
+        md << "Before any mutating call (creating/modifying/removing MCP servers, sub-agents, "
+              "governance policy, or modules), the client MUST consult this bundle and respect "
+              "CLU's enforceAction outcome. On the LAN MCP gateway surface MCOS does not "
+              "collect provider credentials. Only the operator surface authenticates actors via "
+              "X-MCOS-Client-Id.\n";
+        return md.str();
+    }
+
+    // Canonical content for checksum. Excludes the checksum and generatedAt
+    // fields so the digest is stable across regenerations.
+    std::string canonicalSerialization(const GovernanceBundle& bundle) const {
+        nlohmann::json canonical;
+        canonical["platform"] = bundle.platform;
+        canonical["forsettiFrameworkVersion"] = bundle.forsettiFrameworkVersion;
+        canonical["agenticCodingFrameworkVersion"] = bundle.agenticCodingFrameworkVersion;
+        canonical["cluSchemaVersion"] = bundle.cluSchemaVersion;
+        canonical["instructionsMarkdown"] = bundle.instructionsMarkdown;
+        canonical["rulesJson"] = bundle.rulesJson;
+        canonical["decisionPolicy"] = bundle.decisionPolicy;
+        return canonical.dump();
+    }
+
+    static std::string sha256Hex(const std::string& input) {
+#if defined(_WIN32)
+        BCRYPT_ALG_HANDLE algorithm = nullptr;
+        if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) {
+            return std::string();
+        }
+        DWORD hashSize = 0;
+        ULONG resultSize = 0;
+        BCryptGetProperty(algorithm,
+                          BCRYPT_HASH_LENGTH,
+                          reinterpret_cast<PUCHAR>(&hashSize),
+                          sizeof(hashSize),
+                          &resultSize, 0);
+        std::vector<UCHAR> hashBuffer(hashSize, 0);
+        BCRYPT_HASH_HANDLE hash = nullptr;
+        if (BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0) != 0) {
+            BCryptCloseAlgorithmProvider(algorithm, 0);
+            return std::string();
+        }
+        BCryptHashData(hash,
+                       reinterpret_cast<PUCHAR>(const_cast<char*>(input.data())),
+                       static_cast<ULONG>(input.size()),
+                       0);
+        BCryptFinishHash(hash, hashBuffer.data(), hashSize, 0);
+        BCryptDestroyHash(hash);
+        BCryptCloseAlgorithmProvider(algorithm, 0);
+
+        std::ostringstream stream;
+        stream << std::hex << std::setfill('0');
+        for (const auto byte : hashBuffer) {
+            stream << std::setw(2) << static_cast<int>(byte);
+        }
+        return "sha256:" + stream.str();
+#else
+        (void)input;
+        return std::string();
+#endif
+    }
+
+    std::filesystem::path cluProfileFile_;
+    std::filesystem::path forsettiInstructionsFile_;
+};
+
 // PHASE-04 (ADR-002 §5): Onboarding Profile Service. Composes a per-client
 // profile from the discovery document (gateway URL + governance bundle URL)
 // and known per-clientType configuration shape. The generic profile is the
@@ -8351,6 +8575,7 @@ private:
     std::shared_ptr<IMcpGateway> mcpGateway_;
     std::shared_ptr<IDiscoveryService> discoveryService_;
     std::shared_ptr<IOnboardingProfileService> onboardingProfileService_;
+    std::shared_ptr<IGovernanceBundleService> governanceBundleService_;
     std::shared_ptr<IAdminApiService> adminApiService_;
     std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager_;
     std::shared_ptr<Forsetti::IEntitlementProvider> entitlementProvider_;
@@ -8412,6 +8637,14 @@ bool MasterControlApplication::Impl::initialize() {
     // propagates to client onboarding without separate plumbing.
     onboardingProfileService_ = std::make_shared<OnboardingProfileService>(
         configurationService_, discoveryService);
+
+    // PHASE-05 (ADR-002 §6): construct the per-platform governance bundle
+    // service. Reads CLU profile and vendored Forsetti instructions on each
+    // request to keep the bundle in sync with operator edits to
+    // resources/clu/governance-profile.json. SHA-256 checksum is stable
+    // across requests for unchanged content.
+    governanceBundleService_ = std::make_shared<GovernanceBundleService>(
+        paths_.cluProfileFile, paths_.forsettiInstructionsFile);
 
     // PHASE-02: register one stable logical MCP endpoint with the gateway
     // adapter so subsequent phases (PHASE-06 worker pools, PHASE-07 lease
@@ -9098,6 +9331,44 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             return jsonResponse(onboardingProfileService_
                 ? onboardingProfileService_->profileFor(clientType)
                 : OnboardingProfile{});
+        }
+        // -------------------------------------------------------------------
+        // PHASE-05 (ADR-002 §6): governance bundle distribution surface.
+        // Per-platform bundle: /api/governance/bundles/{windows|macos|ios}
+        // Profile summary:    /api/governance/profile
+        // Decisions endpoint: /api/governance/decisions (POST evaluates a
+        // GovernanceEnforcementRequest through CLU; GET returns a help
+        // document so smoke probes do not 404).
+        if (request.method == "GET" && request.path == "/api/governance/profile") {
+            return jsonResponse(governanceBundleService_
+                ? governanceBundleService_->profileSummary()
+                : GovernanceProfileSummary{});
+        }
+        if (request.method == "GET" && startsWith(request.path, "/api/governance/bundles/")) {
+            const auto prefix = std::string("/api/governance/bundles/");
+            const std::string platform = request.path.substr(prefix.size());
+            return jsonResponse(governanceBundleService_
+                ? governanceBundleService_->bundleFor(platform)
+                : GovernanceBundle{});
+        }
+        if (request.method == "GET" && request.path == "/api/governance/bundles") {
+            nlohmann::json response;
+            response["platforms"] = governanceBundleService_
+                ? governanceBundleService_->supportedPlatforms()
+                : std::vector<std::string>{};
+            return jsonResponse(response);
+        }
+        if (request.method == "GET" && request.path == "/api/governance/decisions") {
+            // Documentation-only GET. The POST path that actually
+            // evaluates governance decisions is wired via the existing
+            // CLU enforcement surface in PHASE-07 — for PHASE-05 the
+            // GET advertises the contract so smoke probes do not 404.
+            nlohmann::json response;
+            response["method"] = "POST";
+            response["expects"] = "GovernanceEnforcementRequest";
+            response["returns"] = "GovernanceEnforcementDecision";
+            response["note"] = "POST handler lands in PHASE-06/07 alongside the managed worker pool surface.";
+            return jsonResponse(response);
         }
         // -------------------------------------------------------------------
         // /api/gateway/* — MCP Gateway adapter surface (PHASE-02 of ADR-002).

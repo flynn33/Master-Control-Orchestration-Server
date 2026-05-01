@@ -33,12 +33,14 @@ target_link_libraries(MasterControlApp
         userenv
         wtsapi32
         rpcrt4
+        bcrypt
 )
 
 target_compile_definitions(MasterControlApp PUBLIC
     MASTERCONTROL_SOURCE_MODULE_MANIFESTS_DIR="${CMAKE_SOURCE_DIR}/src/MasterControlModules/Resources/ForsettiManifests"
     MASTERCONTROL_SOURCE_WEB_RESOURCES_DIR="${CMAKE_SOURCE_DIR}/resources/web"
     MASTERCONTROL_SOURCE_CLU_RESOURCES_DIR="${CMAKE_SOURCE_DIR}/resources/clu"
+    MASTERCONTROL_SOURCE_FORSETTI_INSTRUCTIONS_FILE="${FORSETTI_VENDOR_DIR}/forsetti-instructions.json"
 )
 
 if(MSVC)
