@@ -6,6 +6,7 @@ add_library(MasterControlApp STATIC
     MasterControlDefaults.cpp
     MasterControlModels.cpp
     MasterControlRuntime.cpp
+    McpGatewayAdapters.cpp
 )
 
 target_include_directories(MasterControlApp PUBLIC

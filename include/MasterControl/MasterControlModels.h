@@ -100,6 +100,37 @@ enum class GovernanceDecisionOutcome {
     RequiresOperatorApproval
 };
 
+// PHASE-02 (ADR-002 §2): MCP Gateway abstraction. MCOS exposes one
+// MCP endpoint to AI clients; the substrate behind that endpoint is
+// pluggable through IMcpGateway. The first implementation is an
+// MCPJungle adapter; PHASE-11 evaluates a native HTTP.sys gateway.
+enum class GatewayType {
+    MCPJungle,
+    Native
+};
+
+enum class GatewayState {
+    Disabled,
+    Configured,
+    Starting,
+    Running,
+    Stopping,
+    Stopped,
+    Failed
+};
+
+enum class GatewayHealthStatus {
+    Unknown,
+    Healthy,
+    Degraded,
+    Unhealthy
+};
+
+enum class McpServerTransport {
+    StreamableHttp,
+    Stdio
+};
+
 struct HostTelemetrySnapshot final {
     double cpuPercent = 0.0;
     double memoryPercent = 0.0;
@@ -671,6 +702,73 @@ struct BeaconAdvertisement final {
     std::vector<PlatformGatewayDescriptor> platformGateways;
 };
 
+// PHASE-02: MCP Gateway configuration consumed by IMcpGateway adapters.
+// Conforms to docs/implementation/schemas/gateway-service.schema.json.
+struct McpGatewayConfiguration final {
+    GatewayType type = GatewayType::MCPJungle;
+    bool enabled = false;            // PHASE-02 ships disabled-by-default
+    std::string binaryPath;          // path to mcpjungle.exe (or empty)
+    std::string listenHost = "0.0.0.0";
+    uint16_t listenPort = 8080;      // distinct from admin browserPort=7300
+    std::string mcpPath = "/mcp";
+    std::string healthPath = "/health";
+    std::string databasePath;        // optional sqlite path for MCPJungle
+    std::string mode = "lan-trusted"; // development | enterprise | lan-trusted
+};
+
+// PHASE-02: opaque registration request handed to IMcpGateway when MCOS
+// publishes a stable logical endpoint backed by a managed worker pool.
+struct McpServerRegistration final {
+    std::string name;                // logical pool/server identifier
+    std::string description;
+    McpServerTransport transport = McpServerTransport::StreamableHttp;
+    std::string url;                 // streamable_http: full URL
+    std::map<std::string, std::string> headers;
+    std::string sessionMode = "stateful";
+    std::string command;             // stdio: executable path
+    std::vector<std::string> args;
+    std::map<std::string, std::string> environment;
+};
+
+struct McpToolDescriptor final {
+    std::string serverName;          // registered logical server name
+    std::string toolName;
+    std::string description;
+};
+
+struct GatewayStatus final {
+    GatewayState state = GatewayState::Disabled;
+    std::string message;
+    std::string mcpUrl;              // empty until Running
+    std::string startedAtUtc;
+    std::string adapterType;         // "mcpjungle" | "native" | "fake"
+};
+
+struct GatewayHealth final {
+    GatewayHealthStatus status = GatewayHealthStatus::Unknown;
+    bool reachable = false;
+    int httpStatusCode = 0;          // 0 if probe never landed
+    std::string message;
+    std::string probedAtUtc;
+    std::string mcpUrl;
+    std::string healthUrl;
+    std::string adapterType;
+    int registeredServerCount = 0;
+};
+
+struct RegistrationResult final {
+    bool succeeded = false;
+    std::string message;
+    std::string serverName;
+    std::string registeredAtUtc;
+};
+
+struct DeregistrationResult final {
+    bool succeeded = false;
+    std::string message;
+    std::string serverName;
+};
+
 struct DashboardSnapshot final {
     HostTelemetrySnapshot telemetry;
     std::vector<RuntimeEndpoint> endpoints;
@@ -684,6 +782,9 @@ struct DashboardSnapshot final {
     std::vector<PlatformGatewayDescriptor> platformGateways;
     std::vector<GovernanceServerDescriptor> governanceServers;
     ForsettiSurfaceSnapshot surface;
+    GatewayStatus mcpGatewayStatus;
+    GatewayHealth mcpGatewayHealth;
+    std::vector<McpToolDescriptor> mcpGatewayTools;
 };
 
 struct AppConfiguration final {
@@ -705,6 +806,7 @@ struct AppConfiguration final {
     std::vector<LanClient> lanClients;
     std::vector<AppleRemoteHost> appleRemoteHosts;
     ManagedNodeProfile activeProfile;
+    McpGatewayConfiguration mcpGateway;
 };
 
 std::string to_string(EndpointKind value);
@@ -717,6 +819,10 @@ std::string to_string(GovernanceToolStatus value);
 std::string to_string(AppleOperationStatus value);
 std::string to_string(GovernanceActionKind value);
 std::string to_string(GovernanceDecisionOutcome value);
+std::string to_string(GatewayType value);
+std::string to_string(GatewayState value);
+std::string to_string(GatewayHealthStatus value);
+std::string to_string(McpServerTransport value);
 
 EndpointKind endpointKindFromString(const std::string& value);
 EndpointStatus endpointStatusFromString(const std::string& value);
@@ -728,6 +834,10 @@ GovernanceToolStatus governanceToolStatusFromString(const std::string& value);
 AppleOperationStatus appleOperationStatusFromString(const std::string& value);
 GovernanceActionKind governanceActionKindFromString(const std::string& value);
 GovernanceDecisionOutcome governanceDecisionOutcomeFromString(const std::string& value);
+GatewayType gatewayTypeFromString(const std::string& value);
+GatewayState gatewayStateFromString(const std::string& value);
+GatewayHealthStatus gatewayHealthStatusFromString(const std::string& value);
+McpServerTransport mcpServerTransportFromString(const std::string& value);
 
 void to_json(nlohmann::json& json, EndpointKind value);
 void from_json(const nlohmann::json& json, EndpointKind& value);
@@ -758,6 +868,18 @@ void from_json(const nlohmann::json& json, GovernanceActionKind& value);
 
 void to_json(nlohmann::json& json, GovernanceDecisionOutcome value);
 void from_json(const nlohmann::json& json, GovernanceDecisionOutcome& value);
+
+void to_json(nlohmann::json& json, GatewayType value);
+void from_json(const nlohmann::json& json, GatewayType& value);
+
+void to_json(nlohmann::json& json, GatewayState value);
+void from_json(const nlohmann::json& json, GatewayState& value);
+
+void to_json(nlohmann::json& json, GatewayHealthStatus value);
+void from_json(const nlohmann::json& json, GatewayHealthStatus& value);
+
+void to_json(nlohmann::json& json, McpServerTransport value);
+void from_json(const nlohmann::json& json, McpServerTransport& value);
 
 std::string toPrettyJson(const nlohmann::json& json);
 std::string timestampNowUtc();
@@ -1282,7 +1404,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     appleRemoteHosts,
     platformGateways,
     governanceServers,
-    surface)
+    surface,
+    mcpGatewayStatus,
+    mcpGatewayHealth,
+    mcpGatewayTools)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     AppConfiguration,
@@ -1303,6 +1428,70 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     subAgentGroups,
     lanClients,
     appleRemoteHosts,
-    activeProfile)
+    activeProfile,
+    mcpGateway)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    McpGatewayConfiguration,
+    type,
+    enabled,
+    binaryPath,
+    listenHost,
+    listenPort,
+    mcpPath,
+    healthPath,
+    databasePath,
+    mode)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    McpServerRegistration,
+    name,
+    description,
+    transport,
+    url,
+    headers,
+    sessionMode,
+    command,
+    args,
+    environment)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    McpToolDescriptor,
+    serverName,
+    toolName,
+    description)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GatewayStatus,
+    state,
+    message,
+    mcpUrl,
+    startedAtUtc,
+    adapterType)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GatewayHealth,
+    status,
+    reachable,
+    httpStatusCode,
+    message,
+    probedAtUtc,
+    mcpUrl,
+    healthUrl,
+    adapterType,
+    registeredServerCount)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    RegistrationResult,
+    succeeded,
+    message,
+    serverName,
+    registeredAtUtc)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    DeregistrationResult,
+    succeeded,
+    message,
+    serverName)
 
 } // namespace MasterControl

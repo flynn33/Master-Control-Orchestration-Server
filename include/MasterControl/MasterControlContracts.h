@@ -191,6 +191,25 @@ public:
     virtual ~IPlatformServiceCatalogService() = default;
 };
 
+// PHASE-02 (ADR-002 §2): MCP Gateway abstraction. Implementations include
+// `McpJungleGatewayAdapter` (supervises MCPJungle as a child process) and
+// `FakeMcpGatewayAdapter` (used by tests). PHASE-11 evaluates a native
+// HTTP.sys-backed gateway behind the same interface.
+class IMcpGateway {
+public:
+    virtual ~IMcpGateway() = default;
+    virtual GatewayStatus Start() = 0;
+    virtual GatewayStatus Stop() = 0;
+    virtual GatewayStatus CurrentStatus() const = 0;
+    virtual GatewayHealth Probe() = 0;
+    virtual RegistrationResult RegisterHttpServer(const McpServerRegistration& server) = 0;
+    virtual RegistrationResult RegisterStdioServer(const McpServerRegistration& server) = 0;
+    virtual DeregistrationResult DeregisterServer(const std::string& serverName) = 0;
+    virtual std::vector<McpToolDescriptor> ListTools() const = 0;
+    virtual std::string GatewayMcpUrl() const = 0;
+    virtual std::string AdapterType() const = 0;
+};
+
 class IAdminApiService {
 public:
     virtual DashboardSnapshot snapshot() = 0;

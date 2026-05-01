@@ -146,6 +146,41 @@ std::string to_string(GovernanceDecisionOutcome value) {
     });
 }
 
+std::string to_string(GatewayType value) {
+    return enumToString(value, {
+        { GatewayType::MCPJungle, "mcpjungle" },
+        { GatewayType::Native, "native" }
+    });
+}
+
+std::string to_string(GatewayState value) {
+    return enumToString(value, {
+        { GatewayState::Disabled, "disabled" },
+        { GatewayState::Configured, "configured" },
+        { GatewayState::Starting, "starting" },
+        { GatewayState::Running, "running" },
+        { GatewayState::Stopping, "stopping" },
+        { GatewayState::Stopped, "stopped" },
+        { GatewayState::Failed, "failed" }
+    });
+}
+
+std::string to_string(GatewayHealthStatus value) {
+    return enumToString(value, {
+        { GatewayHealthStatus::Unknown, "unknown" },
+        { GatewayHealthStatus::Healthy, "healthy" },
+        { GatewayHealthStatus::Degraded, "degraded" },
+        { GatewayHealthStatus::Unhealthy, "unhealthy" }
+    });
+}
+
+std::string to_string(McpServerTransport value) {
+    return enumToString(value, {
+        { McpServerTransport::StreamableHttp, "streamable_http" },
+        { McpServerTransport::Stdio, "stdio" }
+    });
+}
+
 EndpointKind endpointKindFromString(const std::string& value) {
     return enumFromString<EndpointKind>(value, {
         { EndpointKind::Host, "host" },
@@ -249,6 +284,41 @@ GovernanceDecisionOutcome governanceDecisionOutcomeFromString(const std::string&
     });
 }
 
+GatewayType gatewayTypeFromString(const std::string& value) {
+    return enumFromString<GatewayType>(value, {
+        { GatewayType::MCPJungle, "mcpjungle" },
+        { GatewayType::Native, "native" }
+    });
+}
+
+GatewayState gatewayStateFromString(const std::string& value) {
+    return enumFromString<GatewayState>(value, {
+        { GatewayState::Disabled, "disabled" },
+        { GatewayState::Configured, "configured" },
+        { GatewayState::Starting, "starting" },
+        { GatewayState::Running, "running" },
+        { GatewayState::Stopping, "stopping" },
+        { GatewayState::Stopped, "stopped" },
+        { GatewayState::Failed, "failed" }
+    });
+}
+
+GatewayHealthStatus gatewayHealthStatusFromString(const std::string& value) {
+    return enumFromString<GatewayHealthStatus>(value, {
+        { GatewayHealthStatus::Unknown, "unknown" },
+        { GatewayHealthStatus::Healthy, "healthy" },
+        { GatewayHealthStatus::Degraded, "degraded" },
+        { GatewayHealthStatus::Unhealthy, "unhealthy" }
+    });
+}
+
+McpServerTransport mcpServerTransportFromString(const std::string& value) {
+    return enumFromString<McpServerTransport>(value, {
+        { McpServerTransport::StreamableHttp, "streamable_http" },
+        { McpServerTransport::Stdio, "stdio" }
+    });
+}
+
 void to_json(nlohmann::json& json, EndpointKind value) {
     json = to_string(value);
 }
@@ -328,6 +398,38 @@ void to_json(nlohmann::json& json, GovernanceDecisionOutcome value) {
 
 void from_json(const nlohmann::json& json, GovernanceDecisionOutcome& value) {
     value = governanceDecisionOutcomeFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, GatewayType value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, GatewayType& value) {
+    value = gatewayTypeFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, GatewayState value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, GatewayState& value) {
+    value = gatewayStateFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, GatewayHealthStatus value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, GatewayHealthStatus& value) {
+    value = gatewayHealthStatusFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, McpServerTransport value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, McpServerTransport& value) {
+    value = mcpServerTransportFromString(json.get<std::string>());
 }
 
 std::string toPrettyJson(const nlohmann::json& json) {

@@ -407,6 +407,21 @@ AppConfiguration buildDefaultConfiguration() {
     configuration.activeProfile.preferredBindAddress = environment.preferredBindAddress;
     configuration.activeProfile.macAddress = environment.macAddress;
     configuration.activeProfile.seededEndpoints = buildDefaultSeededEndpointsForHost(environment.preferredBindAddress);
+
+    // PHASE-02: MCP Gateway is configured (defaults populated) but disabled.
+    // Operators flip `enabled` to true once an MCPJungle binary is installed
+    // and the gateway port (default 8080) is reachable from LAN clients.
+    // The gateway URL is logically distinct from the admin port (7300).
+    configuration.mcpGateway.type = GatewayType::MCPJungle;
+    configuration.mcpGateway.enabled = false;
+    configuration.mcpGateway.binaryPath = "";
+    configuration.mcpGateway.listenHost = "0.0.0.0";
+    configuration.mcpGateway.listenPort = 8080;
+    configuration.mcpGateway.mcpPath = "/mcp";
+    configuration.mcpGateway.healthPath = "/health";
+    configuration.mcpGateway.databasePath = "";
+    configuration.mcpGateway.mode = "lan-trusted";
+
     return configuration;
 }
 

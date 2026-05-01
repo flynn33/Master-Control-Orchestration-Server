@@ -22,6 +22,7 @@
 #include "MasterControl/ILanClientAccessService.h"
 #include "MasterControl/MasterControlDefaults.h"
 #include "MasterControl/MasterControlModules.h"
+#include "MasterControl/McpGatewayAdapters.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -7225,7 +7226,8 @@ public:
                     std::shared_ptr<IZipBundleService> zipBundleService,
                     std::shared_ptr<IExportService> exportService,
                     std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService,
-                    std::shared_ptr<IForsettiSurfaceService> surfaceService)
+                    std::shared_ptr<IForsettiSurfaceService> surfaceService,
+                    std::shared_ptr<IMcpGateway> mcpGateway)
         : telemetryService_(std::move(telemetryService))
         , inventoryService_(std::move(inventoryService))
         , configurationService_(std::move(configurationService))
@@ -7239,7 +7241,8 @@ public:
         , zipBundleService_(std::move(zipBundleService))
         , exportService_(std::move(exportService))
         , commandLogicUnitService_(std::move(commandLogicUnitService))
-        , surfaceService_(std::move(surfaceService)) {}
+        , surfaceService_(std::move(surfaceService))
+        , mcpGateway_(std::move(mcpGateway)) {}
 
     DashboardSnapshot snapshot() override {
         // Use synchronous refresh so the snapshot always reflects the latest
@@ -7266,6 +7269,11 @@ public:
             ? platformServiceCatalogService_->listGovernanceServers()
             : std::vector<GovernanceServerDescriptor>{};
         snapshot.surface = surfaceService_->currentSurface();
+        if (mcpGateway_) {
+            snapshot.mcpGatewayStatus = mcpGateway_->CurrentStatus();
+            snapshot.mcpGatewayHealth = mcpGateway_->Probe();
+            snapshot.mcpGatewayTools = mcpGateway_->ListTools();
+        }
         for (const auto& gateway : snapshot.platformGateways) {
             snapshot.endpoints.push_back(RuntimeEndpoint{
                 gateway.serviceId,
@@ -7434,6 +7442,7 @@ private:
     std::shared_ptr<IExportService> exportService_;
     std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService_;
     std::shared_ptr<IForsettiSurfaceService> surfaceService_;
+    std::shared_ptr<IMcpGateway> mcpGateway_;
 };
 
 struct HttpRequest final {
@@ -7840,6 +7849,7 @@ private:
     std::shared_ptr<IModuleControlSurfaceService> controlSurfaceService_;
     std::shared_ptr<IForsettiSurfaceService> surfaceService_;
     std::shared_ptr<IBeaconService> beaconService_;
+    std::shared_ptr<IMcpGateway> mcpGateway_;
     std::shared_ptr<IAdminApiService> adminApiService_;
     std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager_;
     std::shared_ptr<Forsetti::IEntitlementProvider> entitlementProvider_;
@@ -7882,6 +7892,28 @@ bool MasterControlApplication::Impl::initialize() {
     registerConfigurationDefaults();
     createForsettiRuntime();
 
+    // PHASE-02 (ADR-002 §2): construct the MCP Gateway adapter from current
+    // configuration. Default config disables the gateway; operators flip
+    // mcpGateway.enabled=true once an MCPJungle binary is installed.
+    mcpGateway_ = std::make_shared<McpJungleGatewayAdapter>(
+        configurationService_->current().mcpGateway);
+
+    // PHASE-02: register one stable logical MCP endpoint with the gateway
+    // adapter so subsequent phases (PHASE-06 worker pools, PHASE-07 lease
+    // routing) have a known registration shape to extend. This is an
+    // in-memory registration only; the adapter reconciles with the real
+    // backend on Start() once a binary is configured.
+    {
+        McpServerRegistration logicalPool;
+        logicalPool.name = "mcos-default-pool";
+        logicalPool.description = "MCOS default logical MCP pool. Backend instances are managed by the worker supervisor (PHASE-06).";
+        logicalPool.transport = McpServerTransport::StreamableHttp;
+        logicalPool.url = "http://127.0.0.1:" + std::to_string(configurationService_->current().browserPort) + "/mcp/pools/default/mcp";
+        logicalPool.sessionMode = "stateful";
+        logicalPool.headers["X-MCOS-Gateway-Source"] = "mcpjungle";
+        (void)mcpGateway_->RegisterHttpServer(logicalPool);
+    }
+
     adminApiService_ = std::make_shared<AdminApiService>(
         telemetryService_,
         inventoryService_,
@@ -7896,7 +7928,8 @@ bool MasterControlApplication::Impl::initialize() {
         installerOrchestrator_,
         exportService_,
         commandLogicUnitService_,
-        surfaceService_);
+        surfaceService_,
+        mcpGateway_);
 
     runtime_->boot();
     if (entitlementProvider_) {
@@ -7941,6 +7974,9 @@ void MasterControlApplication::Impl::shutdown() {
     }
     if (beaconService_) {
         beaconService_->stop();
+    }
+    if (mcpGateway_) {
+        mcpGateway_->Stop();
     }
     if (runtime_) {
         runtime_->shutdown();
@@ -8500,6 +8536,25 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "GET" && request.path == "/api/beacon") {
             return jsonResponse(beaconService_->currentAdvertisement());
+        }
+        // -------------------------------------------------------------------
+        // /api/gateway/* — MCP Gateway adapter surface (PHASE-02 of ADR-002).
+        // PHASE-04 onboarding profiles point clients at the gateway URL
+        // exposed here, not at the admin port.
+        if (request.method == "GET" && request.path == "/api/gateway/status") {
+            return jsonResponse(mcpGateway_ ? mcpGateway_->CurrentStatus() : GatewayStatus{});
+        }
+        if (request.method == "GET" && request.path == "/api/gateway/health") {
+            return jsonResponse(mcpGateway_ ? mcpGateway_->Probe() : GatewayHealth{});
+        }
+        if (request.method == "GET" && request.path == "/api/gateway/tools") {
+            return jsonResponse(mcpGateway_ ? mcpGateway_->ListTools() : std::vector<McpToolDescriptor>{});
+        }
+        if (request.method == "POST" && request.path == "/api/gateway/start") {
+            return jsonResponse(mcpGateway_ ? mcpGateway_->Start() : GatewayStatus{});
+        }
+        if (request.method == "POST" && request.path == "/api/gateway/stop") {
+            return jsonResponse(mcpGateway_ ? mcpGateway_->Stop() : GatewayStatus{});
         }
         if (request.method == "GET" && request.path == "/api/environment-hints") {
             // Reserved endpoint - returns an empty object after the provider

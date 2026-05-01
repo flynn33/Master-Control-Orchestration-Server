@@ -12,6 +12,7 @@
 #include "MasterControl/MasterControlDefaults.h"
 #include "MasterControl/MasterControlModels.h"
 #include "MasterControl/MasterControlVersion.h"
+#include "MasterControl/McpGatewayAdapters.h"
 
 #include <nlohmann/json.hpp>
 
@@ -266,6 +267,315 @@ bool testLanClientConfigBundleShape() {
     return ok;
 }
 
+// PHASE-02 (ADR-002 §2): MCP Gateway adapter tests. The fake adapter
+// implements IMcpGateway with no child processes and no network calls
+// so the state machine and registration contract can be exercised
+// deterministically.
+
+bool testGatewayConfigurationDefaults() {
+    const auto configuration = MasterControl::buildDefaultConfiguration();
+    bool ok = true;
+    ok &= expect(configuration.mcpGateway.type == MasterControl::GatewayType::MCPJungle,
+                 "Default gateway type is MCPJungle.");
+    ok &= expect(configuration.mcpGateway.enabled == false,
+                 "Default gateway is disabled (operator opt-in required).");
+    ok &= expect(configuration.mcpGateway.listenPort == 8080,
+                 "Default gateway port is 8080 (distinct from admin 7300).");
+    ok &= expect(configuration.mcpGateway.mcpPath == "/mcp",
+                 "Default gateway MCP path is /mcp.");
+    ok &= expect(configuration.mcpGateway.healthPath == "/health",
+                 "Default gateway health path is /health.");
+    ok &= expect(configuration.mcpGateway.mode == "lan-trusted",
+                 "Default gateway mode is lan-trusted (per ADR-002 §1).");
+    return ok;
+}
+
+bool testFakeGatewayDisabledStartsDisabled() {
+    MasterControl::McpGatewayConfiguration configuration;
+    configuration.enabled = false;
+    MasterControl::FakeMcpGatewayAdapter adapter(configuration);
+
+    const auto status = adapter.Start();
+    bool ok = true;
+    ok &= expect(status.state == MasterControl::GatewayState::Disabled,
+                 "Disabled fake adapter cannot transition to Running on Start().");
+    ok &= expect(adapter.startCallCount() == 1,
+                 "Fake adapter records the Start() call even when disabled.");
+    ok &= expect(adapter.AdapterType() == "fake",
+                 "Fake adapter identifies as 'fake'.");
+    return ok;
+}
+
+bool testFakeGatewayEnabledStartStopRoundTrip() {
+    MasterControl::McpGatewayConfiguration configuration;
+    configuration.enabled = true;
+    configuration.listenHost = "127.0.0.1";
+    configuration.listenPort = 8080;
+    configuration.mcpPath = "/mcp";
+    MasterControl::FakeMcpGatewayAdapter adapter(configuration);
+
+    bool ok = true;
+
+    auto initial = adapter.CurrentStatus();
+    ok &= expect(initial.state == MasterControl::GatewayState::Configured,
+                 "Newly constructed enabled adapter starts in Configured state.");
+
+    const auto started = adapter.Start();
+    ok &= expect(started.state == MasterControl::GatewayState::Running,
+                 "Enabled fake adapter transitions to Running on Start().");
+    ok &= expect(!started.startedAtUtc.empty(),
+                 "Started status carries a non-empty startedAtUtc timestamp.");
+
+    const auto stopped = adapter.Stop();
+    ok &= expect(stopped.state == MasterControl::GatewayState::Stopped,
+                 "Stop() transitions the adapter to Stopped.");
+    ok &= expect(stopped.startedAtUtc.empty(),
+                 "Stopped status clears startedAtUtc.");
+    ok &= expect(adapter.startCallCount() == 1,
+                 "Start was invoked exactly once.");
+    ok &= expect(adapter.stopCallCount() == 1,
+                 "Stop was invoked exactly once.");
+    return ok;
+}
+
+bool testFakeGatewayStartFailureScripted() {
+    MasterControl::McpGatewayConfiguration configuration;
+    configuration.enabled = true;
+    MasterControl::FakeMcpGatewayAdapter adapter(configuration);
+    adapter.setStartShouldFail(true, "scripted failure");
+
+    const auto status = adapter.Start();
+    bool ok = true;
+    ok &= expect(status.state == MasterControl::GatewayState::Failed,
+                 "Scripted start failure surfaces GatewayState::Failed.");
+    ok &= expect(status.message == "scripted failure",
+                 "Scripted failure message propagates.");
+    return ok;
+}
+
+bool testFakeGatewayRegistrationRoundTrip() {
+    MasterControl::McpGatewayConfiguration configuration;
+    configuration.enabled = true;
+    MasterControl::FakeMcpGatewayAdapter adapter(configuration);
+
+    MasterControl::McpServerRegistration registration;
+    registration.name = "logical-pool-alpha";
+    registration.url = "http://127.0.0.1:7300/mcp/pools/alpha/mcp";
+    registration.transport = MasterControl::McpServerTransport::StreamableHttp;
+
+    const auto registered = adapter.RegisterHttpServer(registration);
+    bool ok = true;
+    ok &= expect(registered.succeeded,
+                 "RegisterHttpServer succeeds for a well-formed registration.");
+    ok &= expect(registered.serverName == "logical-pool-alpha",
+                 "RegisterHttpServer echoes the server name.");
+    ok &= expect(!registered.registeredAtUtc.empty(),
+                 "RegisterHttpServer stamps a UTC timestamp.");
+
+    const auto names = adapter.registeredServerNames();
+    ok &= expect(names.size() == 1 && names.front() == "logical-pool-alpha",
+                 "Registry exposes the registered server name to test observers.");
+
+    const auto deregistered = adapter.DeregisterServer("logical-pool-alpha");
+    ok &= expect(deregistered.succeeded,
+                 "DeregisterServer reports success for a known registration.");
+    ok &= expect(adapter.registeredServerNames().empty(),
+                 "Registry is empty after deregistration.");
+    return ok;
+}
+
+bool testFakeGatewayRegistrationRejectsEmptyName() {
+    MasterControl::McpGatewayConfiguration configuration;
+    configuration.enabled = true;
+    MasterControl::FakeMcpGatewayAdapter adapter(configuration);
+
+    MasterControl::McpServerRegistration registration;
+    registration.url = "http://127.0.0.1:7300/mcp/pools/x/mcp";
+    const auto result = adapter.RegisterHttpServer(registration);
+    bool ok = true;
+    ok &= expect(!result.succeeded,
+                 "RegisterHttpServer rejects an empty server name.");
+    ok &= expect(adapter.registeredServerNames().empty(),
+                 "Rejected registration leaves the registry empty.");
+    return ok;
+}
+
+bool testFakeGatewayProbeUsesScriptedHealth() {
+    MasterControl::McpGatewayConfiguration configuration;
+    configuration.enabled = true;
+    MasterControl::FakeMcpGatewayAdapter adapter(configuration);
+
+    MasterControl::GatewayHealth scripted;
+    scripted.status = MasterControl::GatewayHealthStatus::Healthy;
+    scripted.reachable = true;
+    scripted.httpStatusCode = 200;
+    scripted.message = "synthetic-healthy";
+    adapter.setNextProbe(scripted);
+
+    const auto observed = adapter.Probe();
+    bool ok = true;
+    ok &= expect(observed.status == MasterControl::GatewayHealthStatus::Healthy,
+                 "Probe returns the scripted health status.");
+    ok &= expect(observed.reachable == true,
+                 "Probe returns the scripted reachability flag.");
+    ok &= expect(observed.httpStatusCode == 200,
+                 "Probe returns the scripted HTTP status code.");
+    ok &= expect(observed.message == "synthetic-healthy",
+                 "Probe returns the scripted message.");
+    ok &= expect(observed.adapterType == "fake",
+                 "Probe stamps the adapter type.");
+    ok &= expect(!observed.probedAtUtc.empty(),
+                 "Probe stamps a UTC timestamp.");
+    ok &= expect(adapter.probeCallCount() == 1,
+                 "Probe call count increments.");
+    return ok;
+}
+
+bool testFakeGatewayMcpUrlComposition() {
+    MasterControl::McpGatewayConfiguration configuration;
+    configuration.enabled = true;
+    configuration.listenHost = "0.0.0.0";
+    configuration.listenPort = 8080;
+    configuration.mcpPath = "/mcp";
+    MasterControl::FakeMcpGatewayAdapter adapter(configuration);
+
+    bool ok = true;
+    ok &= expect(adapter.GatewayMcpUrl() == "http://0.0.0.0:8080/mcp",
+                 "GatewayMcpUrl composes from listenHost + listenPort + mcpPath.");
+
+    MasterControl::McpGatewayConfiguration alt = configuration;
+    alt.mcpPath = "mcp"; // missing leading slash on purpose
+    MasterControl::FakeMcpGatewayAdapter adapter2(alt);
+    ok &= expect(adapter2.GatewayMcpUrl() == "http://0.0.0.0:8080/mcp",
+                 "GatewayMcpUrl normalizes mcpPath to ensure a leading slash.");
+    return ok;
+}
+
+bool testRealAdapterDisabledByDefault() {
+    MasterControl::McpGatewayConfiguration configuration;
+    // enabled defaults to false
+    MasterControl::McpJungleGatewayAdapter adapter(configuration);
+
+    bool ok = true;
+    ok &= expect(adapter.AdapterType() == "mcpjungle",
+                 "Real adapter identifies as 'mcpjungle'.");
+
+    const auto status = adapter.Start();
+    ok &= expect(status.state == MasterControl::GatewayState::Disabled,
+                 "Disabled real adapter refuses to Start().");
+    ok &= expect(adapter.isSupervisingChildProcess() == false,
+                 "Disabled real adapter never spawns a child process.");
+
+    const auto health = adapter.Probe();
+    ok &= expect(health.status == MasterControl::GatewayHealthStatus::Unknown,
+                 "Probe on disabled adapter reports Unknown (no fake healthy).");
+    ok &= expect(health.adapterType == "mcpjungle",
+                 "Probe stamps adapter type.");
+    return ok;
+}
+
+bool testRealAdapterSupervisedMockWhenBinaryMissing() {
+    MasterControl::McpGatewayConfiguration configuration;
+    configuration.enabled = true;
+    configuration.binaryPath = ""; // intentionally empty
+    MasterControl::McpJungleGatewayAdapter adapter(configuration);
+
+    bool ok = true;
+    const auto status = adapter.Start();
+    // No child process spawned when binaryPath is empty; adapter still
+    // transitions to Running so the state machine is exercisable.
+    ok &= expect(status.state == MasterControl::GatewayState::Running,
+                 "Enabled real adapter with no binary enters supervised-mock Running.");
+    ok &= expect(adapter.isSupervisingChildProcess() == false,
+                 "Supervised-mock mode does NOT spawn a child process.");
+
+    const auto stopped = adapter.Stop();
+    ok &= expect(stopped.state == MasterControl::GatewayState::Stopped,
+                 "Stop() returns the supervised-mock adapter to Stopped.");
+    return ok;
+}
+
+bool testRealAdapterRegistrationSurvivesAcrossStartStop() {
+    MasterControl::McpGatewayConfiguration configuration;
+    configuration.enabled = true;
+    MasterControl::McpJungleGatewayAdapter adapter(configuration);
+
+    MasterControl::McpServerRegistration registration;
+    registration.name = "default-pool";
+    registration.url = "http://127.0.0.1:7300/mcp/pools/default/mcp";
+
+    const auto registered = adapter.RegisterHttpServer(registration);
+    adapter.Start();
+    adapter.Stop();
+
+    // Registration is in-memory and persists across Start/Stop.
+    bool ok = true;
+    ok &= expect(registered.succeeded,
+                 "Registration succeeds before Start().");
+    const auto deregistered = adapter.DeregisterServer("default-pool");
+    ok &= expect(deregistered.succeeded,
+                 "Registration survives Start()/Stop() and is still removable.");
+    return ok;
+}
+
+bool testGatewayEnumRoundTrips() {
+    bool ok = true;
+
+    using MasterControl::GatewayType;
+    ok &= expect(MasterControl::to_string(GatewayType::MCPJungle) == "mcpjungle",
+                 "GatewayType serializes mcpjungle.");
+    ok &= expect(MasterControl::gatewayTypeFromString("native") == GatewayType::Native,
+                 "GatewayType deserializes native.");
+
+    using MasterControl::GatewayState;
+    ok &= expect(MasterControl::to_string(GatewayState::Running) == "running",
+                 "GatewayState serializes running.");
+    ok &= expect(MasterControl::gatewayStateFromString("failed") == GatewayState::Failed,
+                 "GatewayState deserializes failed.");
+
+    using MasterControl::GatewayHealthStatus;
+    ok &= expect(MasterControl::to_string(GatewayHealthStatus::Healthy) == "healthy",
+                 "GatewayHealthStatus serializes healthy.");
+    ok &= expect(MasterControl::gatewayHealthStatusFromString("degraded") == GatewayHealthStatus::Degraded,
+                 "GatewayHealthStatus deserializes degraded.");
+
+    using MasterControl::McpServerTransport;
+    ok &= expect(MasterControl::to_string(McpServerTransport::StreamableHttp) == "streamable_http",
+                 "McpServerTransport serializes streamable_http.");
+    ok &= expect(MasterControl::mcpServerTransportFromString("stdio") == McpServerTransport::Stdio,
+                 "McpServerTransport deserializes stdio.");
+    return ok;
+}
+
+bool testGatewayConfigJsonRoundTrip() {
+    MasterControl::McpGatewayConfiguration original;
+    original.type = MasterControl::GatewayType::MCPJungle;
+    original.enabled = true;
+    original.listenHost = "0.0.0.0";
+    original.listenPort = 9090;
+    original.mcpPath = "/mcp";
+    original.healthPath = "/health";
+    original.mode = "lan-trusted";
+
+    nlohmann::json serialized = original;
+    bool ok = true;
+    ok &= expect(serialized["type"].get<std::string>() == "mcpjungle",
+                 "Gateway config serializes type as a slug.");
+    ok &= expect(serialized["listenPort"].get<uint16_t>() == 9090,
+                 "Gateway config preserves listenPort.");
+
+    auto restored = serialized.get<MasterControl::McpGatewayConfiguration>();
+    ok &= expect(restored.type == original.type,
+                 "Gateway config deserializes type.");
+    ok &= expect(restored.enabled == original.enabled,
+                 "Gateway config deserializes enabled.");
+    ok &= expect(restored.listenPort == original.listenPort,
+                 "Gateway config deserializes listenPort.");
+    ok &= expect(restored.mcpPath == original.mcpPath,
+                 "Gateway config deserializes mcpPath.");
+    return ok;
+}
+
 bool testAppConfigurationCarriesLanClients() {
     MasterControl::AppConfiguration configuration;
     MasterControl::LanClient client;
@@ -391,5 +701,19 @@ int main() {
     ok &= testGovernanceActionKindRoundTrip();
     ok &= testGovernanceDecisionOutcomeRoundTrip();
     ok &= testGovernanceDeferredActionShape();
+    // PHASE-02 MCP Gateway adapter tests
+    ok &= testGatewayConfigurationDefaults();
+    ok &= testFakeGatewayDisabledStartsDisabled();
+    ok &= testFakeGatewayEnabledStartStopRoundTrip();
+    ok &= testFakeGatewayStartFailureScripted();
+    ok &= testFakeGatewayRegistrationRoundTrip();
+    ok &= testFakeGatewayRegistrationRejectsEmptyName();
+    ok &= testFakeGatewayProbeUsesScriptedHealth();
+    ok &= testFakeGatewayMcpUrlComposition();
+    ok &= testRealAdapterDisabledByDefault();
+    ok &= testRealAdapterSupervisedMockWhenBinaryMissing();
+    ok &= testRealAdapterRegistrationSurvivesAcrossStartStop();
+    ok &= testGatewayEnumRoundTrips();
+    ok &= testGatewayConfigJsonRoundTrip();
     return ok ? 0 : 1;
 }

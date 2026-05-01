@@ -101,10 +101,15 @@ Expected: zero matches across `src/` and `resources/web`. PHASE-01 removed all o
 ```bash
 git grep -nE 'mcpjungle|MCPJungle|McpJungle' \
   -- src/MasterControlApp src/MasterControlServiceHost src/MasterControlBootstrapper tests resources/web include \
-  ':!src/MasterControlApp/*Gateway*' ':!src/MasterControlApp/*McpJungle*' ':!include/MasterControl/*Gateway*' ':!docs/**'
+  ':!src/MasterControlApp/McpGatewayAdapters.cpp' \
+  ':!include/MasterControl/McpGatewayAdapters.h' \
+  ':!src/MasterControlApp/MasterControlDefaults.cpp' \
+  ':!src/MasterControlApp/MasterControlModels.cpp' \
+  ':!include/MasterControl/MasterControlModels.h' \
+  ':!docs/**'
 ```
 
-Expected: zero matches once PHASE-02 lands. The substring may only appear inside the `IMcpGateway` adapter implementation, configuration, and docs/handoff content.
+Expected: zero matches as of PHASE-02. The substring is allowed inside the adapter (`include/MasterControl/McpGatewayAdapters.h`, `src/MasterControlApp/McpGatewayAdapters.cpp`), the enum string tables (`src/MasterControlApp/MasterControlModels.cpp`), default-config seeding (`MasterControlDefaults.cpp`), and the `GatewayType::MCPJungle` declaration. Anywhere else is a coupling regression.
 
 ### 2.2 Autoscaled clones registered as separate public MCP tools
 
