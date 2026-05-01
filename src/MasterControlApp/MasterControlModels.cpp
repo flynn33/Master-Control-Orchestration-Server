@@ -200,6 +200,14 @@ std::string to_string(EndpointInstanceState value) {
     });
 }
 
+std::string to_string(LeaseState value) {
+    return enumToString(value, {
+        { LeaseState::Active, "active" },
+        { LeaseState::Released, "released" },
+        { LeaseState::Failed, "failed" }
+    });
+}
+
 EndpointKind endpointKindFromString(const std::string& value) {
     return enumFromString<EndpointKind>(value, {
         { EndpointKind::Host, "host" },
@@ -357,6 +365,14 @@ EndpointInstanceState endpointInstanceStateFromString(const std::string& value) 
     });
 }
 
+LeaseState leaseStateFromString(const std::string& value) {
+    return enumFromString<LeaseState>(value, {
+        { LeaseState::Active, "active" },
+        { LeaseState::Released, "released" },
+        { LeaseState::Failed, "failed" }
+    });
+}
+
 void to_json(nlohmann::json& json, EndpointKind value) {
     json = to_string(value);
 }
@@ -484,6 +500,14 @@ void to_json(nlohmann::json& json, EndpointInstanceState value) {
 
 void from_json(const nlohmann::json& json, EndpointInstanceState& value) {
     value = endpointInstanceStateFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, LeaseState value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, LeaseState& value) {
+    value = leaseStateFromString(json.get<std::string>());
 }
 
 std::string toPrettyJson(const nlohmann::json& json) {

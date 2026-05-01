@@ -551,6 +551,121 @@ bool testGatewayEnumRoundTrips() {
 // shape, the required fields, and the JSON round-trip so /.well-known/mcos.json
 // stays compatible with discovery-document.schema.json.
 
+// PHASE-07 (ADR-002 §8): Lease routing + autoscale shape tests. The
+// LeaseRouter implementation lives inside the runtime translation
+// unit; these tests pin the public types' contract by constructing
+// EndpointLease, LeaseRequest, and PoolSaturation values directly.
+
+bool testLeaseStateEnumRoundTrip() {
+    using State = MasterControl::LeaseState;
+    bool ok = true;
+    const std::pair<State, const char*> samples[] = {
+        { State::Active,   "active" },
+        { State::Released, "released" },
+        { State::Failed,   "failed" }
+    };
+    for (const auto& [value, expected] : samples) {
+        const auto serialized = MasterControl::to_string(value);
+        ok &= expect(serialized == expected,
+                     "LeaseState serializes to its documented slug.");
+        const auto restored = MasterControl::leaseStateFromString(serialized);
+        ok &= expect(restored == value,
+                     "LeaseState round-trips through fromString.");
+    }
+    return ok;
+}
+
+bool testLeaseRequestJsonRoundTrip() {
+    MasterControl::LeaseRequest request;
+    request.poolId = "test-pool";
+    request.sessionId = "session-abc";
+    request.clientHint = "claude-code";
+    request.stateful = true;
+
+    nlohmann::json serialized = request;
+    bool ok = true;
+    ok &= expect(serialized["poolId"].get<std::string>() == "test-pool",
+                 "LeaseRequest serializes poolId.");
+    ok &= expect(serialized["stateful"].get<bool>() == true,
+                 "LeaseRequest serializes stateful flag.");
+
+    auto restored = serialized.get<MasterControl::LeaseRequest>();
+    ok &= expect(restored.sessionId == "session-abc",
+                 "LeaseRequest round-trips sessionId.");
+    return ok;
+}
+
+bool testEndpointLeaseDefaultStateActive() {
+    MasterControl::EndpointLease lease;
+    bool ok = true;
+    ok &= expect(lease.state == MasterControl::LeaseState::Active,
+                 "EndpointLease defaults to Active state.");
+    return ok;
+}
+
+bool testEndpointLeaseJsonShape() {
+    MasterControl::EndpointLease lease;
+    lease.leaseId = "lease-1";
+    lease.poolId = "test-pool";
+    lease.instanceId = "test-pool#1";
+    lease.sessionId = "session-abc";
+    lease.state = MasterControl::LeaseState::Active;
+    lease.acquiredAtUtc = "2026-05-01T00:00:00Z";
+    lease.statusMessage = "Lease bound to least-loaded Ready instance.";
+
+    nlohmann::json serialized = lease;
+    bool ok = true;
+    ok &= expect(serialized["state"].get<std::string>() == "active",
+                 "Lease state serializes to slug.");
+    ok &= expect(serialized["instanceId"].get<std::string>() == "test-pool#1",
+                 "Lease records the bound instanceId.");
+    ok &= expect(serialized["sessionId"].get<std::string>() == "session-abc",
+                 "Lease preserves sessionId for sticky-routing observers.");
+
+    auto restored = serialized.get<MasterControl::EndpointLease>();
+    ok &= expect(restored.state == lease.state,
+                 "Lease state round-trips through JSON.");
+    return ok;
+}
+
+bool testPoolSaturationJsonShape() {
+    MasterControl::PoolSaturation saturation;
+    saturation.poolId = "test-pool";
+    saturation.instanceCount = 3;
+    saturation.readyInstanceCount = 2;
+    saturation.drainingInstanceCount = 1;
+    saturation.activeLeaseCount = 6;
+    saturation.maxActiveLeasesPerInstance = 3;
+    saturation.atSaturation = true;
+    saturation.scaleOutTriggered = false;
+    saturation.atMaxInstances = false;
+
+    nlohmann::json serialized = saturation;
+    bool ok = true;
+    ok &= expect(serialized["atSaturation"].get<bool>() == true,
+                 "PoolSaturation exposes atSaturation flag.");
+    ok &= expect(serialized["readyInstanceCount"].get<int>() == 2,
+                 "PoolSaturation exposes readyInstanceCount.");
+    ok &= expect(serialized["activeLeaseCount"].get<int>() == 6,
+                 "PoolSaturation exposes activeLeaseCount.");
+    ok &= expect(serialized["drainingInstanceCount"].get<int>() == 1,
+                 "PoolSaturation exposes drainingInstanceCount for drain-policy observers.");
+    return ok;
+}
+
+bool testScalePolicyDefaultsAreSafe() {
+    // ADR-002 §9: no fake live infrastructure. Defaults must NOT auto-spawn.
+    MasterControl::ScalePolicy policy;
+    bool ok = true;
+    ok &= expect(policy.minInstances == 0,
+                 "ScalePolicy.minInstances defaults to 0 (no auto-spawn).");
+    ok &= expect(policy.maxInstances >= 1,
+                 "ScalePolicy.maxInstances default is >= 1 so single-instance pools work.");
+    ok &= expect(policy.maxActiveLeasesPerInstance >= 1,
+                 "ScalePolicy.maxActiveLeasesPerInstance default is >= 1.");
+    return ok;
+}
+
 // PHASE-06 (ADR-002 §7): Managed worker pool shape tests. The runtime's
 // WorkerSupervisor lives inside the MasterControlRuntime translation
 // unit; these tests pin the public model contract by constructing
@@ -1133,5 +1248,12 @@ int main() {
     ok &= testManagedEndpointPoolJsonRequiredFields();
     ok &= testEndpointInstanceJsonShape();
     ok &= testManagedPoolEmptyByDefault();
+    // PHASE-07 lease + autoscale tests
+    ok &= testLeaseStateEnumRoundTrip();
+    ok &= testLeaseRequestJsonRoundTrip();
+    ok &= testEndpointLeaseDefaultStateActive();
+    ok &= testEndpointLeaseJsonShape();
+    ok &= testPoolSaturationJsonShape();
+    ok &= testScalePolicyDefaultsAreSafe();
     return ok ? 0 : 1;
 }

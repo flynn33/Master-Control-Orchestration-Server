@@ -192,6 +192,27 @@ public:
     virtual ~IPlatformServiceCatalogService() = default;
 };
 
+// PHASE-07 (ADR-002 §8): Lease Router. Resolves a LeaseRequest into a
+// concrete EndpointLease bound to one Ready instance. Stateful sessions
+// are sticky for the lease's lifetime; new sessions/leases route to
+// Ready instances that have headroom under the pool's
+// scalePolicy.maxActiveLeasesPerInstance threshold. When all Ready
+// instances are at capacity and the pool has not yet reached
+// scalePolicy.maxInstances, the router triggers a same-type scale-out
+// via IWorkerSupervisor::ensureMinInstances-style scaling and routes
+// the new lease to the freshly-spawned instance. Hot-migration of
+// active stateful sessions is forbidden (ADR-002 §8); Draining
+// instances retain sticky leases but new sessions route elsewhere.
+class ILeaseRouter {
+public:
+    virtual EndpointLease acquireLease(const LeaseRequest& request) = 0;
+    virtual OperationResult releaseLease(const std::string& leaseId,
+                                         const std::string& reason) = 0;
+    virtual std::vector<EndpointLease> activeLeases(const std::string& poolId) const = 0;
+    virtual PoolSaturation saturationFor(const std::string& poolId) const = 0;
+    virtual ~ILeaseRouter() = default;
+};
+
 // PHASE-06 (ADR-002 §7): Worker Supervisor. Owns the lifecycle of
 // `ManagedEndpointPool` records and their `EndpointInstance` children.
 // Supervised process trees are contained with Windows Job Objects so
@@ -207,6 +228,11 @@ public:
     virtual OperationResult upsertPool(ManagedEndpointPool pool) = 0;
     virtual OperationResult removePool(const std::string& poolId) = 0;
     virtual OperationResult ensureMinInstances(const std::string& poolId) = 0;
+    // PHASE-07: scale-out trigger called by the LeaseRouter when all
+    // Ready instances are at maxActiveLeasesPerInstance and the pool
+    // has not yet reached scalePolicy.maxInstances. Returns the newly
+    // spawned instance id (empty on no-op).
+    virtual std::string scaleUpOnce(const std::string& poolId) = 0;
     virtual OperationResult drainPool(const std::string& poolId) = 0;
     virtual OperationResult shutdownAll() = 0;
     virtual ~IWorkerSupervisor() = default;

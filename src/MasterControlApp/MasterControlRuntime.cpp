@@ -7509,6 +7509,29 @@ public:
         return OperationResult{ true, false, "Pool draining." };
     }
 
+    std::string scaleUpOnce(const std::string& poolId) override {
+        // PHASE-07: invoked by the LeaseRouter when all Ready instances
+        // are at maxActiveLeasesPerInstance and the pool has not yet
+        // reached scalePolicy.maxInstances. Spawns one new instance and
+        // returns its id (empty if the pool is already at max).
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto iterator = pools_.find(poolId);
+        if (iterator == pools_.end()) {
+            return std::string();
+        }
+        ManagedEndpointPool& pool = iterator->second;
+        const int max = (std::max)(0, pool.scalePolicy.maxInstances);
+        const int current = static_cast<int>(pool.instances.size());
+        if (current >= max) {
+            return std::string();
+        }
+        EndpointInstance instance = startInstanceLocked(pool);
+        const std::string newInstanceId = instance.instanceId;
+        pool.instances.push_back(std::move(instance));
+        pool.updatedAtUtc = timestampNowUtc();
+        return newInstanceId;
+    }
+
     OperationResult shutdownAll() override {
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto& [_, pool] : pools_) {
@@ -7645,6 +7668,213 @@ private:
     std::map<std::string, ManagedEndpointPool> pools_;
     std::map<std::string, ChildProcess> children_;
     std::atomic<uint64_t> nextInstanceSerial_{ 1 };
+};
+
+// PHASE-07 (ADR-002 §8): LeaseRouter. Resolves a LeaseRequest into a
+// concrete EndpointLease bound to one Ready instance. The selection
+// rule:
+//   1. If the request carries a sessionId that maps to an active
+//      lease, return that lease verbatim (sticky session). Honors
+//      ADR-002 §8: no hot-migration of active stateful streams.
+//   2. Otherwise, find the Ready instance with the fewest active
+//      leases (excluding Draining instances). If that instance has
+//      headroom under maxActiveLeasesPerInstance, bind the lease.
+//   3. If all Ready instances are at capacity AND the pool has not
+//      yet reached scalePolicy.maxInstances, ask the supervisor to
+//      scaleUpOnce(). Bind the new lease to the freshly-spawned
+//      instance.
+//   4. If saturated and at maxInstances, return a Failed lease with
+//      a saturation message; the caller can retry.
+class LeaseRouter final : public ILeaseRouter {
+public:
+    explicit LeaseRouter(std::shared_ptr<IWorkerSupervisor> workerSupervisor)
+        : workerSupervisor_(std::move(workerSupervisor)) {}
+
+    EndpointLease acquireLease(const LeaseRequest& request) override {
+        if (request.poolId.empty()) {
+            EndpointLease lease;
+            lease.state = LeaseState::Failed;
+            lease.statusMessage = "LeaseRequest is missing poolId.";
+            return lease;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // 1) Sticky session: if the request carries a sessionId that maps
+        //    to an active lease, return it verbatim. Active stateful
+        //    streams must not be hot-migrated (ADR-002 §8).
+        if (!request.sessionId.empty()) {
+            const auto sessionIterator = stickySessions_.find(stickyKey(request.poolId, request.sessionId));
+            if (sessionIterator != stickySessions_.end()) {
+                const auto leaseIterator = leases_.find(sessionIterator->second);
+                if (leaseIterator != leases_.end() && leaseIterator->second.state == LeaseState::Active) {
+                    return leaseIterator->second;
+                }
+                // Sticky entry pointed at a stale lease; clean up.
+                stickySessions_.erase(sessionIterator);
+            }
+        }
+
+        const auto poolOpt = workerSupervisor_ ? workerSupervisor_->findPool(request.poolId) : std::optional<ManagedEndpointPool>{};
+        if (!poolOpt.has_value()) {
+            EndpointLease lease;
+            lease.poolId = request.poolId;
+            lease.state = LeaseState::Failed;
+            lease.statusMessage = "Unknown pool.";
+            return lease;
+        }
+        const ManagedEndpointPool& pool = *poolOpt;
+        const int maxLeasesPerInstance = (std::max)(1, pool.scalePolicy.maxActiveLeasesPerInstance);
+
+        // 2) Pick the Ready instance with the fewest active leases.
+        const auto choice = selectLeastLoadedReadyLocked(pool, maxLeasesPerInstance);
+        if (choice.has_value()) {
+            return bindLeaseLocked(pool.poolId, *choice, request);
+        }
+
+        // 3) Try same-type scale-out. The supervisor refuses if the pool
+        //    is already at scalePolicy.maxInstances.
+        const std::string newInstanceId = workerSupervisor_->scaleUpOnce(request.poolId);
+        if (!newInstanceId.empty()) {
+            return bindLeaseLocked(pool.poolId, newInstanceId, request, /*scaleOutTriggered=*/true);
+        }
+
+        // 4) Saturated and at max — surface a Failed lease the caller can
+        //    retry once existing leases drain.
+        EndpointLease lease;
+        lease.poolId = pool.poolId;
+        lease.state = LeaseState::Failed;
+        lease.statusMessage = "Pool saturated; at scalePolicy.maxInstances. Retry after existing leases release.";
+        return lease;
+    }
+
+    OperationResult releaseLease(const std::string& leaseId, const std::string& reason) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto iterator = leases_.find(leaseId);
+        if (iterator == leases_.end()) {
+            return OperationResult{ false, false, "Unknown lease id." };
+        }
+        EndpointLease& lease = iterator->second;
+        if (lease.state != LeaseState::Active) {
+            return OperationResult{ true, false, "Lease already released." };
+        }
+        lease.state = LeaseState::Released;
+        lease.releasedAtUtc = timestampNowUtc();
+        lease.statusMessage = reason.empty() ? std::string("Lease released.") : reason;
+        if (!lease.sessionId.empty()) {
+            stickySessions_.erase(stickyKey(lease.poolId, lease.sessionId));
+        }
+        return OperationResult{ true, false, "Lease released." };
+    }
+
+    std::vector<EndpointLease> activeLeases(const std::string& poolId) const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<EndpointLease> result;
+        for (const auto& [_, lease] : leases_) {
+            if (lease.poolId == poolId && lease.state == LeaseState::Active) {
+                result.push_back(lease);
+            }
+        }
+        std::sort(result.begin(), result.end(),
+                  [](const EndpointLease& a, const EndpointLease& b) {
+                      return a.acquiredAtUtc < b.acquiredAtUtc;
+                  });
+        return result;
+    }
+
+    PoolSaturation saturationFor(const std::string& poolId) const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PoolSaturation saturation;
+        saturation.poolId = poolId;
+        const auto poolOpt = workerSupervisor_ ? workerSupervisor_->findPool(poolId) : std::optional<ManagedEndpointPool>{};
+        if (!poolOpt.has_value()) {
+            return saturation;
+        }
+        const ManagedEndpointPool& pool = *poolOpt;
+        saturation.instanceCount = static_cast<int>(pool.instances.size());
+        for (const auto& instance : pool.instances) {
+            if (instance.state == EndpointInstanceState::Ready
+                || instance.state == EndpointInstanceState::Busy) {
+                ++saturation.readyInstanceCount;
+            }
+            if (instance.state == EndpointInstanceState::Draining) {
+                ++saturation.drainingInstanceCount;
+            }
+        }
+        for (const auto& [_, lease] : leases_) {
+            if (lease.poolId == poolId && lease.state == LeaseState::Active) {
+                ++saturation.activeLeaseCount;
+            }
+        }
+        saturation.maxActiveLeasesPerInstance = (std::max)(1, pool.scalePolicy.maxActiveLeasesPerInstance);
+        const int capacity = saturation.readyInstanceCount * saturation.maxActiveLeasesPerInstance;
+        saturation.atSaturation = (saturation.readyInstanceCount > 0 && saturation.activeLeaseCount >= capacity);
+        saturation.atMaxInstances = saturation.instanceCount >= (std::max)(0, pool.scalePolicy.maxInstances);
+        return saturation;
+    }
+
+private:
+    static std::string stickyKey(const std::string& poolId, const std::string& sessionId) {
+        return poolId + "::" + sessionId;
+    }
+
+    std::optional<std::string> selectLeastLoadedReadyLocked(const ManagedEndpointPool& pool,
+                                                             int maxLeasesPerInstance) const {
+        std::map<std::string, int> activeByInstance;
+        for (const auto& [_, lease] : leases_) {
+            if (lease.poolId == pool.poolId && lease.state == LeaseState::Active) {
+                activeByInstance[lease.instanceId] += 1;
+            }
+        }
+        std::optional<std::string> bestInstanceId;
+        // Parenthesize std::numeric_limits<int>::max to bypass the
+        // Windows.h max() macro collision in this TU.
+        int bestLoad = (std::numeric_limits<int>::max)();
+        for (const auto& instance : pool.instances) {
+            if (instance.state != EndpointInstanceState::Ready
+                && instance.state != EndpointInstanceState::Busy) {
+                continue;
+            }
+            const int load = activeByInstance[instance.instanceId];
+            if (load >= maxLeasesPerInstance) {
+                continue;
+            }
+            if (load < bestLoad) {
+                bestLoad = load;
+                bestInstanceId = instance.instanceId;
+            }
+        }
+        return bestInstanceId;
+    }
+
+    EndpointLease bindLeaseLocked(const std::string& poolId,
+                                   const std::string& instanceId,
+                                   const LeaseRequest& request,
+                                   bool scaleOutTriggered = false) {
+        EndpointLease lease;
+        lease.leaseId = "lease-" + std::to_string(nextLeaseSerial_++);
+        lease.poolId = poolId;
+        lease.instanceId = instanceId;
+        lease.state = LeaseState::Active;
+        lease.acquiredAtUtc = timestampNowUtc();
+        if (request.stateful || !request.sessionId.empty()) {
+            lease.sessionId = request.sessionId;
+            if (!lease.sessionId.empty()) {
+                stickySessions_[stickyKey(poolId, lease.sessionId)] = lease.leaseId;
+            }
+        }
+        lease.statusMessage = scaleOutTriggered
+            ? "Lease bound to freshly-spawned instance after pool scale-out."
+            : "Lease bound to least-loaded Ready instance.";
+        leases_[lease.leaseId] = lease;
+        return lease;
+    }
+
+    mutable std::mutex mutex_;
+    std::shared_ptr<IWorkerSupervisor> workerSupervisor_;
+    std::map<std::string, EndpointLease> leases_;
+    std::map<std::string, std::string> stickySessions_;
+    std::atomic<uint64_t> nextLeaseSerial_{ 1 };
 };
 
 // PHASE-05 (ADR-002 §6): Governance Bundle Service. Composes per-platform
@@ -8822,6 +9052,7 @@ private:
     std::shared_ptr<IOnboardingProfileService> onboardingProfileService_;
     std::shared_ptr<IGovernanceBundleService> governanceBundleService_;
     std::shared_ptr<IWorkerSupervisor> workerSupervisor_;
+    std::shared_ptr<ILeaseRouter> leaseRouter_;
     std::shared_ptr<IAdminApiService> adminApiService_;
     std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager_;
     std::shared_ptr<Forsetti::IEntitlementProvider> entitlementProvider_;
@@ -8898,6 +9129,13 @@ bool MasterControlApplication::Impl::initialize() {
     // boot — operators register pools via POST /api/pools or future
     // module manifests.
     workerSupervisor_ = std::make_shared<WorkerSupervisor>();
+
+    // PHASE-07 (ADR-002 §8): construct the lease router that resolves
+    // LeaseRequest -> EndpointLease using sticky-session + least-loaded
+    // routing, with same-type scale-out when all Ready instances are at
+    // maxActiveLeasesPerInstance and the pool has not reached its
+    // scalePolicy.maxInstances ceiling.
+    leaseRouter_ = std::make_shared<LeaseRouter>(workerSupervisor_);
 
     // PHASE-02: register one stable logical MCP endpoint with the gateway
     // adapter so subsequent phases (PHASE-06 worker pools, PHASE-07 lease
@@ -8986,6 +9224,7 @@ void MasterControlApplication::Impl::shutdown() {
     if (workerSupervisor_) {
         (void)workerSupervisor_->shutdownAll();
     }
+    leaseRouter_.reset();
     if (mcpGateway_) {
         mcpGateway_->Stop();
     }
@@ -9641,7 +9880,25 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "GET" && startsWith(request.path, "/api/pools/")) {
             const auto prefix = std::string("/api/pools/");
-            const std::string poolId = request.path.substr(prefix.size());
+            const std::string suffix = request.path.substr(prefix.size());
+            const auto slash = suffix.find('/');
+            const std::string poolId = (slash == std::string::npos) ? suffix : suffix.substr(0, slash);
+            const std::string subResource = (slash == std::string::npos) ? std::string{} : suffix.substr(slash + 1);
+
+            // PHASE-07 sub-resources: /leases (active list) and /saturation.
+            if (subResource == "leases") {
+                return jsonResponse(leaseRouter_
+                    ? leaseRouter_->activeLeases(poolId)
+                    : std::vector<EndpointLease>{});
+            }
+            if (subResource == "saturation") {
+                return jsonResponse(leaseRouter_
+                    ? leaseRouter_->saturationFor(poolId)
+                    : PoolSaturation{});
+            }
+            if (!subResource.empty()) {
+                return jsonResponse(OperationResult{ false, false, "Unknown pool sub-resource; expected leases|saturation." });
+            }
             const auto pool = workerSupervisor_
                 ? workerSupervisor_->findPool(poolId)
                 : std::optional<ManagedEndpointPool>{};
@@ -9665,7 +9922,7 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const std::string suffix = request.path.substr(prefix.size());
             const auto slash = suffix.find('/');
             if (slash == std::string::npos) {
-                return jsonResponse(OperationResult{ false, false, "Pool action route is /api/pools/{poolId}/{remove|scale|drain}." });
+                return jsonResponse(OperationResult{ false, false, "Pool action route is /api/pools/{poolId}/{remove|scale|drain|leases}." });
             }
             const std::string poolId = suffix.substr(0, slash);
             const std::string action = suffix.substr(slash + 1);
@@ -9681,7 +9938,46 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             if (action == "drain") {
                 return jsonResponse(workerSupervisor_->drainPool(poolId));
             }
-            return jsonResponse(OperationResult{ false, false, "Unknown pool action; expected remove|scale|drain." });
+            // PHASE-07 lease acquire: POST /api/pools/{poolId}/leases
+            if (action == "leases") {
+                if (!leaseRouter_) {
+                    return jsonResponse(OperationResult{ false, false, "Lease router is not running." });
+                }
+                LeaseRequest leaseRequest;
+                leaseRequest.poolId = poolId;
+                if (!request.body.empty()) {
+                    try {
+                        leaseRequest = nlohmann::json::parse(request.body).get<LeaseRequest>();
+                        leaseRequest.poolId = poolId; // path takes precedence
+                    } catch (...) {
+                        // Empty / malformed body falls back to a stateless lease.
+                    }
+                }
+                return jsonResponse(leaseRouter_->acquireLease(leaseRequest));
+            }
+            return jsonResponse(OperationResult{ false, false, "Unknown pool action; expected remove|scale|drain|leases." });
+        }
+        // PHASE-07 lease release: POST /api/leases/{leaseId}/release
+        if (request.method == "POST" && startsWith(request.path, "/api/leases/")) {
+            const auto prefix = std::string("/api/leases/");
+            const std::string suffix = request.path.substr(prefix.size());
+            const auto slash = suffix.find('/');
+            if (slash == std::string::npos || suffix.substr(slash + 1) != "release") {
+                return jsonResponse(OperationResult{ false, false, "Lease route is POST /api/leases/{leaseId}/release." });
+            }
+            const std::string leaseId = suffix.substr(0, slash);
+            std::string reason;
+            if (!request.body.empty()) {
+                try {
+                    const auto body = nlohmann::json::parse(request.body);
+                    reason = body.value("reason", std::string{});
+                } catch (...) {
+                    // Reason is optional.
+                }
+            }
+            return jsonResponse(leaseRouter_
+                ? leaseRouter_->releaseLease(leaseId, reason)
+                : OperationResult{ false, false, "Lease router is not running." });
         }
         // -------------------------------------------------------------------
         // /api/gateway/* — MCP Gateway adapter surface (PHASE-02 of ADR-002).

@@ -859,6 +859,53 @@ struct ManagedEndpointPool final {
     std::string updatedAtUtc;
 };
 
+// PHASE-07 (ADR-002 §8): Lease routing + autoscale. Sessions/requests
+// are assigned to instances behind stable logical pool endpoints via
+// EndpointLease. Stateful sessions stay sticky to their owning
+// instance for the lease's lifetime; new sessions route to the
+// least-loaded Ready instance. When all Ready instances are at
+// scalePolicy.maxActiveLeasesPerInstance and adding another instance
+// is permitted, the LeaseRouter triggers a same-type scale-out and
+// routes the new lease to the freshly-spawned instance. Drain transitions
+// existing instances to Draining (active leases stay sticky); new
+// sessions route elsewhere. Hot-migration is forbidden (ADR-002 §8).
+enum class LeaseState {
+    Active,
+    Released,
+    Failed
+};
+
+struct LeaseRequest final {
+    std::string poolId;
+    std::string sessionId;          // empty: stateless lease (any Ready)
+    std::string clientHint;         // operator-provided routing hint
+    bool stateful = false;
+};
+
+struct EndpointLease final {
+    std::string leaseId;
+    std::string poolId;
+    std::string instanceId;
+    std::string sessionId;          // present iff stateful
+    LeaseState state = LeaseState::Active;
+    std::string acquiredAtUtc;
+    std::string releasedAtUtc;
+    std::string statusMessage;
+};
+
+struct PoolSaturation final {
+    std::string poolId;
+    int instanceCount = 0;
+    int readyInstanceCount = 0;
+    int drainingInstanceCount = 0;
+    int activeLeaseCount = 0;
+    int queueDepth = 0;
+    int maxActiveLeasesPerInstance = 1;
+    bool atSaturation = false;       // every Ready instance is at max leases
+    bool scaleOutTriggered = false;  // last lease attempt forced scale-out
+    bool atMaxInstances = false;     // pool already at scalePolicy.maxInstances
+};
+
 // PHASE-05 (ADR-002 §6): Per-platform CLU/Forsetti governance bundle.
 // Contract: docs/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md.
 // Each bundle wraps the Forsetti Framework + Forsetti Framework for
@@ -1016,6 +1063,7 @@ std::string to_string(GatewayHealthStatus value);
 std::string to_string(McpServerTransport value);
 std::string to_string(EndpointPoolKind value);
 std::string to_string(EndpointInstanceState value);
+std::string to_string(LeaseState value);
 
 EndpointKind endpointKindFromString(const std::string& value);
 EndpointStatus endpointStatusFromString(const std::string& value);
@@ -1033,6 +1081,7 @@ GatewayHealthStatus gatewayHealthStatusFromString(const std::string& value);
 McpServerTransport mcpServerTransportFromString(const std::string& value);
 EndpointPoolKind endpointPoolKindFromString(const std::string& value);
 EndpointInstanceState endpointInstanceStateFromString(const std::string& value);
+LeaseState leaseStateFromString(const std::string& value);
 
 void to_json(nlohmann::json& json, EndpointKind value);
 void from_json(const nlohmann::json& json, EndpointKind& value);
@@ -1081,6 +1130,9 @@ void from_json(const nlohmann::json& json, EndpointPoolKind& value);
 
 void to_json(nlohmann::json& json, EndpointInstanceState value);
 void from_json(const nlohmann::json& json, EndpointInstanceState& value);
+
+void to_json(nlohmann::json& json, LeaseState value);
+void from_json(const nlohmann::json& json, LeaseState& value);
 
 std::string toPrettyJson(const nlohmann::json& json);
 std::string timestampNowUtc();
@@ -1831,6 +1883,37 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     lastTransitionAtUtc,
     statusMessage,
     telemetry)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    LeaseRequest,
+    poolId,
+    sessionId,
+    clientHint,
+    stateful)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    EndpointLease,
+    leaseId,
+    poolId,
+    instanceId,
+    sessionId,
+    state,
+    acquiredAtUtc,
+    releasedAtUtc,
+    statusMessage)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    PoolSaturation,
+    poolId,
+    instanceCount,
+    readyInstanceCount,
+    drainingInstanceCount,
+    activeLeaseCount,
+    queueDepth,
+    maxActiveLeasesPerInstance,
+    atSaturation,
+    scaleOutTriggered,
+    atMaxInstances)
 
 // ManagedEndpointPool uses an explicit serializer because the
 // EndpointTemplate field is named `template_` to avoid the `template`

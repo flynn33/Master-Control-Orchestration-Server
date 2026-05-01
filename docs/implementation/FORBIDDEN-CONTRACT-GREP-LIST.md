@@ -174,6 +174,16 @@ git grep -nE 'migrateSession|hotMigrate|migrateLease' \
 
 Expected: zero matches unless an explicit backend-specific migration contract is added in a future phase. ADR-002 §8 forbids hot-migrating active stateful streams.
 
+### 2.4 Lease router sticky-session integrity (PHASE-07, ADR-002 §8)
+
+The PHASE-07 LeaseRouter MUST honor sticky-session routing: an active lease bound to a sessionId always returns that lease verbatim on subsequent `acquireLease` calls with the same sessionId. Re-binding an active stateful session to a different instance is hot-migration and forbidden.
+
+```bash
+git grep -nE 'stickySessions_\[' src/MasterControlApp/MasterControlRuntime.cpp
+```
+
+Expected: matches only inside `LeaseRouter::bindLeaseLocked` (one assignment site for new-lease binding) and inside the cleanup paths in `acquireLease` (stale-entry removal) and `releaseLease`. Any other write site is a hot-migration attempt and a regression.
+
 ---
 
 ## Group 3 — Trust model integrity (forbidden by ADR-002 §1)
