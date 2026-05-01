@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MCOS Managed Endpoint Pool",
+  "type": "object",
+  "required": [
+    "poolId",
+    "kind",
+    "logicalMcpUrl",
+    "template",
+    "scalePolicy"
+  ],
+  "properties": {
+    "poolId": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "mcp-server",
+        "sub-agent"
+      ]
+    },
+    "logicalMcpUrl": {
+      "type": "string"
+    },
+    "template": {
+      "type": "object",
+      "properties": {
+        "executable": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "workingDirectory": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "object"
+        },
+        "transport": {
+          "type": "string",
+          "enum": [
+            "streamable_http",
+            "stdio"
+          ]
+        },
+        "healthProbe": {
+          "type": "object"
+        }
+      }
+    },
+    "scalePolicy": {
+      "type": "object",
+      "properties": {
+        "minInstances": {
+          "type": "integer"
+        },
+        "maxInstances": {
+          "type": "integer"
+        },
+        "maxActiveLeasesPerInstance": {
+          "type": "integer"
+        },
+        "scaleOutQueueWaitMs": {
+          "type": "integer"
+        },
+        "scaleInIdleSeconds": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MCOS Gateway Service Configuration",
+  "type": "object",
+  "required": [
+    "gatewayType",
+    "enabled",
+    "listenPort",
+    "mcpPath"
+  ],
+  "properties": {
+    "gatewayType": {
+      "type": "string",
+      "enum": [
+        "mcpjungle",
+        "native"
+      ]
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "binaryPath": {
+      "type": "string"
+    },
+    "listenHost": {
+      "type": "string",
+      "default": "0.0.0.0"
+    },
+    "listenPort": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "mcpPath": {
+      "type": "string",
+      "default": "/mcp"
+    },
+    "healthPath": {
+      "type": "string",
+      "default": "/health"
+    },
+    "databasePath": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "development",
+        "enterprise",
+        "lan-trusted"
+      ]
+    }
+  }
+}

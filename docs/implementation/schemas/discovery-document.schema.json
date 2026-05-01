@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MCOS Discovery Document",
+  "type": "object",
+  "required": [
+    "product",
+    "role",
+    "instanceId",
+    "trust",
+    "auth",
+    "gateway",
+    "onboarding",
+    "governance",
+    "capabilities"
+  ],
+  "properties": {
+    "product": {
+      "const": "MCOS"
+    },
+    "role": {
+      "const": "mcp-gateway-host"
+    },
+    "version": {
+      "type": "string"
+    },
+    "instanceId": {
+      "type": "string"
+    },
+    "trust": {
+      "const": "lan"
+    },
+    "auth": {
+      "const": "none"
+    },
+    "gateway": {
+      "type": "object"
+    },
+    "onboarding": {
+      "type": "object"
+    },
+    "governance": {
+      "type": "object"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

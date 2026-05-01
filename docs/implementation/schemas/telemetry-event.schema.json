@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MCOS Telemetry Event",
+  "type": "object",
+  "required": [
+    "timestamp",
+    "category",
+    "severity",
+    "message"
+  ],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "host",
+        "client",
+        "gateway",
+        "worker",
+        "governance",
+        "discovery",
+        "dashboard",
+        "system"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "warning",
+        "error",
+        "critical"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "clientId": {
+      "type": "string"
+    },
+    "poolId": {
+      "type": "string"
+    },
+    "instanceId": {
+      "type": "string"
+    },
+    "metrics": {
+      "type": "object"
+    }
+  }
+}

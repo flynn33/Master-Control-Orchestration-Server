@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MCOS Onboarding Profile",
+  "type": "object",
+  "required": [
+    "clientType",
+    "gatewayMcpUrl",
+    "transport",
+    "authRequired",
+    "governanceBundleUrl"
+  ],
+  "properties": {
+    "clientType": {
+      "type": "string"
+    },
+    "displayName": {
+      "type": "string"
+    },
+    "gatewayMcpUrl": {
+      "type": "string",
+      "format": "uri"
+    },
+    "transport": {
+      "type": "string",
+      "enum": [
+        "streamable_http",
+        "stdio_bridge",
+        "sse_compat"
+      ]
+    },
+    "authRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "governanceBundleUrl": {
+      "type": "string",
+      "format": "uri"
+    },
+    "configSnippets": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "manualInstructions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "verificationSteps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

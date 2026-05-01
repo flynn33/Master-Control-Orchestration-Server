@@ -1,0 +1,377 @@
+{
+  "project": "Master Control Orchestration Server",
+  "program": "MCOS Gateway-First Realignment",
+  "version": "2026-04-30",
+  "executionPolicy": {
+    "onePhaseAtATime": true,
+    "requiresFileByFilePlanBeforeEdits": true,
+    "requiresCompletionReport": true,
+    "noDirectAIProviderExecution": true,
+    "lanClientAuth": "none; network-level trust only",
+    "preferredGatewaySubstrate": "MCPJungle through replaceable adapter",
+    "windowsNative": true,
+    "forsettiComplianceRequired": true
+  },
+  "phases": [
+    {
+      "id": "PHASE-00",
+      "label": "Repository baseline and ADR lock",
+      "file": "handoff/realignment/PHASE-00-repo-baseline-and-adr-lock.md",
+      "objective": "Freeze the new architecture in repo docs before code changes.",
+      "readFirst": [
+        "README.md",
+        "CLAUDE.md",
+        "AGENTS.md",
+        "docs/wiki/Architecture-Decisions/ADR-001-lan-client-control-plane.md",
+        "src/MasterControlApp/MasterControlRuntime.cpp",
+        "src/MasterControlModules/MasterControlModules.cpp"
+      ],
+      "deliverables": [
+        "New ADR for gateway-first realignment",
+        "Architecture drift inventory",
+        "Provider-era removal map",
+        "Baseline forbidden-contract grep list"
+      ],
+      "acceptanceCriteria": [
+        "New ADR states MCOS is not direct AI executor",
+        "MCP Gateway and LAN discovery are first-class modules",
+        "Current provider/client/auth semantics documented before change"
+      ],
+      "validation": [
+        "Static source inventory",
+        "Grep for provider-era terms",
+        "No code edits unless needed for docs index"
+      ]
+    },
+    {
+      "id": "PHASE-01",
+      "label": "Remove provider-era direct AI integration",
+      "file": "handoff/realignment/PHASE-01-remove-provider-era-direct-ai-integration.md",
+      "objective": "Remove or quarantine direct AI-provider execution and provider assignment paths.",
+      "readFirst": [
+        "src/MasterControlApp/MasterControlRuntime.cpp",
+        "src/MasterControlModules/MasterControlModules.cpp",
+        "src/MasterControlShell",
+        "resources/web/app.js",
+        "tests/MasterControlOrchestrationServerTests.cpp"
+      ],
+      "deliverables": [
+        "ExternalClient model or migration path",
+        "Provider-era direct execution removed/quarantined",
+        "Docs updated from provider execution to external client onboarding"
+      ],
+      "acceptanceCriteria": [
+        "No ChatGPT/Codex/Claude/Grok direct execution path remains in MCOS",
+        "Client model is external-agent oriented",
+        "Tests updated for semantic reset"
+      ],
+      "validation": [
+        "cmake --preset debug",
+        "cmake --build --preset debug",
+        "ctest --preset debug --output-on-failure"
+      ]
+    },
+    {
+      "id": "PHASE-02",
+      "label": "MCP Gateway spike with MCPJungle adapter",
+      "file": "handoff/realignment/PHASE-02-mcp-gateway-spike-mcpjungle.md",
+      "objective": "Add replaceable MCP Gateway adapter and supervised MCPJungle integration spike.",
+      "readFirst": [
+        "src/MasterControlApp/MasterControlRuntime.cpp",
+        "src/MasterControlServiceHost",
+        "src/MasterControlModules",
+        "CMakeLists.txt",
+        "docs/implementation/MCOS-REALIGNMENT-MASTER.md"
+      ],
+      "deliverables": [
+        "IMcpGateway interface",
+        "McpJungleGatewayAdapter",
+        "Gateway configuration",
+        "Gateway health API",
+        "First logical MCP endpoint registration path"
+      ],
+      "acceptanceCriteria": [
+        "MCOS exposes one gateway MCP URL",
+        "MCPJungle is supervised or mock-supervised",
+        "Adapter can be replaced later",
+        "No worker clone is exposed directly as public gateway server"
+      ],
+      "validation": [
+        "Targeted gateway adapter tests",
+        "Static health endpoint check",
+        "Build/tests where available"
+      ]
+    },
+    {
+      "id": "PHASE-03",
+      "label": "Bonjour-style LAN discovery and beacon correction",
+      "file": "handoff/realignment/PHASE-03-bonjour-lan-discovery.md",
+      "objective": "Advertise MCOS gateway via DNS-SD/mDNS and normalized discovery JSON.",
+      "readFirst": [
+        "src/MasterControlApp/MasterControlRuntime.cpp",
+        "include/MasterControl",
+        "docs/wiki/Remote-Client.md",
+        "resources/web/app.js"
+      ],
+      "deliverables": [
+        "DNS-SD service registration",
+        "/.well-known/mcos.json",
+        "/api/discovery",
+        "UDP beacon update",
+        "Discovery tests"
+      ],
+      "acceptanceCriteria": [
+        "DNS-SD TXT fields include gateway/config/governance paths",
+        "Discovery JSON matches schema",
+        "Beacon is gateway-first not provider-first"
+      ],
+      "validation": [
+        "Serialization tests",
+        "Static API route tests",
+        "Windows DNS-SD code review"
+      ]
+    },
+    {
+      "id": "PHASE-04",
+      "label": "Model-specific onboarding profiles",
+      "file": "handoff/realignment/PHASE-04-model-specific-onboarding-profiles.md",
+      "objective": "Generate configuration profiles for Claude Code, Codex, Grok, ChatGPT connector-edge, and generic MCP clients.",
+      "readFirst": [
+        "resources/web/app.js",
+        "docs/wiki/Client-Config-Bundle.md",
+        "src/MasterControlApp/MasterControlRuntime.cpp",
+        ".mcp.json"
+      ],
+      "deliverables": [
+        "/api/onboarding/{clientType}",
+        "Generic fallback profile",
+        "Config snippets",
+        "Verification instructions",
+        "Companion utility plan if auto-apply is not feasible"
+      ],
+      "acceptanceCriteria": [
+        "Every profile uses one gateway MCP URL",
+        "Profiles state authRequired=false for LAN gateway",
+        "ChatGPT path is documented as connector-edge/optional where needed",
+        "No direct provider credentials collected by MCOS for gateway use"
+      ],
+      "validation": [
+        "Schema tests",
+        "Snapshot tests for profiles",
+        "Manual docs review"
+      ]
+    },
+    {
+      "id": "PHASE-05",
+      "label": "CLU/Forsetti governance bundle distribution",
+      "file": "handoff/realignment/PHASE-05-clu-forsetti-governance-bundles.md",
+      "objective": "Deliver platform-specific governance bundles and CLU decision behavior to clients.",
+      "readFirst": [
+        "resources/clu/governance-profile.json",
+        "Forsetti-Framework-Windows-main",
+        "scripts/check-mastercontrol-forsetti.ps1",
+        "src/MasterControlModules"
+      ],
+      "deliverables": [
+        "Governance bundle endpoints",
+        "Windows/macOS/iOS bundle records",
+        "Checksums",
+        "Client instructions",
+        "Updated compliance gate"
+      ],
+      "acceptanceCriteria": [
+        "Windows governance bundle works",
+        "macOS/iOS paths represented",
+        "CLU profile served during onboarding",
+        "Forsetti compliance script passes or reports exact blockers"
+      ],
+      "validation": [
+        "Forsetti compliance script",
+        "Bundle schema tests",
+        "Checksum validation tests"
+      ]
+    },
+    {
+      "id": "PHASE-06",
+      "label": "Managed MCP/sub-agent worker pools",
+      "file": "handoff/realignment/PHASE-06-managed-worker-pools.md",
+      "objective": "Turn MCP servers and sub-agents into supervised managed endpoint pools.",
+      "readFirst": [
+        "src/MasterControlApp/MasterControlRuntime.cpp",
+        "include/MasterControl",
+        "tests/MasterControlOrchestrationServerTests.cpp",
+        "docs/wiki/Sub-Agents.md"
+      ],
+      "deliverables": [
+        "EndpointTemplate",
+        "EndpointInstance",
+        "ManagedEndpointPool",
+        "WorkerSupervisor",
+        "Job Object lifecycle",
+        "Health/readiness states"
+      ],
+      "acceptanceCriteria": [
+        "MCP servers and sub-agents use same operational abstraction",
+        "Worker process trees are supervised",
+        "Health states visible through API",
+        "No fake live infrastructure"
+      ],
+      "validation": [
+        "Supervisor unit tests",
+        "Lifecycle tests",
+        "Static Windows handle cleanup review"
+      ]
+    },
+    {
+      "id": "PHASE-07",
+      "label": "Autoscaling and lease routing",
+      "file": "handoff/realignment/PHASE-07-autoscaling-lease-routing.md",
+      "objective": "Scale endpoint pools and route new sessions/leases under load.",
+      "readFirst": [
+        "docs/implementation/schemas/managed-endpoint-pool.schema.json",
+        "src/MasterControlApp/MasterControlRuntime.cpp",
+        "tests"
+      ],
+      "deliverables": [
+        "EndpointLease",
+        "LeaseRouter",
+        "ScalePolicy",
+        "DrainPolicy",
+        "Queue pressure metrics",
+        "Synthetic load tests"
+      ],
+      "acceptanceCriteria": [
+        "Heavy utilization triggers same-type scale-out",
+        "Existing stateful sessions drain/stick",
+        "New sessions route to scaled instance",
+        "Dashboard/API show pool saturation"
+      ],
+      "validation": [
+        "Lease routing tests",
+        "Scale policy tests",
+        "Failure/restart tests"
+      ]
+    },
+    {
+      "id": "PHASE-08",
+      "label": "Real-time telemetry model",
+      "file": "handoff/realignment/PHASE-08-real-time-telemetry.md",
+      "objective": "Collect and expose host/client/gateway/worker telemetry.",
+      "readFirst": [
+        "src/MasterControlApp/MasterControlRuntime.cpp",
+        "resources/web/app.js",
+        "docs/wiki/Telemetry-and-Activity.md"
+      ],
+      "deliverables": [
+        "Host CPU/GPU/network/disk telemetry",
+        "Client heartbeat schema",
+        "Worker telemetry",
+        "Gateway telemetry",
+        "Activity event taxonomy"
+      ],
+      "acceptanceCriteria": [
+        "Dashboard APIs expose real metrics or unavailable states",
+        "No fake client CPU/GPU without heartbeat",
+        "Warnings/errors stream in real time",
+        "Worker pool telemetry includes utilization and waits"
+      ],
+      "validation": [
+        "Telemetry schema tests",
+        "Activity serialization tests",
+        "Static metric-source review"
+      ]
+    },
+    {
+      "id": "PHASE-09",
+      "label": "Tron dashboard realignment",
+      "file": "handoff/realignment/PHASE-09-tron-dashboard-realignment.md",
+      "objective": "Rebuild dashboard around gateway, clients, workers, telemetry, and activity.",
+      "readFirst": [
+        "resources/web/index.html",
+        "resources/web/app.js",
+        "resources/web/styles.css",
+        "src/MasterControlShell"
+      ],
+      "deliverables": [
+        "Gateway status panel",
+        "Client/model roster",
+        "Host telemetry meters",
+        "Worker pool gauges",
+        "Activity log",
+        "Governance panel",
+        "Setup/onboarding view"
+      ],
+      "acceptanceCriteria": [
+        "Dashboard no longer centers provider execution",
+        "All required real-time telemetry appears",
+        "Generic unavailable states are honest",
+        "Manual/import setup paths remain visible"
+      ],
+      "validation": [
+        "Browser static tests if present",
+        "Snapshot review",
+        "Manual UI route checklist"
+      ]
+    },
+    {
+      "id": "PHASE-10",
+      "label": "Windows hardening, CI, packaging, and release gate",
+      "file": "handoff/realignment/PHASE-10-windows-hardening-ci-release.md",
+      "objective": "Make release validation trustworthy and Windows production behavior explicit.",
+      "readFirst": [
+        ".github/workflows",
+        "CMakePresets.json",
+        "vcpkg.json",
+        "VERSION.json",
+        "installer",
+        "scripts"
+      ],
+      "deliverables": [
+        "Windows CI build/test/package gate",
+        "No workflow_dispatch bypass",
+        "Version source of truth",
+        "Packaging docs",
+        "Firewall/LAN mode docs",
+        "Bootstrapper smoke check"
+      ],
+      "acceptanceCriteria": [
+        "Windows build/test/package gate blocks release",
+        "Manual dispatch cannot bypass successful same-SHA build",
+        "Toolchain discovery avoids hardcoded VS Enterprise path",
+        "Release version stamped before configure/build/package"
+      ],
+      "validation": [
+        "CI workflow static review",
+        "Local build/test where available",
+        "Package script dry run if possible"
+      ]
+    },
+    {
+      "id": "PHASE-11",
+      "label": "Native gateway evaluation and MCPJungle replacement option",
+      "file": "handoff/realignment/PHASE-11-native-gateway-option.md",
+      "objective": "Evaluate whether to keep MCPJungle or implement native MCOS gateway after spike data.",
+      "readFirst": [
+        "src",
+        "docs/implementation",
+        "handoff/realignment/PHASE-02-mcp-gateway-spike-mcpjungle.md"
+      ],
+      "deliverables": [
+        "Keep/replace decision matrix",
+        "Native gateway requirements",
+        "Migration plan if replacing",
+        "Operational limitations report"
+      ],
+      "acceptanceCriteria": [
+        "Decision is evidence-based",
+        "MCPJungle limitations documented",
+        "Native implementation scope does not break previous phases"
+      ],
+      "validation": [
+        "Architecture review",
+        "Performance/operational notes",
+        "Risk report"
+      ]
+    }
+  ]
+}

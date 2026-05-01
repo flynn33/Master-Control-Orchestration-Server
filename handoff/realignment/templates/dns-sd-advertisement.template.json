@@ -1,0 +1,30 @@
+{
+  "services": [
+    {
+      "type": "_mcos._tcp.local",
+      "instanceName": "MCOS Gateway on {hostname}",
+      "port": 7300,
+      "txt": {
+        "product": "MCOS",
+        "role": "mcp-gateway-host",
+        "config_path": "/api/onboarding",
+        "governance_path": "/api/governance/bundles",
+        "auth": "none",
+        "trust": "lan"
+      }
+    },
+    {
+      "type": "_mcos-mcp._tcp.local",
+      "instanceName": "MCOS MCP Gateway on {hostname}",
+      "port": 8080,
+      "txt": {
+        "product": "MCOS",
+        "role": "mcp-gateway",
+        "gateway": "mcpjungle",
+        "mcp_path": "/mcp",
+        "protovers": "2025-03-26",
+        "auth": "none"
+      }
+    }
+  ]
+}

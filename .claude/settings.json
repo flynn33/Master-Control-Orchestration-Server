@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "defaultMode": "plan",
+    "deny": [
+      "Bash(git push*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -fd*)",
+      "Bash(rm -rf .git*)",
+      "Bash(del /s /q .git*)",
+      "Bash(powershell*Remove-Item*-Recurse*-Force*.git*)"
+    ]
+  },
+  "autoMemoryEnabled": true,
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo MCOS gate: read CLAUDE.md, manifest.json, and active phase file before editing."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo MCOS pre-edit gate: confirm active phase scope, file-by-file plan, and validation path."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo MCOS stop gate: include files changed, validation results, risks, and next phase status."
+          }
+        ]
+      }
+    ]
+  }
+}
