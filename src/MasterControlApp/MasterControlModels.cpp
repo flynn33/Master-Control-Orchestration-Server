@@ -208,6 +208,28 @@ std::string to_string(LeaseState value) {
     });
 }
 
+std::string to_string(TelemetryCategory value) {
+    return enumToString(value, {
+        { TelemetryCategory::Host, "host" },
+        { TelemetryCategory::Client, "client" },
+        { TelemetryCategory::Gateway, "gateway" },
+        { TelemetryCategory::Worker, "worker" },
+        { TelemetryCategory::Governance, "governance" },
+        { TelemetryCategory::Discovery, "discovery" },
+        { TelemetryCategory::Dashboard, "dashboard" },
+        { TelemetryCategory::System, "system" }
+    });
+}
+
+std::string to_string(TelemetrySeverity value) {
+    return enumToString(value, {
+        { TelemetrySeverity::Info, "info" },
+        { TelemetrySeverity::Warning, "warning" },
+        { TelemetrySeverity::Error, "error" },
+        { TelemetrySeverity::Critical, "critical" }
+    });
+}
+
 EndpointKind endpointKindFromString(const std::string& value) {
     return enumFromString<EndpointKind>(value, {
         { EndpointKind::Host, "host" },
@@ -373,6 +395,28 @@ LeaseState leaseStateFromString(const std::string& value) {
     });
 }
 
+TelemetryCategory telemetryCategoryFromString(const std::string& value) {
+    return enumFromString<TelemetryCategory>(value, {
+        { TelemetryCategory::Host, "host" },
+        { TelemetryCategory::Client, "client" },
+        { TelemetryCategory::Gateway, "gateway" },
+        { TelemetryCategory::Worker, "worker" },
+        { TelemetryCategory::Governance, "governance" },
+        { TelemetryCategory::Discovery, "discovery" },
+        { TelemetryCategory::Dashboard, "dashboard" },
+        { TelemetryCategory::System, "system" }
+    });
+}
+
+TelemetrySeverity telemetrySeverityFromString(const std::string& value) {
+    return enumFromString<TelemetrySeverity>(value, {
+        { TelemetrySeverity::Info, "info" },
+        { TelemetrySeverity::Warning, "warning" },
+        { TelemetrySeverity::Error, "error" },
+        { TelemetrySeverity::Critical, "critical" }
+    });
+}
+
 void to_json(nlohmann::json& json, EndpointKind value) {
     json = to_string(value);
 }
@@ -508,6 +552,22 @@ void to_json(nlohmann::json& json, LeaseState value) {
 
 void from_json(const nlohmann::json& json, LeaseState& value) {
     value = leaseStateFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, TelemetryCategory value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, TelemetryCategory& value) {
+    value = telemetryCategoryFromString(json.get<std::string>());
+}
+
+void to_json(nlohmann::json& json, TelemetrySeverity value) {
+    json = to_string(value);
+}
+
+void from_json(const nlohmann::json& json, TelemetrySeverity& value) {
+    value = telemetrySeverityFromString(json.get<std::string>());
 }
 
 std::string toPrettyJson(const nlohmann::json& json) {

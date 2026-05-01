@@ -242,6 +242,41 @@ git grep -nE 'clientCpu|clientGpu|clientDisk' \
 
 Expected: zero matches. PHASE-08: per-client telemetry only via heartbeat/sidecar.
 
+### 4.3 ClientHeartbeat / WorkerTelemetry unavailable-sentinel integrity (PHASE-08)
+
+`ClientHeartbeat` and `WorkerTelemetry` carry **client-supplied** or **worker-side** metrics. ADR-002 §9 forbids confusing "unreported" with "idle": the sentinel for "unavailable" is `-1.0`, not `0.0`.
+
+`gpuPercent` and `gpuMemoryMb` are unique to `ClientHeartbeat` (no other struct uses them), so a `0.0` default on either is unambiguously a regression.
+
+```bash
+git grep -nE 'gpuPercent\s*=\s*0\.0|gpuMemoryMb\s*=\s*0\.0' \
+  -- include/MasterControl src/MasterControlApp src/MasterControlModules
+git grep -nE 'gpuPercent\s*\{\s*0\.0\s*\}|gpuMemoryMb\s*\{\s*0\.0\s*\}' \
+  -- include/MasterControl src/MasterControlApp src/MasterControlModules
+```
+
+Expected: zero matches.
+
+Note: `cpuPercent` and `memoryPercent` are intentionally **not** part of this grep because `HostTelemetrySnapshot` legitimately uses them with `0.0` defaults — host-side PDH-derived counters measure directly, so `0.0` is genuinely "idle" rather than "unreported". When auditing those fields, verify the enclosing struct manually: `ClientHeartbeat` and `WorkerTelemetry` must keep `-1.0` defaults; `HostTelemetrySnapshot` may keep `0.0`.
+
+### 4.4 Telemetry event ring-buffer cap (PHASE-08)
+
+```bash
+git grep -nE 'kMaxEvents_\s*=\s*[0-9]+' \
+  -- src/MasterControlApp/MasterControlRuntime.cpp
+```
+
+Expected: exactly one match — the `static constexpr std::size_t kMaxEvents_ = 1024;` declaration inside `TelemetryAggregator`. No additional event-buffer caps elsewhere; the ring is bounded so a noisy worker cannot OOM the runtime.
+
+### 4.5 Heartbeat ingest is the only client-metric write site (PHASE-08)
+
+```bash
+git grep -nE 'recordHeartbeat\(' \
+  -- src/MasterControlApp src/MasterControlModules
+```
+
+Expected: matches inside `MasterControlRuntime.cpp` only — at the `POST /api/telemetry/heartbeat` route handler and inside the `TelemetryAggregator` member-function definition. Any other caller is a regression: client CPU/GPU/disk numbers must originate from a client-supplied heartbeat or sidecar, never from synthesizer code paths.
+
 ---
 
 ## Group 5 — Forsetti vendoring integrity (forbidden by ADR-002 §11)

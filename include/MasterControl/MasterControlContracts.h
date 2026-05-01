@@ -192,6 +192,22 @@ public:
     virtual ~IPlatformServiceCatalogService() = default;
 };
 
+// PHASE-08 (ADR-002 §9): Telemetry Aggregator. Holds the activity event
+// ring, the connected-client roster, and gateway traffic counters.
+// Honest only: per-AI-client CPU/GPU/disk arrives via ClientHeartbeat
+// (or sidecar) — never fabricated. The aggregator also provides the
+// event sink that other services call when meaningful state changes.
+class ITelemetryAggregator {
+public:
+    virtual void recordEvent(TelemetryEvent event) = 0;
+    virtual std::vector<TelemetryEvent> recentEvents(std::size_t maxEvents) const = 0;
+    virtual void recordHeartbeat(ClientHeartbeat heartbeat) = 0;
+    virtual std::vector<ClientPresence> clientRoster() const = 0;
+    virtual GatewayTrafficSnapshot gatewayTraffic() const = 0;
+    virtual void incrementGatewayRequest(bool errored) = 0;
+    virtual ~ITelemetryAggregator() = default;
+};
+
 // PHASE-07 (ADR-002 §8): Lease Router. Resolves a LeaseRequest into a
 // concrete EndpointLease bound to one Ready instance. Stateful sessions
 // are sticky for the lease's lifetime; new sessions/leases route to

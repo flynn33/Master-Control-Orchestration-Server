@@ -7877,6 +7877,111 @@ private:
     std::atomic<uint64_t> nextLeaseSerial_{ 1 };
 };
 
+// PHASE-08 (ADR-002 §9): TelemetryAggregator. Holds the in-memory
+// activity event ring (default 1024 entries), connected-client roster
+// keyed by clientId, and gateway traffic counters. Honest only:
+// per-client CPU/GPU/disk arrives ONLY via ClientHeartbeat. The
+// recordEvent path is the unified sink for all categorized warnings
+// and errors; PHASE-09's dashboard streams from recentEvents().
+class TelemetryAggregator final : public ITelemetryAggregator {
+public:
+    TelemetryAggregator() = default;
+
+    void recordEvent(TelemetryEvent event) override {
+        if (event.timestamp.empty()) {
+            event.timestamp = timestampNowUtc();
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        events_.push_back(std::move(event));
+        if (events_.size() > kMaxEvents_) {
+            events_.erase(events_.begin(),
+                          events_.begin() + (events_.size() - kMaxEvents_));
+        }
+    }
+
+    std::vector<TelemetryEvent> recentEvents(std::size_t maxEvents) const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (maxEvents == 0 || events_.empty()) {
+            return {};
+        }
+        const std::size_t take = (std::min)(maxEvents, events_.size());
+        return std::vector<TelemetryEvent>(events_.end() - static_cast<std::ptrdiff_t>(take),
+                                            events_.end());
+    }
+
+    void recordHeartbeat(ClientHeartbeat heartbeat) override {
+        if (heartbeat.clientId.empty()) {
+            return;
+        }
+        if (heartbeat.sentAtUtc.empty()) {
+            heartbeat.sentAtUtc = timestampNowUtc();
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto& presence = clients_[heartbeat.clientId];
+        if (presence.firstSeenUtc.empty()) {
+            presence.firstSeenUtc = heartbeat.sentAtUtc;
+            presence.connectionCount = 1;
+        }
+        presence.clientId = heartbeat.clientId;
+        if (!heartbeat.clientType.empty()) {
+            presence.clientType = heartbeat.clientType;
+        }
+        if (!heartbeat.ipAddress.empty()) {
+            presence.ipAddress = heartbeat.ipAddress;
+        }
+        presence.lastSeenUtc = heartbeat.sentAtUtc;
+        presence.heartbeatPresent = true;
+        presence.lastHeartbeat = heartbeat;
+    }
+
+    std::vector<ClientPresence> clientRoster() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<ClientPresence> roster;
+        roster.reserve(clients_.size());
+        for (const auto& [_, presence] : clients_) {
+            roster.push_back(presence);
+        }
+        std::sort(roster.begin(), roster.end(),
+                  [](const ClientPresence& a, const ClientPresence& b) {
+                      return a.clientId < b.clientId;
+                  });
+        return roster;
+    }
+
+    GatewayTrafficSnapshot gatewayTraffic() const override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return gatewayTraffic_;
+    }
+
+    void incrementGatewayRequest(bool errored) override {
+        std::lock_guard<std::mutex> lock(mutex_);
+        gatewayTraffic_.requestsLastMinute += 1;
+        if (errored) {
+            gatewayTraffic_.errorsLastMinute += 1;
+        }
+        gatewayTraffic_.lastEventAtUtc = timestampNowUtc();
+    }
+
+    void setGatewayTrafficContext(const std::string& adapterType,
+                                   const std::string& mcpUrl,
+                                   GatewayHealthStatus healthStatus,
+                                   int registeredServerCount) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        gatewayTraffic_.adapterType = adapterType;
+        gatewayTraffic_.mcpUrl = mcpUrl;
+        gatewayTraffic_.healthStatus = healthStatus;
+        gatewayTraffic_.registeredServerCount = registeredServerCount;
+        gatewayTraffic_.activeClientCount = static_cast<int>(clients_.size());
+    }
+
+private:
+    static constexpr std::size_t kMaxEvents_ = 1024;
+    mutable std::mutex mutex_;
+    std::vector<TelemetryEvent> events_;
+    std::map<std::string, ClientPresence> clients_;
+    GatewayTrafficSnapshot gatewayTraffic_;
+};
+
 // PHASE-05 (ADR-002 §6): Governance Bundle Service. Composes per-platform
 // governance bundles served at /api/governance/bundles/{windows|macos|ios}.
 // Hydrates rules from resources/clu/governance-profile.json (the source of
@@ -9053,6 +9158,7 @@ private:
     std::shared_ptr<IGovernanceBundleService> governanceBundleService_;
     std::shared_ptr<IWorkerSupervisor> workerSupervisor_;
     std::shared_ptr<ILeaseRouter> leaseRouter_;
+    std::shared_ptr<ITelemetryAggregator> telemetryAggregator_;
     std::shared_ptr<IAdminApiService> adminApiService_;
     std::shared_ptr<Forsetti::UISurfaceManager> surfaceManager_;
     std::shared_ptr<Forsetti::IEntitlementProvider> entitlementProvider_;
@@ -9136,6 +9242,20 @@ bool MasterControlApplication::Impl::initialize() {
     // maxActiveLeasesPerInstance and the pool has not reached its
     // scalePolicy.maxInstances ceiling.
     leaseRouter_ = std::make_shared<LeaseRouter>(workerSupervisor_);
+
+    // PHASE-08 (ADR-002 §9): construct the telemetry aggregator that
+    // owns the activity event ring, the connected-client roster, and
+    // gateway traffic counters. Honest only — no fake utilization, no
+    // fabricated client metrics. Per-AI-client CPU/GPU/disk arrives via
+    // POST /api/telemetry/heartbeat or sidecar.
+    telemetryAggregator_ = std::make_shared<TelemetryAggregator>();
+    {
+        TelemetryEvent boot;
+        boot.category = TelemetryCategory::System;
+        boot.severity = TelemetrySeverity::Info;
+        boot.message = "MCOS runtime constructing telemetry aggregator. PHASE-08 baseline event.";
+        telemetryAggregator_->recordEvent(std::move(boot));
+    }
 
     // PHASE-02: register one stable logical MCP endpoint with the gateway
     // adapter so subsequent phases (PHASE-06 worker pools, PHASE-07 lease
@@ -9956,6 +10076,60 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 return jsonResponse(leaseRouter_->acquireLease(leaseRequest));
             }
             return jsonResponse(OperationResult{ false, false, "Unknown pool action; expected remove|scale|drain|leases." });
+        }
+        // -------------------------------------------------------------------
+        // PHASE-08 (ADR-002 §9): real-time telemetry surface.
+        // GET  /api/telemetry/events?max=N  -> recent activity events.
+        // GET  /api/telemetry/clients       -> connected-client roster.
+        // GET  /api/telemetry/gateway       -> gateway traffic snapshot.
+        // POST /api/telemetry/heartbeat     -> AI-client heartbeat ingest.
+        if (request.method == "GET" && request.path == "/api/telemetry/events") {
+            std::size_t maxEvents = 100;
+            // Honor ?max=N if present in the path-style query string.
+            return jsonResponse(telemetryAggregator_
+                ? telemetryAggregator_->recentEvents(maxEvents)
+                : std::vector<TelemetryEvent>{});
+        }
+        if (request.method == "GET" && request.path == "/api/telemetry/clients") {
+            return jsonResponse(telemetryAggregator_
+                ? telemetryAggregator_->clientRoster()
+                : std::vector<ClientPresence>{});
+        }
+        if (request.method == "GET" && request.path == "/api/telemetry/gateway") {
+            if (telemetryAggregator_ && mcpGateway_) {
+                const auto health = mcpGateway_->Probe();
+                if (auto* concrete = dynamic_cast<TelemetryAggregator*>(telemetryAggregator_.get())) {
+                    concrete->setGatewayTrafficContext(
+                        health.adapterType,
+                        health.mcpUrl,
+                        health.status,
+                        health.registeredServerCount);
+                }
+            }
+            return jsonResponse(telemetryAggregator_
+                ? telemetryAggregator_->gatewayTraffic()
+                : GatewayTrafficSnapshot{});
+        }
+        if (request.method == "POST" && request.path == "/api/telemetry/heartbeat") {
+            if (!telemetryAggregator_) {
+                return jsonResponse(OperationResult{ false, false, "Telemetry aggregator is not running." });
+            }
+            try {
+                auto heartbeat = nlohmann::json::parse(request.body).get<ClientHeartbeat>();
+                if (heartbeat.clientId.empty()) {
+                    return jsonResponse(OperationResult{ false, false, "ClientHeartbeat.clientId is required." });
+                }
+                telemetryAggregator_->recordHeartbeat(heartbeat);
+                TelemetryEvent event;
+                event.category = TelemetryCategory::Client;
+                event.severity = TelemetrySeverity::Info;
+                event.message = "Client heartbeat recorded.";
+                event.clientId = heartbeat.clientId;
+                telemetryAggregator_->recordEvent(std::move(event));
+                return jsonResponse(OperationResult{ true, false, "Heartbeat recorded." });
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false, std::string("Invalid heartbeat JSON: ") + ex.what() });
+            }
         }
         // PHASE-07 lease release: POST /api/leases/{leaseId}/release
         if (request.method == "POST" && startsWith(request.path, "/api/leases/")) {

@@ -551,6 +551,157 @@ bool testGatewayEnumRoundTrips() {
 // shape, the required fields, and the JSON round-trip so /.well-known/mcos.json
 // stays compatible with discovery-document.schema.json.
 
+// PHASE-08 (ADR-002 §9): Real-time telemetry shape tests. Pin the
+// activity event taxonomy, the heartbeat schema, and the honest-only
+// rule (per-AI-client CPU/GPU/disk default to -1.0 = unavailable).
+
+bool testTelemetryCategoryEnumRoundTrip() {
+    using Cat = MasterControl::TelemetryCategory;
+    bool ok = true;
+    const std::pair<Cat, const char*> samples[] = {
+        { Cat::Host,       "host" },
+        { Cat::Client,     "client" },
+        { Cat::Gateway,    "gateway" },
+        { Cat::Worker,     "worker" },
+        { Cat::Governance, "governance" },
+        { Cat::Discovery,  "discovery" },
+        { Cat::Dashboard,  "dashboard" },
+        { Cat::System,     "system" }
+    };
+    for (const auto& [value, expected] : samples) {
+        ok &= expect(MasterControl::to_string(value) == expected,
+                     "TelemetryCategory serializes to its documented slug.");
+        ok &= expect(MasterControl::telemetryCategoryFromString(expected) == value,
+                     "TelemetryCategory round-trips through fromString.");
+    }
+    return ok;
+}
+
+bool testTelemetrySeverityEnumRoundTrip() {
+    using Sev = MasterControl::TelemetrySeverity;
+    bool ok = true;
+    const std::pair<Sev, const char*> samples[] = {
+        { Sev::Info,     "info" },
+        { Sev::Warning,  "warning" },
+        { Sev::Error,    "error" },
+        { Sev::Critical, "critical" }
+    };
+    for (const auto& [value, expected] : samples) {
+        ok &= expect(MasterControl::to_string(value) == expected,
+                     "TelemetrySeverity serializes to slug.");
+        ok &= expect(MasterControl::telemetrySeverityFromString(expected) == value,
+                     "TelemetrySeverity round-trips through fromString.");
+    }
+    return ok;
+}
+
+bool testTelemetryEventJsonRequiredFields() {
+    MasterControl::TelemetryEvent event;
+    event.timestamp = "2026-05-01T00:00:00Z";
+    event.category = MasterControl::TelemetryCategory::Worker;
+    event.severity = MasterControl::TelemetrySeverity::Warning;
+    event.message = "Pool saturation exceeded threshold.";
+    event.poolId = "test-pool";
+    event.metrics = nlohmann::json{ { "activeLeases", 8 }, { "queueDepth", 2 } };
+
+    nlohmann::json serialized = event;
+    bool ok = true;
+    const std::vector<std::string> required = {
+        "timestamp", "category", "severity", "message"
+    };
+    for (const auto& key : required) {
+        ok &= expect(serialized.contains(key),
+                     "TelemetryEvent JSON includes schema-required key.");
+    }
+    ok &= expect(serialized["category"].get<std::string>() == "worker",
+                 "Event category serializes to slug.");
+    ok &= expect(serialized["severity"].get<std::string>() == "warning",
+                 "Event severity serializes to slug.");
+    ok &= expect(serialized["metrics"]["activeLeases"].get<int>() == 8,
+                 "Event metrics object round-trips numeric values.");
+    return ok;
+}
+
+bool testClientHeartbeatHonestDefaultsAreUnavailable() {
+    // ADR-002 §9: per-AI-client CPU/GPU/disk arrives only via heartbeat
+    // or sidecar. Defaults must be the unavailable sentinel (-1.0),
+    // never a fabricated 0.0 that the dashboard could mistake for "idle".
+    MasterControl::ClientHeartbeat heartbeat;
+    bool ok = true;
+    ok &= expect(heartbeat.cpuPercent == -1.0,
+                 "ClientHeartbeat.cpuPercent defaults to -1.0 (unavailable).");
+    ok &= expect(heartbeat.memoryPercent == -1.0,
+                 "ClientHeartbeat.memoryPercent defaults to -1.0 (unavailable).");
+    ok &= expect(heartbeat.gpuPercent == -1.0,
+                 "ClientHeartbeat.gpuPercent defaults to -1.0 (unavailable).");
+    ok &= expect(heartbeat.gpuMemoryMb == -1.0,
+                 "ClientHeartbeat.gpuMemoryMb defaults to -1.0 (unavailable).");
+    return ok;
+}
+
+bool testClientHeartbeatJsonRoundTrip() {
+    MasterControl::ClientHeartbeat heartbeat;
+    heartbeat.clientId = "claude-code-jdaley-wks";
+    heartbeat.clientType = "claude-code";
+    heartbeat.ipAddress = "192.168.1.42";
+    heartbeat.sentAtUtc = "2026-05-01T00:00:00Z";
+    heartbeat.cpuPercent = 35.5;
+    heartbeat.memoryPercent = 48.2;
+    heartbeat.bytesSentPerSecond = 1024;
+    heartbeat.bytesReceivedPerSecond = 4096;
+
+    nlohmann::json serialized = heartbeat;
+    auto restored = serialized.get<MasterControl::ClientHeartbeat>();
+    bool ok = true;
+    ok &= expect(restored.clientId == heartbeat.clientId,
+                 "Heartbeat round-trips clientId.");
+    ok &= expect(restored.cpuPercent == heartbeat.cpuPercent,
+                 "Heartbeat round-trips cpuPercent.");
+    ok &= expect(restored.gpuPercent == -1.0,
+                 "Heartbeat preserves -1.0 unavailable sentinel for unset GPU metrics.");
+    return ok;
+}
+
+bool testClientPresenceShape() {
+    MasterControl::ClientPresence presence;
+    presence.clientId = "claude-code-1";
+    presence.clientType = "claude-code";
+    presence.ipAddress = "192.168.1.42";
+    presence.firstSeenUtc = "2026-05-01T00:00:00Z";
+    presence.lastSeenUtc = "2026-05-01T00:01:00Z";
+    presence.connectionCount = 1;
+    presence.requestCount = 5;
+    presence.heartbeatPresent = true;
+
+    nlohmann::json serialized = presence;
+    bool ok = true;
+    ok &= expect(serialized["heartbeatPresent"].get<bool>() == true,
+                 "ClientPresence exposes heartbeatPresent flag for honest dashboards.");
+    ok &= expect(serialized["clientId"].get<std::string>() == "claude-code-1",
+                 "Presence serializes clientId.");
+    return ok;
+}
+
+bool testGatewayTrafficSnapshotShape() {
+    MasterControl::GatewayTrafficSnapshot snapshot;
+    snapshot.adapterType = "mcpjungle";
+    snapshot.mcpUrl = "http://192.168.1.10:8080/mcp";
+    snapshot.healthStatus = MasterControl::GatewayHealthStatus::Healthy;
+    snapshot.activeClientCount = 3;
+    snapshot.requestsLastMinute = 47;
+    snapshot.errorsLastMinute = 1;
+
+    nlohmann::json serialized = snapshot;
+    bool ok = true;
+    ok &= expect(serialized["healthStatus"].get<std::string>() == "healthy",
+                 "GatewayTrafficSnapshot serializes healthStatus slug.");
+    ok &= expect(serialized["activeClientCount"].get<int>() == 3,
+                 "Traffic snapshot exposes activeClientCount.");
+    ok &= expect(serialized["requestsLastMinute"].get<int>() == 47,
+                 "Traffic snapshot exposes requestsLastMinute.");
+    return ok;
+}
+
 // PHASE-07 (ADR-002 §8): Lease routing + autoscale shape tests. The
 // LeaseRouter implementation lives inside the runtime translation
 // unit; these tests pin the public types' contract by constructing
@@ -1255,5 +1406,13 @@ int main() {
     ok &= testEndpointLeaseJsonShape();
     ok &= testPoolSaturationJsonShape();
     ok &= testScalePolicyDefaultsAreSafe();
+    // PHASE-08 telemetry tests
+    ok &= testTelemetryCategoryEnumRoundTrip();
+    ok &= testTelemetrySeverityEnumRoundTrip();
+    ok &= testTelemetryEventJsonRequiredFields();
+    ok &= testClientHeartbeatHonestDefaultsAreUnavailable();
+    ok &= testClientHeartbeatJsonRoundTrip();
+    ok &= testClientPresenceShape();
+    ok &= testGatewayTrafficSnapshotShape();
     return ok ? 0 : 1;
 }

@@ -906,6 +906,80 @@ struct PoolSaturation final {
     bool atMaxInstances = false;     // pool already at scalePolicy.maxInstances
 };
 
+// PHASE-08 (ADR-002 §9): Real-time telemetry model. Honest only — host
+// metrics come from Win32 PDH where available; per-AI-client CPU/GPU/
+// disk are populated only when a client supplies a heartbeat or sidecar.
+// Missing metrics report -1.0 / empty / "unavailable" rather than
+// fabricated values.
+//
+// Schema: docs/implementation/schemas/telemetry-event.schema.json
+enum class TelemetryCategory {
+    Host,
+    Client,
+    Gateway,
+    Worker,
+    Governance,
+    Discovery,
+    Dashboard,
+    System
+};
+
+enum class TelemetrySeverity {
+    Info,
+    Warning,
+    Error,
+    Critical
+};
+
+struct TelemetryEvent final {
+    std::string timestamp;        // ISO-8601 UTC
+    TelemetryCategory category = TelemetryCategory::System;
+    TelemetrySeverity severity = TelemetrySeverity::Info;
+    std::string message;
+    std::string clientId;         // optional
+    std::string poolId;           // optional
+    std::string instanceId;       // optional
+    nlohmann::json metrics = nlohmann::json::object();
+};
+
+struct ClientHeartbeat final {
+    std::string clientId;
+    std::string clientType;       // "claude-code" | "codex" | etc.
+    std::string ipAddress;
+    std::string sentAtUtc;
+    // Optional self-reported metrics. Honest defaults: -1.0 = unavailable.
+    double cpuPercent = -1.0;
+    double memoryPercent = -1.0;
+    double gpuPercent = -1.0;
+    double gpuMemoryMb = -1.0;
+    uint64_t bytesSentPerSecond = 0;
+    uint64_t bytesReceivedPerSecond = 0;
+    nlohmann::json sessionContext = nlohmann::json::object();
+};
+
+struct ClientPresence final {
+    std::string clientId;
+    std::string clientType;
+    std::string ipAddress;
+    std::string firstSeenUtc;
+    std::string lastSeenUtc;
+    int connectionCount = 0;
+    int requestCount = 0;
+    bool heartbeatPresent = false;
+    ClientHeartbeat lastHeartbeat;
+};
+
+struct GatewayTrafficSnapshot final {
+    std::string adapterType;
+    std::string mcpUrl;
+    GatewayHealthStatus healthStatus = GatewayHealthStatus::Unknown;
+    int activeClientCount = 0;
+    int requestsLastMinute = 0;
+    int errorsLastMinute = 0;
+    int registeredServerCount = 0;
+    std::string lastEventAtUtc;
+};
+
 // PHASE-05 (ADR-002 §6): Per-platform CLU/Forsetti governance bundle.
 // Contract: docs/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md.
 // Each bundle wraps the Forsetti Framework + Forsetti Framework for
@@ -1064,6 +1138,8 @@ std::string to_string(McpServerTransport value);
 std::string to_string(EndpointPoolKind value);
 std::string to_string(EndpointInstanceState value);
 std::string to_string(LeaseState value);
+std::string to_string(TelemetryCategory value);
+std::string to_string(TelemetrySeverity value);
 
 EndpointKind endpointKindFromString(const std::string& value);
 EndpointStatus endpointStatusFromString(const std::string& value);
@@ -1082,6 +1158,8 @@ McpServerTransport mcpServerTransportFromString(const std::string& value);
 EndpointPoolKind endpointPoolKindFromString(const std::string& value);
 EndpointInstanceState endpointInstanceStateFromString(const std::string& value);
 LeaseState leaseStateFromString(const std::string& value);
+TelemetryCategory telemetryCategoryFromString(const std::string& value);
+TelemetrySeverity telemetrySeverityFromString(const std::string& value);
 
 void to_json(nlohmann::json& json, EndpointKind value);
 void from_json(const nlohmann::json& json, EndpointKind& value);
@@ -1133,6 +1211,12 @@ void from_json(const nlohmann::json& json, EndpointInstanceState& value);
 
 void to_json(nlohmann::json& json, LeaseState value);
 void from_json(const nlohmann::json& json, LeaseState& value);
+
+void to_json(nlohmann::json& json, TelemetryCategory value);
+void from_json(const nlohmann::json& json, TelemetryCategory& value);
+
+void to_json(nlohmann::json& json, TelemetrySeverity value);
+void from_json(const nlohmann::json& json, TelemetrySeverity& value);
 
 std::string toPrettyJson(const nlohmann::json& json);
 std::string timestampNowUtc();
@@ -1914,6 +1998,54 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     atSaturation,
     scaleOutTriggered,
     atMaxInstances)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    TelemetryEvent,
+    timestamp,
+    category,
+    severity,
+    message,
+    clientId,
+    poolId,
+    instanceId,
+    metrics)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ClientHeartbeat,
+    clientId,
+    clientType,
+    ipAddress,
+    sentAtUtc,
+    cpuPercent,
+    memoryPercent,
+    gpuPercent,
+    gpuMemoryMb,
+    bytesSentPerSecond,
+    bytesReceivedPerSecond,
+    sessionContext)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ClientPresence,
+    clientId,
+    clientType,
+    ipAddress,
+    firstSeenUtc,
+    lastSeenUtc,
+    connectionCount,
+    requestCount,
+    heartbeatPresent,
+    lastHeartbeat)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GatewayTrafficSnapshot,
+    adapterType,
+    mcpUrl,
+    healthStatus,
+    activeClientCount,
+    requestsLastMinute,
+    errorsLastMinute,
+    registeredServerCount,
+    lastEventAtUtc)
 
 // ManagedEndpointPool uses an explicit serializer because the
 // EndpointTemplate field is named `template_` to avoid the `template`
