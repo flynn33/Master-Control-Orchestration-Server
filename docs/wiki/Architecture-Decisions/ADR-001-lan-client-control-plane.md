@@ -1,9 +1,10 @@
 ## ADR-001 - MCOS is a LAN Client Control Plane
 
-- Status: Accepted
+- Status: Accepted (in part superseded — see [ADR-002](ADR-002-gateway-first-mcp-realignment.md))
 - Date: 2026-04-24
 - Deciders: Product owner, engineering
 - Supersedes: the embedded-provider direction in `docs/wiki/Auto-Connect-AI.md` and the provider-centric framing in `docs/wiki/Architecture.md`
+- Superseded in part by: [ADR-002 - MCOS is a Windows-Native LAN MCP Gateway Host (Gateway-First Realignment)](ADR-002-gateway-first-mcp-realignment.md). ADR-002 retains the no-provider-execution stance (§1, §2), the per-client privilege flags (§4), autonomous mode (§5), and CLU centrality (§7). It supersedes §3 (the `X-MCOS-Client-Id` model on the AI-client surface) and §6 (the catalog read surface as the AI-client tool path) — those become the operator surface only; AI clients reach tools through one MCOS-advertised MCP Gateway URL.
 - Related: `plans/dashboard/remote-client-onboarding.md`, `plans/remediation/02-removal-inventory.md`, `docs/wiki/CLU-Governance.md`
 
 ### Context
