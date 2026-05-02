@@ -697,13 +697,13 @@
     },
     "PHASE-11": {
       "status": "complete",
-      "commit": "pending",
+      "commit": "f21e868",
       "report": "handoff/realignment/PHASE-11-completion-report.md",
       "deferred": [
         "Conditional PHASE-12 native HTTP.sys gateway"
       ],
       "notes": "Decision: keep MCPJungle for v0.6.x. Native HTTP.sys gateway deferred to conditional PHASE-12 gated on five triggers (throughput cap, session-affinity break, upstream stall, operator-install friction, vendoring policy change). ADR-003 records the decision. PHASE-11-NATIVE-GATEWAY-EVALUATION.md carries the matrix + requirements + migration plan + limitations.",
-      "updatedAt": "2026-05-02T12:20:59Z"
+      "updatedAt": "2026-05-02T12:21:48Z"
     }
   },
   "files": {
