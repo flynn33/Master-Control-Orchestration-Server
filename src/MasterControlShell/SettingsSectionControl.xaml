@@ -90,6 +90,40 @@
             <Border Style="{StaticResource ShellCardStyle}">
                 <TextBlock x:Name="ConfigurationNarrativeText" Style="{StaticResource ShellDataTextStyle}" Text="Configuration details will populate here." />
             </Border>
+
+            <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="LAN Advertising and Windows Firewall" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords"
+                               Text="MCOS advertises itself on the LAN via Win32 DNS-SD (Bonjour-compatible), a UDP JSON beacon, and the discovery document at /.well-known/mcos.json. Advertising fires whenever this service is running, but the host firewall must allow the inbound ports below or LAN clients will see nothing. Run each snippet from an elevated PowerShell. Admin rights are required." />
+
+                    <TextBlock x:Name="FirewallAdvertisingSummaryText" Style="{StaticResource ShellDataTextStyle}" TextWrapping="WrapWholeWords" />
+
+                    <TextBlock Text="Inbound rule 1 of 4 - MCP Gateway (TCP, the AI-client surface)" Style="{StaticResource ShellLabelTextStyle}" />
+                    <TextBox x:Name="FirewallGatewayRuleTextBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Cascadia Code, Consolas" />
+                    <Button x:Name="CopyFirewallGatewayRuleButton" Click="CopyFirewallGatewayRuleButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Copy snippet" HorizontalAlignment="Left" />
+
+                    <TextBlock Text="Inbound rule 2 of 4 - Operator surface (TCP, the dashboard and admin API)" Style="{StaticResource ShellLabelTextStyle}" />
+                    <TextBox x:Name="FirewallOperatorRuleTextBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Cascadia Code, Consolas" />
+                    <Button x:Name="CopyFirewallOperatorRuleButton" Click="CopyFirewallOperatorRuleButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Copy snippet" HorizontalAlignment="Left" />
+
+                    <TextBlock Text="Inbound rule 3 of 4 - DNS-SD / mDNS (UDP 5353, the Bonjour advertising path)" Style="{StaticResource ShellLabelTextStyle}" />
+                    <TextBox x:Name="FirewallMDnsRuleTextBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Cascadia Code, Consolas" />
+                    <Button x:Name="CopyFirewallMDnsRuleButton" Click="CopyFirewallMDnsRuleButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Copy snippet" HorizontalAlignment="Left" />
+
+                    <TextBlock Text="Inbound rule 4 of 4 - Discovery beacon (UDP, legacy JSON broadcast)" Style="{StaticResource ShellLabelTextStyle}" />
+                    <TextBox x:Name="FirewallBeaconRuleTextBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Cascadia Code, Consolas" />
+                    <Button x:Name="CopyFirewallBeaconRuleButton" Click="CopyFirewallBeaconRuleButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Copy snippet" HorizontalAlignment="Left" />
+
+                    <TextBlock Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords"
+                               Text="Profile=Private,Domain on every rule keeps MCOS off the Public profile. If your LAN is currently on the Public profile, reclassify the network in Windows Settings before applying these rules. To remove the rules later, run: Get-NetFirewallRule -DisplayName 'MCOS *' | Remove-NetFirewallRule" />
+
+                    <TextBlock Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords"
+                               Text="Verification: from another machine on the LAN, run Test-NetConnection -ComputerName &lt;this-host-ip&gt; -Port &lt;gateway-port&gt;. From a Public-profile network the same call should fail. mDNS browsing requires a Bonjour-aware tool such as 'dns-sd -B _mcos._tcp' on macOS or 'avahi-browse _mcos._tcp' on Linux. The full operations runbook lives at docs/wiki/Operations/Windows-Firewall-LAN-Mode.md." />
+
+                    <TextBlock x:Name="FirewallCopyStatusText" Style="{StaticResource ShellDataTextStyle}" TextWrapping="WrapWholeWords" />
+                </StackPanel>
+            </Border>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

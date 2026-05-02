@@ -24,11 +24,21 @@ struct SettingsSectionControl : SettingsSectionControlT<SettingsSectionControl> 
                                 Microsoft::UI::Xaml::RoutedEventArgs const&);
     void ApplySettingsButton_Click(Windows::Foundation::IInspectable const&,
                                    Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void CopyFirewallGatewayRuleButton_Click(Windows::Foundation::IInspectable const&,
+                                             Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void CopyFirewallOperatorRuleButton_Click(Windows::Foundation::IInspectable const&,
+                                              Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void CopyFirewallMDnsRuleButton_Click(Windows::Foundation::IInspectable const&,
+                                          Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void CopyFirewallBeaconRuleButton_Click(Windows::Foundation::IInspectable const&,
+                                            Microsoft::UI::Xaml::RoutedEventArgs const&);
 
 private:
     void PopulateEditorFromSnapshot();
     void UpdateSummary();
     void UpdateEditorState();
+    void UpdateFirewallRuleSnippets();
+    void CopyTextToClipboard(const std::wstring& text, const std::wstring& successMessage);
     winrt::Windows::Foundation::IAsyncAction ApplySettingsAsync();
 
     ::MasterControlShell::ShellRuntime* runtime_ = nullptr;

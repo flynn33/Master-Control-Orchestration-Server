@@ -456,7 +456,7 @@ function renderCurrent() {
     case 'pools':             host.innerHTML = banner + renderPoolsPanel();        bindPoolsHandlers();      break;
     case 'telemetry-clients': host.innerHTML = banner + renderTelemetryClients();                            break;
     case 'onboarding':        host.innerHTML = banner + renderOnboardingPanel();   bindOnboardingHandlers(); break;
-    case 'discovery':         host.innerHTML = banner + renderDiscoveryPanel();                              break;
+    case 'discovery':         host.innerHTML = banner + renderDiscoveryPanel();    bindDiscoveryHandlers();  break;
     case 'clients':           host.innerHTML = banner + renderClients();           bindClientsHandlers();    break;
     case 'governance':        host.innerHTML = banner + renderGovernance();        bindGovernanceHandlers(); break;
     case 'runtime':           host.innerHTML = banner + renderRuntime();                                     break;
@@ -1521,7 +1521,111 @@ function renderDiscoveryPanel() {
         ? '<p class="muted">No onboarding paths advertised.</p>'
         : `<ul class="kv-list">${onboardingPaths.map((p) => `<li><span>${escapeHtml(p.clientType || '')}</span><strong><code>${escapeHtml(p.url || '')}</code></strong></li>`).join('')}</ul>`}
     </article>
+    ${renderFirewallGuidanceCard()}
   `;
+}
+
+// PHASE-09 follow-on: surface the Windows Firewall + LAN advertising
+// snippets the operator needs to apply once. ADR-002 §10 / docs/wiki/
+// Operations/Windows-Firewall-LAN-Mode.md is the canonical reference.
+// This card surfaces the same snippets with port values templated from
+// the live discovery document so copy-paste lands an accurate rule.
+function renderFirewallGuidanceCard() {
+  // Pull live values where available; fall back to documented defaults.
+  const browserPort = inferBrowserPortFromDiscovery() || 7300;
+  const beaconPort = (state.discovery && state.discovery.beacon && state.discovery.beacon.port) || 7301;
+  const gatewayPort = inferGatewayPortFromDiscovery() || 8080;
+  const mDnsPort = 5353;
+  const exePath = 'C:\\\\Program Files\\\\Master Control Orchestration Server\\\\MasterControlServiceHost.exe';
+
+  const rules = [
+    {
+      label: '1 of 4 — MCP Gateway (TCP, AI-client surface)',
+      content: buildFirewallRule('MCOS — MCP Gateway (LAN)', 'TCP', gatewayPort, exePath)
+    },
+    {
+      label: '2 of 4 — Operator surface (TCP, dashboard + admin API)',
+      content: buildFirewallRule('MCOS — Operator Surface (LAN)', 'TCP', browserPort, exePath)
+    },
+    {
+      label: '3 of 4 — DNS-SD / mDNS (UDP 5353, the Bonjour advertising path)',
+      content: buildFirewallRule('MCOS — DNS-SD/mDNS (LAN)', 'UDP', mDnsPort, exePath)
+    },
+    {
+      label: '4 of 4 — Discovery beacon (UDP, legacy JSON broadcast)',
+      content: buildFirewallRule('MCOS — Discovery Beacon (LAN)', 'UDP', beaconPort, exePath)
+    }
+  ];
+
+  return `
+    <article class="panel-block wide discovery-doc firewall-guidance">
+      <h3>LAN advertising and Windows Firewall</h3>
+      <p class="muted">MCOS advertises itself on the LAN via Win32 DNS-SD (Bonjour-compatible), a UDP JSON beacon, and the discovery document at <code>/.well-known/mcos.json</code>. Advertising fires whenever this service is running, but the host firewall must allow the inbound ports below or LAN clients will see nothing. <strong>Run each snippet from an elevated PowerShell.</strong> Admin rights are required.</p>
+      <ul class="kv-list">
+        <li><span>Operator surface (TCP)</span><strong>${browserPort}</strong></li>
+        <li><span>MCP Gateway (TCP)</span><strong>${gatewayPort}</strong></li>
+        <li><span>DNS-SD / mDNS (UDP)</span><strong>${mDnsPort}</strong></li>
+        <li><span>Beacon (UDP)</span><strong>${beaconPort}</strong></li>
+      </ul>
+      ${rules.map((r) => `
+        <details class="onboarding-snippet" open>
+          <summary>${escapeHtml(r.label)}</summary>
+          <pre class="onboarding-code">${escapeHtml(r.content)}</pre>
+          <button type="button" class="route-button" data-action="copy-snippet" data-content="${escapeHtml(r.content)}">Copy</button>
+        </details>
+      `).join('')}
+      <p class="muted"><code>Profile=Private,Domain</code> on every rule keeps MCOS off the Public profile. If your LAN is currently on the Public profile, reclassify the network in Windows Settings before applying these rules. To remove the rules later: <code>Get-NetFirewallRule -DisplayName 'MCOS *' | Remove-NetFirewallRule</code>.</p>
+      <p class="muted">Verification: from another LAN host, <code>Test-NetConnection -ComputerName &lt;this-host-ip&gt; -Port ${gatewayPort}</code>. From a Public-profile network the same call should fail. mDNS browsing requires a Bonjour-aware tool such as <code>dns-sd -B _mcos._tcp</code> on macOS or <code>avahi-browse _mcos._tcp</code> on Linux. Full operations runbook: <code>docs/wiki/Operations/Windows-Firewall-LAN-Mode.md</code>.</p>
+    </article>
+  `;
+}
+
+function buildFirewallRule(displayName, protocol, port, exePath) {
+  return [
+    'New-NetFirewallRule `',
+    '  -DisplayName "' + displayName + '" `',
+    '  -Direction Inbound `',
+    '  -Action Allow `',
+    '  -Protocol ' + protocol + ' `',
+    '  -LocalPort ' + port + ' `',
+    '  -Profile Private,Domain `',
+    '  -Program "' + exePath + '"'
+  ].join('\n');
+}
+
+function inferBrowserPortFromDiscovery() {
+  // Discovery document does not currently include the operator browser
+  // port directly. Best-effort: parse it from the governance bundles URL
+  // (which lives on the same operator surface). Returns null if absent.
+  const url = (state.discovery && state.discovery.governance && state.discovery.governance.bundlesUrl) || '';
+  const match = url.match(/:(\d+)\b/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+function inferGatewayPortFromDiscovery() {
+  const url = (state.discovery && state.discovery.gateway && state.discovery.gateway.mcpUrl) || '';
+  const match = url.match(/:(\d+)\b/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+function bindDiscoveryHandlers() {
+  // Reuse the same copy-snippet behavior the Onboarding panel uses, so a
+  // single click puts the New-NetFirewallRule snippet on the clipboard.
+  document.querySelectorAll('[data-action="copy-snippet"]').forEach((btn) => {
+    if (btn.dataset.discoveryBound === '1') return;
+    btn.dataset.discoveryBound = '1';
+    btn.addEventListener('click', async () => {
+      const content = btn.dataset.content || '';
+      try {
+        await navigator.clipboard.writeText(content);
+        const original = btn.textContent;
+        btn.textContent = 'Copied — run from elevated PowerShell';
+        setTimeout(() => { btn.textContent = original; }, 2200);
+      } catch (_) {
+        // Clipboard may be unavailable on some browsers; silently no-op.
+      }
+    });
+  });
 }
 
 // ---- Telemetry event row helper (used by overview + activity) ----

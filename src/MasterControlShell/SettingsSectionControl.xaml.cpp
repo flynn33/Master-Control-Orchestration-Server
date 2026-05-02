@@ -13,6 +13,7 @@
 #include "ShellFormatting.h"
 
 #include <optional>
+#include <winrt/Windows.ApplicationModel.DataTransfer.h>
 
 namespace winrt::MasterControlShell::implementation {
 
@@ -110,6 +111,8 @@ void SettingsSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnap
         UpdateSummary();
         UpdateEditorState();
     }
+
+    UpdateFirewallRuleSnippets();
 }
 
 void SettingsSectionControl::PopulateEditorFromSnapshot() {
@@ -213,6 +216,111 @@ winrt::Windows::Foundation::IAsyncAction SettingsSectionControl::ApplySettingsAs
         }
     }
     UpdateEditorState();
+}
+
+// ---------------------------------------------------------------------------
+// LAN advertising and Windows Firewall guidance
+//
+// Builds the four New-NetFirewallRule snippets from the live snapshot and
+// shows them in read-only TextBoxes for copy. Operators apply them from an
+// elevated PowerShell. MCOS does not invoke them - admin elevation is the
+// operator's call. See docs/wiki/Operations/Windows-Firewall-LAN-Mode.md.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Default ports when the snapshot has not yet populated. Match
+// MasterControlDefaults.cpp's buildDefaultConfiguration() values.
+constexpr uint16_t kDefaultBrowserPort = 7300;
+constexpr uint16_t kDefaultBeaconPort = 7301;
+constexpr uint16_t kDefaultGatewayPort = 8080;
+constexpr uint16_t kMDnsPort = 5353;
+
+std::wstring formatPortOrDefault(uint16_t port, uint16_t fallback) {
+    return std::to_wstring(port == 0 ? fallback : port);
+}
+
+std::wstring buildFirewallRule(const std::wstring& displayName,
+                               const std::wstring& protocol,
+                               const std::wstring& port,
+                               const std::wstring& serviceHostExePath) {
+    std::wstring rule;
+    rule += L"New-NetFirewallRule `\r\n";
+    rule += L"  -DisplayName \"" + displayName + L"\" `\r\n";
+    rule += L"  -Direction Inbound `\r\n";
+    rule += L"  -Action Allow `\r\n";
+    rule += L"  -Protocol " + protocol + L" `\r\n";
+    rule += L"  -LocalPort " + port + L" `\r\n";
+    rule += L"  -Profile Private,Domain `\r\n";
+    rule += L"  -Program \"" + serviceHostExePath + L"\"";
+    return rule;
+}
+
+} // namespace
+
+void SettingsSectionControl::UpdateFirewallRuleSnippets() {
+    const auto browserPort = formatPortOrDefault(snapshot_.browserPort, kDefaultBrowserPort);
+    const auto beaconPort = formatPortOrDefault(snapshot_.beaconPort, kDefaultBeaconPort);
+    // Gateway port is owned by AppConfiguration::mcpGateway::listenPort, which
+    // the WinUI shell snapshot does not currently mirror. We surface the
+    // configured-default 8080 with a note in the summary so the operator
+    // knows to substitute their actual port if mcos.json overrides it.
+    const auto gatewayPort = formatPortOrDefault(0, kDefaultGatewayPort);
+
+    const std::wstring serviceHostPath = L"C:\\Program Files\\Master Control Orchestration Server\\MasterControlServiceHost.exe";
+
+    FirewallAdvertisingSummaryText().Text(winrt::hstring(
+        L"Advertising state. DNS-SD service types: _mcos._tcp.local on TCP " + browserPort
+        + L", _mcos-mcp._tcp.local on TCP " + gatewayPort
+        + L", _mcos-onboarding._tcp.local on TCP " + browserPort
+        + L". UDP beacon broadcasts on UDP " + beaconPort
+        + L". DNS-SD itself uses UDP " + std::to_wstring(kMDnsPort)
+        + L". The gateway port shown here is the buildDefaultConfiguration value (8080); if mcos.json sets mcpGateway.listenPort to something else, edit the snippet to match before running it."));
+
+    FirewallGatewayRuleTextBox().Text(winrt::hstring(buildFirewallRule(
+        L"MCOS - MCP Gateway (LAN)", L"TCP", gatewayPort, serviceHostPath)));
+    FirewallOperatorRuleTextBox().Text(winrt::hstring(buildFirewallRule(
+        L"MCOS - Operator Surface (LAN)", L"TCP", browserPort, serviceHostPath)));
+    FirewallMDnsRuleTextBox().Text(winrt::hstring(buildFirewallRule(
+        L"MCOS - DNS-SD/mDNS (LAN)", L"UDP", std::to_wstring(kMDnsPort), serviceHostPath)));
+    FirewallBeaconRuleTextBox().Text(winrt::hstring(buildFirewallRule(
+        L"MCOS - Discovery Beacon (LAN)", L"UDP", beaconPort, serviceHostPath)));
+}
+
+void SettingsSectionControl::CopyTextToClipboard(const std::wstring& text, const std::wstring& successMessage) {
+    using namespace winrt::Windows::ApplicationModel::DataTransfer;
+    DataPackage package;
+    package.SetText(winrt::hstring(text));
+    Clipboard::SetContent(package);
+    FirewallCopyStatusText().Text(winrt::hstring(successMessage));
+}
+
+void SettingsSectionControl::CopyFirewallGatewayRuleButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    CopyTextToClipboard(std::wstring(FirewallGatewayRuleTextBox().Text().c_str()),
+                        L"Copied: MCP Gateway firewall rule. Run from an elevated PowerShell.");
+}
+
+void SettingsSectionControl::CopyFirewallOperatorRuleButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    CopyTextToClipboard(std::wstring(FirewallOperatorRuleTextBox().Text().c_str()),
+                        L"Copied: Operator surface firewall rule. Run from an elevated PowerShell.");
+}
+
+void SettingsSectionControl::CopyFirewallMDnsRuleButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    CopyTextToClipboard(std::wstring(FirewallMDnsRuleTextBox().Text().c_str()),
+                        L"Copied: DNS-SD/mDNS firewall rule. Run from an elevated PowerShell.");
+}
+
+void SettingsSectionControl::CopyFirewallBeaconRuleButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    CopyTextToClipboard(std::wstring(FirewallBeaconRuleTextBox().Text().c_str()),
+                        L"Copied: Discovery beacon firewall rule. Run from an elevated PowerShell.");
 }
 
 } // namespace winrt::MasterControlShell::implementation
