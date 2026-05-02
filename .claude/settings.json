@@ -1,18 +1,65 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
-    "defaultMode": "plan",
+    "defaultMode": "default",
     "deny": [
-      "Bash(git push*)",
       "Bash(git reset --hard*)",
       "Bash(git clean -fd*)",
       "Bash(rm -rf .git*)",
       "Bash(del /s /q .git*)",
       "Bash(powershell*Remove-Item*-Recurse*-Force*.git*)"
+    ],
+    "allow": [
+      "Bash(git diff*)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git rev-parse*)",
+      "Bash(git rev-list*)",
+      "Bash(git branch*)",
+      "Bash(git blame*)",
+      "Bash(git grep*)",
+      "Bash(git ls-files*)",
+      "Bash(git fetch*)",
+      "Bash(git remote*)",
+      "Bash(git for-each-ref*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push*)",
+      "Bash(grep*)",
+      "Bash(awk*)",
+      "Bash(sed*)",
+      "Bash(find*)",
+      "Bash(ls*)",
+      "Bash(cat*)",
+      "Bash(head*)",
+      "Bash(tail*)",
+      "Bash(echo*)",
+      "Bash(printf*)",
+      "Bash(wc*)",
+      "Bash(mkdir*)",
+      "Bash(py -3*)",
+      "Bash(python*)",
+      "Bash(node*)",
+      "Bash(npm*)",
+      "Bash(npx*)",
+      "Bash(cmake*)",
+      "Bash(ctest*)",
+      "PowerShell(*)"
     ]
   },
   "autoMemoryEnabled": true,
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "py -3 .claude/scripts/session-start.py"
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

@@ -11,6 +11,14 @@
         "MEMORY_FILE_PATH": "G:\\Claude\\Master-Control-Orchastration-Server\\master-control-dashboard-main\\.remember\\memory.jsonl",
         "PATH": "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows"
       }
+    },
+    "mcos-memory": {
+      "command": "py",
+      "args": ["-3", ".claude/mcp-servers/mcos-memory/server.py"]
+    },
+    "mcos-contracts": {
+      "command": "py",
+      "args": ["-3", ".claude/mcp-servers/mcos-contracts/server.py"]
     }
   }
 }
