@@ -518,6 +518,65 @@
       ],
       "source": "docs/implementation/FORBIDDEN-CONTRACT-GREP-LIST.md",
       "ts": "2026-05-02T12:13:10Z"
+    },
+    {
+      "id": "487f1cccf3e9",
+      "kind": "decision",
+      "title": "ADR-003: keep MCPJungle for v0.6.x",
+      "body": "PHASE-11 decision: keep MCPJungle as the v0.6.x default gateway substrate behind the existing IMcpGateway adapter. Native HTTP.sys gateway is documented as a conditional future phase (proposed PHASE-12). The adapter abstraction makes the choice reversible. Source-tree unchanged.",
+      "tags": [
+        "adr-003",
+        "phase-11",
+        "gateway",
+        "decision",
+        "mcpjungle"
+      ],
+      "source": "docs/wiki/Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision.md",
+      "ts": "2026-05-02T12:20:59Z"
+    },
+    {
+      "id": "fc919c844aa4",
+      "kind": "deferred",
+      "title": "PHASE-12 native HTTP.sys gateway (conditional)",
+      "body": "Native gateway implementation deferred per ADR-003. Activates only when one of five triggers is observed: (1) measured throughput cap with operational impact, (2) confirmed session-affinity break under load, (3) MCPJungle release-cadence stall, (4) operator-experience friction blocking adoption, (5) vendoring policy change. Migration plan documented in docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md Â§3. Effort estimate 7-18 weeks. Requirements documented in Â§2. Native must implement IMcpGateway exactly; McpJungleGatewayAdapter stays as in-tree fallback even post-migration.",
+      "tags": [
+        "phase-12",
+        "conditional",
+        "gateway",
+        "native",
+        "deferred",
+        "adr-003"
+      ],
+      "source": "docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md",
+      "ts": "2026-05-02T12:20:59Z"
+    },
+    {
+      "id": "1bd0fe124163",
+      "kind": "invariant",
+      "title": "ADR-003 Â§triggers: PHASE-12 activation conditions",
+      "body": "PHASE-12 (native HTTP.sys gateway) activates if and only if one or more of: (1) MCPJungle saturates below required p95 under real LAN AI-client load, (2) PHASE-07 sticky-session contract observably violated by MCPJungle routing, (3) MCPJungle does not track an MCP spec version we need to ship, (4) operators consistently fail to install MCPJungle alongside MCOS, (5) ADR-002 Â§11 vendoring policy changes. PHASE-08 telemetry surface is the right monitoring tool for triggers 1 and 2; 3 and 4 are organizational signals. Recall this fact at the start of any future operations review.",
+      "tags": [
+        "adr-003",
+        "phase-12",
+        "triggers",
+        "invariant",
+        "monitoring"
+      ],
+      "source": "docs/wiki/Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision.md",
+      "ts": "2026-05-02T12:20:59Z"
+    },
+    {
+      "id": "70a4bfcba19f",
+      "kind": "phase-event",
+      "title": "PHASE-11 complete: realignment program done (PHASE-00..PHASE-11)",
+      "body": "PHASE-11 was the last phase in the realignment manifest. All 12 phases (PHASE-00..PHASE-11) are complete. Subsequent work is conditional (PHASE-12 if triggers fire), deferred maintenance (consolidated under tags=[deferred]), or out-of-scope operations/feature work. Product is releasable per the PHASE-10 gate.",
+      "tags": [
+        "phase-11",
+        "milestone",
+        "realignment-complete"
+      ],
+      "source": "",
+      "ts": "2026-05-02T12:20:59Z"
     }
   ],
   "phaseState": {
@@ -637,12 +696,14 @@
       "updatedAt": "2026-05-02T12:13:10Z"
     },
     "PHASE-11": {
-      "status": "pending",
-      "commit": "",
-      "report": "",
-      "deferred": [],
-      "notes": "Native gateway evaluation. Decision phase, not implementation. Pending operator instruction.",
-      "updatedAt": "2026-05-02T12:13:10Z"
+      "status": "complete",
+      "commit": "pending",
+      "report": "handoff/realignment/PHASE-11-completion-report.md",
+      "deferred": [
+        "Conditional PHASE-12 native HTTP.sys gateway"
+      ],
+      "notes": "Decision: keep MCPJungle for v0.6.x. Native HTTP.sys gateway deferred to conditional PHASE-12 gated on five triggers (throughput cap, session-affinity break, upstream stall, operator-install friction, vendoring policy change). ADR-003 records the decision. PHASE-11-NATIVE-GATEWAY-EVALUATION.md carries the matrix + requirements + migration plan + limitations.",
+      "updatedAt": "2026-05-02T12:20:59Z"
     }
   },
   "files": {
@@ -752,6 +813,17 @@
           "dashboard",
           "telemetry-honesty",
           "phase-09"
+        ]
+      }
+    ],
+    "docs/wiki/Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision.md": [
+      {
+        "ts": "2026-05-02T12:20:59Z",
+        "note": "Formal decision: keep MCPJungle for v0.6.x. Five triggers in this ADR activate a future PHASE-12 (native HTTP.sys gateway). Cite this ADR before any gateway-substrate discussion.",
+        "tags": [
+          "adr-003",
+          "decision",
+          "gateway"
         ]
       }
     ]
