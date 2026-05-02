@@ -45,6 +45,10 @@ constexpr wchar_t kLegacyDashboardShortcutName[] = L"Master Control Dashboard.ur
 constexpr wchar_t kInstallStateFileName[] = L"installation-state.json";
 constexpr wchar_t kBrowserRuleName[] = L"Master Control Orchestration Server - Browser Access";
 constexpr wchar_t kBeaconRuleName[] = L"Master Control Orchestration Server - Beacon Discovery";
+constexpr wchar_t kGatewayRuleName[] = L"Master Control Orchestration Server - MCP Gateway";
+constexpr wchar_t kMDnsRuleName[] = L"Master Control Orchestration Server - DNS-SD mDNS Advertising";
+constexpr uint16_t kMDnsLocalPort = 5353;
+constexpr uint16_t kDefaultGatewayPort = 8080;
 constexpr wchar_t kBootstrapperLogDirectoryEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_LOG_DIR";
 constexpr wchar_t kBootstrapperServiceNameEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_SERVICE_NAME";
 constexpr wchar_t kBootstrapperUninstallRegistryKeyEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_UNINSTALL_KEY";
@@ -80,8 +84,11 @@ struct InstallationState final {
     std::string dataDirectory;
     uint16_t browserPort = 0;
     uint16_t beaconPort = 0;
+    uint16_t gatewayPort = 0;
     bool allowOpenLanAccess = false;
     bool beaconEnabled = false;
+    bool gatewayAdvertised = true;     // PHASE-03 / ADR-002: gateway-first advertising is on by default
+    bool mDnsAdvertised = true;        // PHASE-03: DNS-SD UDP 5353 is on whenever the runtime is up
     bool serviceManaged = true;
     bool firewallManaged = true;
     bool shortcutsManaged = true;
@@ -120,6 +127,8 @@ struct ShortcutInstallationStatus final {
 struct FirewallRuleStatus final {
     bool browserRulePresent = false;
     bool beaconRulePresent = false;
+    bool gatewayRulePresent = false;
+    bool mDnsRulePresent = false;
 };
 
 struct ProcessCaptureResult final {
@@ -144,8 +153,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     dataDirectory,
     browserPort,
     beaconPort,
+    gatewayPort,
     allowOpenLanAccess,
     beaconEnabled,
+    gatewayAdvertised,
+    mDnsAdvertised,
     serviceManaged,
     firewallManaged,
     shortcutsManaged,
@@ -1107,8 +1119,18 @@ InstallationState buildInstallationState(const std::filesystem::path& installDir
     state.dataDirectory = paths.dataDirectory.string();
     state.browserPort = configuration.browserPort;
     state.beaconPort = configuration.beaconPort;
+    // PHASE-03 / ADR-002: gateway port from McpGatewayConfiguration when set,
+    // otherwise the documented default 8080 from buildDefaultConfiguration.
+    state.gatewayPort = configuration.mcpGateway.listenPort > 0
+        ? configuration.mcpGateway.listenPort
+        : kDefaultGatewayPort;
     state.allowOpenLanAccess = configuration.security.allowOpenLanAccess;
     state.beaconEnabled = configuration.beaconEnabled;
+    // The gateway and mDNS rules cover the LAN-discovery surface MCOS always
+    // exposes when the runtime is up. Both default to advertised so an
+    // operator-installed MCOS reaches the LAN out of the box.
+    state.gatewayAdvertised = true;
+    state.mDnsAdvertised = true;
     state.serviceManaged = options.manageService;
     state.firewallManaged = options.manageFirewall;
     state.shortcutsManaged = options.manageShortcuts;
@@ -1221,6 +1243,8 @@ FirewallRuleStatus queryFirewallRuleStatus() {
     FirewallRuleStatus status;
     status.browserRulePresent = firewallRuleExists(kBrowserRuleName);
     status.beaconRulePresent = firewallRuleExists(kBeaconRuleName);
+    status.gatewayRulePresent = firewallRuleExists(kGatewayRuleName);
+    status.mDnsRulePresent = firewallRuleExists(kMDnsRuleName);
     return status;
 }
 
@@ -1510,27 +1534,65 @@ bool waitForServiceRemoval(const DWORD timeoutMilliseconds) {
 void removeFirewallRules() {
     runNetshCommand(L"delete rule name=\"" + std::wstring(kBrowserRuleName) + L"\"");
     runNetshCommand(L"delete rule name=\"" + std::wstring(kBeaconRuleName) + L"\"");
+    runNetshCommand(L"delete rule name=\"" + std::wstring(kGatewayRuleName) + L"\"");
+    runNetshCommand(L"delete rule name=\"" + std::wstring(kMDnsRuleName) + L"\"");
 }
 
 bool configureFirewallRules(const InstallationState& state) {
     removeFirewallRules();
 
+    const std::wstring serviceProgram = std::filesystem::path(state.serviceBinary).wstring();
+    // profile=private,domain matches docs/wiki/Operations/Windows-Firewall-LAN-Mode.md.
+    // Public profile is deliberately excluded to keep MCOS off untrusted networks.
+    constexpr const wchar_t* kProfileScope = L" profile=private,domain";
     bool success = true;
+
     if (state.allowOpenLanAccess) {
         success = runNetshCommand(
                       L"add rule name=\"" + std::wstring(kBrowserRuleName) +
-                      L"\" dir=in action=allow profile=private protocol=TCP localport=" +
+                      L"\" dir=in action=allow protocol=TCP localport=" +
                       std::to_wstring(state.browserPort) +
-                      L" program=\"" + std::filesystem::path(state.serviceBinary).wstring() + L"\"") &&
+                      kProfileScope +
+                      L" program=\"" + serviceProgram + L"\"") &&
             success;
     }
 
     if (state.beaconEnabled) {
         success = runNetshCommand(
                       L"add rule name=\"" + std::wstring(kBeaconRuleName) +
-                      L"\" dir=in action=allow profile=private protocol=UDP localport=" +
+                      L"\" dir=in action=allow protocol=UDP localport=" +
                       std::to_wstring(state.beaconPort) +
-                      L" program=\"" + std::filesystem::path(state.serviceBinary).wstring() + L"\"") &&
+                      kProfileScope +
+                      L" program=\"" + serviceProgram + L"\"") &&
+            success;
+    }
+
+    // PHASE-03 / ADR-002: the MCP gateway is the AI-client-facing surface.
+    // Always open it on the LAN profile so external AI clients can reach
+    // the advertised endpoint. The supervised gateway substrate (PHASE-02
+    // / ADR-003) listens on this port; whether the listener is MCPJungle
+    // or a future native gateway is invisible to the firewall rule.
+    if (state.gatewayAdvertised && state.gatewayPort > 0) {
+        success = runNetshCommand(
+                      L"add rule name=\"" + std::wstring(kGatewayRuleName) +
+                      L"\" dir=in action=allow protocol=TCP localport=" +
+                      std::to_wstring(state.gatewayPort) +
+                      kProfileScope +
+                      L" program=\"" + serviceProgram + L"\"") &&
+            success;
+    }
+
+    // PHASE-03: DNS-SD / mDNS advertising over UDP 5353. Without this rule,
+    // MCOS advertises but the broadcasts are dropped at the host firewall
+    // before reaching the LAN. Bonjour-aware peers cannot discover the
+    // host until this is allowed.
+    if (state.mDnsAdvertised) {
+        success = runNetshCommand(
+                      L"add rule name=\"" + std::wstring(kMDnsRuleName) +
+                      L"\" dir=in action=allow protocol=UDP localport=" +
+                      std::to_wstring(kMDnsLocalPort) +
+                      kProfileScope +
+                      L" program=\"" + serviceProgram + L"\"") &&
             success;
     }
 
@@ -2005,6 +2067,12 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
             if (state->beaconEnabled && !firewallStatus.beaconRulePresent) {
                 appendIssue(L"Beacon firewall access is expected but the inbound beacon rule is missing.");
             }
+            if (state->gatewayAdvertised && !firewallStatus.gatewayRulePresent) {
+                appendIssue(L"MCP Gateway firewall access is expected but the inbound gateway rule is missing.");
+            }
+            if (state->mDnsAdvertised && !firewallStatus.mDnsRulePresent) {
+                appendIssue(L"DNS-SD/mDNS advertising is expected but the inbound UDP 5353 rule is missing.");
+            }
         }
     }
 
@@ -2035,7 +2103,9 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
             { "shellShortcutPresent", shortcutStatus.shellShortcutPresent },
             { "dashboardShortcutPresent", shortcutStatus.dashboardShortcutPresent },
             { "browserFirewallRulePresent", firewallStatus.browserRulePresent },
-            { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent }
+            { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent },
+            { "gatewayFirewallRulePresent", firewallStatus.gatewayRulePresent },
+            { "mDnsFirewallRulePresent", firewallStatus.mDnsRulePresent }
         };
         for (const auto& issue : issues) {
             payload["issues"].push_back(utf8FromWide(issue));
@@ -2121,7 +2191,9 @@ void showDetectedEnvironment(const bool jsonOutput) {
             { "uninstallDisplayVersion", uninstallStatus.displayVersion },
             { "uninstallInstallLocation", uninstallStatus.installLocation },
             { "browserFirewallRulePresent", firewallStatus.browserRulePresent },
-            { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent }
+            { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent },
+            { "gatewayFirewallRulePresent", firewallStatus.gatewayRulePresent },
+            { "mDnsFirewallRulePresent", firewallStatus.mDnsRulePresent }
         };
         std::cout << payload.dump(2) << '\n';
         return;
@@ -2403,6 +2475,8 @@ bool installLike(const std::wstring& mode,
             payload["dashboardShortcutPresent"] = shortcutStatus.dashboardShortcutPresent;
             payload["browserFirewallRulePresent"] = firewallStatus.browserRulePresent;
             payload["beaconFirewallRulePresent"] = firewallStatus.beaconRulePresent;
+            payload["gatewayFirewallRulePresent"] = firewallStatus.gatewayRulePresent;
+            payload["mDnsFirewallRulePresent"] = firewallStatus.mDnsRulePresent;
             if (rollbackDirectory.has_value() && !rollbackRestored) {
                 payload["rollbackSnapshotPath"] = rollbackDirectory->string();
             }
@@ -2517,6 +2591,8 @@ bool installLike(const std::wstring& mode,
         payload["dashboardShortcutPresent"] = shortcutStatus.dashboardShortcutPresent;
         payload["browserFirewallRulePresent"] = firewallStatus.browserRulePresent;
         payload["beaconFirewallRulePresent"] = firewallStatus.beaconRulePresent;
+        payload["gatewayFirewallRulePresent"] = firewallStatus.gatewayRulePresent;
+        payload["mDnsFirewallRulePresent"] = firewallStatus.mDnsRulePresent;
         writeBootstrapperActionLog(mode, true, installDirectory, options, payload);
         std::cout << payload.dump(2) << '\n';
         return true;
@@ -2562,7 +2638,9 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
             { "shellShortcutPresent", shortcutStatus.shellShortcutPresent },
             { "dashboardShortcutPresent", shortcutStatus.dashboardShortcutPresent },
             { "browserFirewallRulePresent", firewallStatus.browserRulePresent },
-            { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent }
+            { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent },
+            { "gatewayFirewallRulePresent", firewallStatus.gatewayRulePresent },
+            { "mDnsFirewallRulePresent", firewallStatus.mDnsRulePresent }
         };
         writeBootstrapperActionLog(L"uninstall", false, installDirectory, options, payload);
 
@@ -2635,7 +2713,9 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
         { "shellShortcutPresent", shortcutStatus.shellShortcutPresent },
         { "dashboardShortcutPresent", shortcutStatus.dashboardShortcutPresent },
         { "browserFirewallRulePresent", firewallStatus.browserRulePresent },
-        { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent }
+        { "beaconFirewallRulePresent", firewallStatus.beaconRulePresent },
+        { "gatewayFirewallRulePresent", firewallStatus.gatewayRulePresent },
+        { "mDnsFirewallRulePresent", firewallStatus.mDnsRulePresent }
     };
     writeBootstrapperActionLog(L"uninstall", true, installDirectory, options, payload);
 

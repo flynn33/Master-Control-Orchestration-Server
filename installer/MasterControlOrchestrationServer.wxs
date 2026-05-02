@@ -13,8 +13,9 @@
       MasterControlBootstrapper.exe by invoking it as a deferred custom
       action with the flags chosen by the operator on the options dialog.
 
-  Shortcut defaults mirror the Microsoft convention: Start Menu checked, Desktop
-  unchecked, operator opts in for Desktop.
+  Shortcut defaults: both Start Menu and Desktop are pre-checked so the operator
+  is offered both placements at install time. Either checkbox can be unchecked
+  to skip that placement. The operator picks per-install.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
@@ -49,13 +50,13 @@
     <WixVariable Id="WixUIDialogBmp" Value="$(var.PackagingDir)\dialog-493x312.bmp"/>
     <WixVariable Id="WixUILicenseRtf" Value="$(var.InstallerDir)\license.rtf"/>
 
-    <!-- Operator choices on the custom Features page. Defaults match the v0.4.2
-         CLI defaults except INSTALL_DESKTOP_SHORTCUT which stays off until the
-         operator explicitly opts in (matches Microsoft convention). -->
+    <!-- Operator choices on the custom Features page. Both shortcut options
+         default ON so the installer prompts the operator with both choices
+         pre-checked; either can be unchecked to opt out. -->
     <Property Id="INSTALL_SERVICE" Value="1" Secure="yes"/>
     <Property Id="INSTALL_FIREWALL" Value="1" Secure="yes"/>
     <Property Id="INSTALL_START_MENU_SHORTCUT" Value="1" Secure="yes"/>
-    <Property Id="INSTALL_DESKTOP_SHORTCUT" Value="0" Secure="yes"/>
+    <Property Id="INSTALL_DESKTOP_SHORTCUT" Value="1" Secure="yes"/>
     <Property Id="LAUNCH_ON_EXIT" Value="1" Secure="yes"/>
 
     <!-- Use the full InstallDir dialog sequence and slot the Features page
