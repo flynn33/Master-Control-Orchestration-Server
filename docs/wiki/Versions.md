@@ -1,14 +1,14 @@
 # Versions
 
 ![scheme](https://img.shields.io/badge/scheme-semver-00f6ff?style=flat-square)
-![current](https://img.shields.io/badge/current-v0.5.0-1cf2c1?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--04--25-031018?style=flat-square)
+![current](https://img.shields.io/badge/current-v0.6.0-1cf2c1?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--05--01-031018?style=flat-square)
 ![strategy](https://img.shields.io/badge/strategy-hand%20authored-5a00e8?style=flat-square)
-![license](https://img.shields.io/badge/license-MIT-00aacc?style=flat-square)
+![license](https://img.shields.io/badge/license-Proprietary-00aacc?style=flat-square)
 
 > **Semantic versioning, hand-authored entries.**
-> Versions are tracked in [`VERSION.json`](../../VERSION.json) and tagged as GitHub Releases.
-> The release-manager agent that bumped patch versions on every push is **retired** as of v0.5.0 — release entries are now written by the operator.
+> Versions are tracked in [`VERSION.json`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/VERSION.json) and tagged as GitHub Releases.
+> Strategy: `minor-on-architecture-change`. Releases are gated by the CI workflow pair (`windows-build-test-package.yml` + `release.yml`); see [Release Gate](Operations/Release-Gate).
 
 ---
 
@@ -16,13 +16,56 @@
 
 | Field | Value |
 | --- | --- |
-| **Version** | `v0.5.0` |
-| **Released** | `2026-04-25` |
-| **Theme** | LAN Client Control Plane (ADR-001 phases 1–9 functionally complete) |
-| **Forsetti modules** | 16 |
-| **Action kinds** | 15 |
-| **Privilege flags** | 9 |
-| **Tag** | [`v0.5.0`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.5.0) |
+| **Version** | `v0.6.0` |
+| **Released** | `2026-05-01` |
+| **Theme** | Gateway-First MCP Realignment (ADR-002 / ADR-003) — PHASE-00..PHASE-11 complete |
+| **Tag** | [`v0.6.0`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.6.0) |
+
+### What v0.6.0 ships
+
+The realignment program in twelve named phases:
+
+```mermaid
+gantt
+    title MCOS Realignment (v0.5.0 → v0.6.0)
+    dateFormat  YYYY-MM-DD
+    axisFormat  %m-%d
+
+    section Foundation
+    PHASE-00 Repo baseline + ADR-002       :done, p0, 2026-04-30, 1d
+    PHASE-01 Provider-era cleanup          :done, p1, after p0, 1d
+
+    section Gateway plus discovery
+    PHASE-02 IMcpGateway + MCPJungle adapter :done, p2, after p1, 1d
+    PHASE-03 Bonjour LAN discovery         :done, p3, after p2, 1d
+
+    section Onboarding plus governance
+    PHASE-04 Onboarding profiles           :done, p4, after p3, 1d
+    PHASE-05 CLU/Forsetti governance bundles :done, p5, after p4, 1d
+
+    section Worker fabric
+    PHASE-06 Managed worker pools          :done, p6, after p5, 1d
+    PHASE-07 Lease routing + autoscaling   :done, p7, after p6, 1d
+    PHASE-08 Real-time telemetry           :done, p8, after p7, 1d
+
+    section UI plus release
+    PHASE-09 Tron dashboard realignment    :done, p9, after p8, 1d
+    PHASE-10 Windows hardening + CI + MSI  :done, p10, after p9, 1d
+    PHASE-11 Native gateway evaluation     :done, p11, after p10, 1d
+```
+
+### Highlights
+
+- **`IMcpGateway` + `McpJungleGatewayAdapter`** — the LAN MCP gateway is now a single advertised endpoint. Replaceable adapter; supervised-mock fallback when no binary configured (PHASE-02).
+- **DNS-SD + UDP beacon advertising** — three Bonjour service types (`_mcos._tcp.local`, `_mcos-mcp._tcp.local`, `_mcos-onboarding._tcp.local`) plus the legacy beacon, all carrying the canonical `DiscoveryDocument` (PHASE-03).
+- **Per-client-type onboarding profiles** — `claude-code`, `codex`, `grok`, `chatgpt`, `generic-mcp`. Manual setup is first-class (PHASE-04).
+- **Per-platform governance bundles** — `windows`, `macos`, `ios`. sha256 checksums; Forsetti version + agentic coding version stamped in (PHASE-05).
+- **Managed Endpoint Pools + Worker Supervisor** — 7-state lifecycle, Job Object containment, supervised process trees (PHASE-06).
+- **Lease Router with sticky-session + autoscaling** — four-step selection (sticky → least-loaded → scale-out → fail honestly). No hot-migration of stateful streams (PHASE-07).
+- **Telemetry Aggregator with `-1.0` honest-unavailable sentinel** — events ring (1024 cap), client presence roster, gateway traffic snapshot (PHASE-08).
+- **Tron dashboard realigned to gateway-first** — eleven destinations covering every layer; `formatMetric()` honesty helper enforced by FORBIDDEN-CONTRACT §8.1 (PHASE-09).
+- **Windows release gate closed** — vswhere-driven toolchain, version-stamping before configure, no `workflow_dispatch` bypass on the gating workflows, MSI rebuilt clean (PHASE-10).
+- **MCPJungle locked as the v0.6.x substrate** — native HTTP.sys gateway documented as conditional PHASE-12 with five named operational triggers (PHASE-11 / ADR-003).
 
 ### What v0.5.0 ships
 

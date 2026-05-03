@@ -459,13 +459,70 @@ Make sure the control is inside a `RootGrid` with `RequestedTheme="Dark"` and th
 | Service hung | §12 |
 | Agent stale tag | §13 |
 | Tron palette wrong (shell) | §14 |
+| LAN clients can't find the host | §16 |
+| Gateway stuck in supervised-mock | §17 |
 
 ---
 
-## 16. See also
+## 16. LAN discovery — clients can't find the host
+
+Run the diagnosis chain in order. Each step has a single expected outcome; the first failure points at the cause.
+
+```mermaid
+flowchart TB
+    classDef step fill:#031018,stroke:#00F6FF,color:#E6FCFF;
+    classDef good fill:#031a14,stroke:#1cf2c1,color:#a8efe0;
+    classDef bad fill:#1a0a0a,stroke:#ff7a90,color:#ffd2d8;
+
+    A[Service running?]:::step --> A1{Get-Service<br/>MasterControlOrchestrationServer<br/>Status?}
+    A1 -->|Running| B[Network profile?]:::step
+    A1 -->|Stopped| Aerr[Start-Service ...]:::bad
+
+    B --> B1{Get-NetConnectionProfile<br/>NetworkCategory?}
+    B1 -->|Private or DomainAuthenticated| C[Firewall rules?]:::step
+    B1 -->|Public| Berr[Reclassify network<br/>or bind to LAN-only NIC]:::bad
+
+    C --> C1{Get-NetFirewallRule<br/>-DisplayName 'MCOS *'<br/>count?}
+    C1 -->|4 rules present + Enabled| D[DNS-SD broadcasting?]:::step
+    C1 -->|Less than 4 / Disabled| Cerr[Re-run MSI with firewall<br/>checkbox on, OR copy<br/>snippets from Settings panel]:::bad
+
+    D --> D1{Resolve-DnsName<br/>-Name _mcos._tcp.local<br/>-Type PTR<br/>-LlmnrFallback}
+    D1 -->|PTR returned| E[Discovery doc reachable?]:::step
+    D1 -->|Empty| Derr[Check service-events.jsonl<br/>for DnsServiceRegister error code]:::bad
+
+    E --> E1{Invoke-RestMethod<br/>http://host:7300/.well-known/mcos.json}
+    E1 -->|JSON returned| Done([Discovery healthy<br/>verify from a remote machine]):::good
+    E1 -->|Connection refused / timeout| Eerr[Bind address wrong<br/>OR service not listening<br/>OR firewall rule missing exe path]:::bad
+```
+
+**Common cause #1** — the network is on the Public profile. Run `Get-NetConnectionProfile`; if it says `Public`, change the connection's classification in Windows Settings. Without Private/Domain, the firewall rules' `Profile=Private,Domain` scope intentionally blocks MCOS.
+
+**Common cause #2** — the MSI was installed without the firewall checkbox. Either re-run the MSI with the checkbox on, or copy the four `New-NetFirewallRule` snippets from the **Settings → LAN Advertising and Windows Firewall** card (also available on the dashboard's Discovery destination) and run them from elevated PowerShell.
+
+**Common cause #3** — the host is multi-homed and bound to the wrong NIC. Set `bindAddress` in `mcos.json` to the LAN-facing IP and restart the service.
+
+---
+
+## 17. Gateway state stuck in supervised-mock
+
+Symptom: the Gateway destination shows `state=running, health=unknown, message="No gateway binary configured."`
+
+This is the documented honest fallback (PHASE-02 / ADR-002 §9). It is not a bug. Two ways to move out of supervised-mock:
+
+1. **Install MCPJungle and point at it.** Download or build the MCPJungle binary, copy it somewhere stable (e.g. `C:\Program Files\Master Control Orchestration Server\bin\mcpjungle\`), and set `mcpGateway.binaryPath` in `mcos.json` to its absolute path. Restart the service. The adapter spawns it under a Job Object on next start. See [Packaging and Gateway Binary](Operations/Packaging-and-Gateway-Binary).
+2. **Confirm `mcpGateway.enabled=true`** in `mcos.json`. The adapter refuses to start in supervised mode if disabled.
+
+If the binary is configured but the adapter still reports supervised-mock, check `service-events.jsonl` for `CreateProcessW` errors. The most common cause is a path with embedded environment variables that didn't expand at config-load time.
+
+---
+
+## 18. See also
 
 - [Operations](Operations) — install, upgrade, repair flows
 - [Architecture](Architecture) — request lifecycle and component layout
 - [API Reference](API-Reference) — every route's verb, privilege, CLU action
 - [Governance](Governance) — CLU outcomes and the approval queue
-- [Telemetry & Activity](Telemetry-and-Activity) — the activity ring + telemetry stream
+- [Telemetry and Activity](Telemetry-and-Activity) — the events ring + clients + gateway snapshot
+- [LAN Discovery](LAN-Discovery) — DNS-SD service types + beacon
+- [Windows Firewall and LAN Mode](Operations/Windows-Firewall-LAN-Mode) — manual firewall snippets
+- [Gateway](Gateway) — supervised-mock fallback details

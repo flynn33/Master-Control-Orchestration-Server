@@ -2,36 +2,45 @@
 
 **[🏠 Home](Home)**
 
-**LAN Client Control Plane**
+**Get started**
+- [⚡ Quick Start](Quick-Start)
+- [🤝 Onboarding](Onboarding)
+
+**Architecture**
+- [🏗️ Architecture](Architecture)
+- [🌐 LAN Discovery](LAN-Discovery)
+- [🚪 Gateway](Gateway)
+- [🛠️ Worker Pools](Worker-Pools)
+- [📡 Telemetry & Activity](Telemetry-and-Activity)
+- [📊 Dashboard](Dashboard)
+- [🛰️ Sub-Agents](Sub-Agents)
+- [🌐 API Reference](API-Reference)
+
+**Decisions**
+- [📜 Architecture Decisions](Architecture-Decisions)
+- [📜 ADR-001 — LAN Client Control Plane](Architecture-Decisions/ADR-001-lan-client-control-plane)
+- [📜 ADR-002 — Gateway-First MCP Realignment](Architecture-Decisions/ADR-002-gateway-first-mcp-realignment)
+- [📜 ADR-003 — MCP Gateway Substrate](Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision)
+
+**Governance**
+- [⚖️ CLU Governance](CLU-Governance)
+- [⚖️ Governance (operator)](Governance)
+
+**Operator surface (ADR-001)**
 - [👥 LAN Clients](LAN-Clients)
 - [🔐 Privileges](Privileges)
 - [📦 Client Config Bundle](Client-Config-Bundle)
-- [⚖️ Governance](Governance)
-- [🔌 Remote Client](Remote-Client)
-
-**Architecture & internals**
-- [📜 ADR-001](Architecture-Decisions/ADR-001-lan-client-control-plane) — LAN Client Control Plane
-- [📜 ADR-002](Architecture-Decisions/ADR-002-gateway-first-mcp-realignment) — Gateway-First MCP Realignment
-- [🏗️ Architecture](Architecture)
-- [🌐 API Reference](API-Reference)
-- [🛰️ Sub-Agents](Sub-Agents)
-- [📡 Telemetry & Activity](Telemetry-and-Activity)
-
-**Realignment (in progress)**
-- [🧭 Realignment Master](../implementation/MCOS-REALIGNMENT-MASTER)
-- [🛡️ Gateway & Discovery Contract](../implementation/MCP-GATEWAY-DISCOVERY-CONTRACT)
-- [⚖️ CLU Governance Bundle Contract](../implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT)
-- [🗺️ Provider-Era Removal Map](../implementation/PROVIDER-ERA-REMOVAL-MAP)
-- [🧱 Architecture Drift Inventory](../implementation/ARCHITECTURE-DRIFT-INVENTORY)
-- [🚫 Forbidden Contract Grep List](../implementation/FORBIDDEN-CONTRACT-GREP-LIST)
-
-**UI / UX**
-- [🎨 Tron UI Theme](Tron-UI-Theme)
 
 **Operations**
 - [🛠️ Operations](Operations)
-- [📦 Infrastructure](Infrastructure)
+- [🔥 Windows Firewall & LAN Mode](Operations/Windows-Firewall-LAN-Mode)
+- [📦 Packaging & Gateway Binary](Operations/Packaging-and-Gateway-Binary)
+- [🚦 Release Gate](Operations/Release-Gate)
+- [🏗️ Infrastructure](Infrastructure)
 - [🚨 Troubleshooting](Troubleshooting)
+
+**UI / UX**
+- [🎨 Tron UI Theme](Tron-UI-Theme)
 
 **Project**
 - [⚙️ Automation](Automation)

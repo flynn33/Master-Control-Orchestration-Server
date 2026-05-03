@@ -1,13 +1,13 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.5.0-00f6ff?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--04--25-031018?style=flat-square)
-![architecture](https://img.shields.io/badge/architecture-LAN%20Client%20Control%20Plane-1cf2c1?style=flat-square)
-![modules](https://img.shields.io/badge/Forsetti%20modules-16-00aacc?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.6.0-00f6ff?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--05--01-031018?style=flat-square)
+![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
 ![governance](https://img.shields.io/badge/governance-CLU%20%2B%20Forsetti-5a00e8?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Win11%20%E2%80%A2%20Server%202022-0a1018?style=flat-square)
+![toolchain](https://img.shields.io/badge/toolchain-C%2B%2B20%20%E2%80%A2%20WinUI%203-00aacc?style=flat-square)
 
-> **A Windows-native LAN client control plane** for shared MCP servers, sub-agents, and CLU-governed AI orchestration. External AI coding agents on the LAN connect as governed users, share one MCP and sub-agent fabric, and operate inside a Forsetti-aligned governance envelope.
+> **A Windows-native LAN MCP Gateway host.** External AI coding clients (Claude Code, Codex, Grok, ChatGPT, generic MCP) connect to one MCOS-advertised endpoint, consume server-generated onboarding profiles and CLU/Forsetti governance bundles, and operate against supervised MCP server and sub-agent worker pools. MCOS owns discovery, governance, telemetry, worker supervision, autoscaling, dashboarding, and Windows packaging.
 
 ---
 
@@ -21,47 +21,39 @@ flowchart LR
     classDef good fill:#031a14,stroke:#1cf2c1,color:#a8efe0;
 
     Operator((👤 Operator))
-    Browser[Browser Admin UI<br/>:7300]:::accent
 
-    subgraph Hosts[LAN Hosts]
-        AgentA[/AI agent A<br/>Claude Code/]:::client
-        AgentB[/AI agent B<br/>Codex/]:::client
-        AgentC[/AI agent C<br/>any vendor/]:::client
+    subgraph LANClients[LAN AI Clients]
+        direction TB
+        ClaudeCode[/Claude Code/]:::client
+        Codex[/Codex/]:::client
+        Grok[/Grok/]:::client
+        ChatGPT[/ChatGPT connector-edge/]:::client
+        Generic[/Generic MCP/]:::client
     end
 
     subgraph MCOS[Master Control Orchestration Server]
-        Service[[Service Host<br/>:7300]]:::accent
-        Identity[[LAN Client Roster<br/>+ Privileges]]:::accent
-        Catalog[(MCP Servers<br/>+ Sub-Agents)]:::good
-        CLU{{CLU Governance<br/>+ Approval Queue}}:::accent
+        direction TB
+        Discovery[LAN Discovery<br/>DNS-SD + UDP beacon]:::accent
+        Gateway[MCP Gateway<br/>MCPJungle adapter]:::accent
+        Onboarding[Onboarding Profiles<br/>per client type]:::accent
+        Governance[Governance Bundles<br/>Windows / macOS / iOS]:::accent
+        Supervisor[Worker Supervisor<br/>+ Lease Router]:::accent
+        Telemetry[Telemetry Aggregator<br/>events / clients / gateway]:::accent
+        Pools[(Managed Endpoint Pools<br/>MCP servers + sub-agents)]:::good
     end
 
-    Operator --> Browser
-    Browser -- "operator-fallback" --> Service
-    AgentA -- "X-MCOS-Client-Id: alpha" --> Service
-    AgentB -- "X-MCOS-Client-Id: bravo" --> Service
-    AgentC -- "X-MCOS-Client-Id: charlie" --> Service
-
-    Service --> Identity
-    Identity -. enforces .-> Catalog
-    Identity -. consults .-> CLU
-    CLU -. governs .-> Catalog
-    CLU -. defers high-impact .-> Operator
+    Operator -->|Browser dashboard| Telemetry
+    LANClients -->|"DNS-SD discovery (auth=none, trust=lan)"| Discovery
+    Discovery --> Gateway
+    LANClients -->|MCP requests| Gateway
+    Gateway -->|registers logical pools with| Supervisor
+    Supervisor --> Pools
+    Pools -->|heartbeat metrics| Telemetry
+    LANClients -.->|fetch on first connect| Onboarding
+    LANClients -.->|fetch on demand| Governance
 ```
 
-The architecture target is set by [ADR-001](Architecture-Decisions/ADR-001-lan-client-control-plane). The full nine-phase rebuild that landed it is documented in [`plans/remediation/01-gut-and-rebuild.md`](../../plans/remediation/01-gut-and-rebuild.md).
-
----
-
-## Three core invariants
-
-These three rules are non-negotiable and shape every other design decision:
-
-> **1. Use is universal.** Every authenticated LAN client may invoke every MCP server and every sub-agent in the catalog. No per-resource visibility, no creator-only restrictions.
-
-> **2. Mutation is gated.** Creation, modification, and removal of catalog entries pass through (a) a per-client privilege flag and (b) CLU enforcement. Both must allow.
-
-> **3. Identity is by header on a trusted LAN.** No bearer tokens, no TLS handshake, no DPAPI secrets. The `X-MCOS-Client-Id` header carries the resolving identity. Disabled clients are refused at the door.
+The architecture target is the **gateway-first MCP host** declared in [ADR-002](Architecture-Decisions/ADR-002-gateway-first-mcp-realignment) and locked at the substrate level by [ADR-003](Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision). The original LAN client identity model in [ADR-001](Architecture-Decisions/ADR-001-lan-client-control-plane) survives as the **operator surface** that coexists with the AI-client gateway surface.
 
 ---
 
@@ -69,110 +61,71 @@ These three rules are non-negotiable and shape every other design decision:
 
 | Field | Value |
 | --- | --- |
-| **Version** | `v0.5.0` |
-| **Released** | `2026-04-25` |
-| **Summary** | LAN Client Control Plane (ADR-001 phases 1–9 functionally complete) |
-| **Forsetti modules** | 16 |
-| **Repository** | [`master-control-dashboard`](https://github.com/flynn33/Master-Control-Orchestration-Server) |
-
-See the [release history](Versions) for the full version log.
+| **Version** | `v0.6.0` |
+| **Released** | `2026-05-01` |
+| **Summary** | Gateway-first MCP realignment (ADR-002 / ADR-003). PHASE-00 through PHASE-11 complete. The product is a LAN MCP gateway host; AI clients connect to one advertised endpoint and consume managed worker pools, governance bundles, and onboarding profiles. |
+| **Repository** | [Master-Control-Orchestration-Server](https://github.com/flynn33/Master-Control-Orchestration-Server) |
+| **License** | Proprietary |
 
 ---
 
-## Site map
+## Quick paths
 
-### LAN Client Control Plane
-
-The user-facing model. Start here.
-
-| Page | What you'll learn |
-| --- | --- |
-| [LAN Clients](LAN-Clients) | The data model, lifecycle endpoints, identification rules, heartbeat, activity attribution |
-| [Privileges](Privileges) | The nine boolean flags, the autonomous-mode bypass, capability bundles |
-| [Client Config Bundle](Client-Config-Bundle) | The schemaVersion-1.0 server-authored bundle, every field referenced |
-| [Governance](Governance) | CLU's two-stage gate, the 15 action kinds, the approval queue |
-| [Remote Client](Remote-Client) | End-to-end onboarding flow for an AI agent on another machine |
-
-### Architecture & internals
-
-For implementers, integrators, and reviewers.
-
-| Page | What you'll learn |
-| --- | --- |
-| [ADR-001](Architecture-Decisions/ADR-001-lan-client-control-plane) | Why the architecture is the shape it is |
-| [Architecture](Architecture) | The runtime topology, request lifecycle, Forsetti modules, service container |
-| [API Reference](API-Reference) | Every HTTP route — verb, path, privilege, CLU action, request body, response shape |
-| [Sub-Agents](Sub-Agents) | The seven-agent specialist roster (SENTINEL through WATCHTOWER) |
-| [Telemetry & Activity](Telemetry-and-Activity) | The 512-event ring buffer + telemetry stream |
-
-### Operations & deployment
-
-For the human running the service.
-
-| Page | What you'll learn |
-| --- | --- |
-| [Operations](Operations) | Build, package, install, upgrade, repair, uninstall |
-| [Infrastructure](Infrastructure) | Deployment shape, target hosts, ports, persistence paths |
-| [Troubleshooting](Troubleshooting) | Common failure modes and how to diagnose them |
-
-### Project & release
-
-| Page | What you'll learn |
-| --- | --- |
-| [Versions](Versions) | Release history with the rationale per release |
-| [Automation](Automation) | The three GitHub Actions workflows that protect the repo |
-
----
-
-## Five-minute walkthrough
-
-Operator on `MCOS-HOST`, AI agent on a remote workstation:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Op as Operator
-    participant MCOS
-    participant Agent as AI Agent on host A
-
-    Op->>MCOS: POST /api/clients<br/>{clientId:"alpha", clientType:"claude_code"}
-    MCOS-->>Op: 200 LAN client registered
-
-    Op->>MCOS: POST /api/clients/alpha/privileges<br/>{canCreateMcpServers:true}
-    MCOS-->>Op: 200 LAN client privileges updated
-
-    Op->>MCOS: GET /api/clients/alpha/config
-    MCOS-->>Op: 200 {schemaVersion:"1.0", mcosServer, identification, ...}
-    Op-)Agent: Hand the bundle to host A
-
-    Agent->>MCOS: POST /api/runtime/mcp-servers<br/>X-MCOS-Client-Id: alpha
-    Note over MCOS: 1. Resolve identity → alpha<br/>2. canCreateMcpServers? ✓<br/>3. CLU.enforceAction → Allow
-    MCOS-->>Agent: 200 succeeded
-
-    Agent->>MCOS: GET /api/client/mcp-servers<br/>X-MCOS-Client-Id: alpha
-    MCOS-->>Agent: 200 [shared catalog]
-```
-
-Walk it yourself with the curl scripts in [`plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md`](../../plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md).
+- **First-time install** → [Quick Start](Quick-Start)
+- **Connect an AI client** → [Onboarding](Onboarding)
+- **Understand how it works** → [Architecture](Architecture)
+- **Why each design choice was made** → [Architecture Decisions](Architecture-Decisions)
+- **Operate it day-to-day** → [Operations](Operations)
+- **Diagnose a problem** → [Troubleshooting](Troubleshooting)
 
 ---
 
 ## Three-line product pitch
 
-1. **Register every AI agent on the LAN.** Each agent gets a server-side `LanClient` record carrying nine privilege toggles plus an autonomous-mode flag. Identity is by header on a trusted LAN.
-2. **Share one MCP and sub-agent fabric.** Every authenticated client may use every catalog entry. Creation, modification, and removal are gated by per-client privileges. Autonomous clients may build out the shared fabric without per-action approval.
-3. **Govern from one console.** Every privileged mutation passes through CLU, attributed to the resolving actor, captured in the activity ring, and visible in the browser dashboard. Deferred decisions queue for operator approval.
+1. **One advertised endpoint.** AI clients on the LAN find MCOS via Bonjour-compatible DNS-SD and connect to a single MCP gateway URL. No per-backend wiring on the client side.
+2. **Honest infrastructure.** Worker pools are supervised under Windows Job Objects, telemetry uses a `-1.0` "unavailable" sentinel rather than fabricating values, and the dashboard surfaces real state — not aspirational state.
+3. **Reversible by construction.** Every gateway-related decision sits behind the `IMcpGateway` adapter. The MCPJungle substrate is supervised, not vendored; it can be replaced with a native HTTP.sys gateway whenever operational evidence justifies the swap, without breaking any client contract.
 
 ---
 
-## What's not here yet
+## Site map
 
-The nine-phase rebuild leaves a few items deliberately out-of-scope for `v0.5.0`:
+### Architecture and design
+| Page | Topic |
+| --- | --- |
+| [Architecture](Architecture) | Runtime composition, layers, request flows |
+| [Architecture Decisions](Architecture-Decisions) | ADR-001 / 002 / 003 with summaries and supersession history |
+| [Gateway](Gateway) | `IMcpGateway` adapter, MCPJungle substrate, supervised-mock fallback |
+| [Worker Pools](Worker-Pools) | Managed endpoint pools, 7-state lifecycle, lease routing, autoscaling |
+| [LAN Discovery](LAN-Discovery) | DNS-SD service types, UDP beacon, the discovery document |
+| [Telemetry and Activity](Telemetry-and-Activity) | Events ring, client roster, gateway traffic, honest `-1.0` sentinel |
+| [API Reference](API-Reference) | Every HTTP route exposed by the runtime |
 
-- **WinUI 3 desktop shell** — kept in a deferred-cleanup state from Phase 2b. The browser admin UI delivers everything Phase 8 needed; the shell rebuild is queued as a separate track.
-- **Captured proof receipt.** [`plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md`](../../plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md) is currently a verification recipe; running the build and capturing the live receipt is the operator's next step.
-- **Hardening track.** ADR-001 locked decisions kept the trusted-LAN posture (no auth, no TLS). A future track can add bearer tokens or mTLS without re-architecting; the bundle's `identification` field shape leaves room.
+### Onboarding and governance
+| Page | Topic |
+| --- | --- |
+| [Quick Start](Quick-Start) | Install MSI → first run → verify on LAN |
+| [Onboarding](Onboarding) | Per-client-type profiles for Claude Code / Codex / Grok / ChatGPT / generic-MCP |
+| [CLU Governance](CLU-Governance) | Forsetti-aligned bundles, profile, decision policy, approval queue |
+| [LAN Clients](LAN-Clients) | ADR-001 operator surface — per-client identity, privileges, autonomous mode |
+| [Privileges](Privileges) | Nine-flag privilege model on the operator surface |
+| [Client Config Bundle](Client-Config-Bundle) | Server-authored bundle for the operator surface |
 
----
+### Operations
+| Page | Topic |
+| --- | --- |
+| [Operations](Operations) | Build, validate, package, install, upgrade, repair, uninstall |
+| [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) | Trust model, firewall rules, validation snippets |
+| [Packaging and Gateway Binary](Packaging-and-Gateway-Binary) | What the MSI installs, why the gateway is operator-installed |
+| [Release Gate](Release-Gate) | The CI workflow pair, no-`workflow_dispatch` rule, tag → release flow |
+| [Dashboard](Dashboard) | Tour of the 11 browser dashboard destinations |
+| [Sub-Agents](Sub-Agents) | Sub-agent roster within managed pools |
+| [Infrastructure](Infrastructure) | Deployment shape and target hosts |
 
-> **Tip:** The wiki is hand-authored. If a section is wrong, file an issue or a pull request — the repository's AI Contributor Guard will reject AI-attributed commits, but operator edits are welcome.
+### Project
+| Page | Topic |
+| --- | --- |
+| [Versions](Versions) | Release history including the realignment program (PHASE-00..PHASE-11) |
+| [Tron UI Theme](Tron-UI-Theme) | Palette, typography, motion |
+| [Automation](Automation) | GitHub agents that maintain this repo |
+| [Troubleshooting](Troubleshooting) | Common failures and diagnosis |
