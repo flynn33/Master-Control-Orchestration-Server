@@ -8,24 +8,46 @@ The plugin lives in the repo at `.claude-plugin/mcos-control/`. Source of truth 
 
 ## How to install
 
-### Option A — install from the in-repo plugin directory
+### Option A — install from the MSI (recommended)
+
+The MSI installer ships the plugin source under `share\claude-plugins\mcos-control` alongside the binaries, plus a registration helper at the install root. After installing or upgrading MCOS, run the helper once from elevated PowerShell:
 
 ```powershell
-# Copy or symlink into your Claude Code plugins directory
+# Default: copy the plugin into ~/.claude/plugins/mcos-control
+& "C:\Program Files\Master Control Orchestration Server\Register-McosControlPlugin.ps1"
+
+# Recommended for ongoing maintenance: junction (auto-tracks MSI upgrades)
+& "C:\Program Files\Master Control Orchestration Server\Register-McosControlPlugin.ps1" -Symlink
+```
+
+The script copies (or junctions) the plugin into `%USERPROFILE%\.claude\plugins\mcos-control`, smoke-checks for Python on PATH, and prints next steps. Restart Claude Code and `/mcos:status` should work.
+
+To remove later:
+```powershell
+& "C:\Program Files\Master Control Orchestration Server\Register-McosControlPlugin.ps1" -Unregister
+```
+
+### Option B — install from the in-repo plugin directory (developers)
+
+```powershell
 Copy-Item -Recurse `
   '<repo-root>\.claude-plugin\mcos-control' `
   "$env:USERPROFILE\.claude\plugins\mcos-control"
 ```
 
-### Option B — point the project's `.mcp.json` at the bridge
+### Option C — point the project's `.mcp.json` at the bridge
 
-The repo's `.mcp.json` already includes `mcos-bridge` so any Claude Code session opened in this repo gets it automatically. The bridge connects to `MCOS_BASE_URL` (default `http://localhost:7300`).
+The repo's `.mcp.json` already includes `mcos-bridge` so any Claude Code session opened **in this repo** gets it automatically. The bridge connects to `MCOS_BASE_URL` (default `http://localhost:7300`).
 
 Override the URL by setting the environment variable before starting Claude Code:
 
 ```powershell
 $env:MCOS_BASE_URL = "http://eng-lab-1.local:7300"
 ```
+
+### Why the MSI doesn't auto-register
+
+A perMachine MSI doesn't know which user's Claude Code installation should get the plugin — Windows Installer doesn't have a clean per-user-from-perMachine path. The bundled `Register-McosControlPlugin.ps1` is the operator's explicit "install for me" step. It's idempotent and safe to re-run.
 
 ---
 

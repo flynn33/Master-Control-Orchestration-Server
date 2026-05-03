@@ -176,3 +176,19 @@ install(
     DIRECTORY "${CMAKE_SOURCE_DIR}/resources/icons"
     DESTINATION "share/MasterControlOrchestrationServer"
 )
+
+# Claude Code plugin (mcos-control). Bundled with the MSI so installs include
+# the operator-side Claude Code tooling. The plugin is NOT auto-registered
+# with Claude Code at install time (per-user state from a perMachine MSI is
+# fragile). After install, operators register it by running
+# Register-McosControlPlugin.ps1 from the install directory, which symlinks
+# this directory into %USERPROFILE%\.claude\plugins\mcos-control.
+install(
+    DIRECTORY "${CMAKE_SOURCE_DIR}/.claude-plugin/mcos-control"
+    DESTINATION "share/claude-plugins"
+)
+
+install(
+    FILES "${CMAKE_SOURCE_DIR}/scripts/Register-McosControlPlugin.ps1"
+    DESTINATION "."
+)

@@ -39,8 +39,18 @@ The MSI's `MajorUpgrade` element is configured `Schedule="afterInstallInitialize
 - All binaries under `C:\Program Files\Master Control Orchestration Server\`
 - The vendored Forsetti framework files
 - `share/MasterControlOrchestrationServer/web/` (browser dashboard assets)
+- `share/claude-plugins/mcos-control/` (the Claude Code plugin source)
+- `Register-McosControlPlugin.ps1` (the plugin registration helper)
 - Start Menu / Desktop shortcuts
 - VC++ runtime + Windows App SDK
+
+### Claude Code plugin after upgrade
+
+If you registered the plugin with `-Symlink` (junction mode), the upgrade is automatic — Claude Code picks up the new bridge code on next launch. If you registered with the default `Copy-Item` mode, re-run `Register-McosControlPlugin.ps1` to refresh the user-side copy:
+
+```powershell
+& "C:\Program Files\Master Control Orchestration Server\Register-McosControlPlugin.ps1"
+```
 
 ### What needs an explicit re-apply
 Nothing automatic — the MSI does not change firewall rules across upgrade, so the `MCOS *` rules from the previous install continue to point at the same `MasterControlServiceHost.exe` path. If you changed install directory between versions, run the firewall snippets again from [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode).

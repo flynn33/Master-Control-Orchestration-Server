@@ -14,6 +14,8 @@ PHASE-10 baseline (ADR-002 §10, §11).
 | `MasterControlShell.exe` | The WinUI 3 desktop shell. |
 | `share/MasterControlOrchestrationServer/web/` | Browser dashboard (`index.html`, `app.js`, `styles.css`, icons). |
 | `share/MasterControlOrchestrationServer/ForsettiManifests/` | Vendored Forsetti manifest files. |
+| `share/claude-plugins/mcos-control/` | The Claude Code plugin source (bridge MCP server, sub-agents, slash commands, skill, README). Operator registers with `Register-McosControlPlugin.ps1` after install. See [Claude Code Plugin](Claude-Code-Plugin). |
+| `Register-McosControlPlugin.ps1` | Helper script at the install root that copies (or junctions, with `-Symlink`) the plugin into `%USERPROFILE%\.claude\plugins\mcos-control`. Idempotent; `-Unregister` removes it. |
 | `resources/clu/governance-profile.json` | CLU governance profile (consumed at runtime by the governance bundle service). |
 | Microsoft VC++ x64 runtime DLLs | Bundled from `Resolve-MasterControlToolchain.ps1`'s `VcRuntimeDirectory`. |
 | Microsoft Windows App SDK runtime DLLs | Bundled with the WinUI shell payload. |
