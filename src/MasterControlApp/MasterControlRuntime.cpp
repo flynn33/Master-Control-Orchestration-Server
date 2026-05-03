@@ -9164,55 +9164,133 @@ inline std::string resolveActiveUserProfile(std::string& userName, std::string& 
         }
     }
 
-    // Path 2: process is running as SYSTEM (service). Recover the active
-    // console user's USERPROFILE via WTSQueryUserToken +
-    // CreateEnvironmentBlock. WTSQueryUserToken requires SE_TCB_NAME, which
-    // SYSTEM has by default but other accounts do not — so this path is
-    // SYSTEM-only and we only reach it if Path 1 already concluded the
-    // process is running as SYSTEM.
-    DWORD sessionId = WTSGetActiveConsoleSessionId();
-    if (sessionId == 0xFFFFFFFFu) {
-        errorOut = "No active console session.";
-        return {};
-    }
-    HANDLE userToken = nullptr;
-    if (!WTSQueryUserToken(sessionId, &userToken)) {
-        const DWORD err = GetLastError();
-        errorOut = "WTSQueryUserToken failed (Win32 errno "
-            + std::to_string(err) + "). The runtime needs SYSTEM privilege "
-            "to recover the interactive user's profile when running as a "
-            "service. Run MCOS as the Windows service or sign in to Windows "
-            "first.";
-        return {};
-    }
-    LPVOID env = nullptr;
-    if (!CreateEnvironmentBlock(&env, userToken, FALSE)) {
-        const DWORD err = GetLastError();
+    // Helper: given a primary user token, expand its environment block and
+    // pull USERPROFILE / USERNAME. Returns the profile path (UTF-8) and
+    // takes ownership of closing the token.
+    const auto extractFromToken = [&](HANDLE userToken) -> std::string {
+        LPVOID env = nullptr;
+        if (!CreateEnvironmentBlock(&env, userToken, FALSE)) {
+            CloseHandle(userToken);
+            return {};
+        }
+        std::string profile;
+        for (wchar_t* p = static_cast<wchar_t*>(env); *p; p += wcslen(p) + 1) {
+            const std::wstring_view entry(p);
+            if (entry.size() >= 12
+                && entry.compare(0, 12, L"USERPROFILE=") == 0) {
+                profile = utf8FromWide(std::wstring(entry.substr(12)));
+            } else if (entry.size() >= 9
+                && entry.compare(0, 9, L"USERNAME=") == 0) {
+                userName = utf8FromWide(std::wstring(entry.substr(9)));
+            }
+        }
+        DestroyEnvironmentBlock(env);
         CloseHandle(userToken);
-        errorOut = "CreateEnvironmentBlock failed (Win32 errno "
-            + std::to_string(err) + ").";
-        return {};
-    }
-    std::string profile;
-    // Walk the double-NUL terminated wide environment block. Names in the
-    // block are upper-case on Windows by convention, so a plain prefix
-    // compare is correct without having to worry about case folding.
-    for (wchar_t* p = static_cast<wchar_t*>(env); *p; p += wcslen(p) + 1) {
-        const std::wstring_view entry(p);
-        if (entry.size() >= 12
-            && entry.compare(0, 12, L"USERPROFILE=") == 0) {
-            profile = utf8FromWide(std::wstring(entry.substr(12)));
-        } else if (entry.size() >= 9
-            && entry.compare(0, 9, L"USERNAME=") == 0) {
-            userName = utf8FromWide(std::wstring(entry.substr(9)));
+        return profile;
+    };
+
+    // Path 2: SYSTEM-hosted runtime, target the active console session.
+    // WTSGetActiveConsoleSessionId + WTSQueryUserToken is the canonical
+    // path; it works when an interactive user is actually signed in and
+    // unlocked at the console. Returns ERROR_NO_TOKEN (1008) when the
+    // console session is locked or not currently associated with a user
+    // (RDP, fast-user-switch away, etc.).
+    DWORD wtsLastError = 0;
+    {
+        const DWORD sessionId = WTSGetActiveConsoleSessionId();
+        if (sessionId != 0xFFFFFFFFu) {
+            HANDLE userToken = nullptr;
+            if (WTSQueryUserToken(sessionId, &userToken)) {
+                const auto profile = extractFromToken(userToken);
+                if (!profile.empty()) {
+                    return profile;
+                }
+            } else {
+                wtsLastError = GetLastError();
+            }
         }
     }
-    DestroyEnvironmentBlock(env);
-    CloseHandle(userToken);
-    if (profile.empty()) {
-        errorOut = "Active user has no USERPROFILE in environment.";
+
+    // Path 3: SYSTEM-hosted runtime, but the console session didn't yield a
+    // token. Enumerate all sessions and pick any State==Active session that
+    // carries a user name. This recovers RDP sessions, locked-but-recently-
+    // active console sessions, and Server Core hosts where the console
+    // session may not be the user's primary session.
+    PWTS_SESSION_INFO_1W sessions = nullptr;
+    DWORD sessionCount = 0;
+    DWORD level = 1;
+    if (WTSEnumerateSessionsExW(WTS_CURRENT_SERVER_HANDLE, &level, 0, &sessions, &sessionCount)) {
+        for (DWORD i = 0; i < sessionCount; ++i) {
+            if (sessions[i].State != WTSActive) {
+                continue;
+            }
+            if (sessions[i].pUserName == nullptr || *sessions[i].pUserName == L'\0') {
+                continue;
+            }
+            HANDLE userToken = nullptr;
+            if (!WTSQueryUserToken(sessions[i].SessionId, &userToken)) {
+                continue;
+            }
+            const auto profile = extractFromToken(userToken);
+            if (!profile.empty()) {
+                WTSFreeMemoryExW(WTSTypeSessionInfoLevel1, sessions, sessionCount);
+                return profile;
+            }
+        }
+        WTSFreeMemoryExW(WTSTypeSessionInfoLevel1, sessions, sessionCount);
     }
-    return profile;
+
+    // Path 4: last resort — enumerate C:\Users\* and pick the directory
+    // that already has a .claude subfolder (i.e., the user has interacted
+    // with Claude Code at least once on this host). When more than one
+    // qualifies we pick the most-recently-modified profile. This is best-
+    // effort: if no user has used Claude Code yet, fall through to error.
+    {
+        std::error_code ec;
+        const std::filesystem::path usersRoot(L"C:\\Users");
+        std::filesystem::path bestProfile;
+        std::filesystem::file_time_type bestMtime{};
+        for (const auto& entry : std::filesystem::directory_iterator(usersRoot, ec)) {
+            if (ec) {
+                break;
+            }
+            if (!entry.is_directory(ec) || ec) {
+                continue;
+            }
+            const auto claudeDir = entry.path() / ".claude";
+            if (!std::filesystem::exists(claudeDir, ec) || ec) {
+                continue;
+            }
+            const auto mtime = std::filesystem::last_write_time(entry.path(), ec);
+            if (ec) {
+                continue;
+            }
+            if (bestProfile.empty() || mtime > bestMtime) {
+                bestProfile = entry.path();
+                bestMtime = mtime;
+            }
+        }
+        if (!bestProfile.empty()) {
+            const auto profileStr = bestProfile.string();
+            userName = bestProfile.filename().string();
+            return profileStr;
+        }
+    }
+
+    // No path succeeded. Surface the WTS error if we have one, otherwise
+    // a generic message.
+    if (wtsLastError != 0) {
+        errorOut = "Could not resolve an interactive user. The console "
+            "session returned WTSQueryUserToken errno "
+            + std::to_string(wtsLastError)
+            + " (typically locked screen / no console logon), no other "
+            "active session yielded a token, and no C:\\Users\\* profile "
+            "carries a .claude directory yet. Sign in to Windows on this "
+            "host or run Claude Code at least once, then try again.";
+    } else {
+        errorOut = "No active interactive user could be resolved on this host.";
+    }
+    return {};
 }
 
 inline ClaudePluginState resolveClaudePluginState(const std::filesystem::path& executableDirectory) {

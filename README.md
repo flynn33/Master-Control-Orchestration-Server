@@ -1,6 +1,6 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.6.2-00f6ff?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.6.3-00f6ff?style=flat-square)
 ![released](https://img.shields.io/badge/released-2026--05--03-031018?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%E2%80%A2%20Server%202022-0a1018?style=flat-square)
 ![toolchain](https://img.shields.io/badge/toolchain-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20CMake-00aacc?style=flat-square)
@@ -80,9 +80,17 @@ Multiple AI coding clients on the same trusted LAN need to share an MCP server a
 
 ---
 
-## v0.6.2 — what's new
+## v0.6.3 — what's new
 
-**Claude Code Control everywhere, console mode fixed.** The Connect / Disconnect toggle now lives in **both** GUI surfaces:
+**Claude Code Control is now a real toggle switch on the Overview deck of both GUI surfaces.**
+- **Browser dashboard** → Overview → **Claude Code Control** card → CSS toggle switch backed by an accessible `<input type="checkbox">`.
+- **WinUI desktop shell** → Overview → **Claude Code Control** card → native `ToggleSwitch` with `OnContent="Connected"` / `OffContent="Disconnected"`.
+
+The shell's card moved out of Settings and onto Overview alongside the dashboard counterpart. Both refresh on load and on every snapshot tick, both stay interactive even when the runtime would refuse, and both call the same `/api/claude-plugin/{status,toggle}` routes.
+
+## v0.6.2 — what shipped
+
+Claude Code Control card initial cut + console-mode resolver fix:
 - **Browser dashboard** → Overview deck → **Claude Code Control** card.
 - **WinUI desktop shell** → **Settings** section → **Claude Code Control** card at the top.
 
@@ -136,7 +144,7 @@ ctest --test-dir build/release -C Release --output-on-failure --timeout 300
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release -SkipBuild
 
 # 2. Install (interactive UI)
-msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.6.2-win-x64\MasterControlOrchestrationServer-v0.6.2-win-x64.msi"
+msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.6.3-win-x64\MasterControlOrchestrationServer-v0.6.3-win-x64.msi"
 
 # 3. Verify (after install)
 & "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output

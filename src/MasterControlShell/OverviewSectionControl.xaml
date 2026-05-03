@@ -26,6 +26,36 @@
                 </StackPanel>
             </Border>
 
+            <!-- Claude Code Control toggle (top of Overview, since it is the
+                 single highest-signal action a host operator takes). The
+                 ToggleSwitch fires Toggled on every state change including
+                 programmatic ones, so the .cpp handler suspends the runtime
+                 toggle call while a snapshot-driven IsOn update is pending. -->
+            <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="CLAUDE CODE CONTROL" Style="{StaticResource ShellEyebrowTextStyle}" />
+                    <TextBlock Text="Direct AI Plugin Connection" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock
+                        Style="{StaticResource ShellBodyTextStyle}"
+                        Foreground="{StaticResource ShellTextMutedBrush}"
+                        TextWrapping="WrapWholeWords"
+                        Text="Toggle on to register the bundled mcos-control plugin into Claude Code for the current Windows user. The runtime drops a directory junction at %USERPROFILE%\.claude\plugins\mcos-control pointing at the bundled plugin source. Restart Claude Code afterwards. Toggle off removes only the junction." />
+                    <ToggleSwitch x:Name="ClaudePluginToggle"
+                                  Header="Connect Claude Code to this server"
+                                  OnContent="Connected"
+                                  OffContent="Disconnected"
+                                  Toggled="ClaudePluginToggle_Toggled" />
+                    <TextBlock x:Name="ClaudePluginStatusText"
+                               Style="{StaticResource ShellDataTextStyle}"
+                               TextWrapping="WrapWholeWords"
+                               Text="Checking plugin registration state..." />
+                    <TextBlock x:Name="ClaudePluginDetailText"
+                               Style="{StaticResource ShellDataTextStyle}"
+                               Foreground="{StaticResource ShellTextMutedBrush}"
+                               TextWrapping="WrapWholeWords" />
+                </StackPanel>
+            </Border>
+
             <!-- Operational summary narrative -->
             <Border Style="{StaticResource ShellCardStyle}">
                 <StackPanel Spacing="10">

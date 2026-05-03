@@ -9,17 +9,6 @@
     <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="20">
             <Border Style="{StaticResource ShellCardStyle}">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="Claude Code Control" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                    <TextBlock Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords"
-                               Text="One-click registration of the bundled mcos-control plugin into Claude Code for the active interactive Windows user. Click Connect and the runtime drops a directory junction at %USERPROFILE%\.claude\plugins\mcos-control pointing at the install directory's bundled plugin source. Restart Claude Code afterwards and /mcos:status works. Disconnect removes only the junction; the install source is never touched." />
-                    <TextBlock x:Name="ClaudePluginStatusText" Style="{StaticResource ShellDataTextStyle}" Text="Checking plugin registration state..." TextWrapping="WrapWholeWords" />
-                    <TextBlock x:Name="ClaudePluginDetailText" Style="{StaticResource ShellDataTextStyle}" TextWrapping="WrapWholeWords" />
-                    <Button x:Name="ClaudePluginToggleButton" Click="ClaudePluginToggleButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Connect Claude Code" HorizontalAlignment="Left" />
-                </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource ShellCardStyle}">
                 <StackPanel Spacing="14">
                     <TextBlock Text="Guided Host Settings" Style="{StaticResource ShellSectionTitleTextStyle}" />
                     <TextBlock Text="Configure this host directly here. Change the instance identity, bind ports, beacon behavior, and governed resource envelope, then apply the update through the local admin API." Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords" />

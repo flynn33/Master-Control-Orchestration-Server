@@ -547,6 +547,7 @@ function renderOverview() {
 
 function renderClaudePluginCard() {
   const cp = state.claudePlugin;
+  const busy = state.claudePluginBusy;
   if (!cp) {
     return `
       <article class="panel-block">
@@ -558,34 +559,52 @@ function renderClaudePluginCard() {
   }
   const registered = cp.registered === true;
   const userResolved = cp.activeUserResolved === true;
-  const stateText = registered ? 'connected' : (userResolved ? 'disconnected' : 'no active user');
-  const tone = registered ? 'good' : (userResolved ? 'warn' : 'bad');
-  const userLine = userResolved
-    ? `<p class="muted">Active user: <strong>${escapeHtml(cp.userName || '—')}</strong></p>`
-    : `<p class="muted">No interactive console session detected. Sign in to Windows on the host first.</p>`;
-  const buttonLabel = state.claudePluginBusy
+  const headline = busy
     ? 'Working…'
-    : (registered ? 'Disconnect Claude Code' : 'Connect Claude Code');
-  const buttonClass = registered ? 'route-button' : 'route-button accent';
-  const errorLine = (cp.lastError && !registered)
+    : (registered
+        ? `Connected as ${cp.userName || '—'}`
+        : (userResolved
+            ? `Disconnected${cp.userName ? ' (' + cp.userName + ')' : ''}`
+            : 'No interactive Windows user resolved'));
+  const tone = registered ? 'good' : (userResolved ? 'warn' : 'bad');
+  // Render the toggle switch as an HTML <input type="checkbox"> wrapped in
+  // a <label.toggle-switch>. The checked state mirrors `registered`. The
+  // toggle is always interactive (not disabled) so the operator can see
+  // immediate feedback even when the runtime would refuse — refusal is
+  // shown in a status line instead.
+  const checkedAttr = registered ? ' checked' : '';
+  const detailLine = userResolved
+    ? `<p class="muted">Drops <code>${escapeHtml(cp.target || '%USERPROFILE%\\.claude\\plugins\\mcos-control')}</code> as a junction onto the install directory's bundled plugin source.</p>`
+    : `<p class="muted">Sign in to Windows on the host first.${cp.lastError ? ' ' + escapeHtml(cp.lastError) : ''}</p>`;
+  const errorLine = (cp.lastError && userResolved && !registered)
     ? `<p class="muted">${escapeHtml(cp.lastError)}</p>`
     : '';
   return `
     <article class="panel-block">
       <h3>Claude Code Control</h3>
-      <p class="big-stat ${tone}">${escapeHtml(stateText)}</p>
-      ${userLine}
-      <p class="muted">Drops <code>${escapeHtml(cp.target || '%USERPROFILE%\\.claude\\plugins\\mcos-control')}</code> as a junction onto the install directory's bundled plugin source.</p>
+      <p class="big-stat ${tone}">${escapeHtml(headline)}</p>
+      <label class="toggle-switch" title="Toggle to register / unregister the mcos-control Claude Code plugin for the active Windows user.">
+        <input type="checkbox" data-action="toggle-claude-plugin"${checkedAttr}>
+        <span class="toggle-track"></span>
+        <span class="toggle-label">${registered ? 'Connected' : 'Disconnected'}</span>
+      </label>
+      ${detailLine}
       ${errorLine}
-      <button type="button" data-action="toggle-claude-plugin" class="${buttonClass}"${state.claudePluginBusy || !userResolved ? ' disabled' : ''}>${escapeHtml(buttonLabel)}</button>
     </article>
   `;
 }
 
-async function toggleClaudePlugin() {
+async function toggleClaudePlugin(event) {
   if (state.claudePluginBusy) {
+    if (event && event.target && event.target.checked !== undefined) {
+      // Bounce the checkbox back to whatever the cached state says.
+      event.target.checked = !!(state.claudePlugin && state.claudePlugin.registered);
+    }
     return;
   }
+  // The HTML toggle's click flips `checked` synchronously before the change
+  // event fires. We don't read it — the runtime always interprets POST
+  // /api/claude-plugin/toggle as "flip" relative to its own ground truth.
   state.claudePluginBusy = true;
   renderCurrent();
   try {
@@ -620,9 +639,11 @@ function bindOverviewHandlers() {
       });
     }
   });
-  const toggleBtn = document.querySelector('[data-action="toggle-claude-plugin"]');
-  if (toggleBtn) {
-    toggleBtn.addEventListener('click', toggleClaudePlugin);
+  const toggleSwitch = document.querySelector('[data-action="toggle-claude-plugin"]');
+  if (toggleSwitch) {
+    // Use 'change' instead of 'click' so keyboard activation (space bar
+    // when the checkbox is focused) also drives the toggle.
+    toggleSwitch.addEventListener('change', toggleClaudePlugin);
   }
 }
 

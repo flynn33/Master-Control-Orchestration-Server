@@ -1,11 +1,27 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.6.2",
-  "current_tag": "v0.6.2",
+  "current_version": "0.6.3",
+  "current_tag": "v0.6.3",
   "released_at": "2026-05-03",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.6.3",
+      "tag": "v0.6.3",
+      "released_at": "2026-05-03",
+      "commit": "pending",
+      "summary": "Claude Code Control becomes a real toggle switch on the Overview deck of both GUI surfaces, and the runtime resolver gains two more fallback paths that fix the silent-toggle case where the service runs as SYSTEM but WTSQueryUserToken returns ERROR_NO_TOKEN (locked console, RDP-only login, fresh boot). The WinUI desktop shell's card moves out of Settings and onto the Overview page, replacing the previous Connect / Disconnect button with a ToggleSwitch (OnContent='Connected', OffContent='Disconnected'). The browser dashboard's button is replaced with a CSS toggle switch backed by an accessible <input type='checkbox'>. Both surfaces refresh from /api/claude-plugin/status on load and on every snapshot tick, and the toggle stays interactive even when the runtime would refuse so failures are visible rather than silent.",
+      "entries": [
+        "feat(shell-overview): Claude Code Control card with a ToggleSwitch lives at the top of OverviewSectionControl. Toggled handler dispatches ToggleClaudePluginAsync; suspendClaudePluginToggleHandler_ short-circuits programmatic IsOn writes from snapshot refresh so they don't re-fire the handler.",
+        "feat(shell-overview): OverviewSectionControl gains AttachRuntime; MainWindow attachInteractiveRuntime now wires the runtime to the Overview view in addition to the existing interactive sections.",
+        "remove(shell-settings): Claude Code Control card removed from SettingsSectionControl; the corresponding async/render helpers and member fields are deleted.",
+        "feat(dashboard): Claude Code Control card uses an HTML toggle switch (<input type='checkbox'> styled as a track + thumb via CSS sibling selectors). The toggle binds 'change' instead of 'click' so keyboard activation works. The toggle stays enabled even when activeUserResolved is false, so the user always sees feedback; refusal is shown in the status text.",
+        "feat(dashboard-css): new .toggle-switch / .toggle-track / .toggle-label styles. Track is 52x26 px with a 20 px thumb; checked state uses the cyan accent (#1cf2c1) plus a 12 px glow. Native checkbox visually hidden but keyboard-focusable.",
+        "fix(runtime): four-path active-user resolver. Path 1 = process USERPROFILE env var (covers --console / shell-hosted). Path 2 = WTSGetActiveConsoleSessionId + WTSQueryUserToken (canonical SYSTEM-service path). Path 3 = WTSEnumerateSessionsExW iterating every session looking for State==Active with a user name (covers RDP-only logons, locked console with active RDP). Path 4 = enumerate C:\\Users\\* directories with a .claude subfolder and pick the most-recently-modified one (last-resort coverage when no live token is available). Without paths 3-4, the toggle silently returned errno 1008 ERROR_NO_TOKEN even though a usable user profile was on disk.",
+        "docs(version): bump 0.6.2 -> 0.6.3 (UI uplift + resolver fallbacks)"
+      ]
+    },
     {
       "version": "0.6.2",
       "tag": "v0.6.2",

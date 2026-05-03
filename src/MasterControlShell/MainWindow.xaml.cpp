@@ -389,6 +389,11 @@ void attachInteractiveRuntime(const FrameworkElement& view,
                               ::MasterControlShell::ShellRuntime& runtime,
                               std::function<void()> refreshRequested,
                               std::function<void(const std::wstring&)> actionRequested) {
+    if (viewId == kOverviewView) {
+        const auto typed = view.as<winrt::MasterControlShell::OverviewSectionControl>();
+        winrt::get_self<winrt::MasterControlShell::implementation::OverviewSectionControl>(typed)->AttachRuntime(&runtime);
+        return;
+    }
     if (viewId == kRuntimeView) {
         const auto typed = view.as<winrt::MasterControlShell::RuntimeSectionControl>();
         winrt::get_self<winrt::MasterControlShell::implementation::RuntimeSectionControl>(typed)->AttachRuntime(
