@@ -1,7 +1,7 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.6.0-00f6ff?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--05--01-031018?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.6.1-00f6ff?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--05--03-031018?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%E2%80%A2%20Server%202022-0a1018?style=flat-square)
 ![toolchain](https://img.shields.io/badge/toolchain-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20CMake-00aacc?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
@@ -80,6 +80,19 @@ Multiple AI coding clients on the same trusted LAN need to share an MCP server a
 
 ---
 
+## v0.6.1 — what's new
+
+**One-click Claude Code control.** The Overview deck now has a **Claude Code Control** card with a **Connect / Disconnect** toggle. Click Connect and the runtime drops `%USERPROFILE%\.claude\plugins\mcos-control` as a directory junction onto the install directory's bundled plugin source — no admin prompt, no execution-policy gymnastics, no PowerShell knowledge required. Restart Claude Code and `/mcos:status` works.
+
+- **Bundled in the MSI.** The installer ships the plugin source under `share\claude-plugins\mcos-control` plus a `Register-McosControlPlugin.ps1` helper at the install root for scripted / manual flows.
+- **Service-mode aware.** When MCOS runs as the Windows service (SYSTEM), the runtime walks `WTSGetActiveConsoleSessionId` → `WTSQueryUserToken` → `CreateEnvironmentBlock` to recover the interactive user's `USERPROFILE`. Toggle works the same in `--console` mode.
+- **Reversible.** Disconnect removes only the junction. The install source is never touched.
+- **HTTP routes:** `GET /api/claude-plugin/status` and `POST /api/claude-plugin/toggle`.
+
+The plugin itself ships 5 sub-agents, 12 slash commands, the `mcos-bridge` MCP server (43 tools), and the `mcos-operations` skill — see [docs/wiki/Claude-Code-Plugin.md](docs/wiki/Claude-Code-Plugin.md).
+
+---
+
 ## v0.6.0 — what shipped
 
 The realignment program in twelve named phases (PHASE-00..PHASE-11):
@@ -116,7 +129,7 @@ ctest --test-dir build/release -C Release --output-on-failure --timeout 300
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release -SkipBuild
 
 # 2. Install (interactive UI)
-msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.6.0-win-x64\MasterControlOrchestrationServer-v0.6.0-win-x64.msi"
+msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.6.1-win-x64\MasterControlOrchestrationServer-v0.6.1-win-x64.msi"
 
 # 3. Verify (after install)
 & "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output

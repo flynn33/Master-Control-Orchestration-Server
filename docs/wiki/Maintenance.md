@@ -46,11 +46,16 @@ The MSI's `MajorUpgrade` element is configured `Schedule="afterInstallInitialize
 
 ### Claude Code plugin after upgrade
 
-If you registered the plugin with `-Symlink` (junction mode), the upgrade is automatic — Claude Code picks up the new bridge code on next launch. If you registered with the default `Copy-Item` mode, re-run `Register-McosControlPlugin.ps1` to refresh the user-side copy:
+The dashboard's **Claude Code Control** toggle (v0.6.1+) creates a directory junction by default — upgrades replace the install source in place, so Claude Code picks up the new bridge code on next launch with no operator action.
+
+If you registered the plugin manually with the helper script in copy mode (no `-Symlink`), re-run the helper after each upgrade to refresh the user-side copy:
 
 ```powershell
-& "C:\Program Files\Master Control Orchestration Server\Register-McosControlPlugin.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  "C:\Program Files\Master Control Orchestration Server\Register-McosControlPlugin.ps1"
 ```
+
+Or just toggle the dashboard control off and back on after the upgrade — the off→on cycle drops a fresh junction.
 
 ### What needs an explicit re-apply
 Nothing automatic — the MSI does not change firewall rules across upgrade, so the `MCOS *` rules from the previous install continue to point at the same `MasterControlServiceHost.exe` path. If you changed install directory between versions, run the firewall snippets again from [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode).

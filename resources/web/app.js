@@ -44,7 +44,14 @@ const state = {
   governanceBundle: null,
   telemetryEvents: { events: [], maxEvents: 0 },
   telemetryClients: [],
-  telemetryGateway: null
+  telemetryGateway: null,
+  // Claude Code plugin (mcos-control) registration toggle.
+  // Backed by /api/claude-plugin/{status,toggle}. The plugin lives under
+  // <install>\share\claude-plugins\mcos-control and is registered for the
+  // active console user as a directory junction at
+  // %USERPROFILE%\.claude\plugins\mcos-control.
+  claudePlugin: null,
+  claudePluginBusy: false
 };
 
 const destinations = [
@@ -254,11 +261,12 @@ async function refreshAll() {
       loadJson('/api/discovery').catch(() => null),
       loadJson('/api/telemetry/events?max=200').catch(() => ({ events: [], maxEvents: 0 })),
       loadJson('/api/telemetry/clients').catch(() => []),
-      loadJson('/api/telemetry/gateway').catch(() => null)
+      loadJson('/api/telemetry/gateway').catch(() => null),
+      loadJson('/api/claude-plugin/status').catch(() => null)
     ]);
     const [health, dashboard, clients, approvals, exportsList, activity,
            gwStatus, gwHealth, gwTools, pools, discovery,
-           telEvents, telClients, telGateway] = results;
+           telEvents, telClients, telGateway, claudePlugin] = results;
     state.health = health || { status: 'unreachable', time: '' };
     state.dashboard = dashboard;
     state.clients = Array.isArray(clients) ? clients : [];
@@ -277,6 +285,7 @@ async function refreshAll() {
       : { events: [], maxEvents: 0 };
     state.telemetryClients = Array.isArray(telClients) ? telClients : [];
     state.telemetryGateway = telGateway;
+    state.claudePlugin = claudePlugin;
     // Per-pool lease + saturation (best-effort; missing routes degrade silently)
     if (state.pools.length > 0) {
       const leaseFetches = state.pools.map((p) =>
@@ -527,12 +536,72 @@ function renderOverview() {
         </ul>
         <p class="muted">Host metrics are PDH-direct; <code>0%</code> means idle.</p>
       </article>
+      ${renderClaudePluginCard()}
       <article class="panel-block wide">
         <h3>Recent Telemetry Events</h3>
         ${renderTelemetryEventRows(recentEvents, { compact: true })}
       </article>
     </div>
   `;
+}
+
+function renderClaudePluginCard() {
+  const cp = state.claudePlugin;
+  if (!cp) {
+    return `
+      <article class="panel-block">
+        <h3>Claude Code Control</h3>
+        <p class="big-stat warn">unknown</p>
+        <p class="muted">Plugin status surface unavailable. The runtime may be older than 0.6.1.</p>
+      </article>
+    `;
+  }
+  const registered = cp.registered === true;
+  const userResolved = cp.activeUserResolved === true;
+  const stateText = registered ? 'connected' : (userResolved ? 'disconnected' : 'no active user');
+  const tone = registered ? 'good' : (userResolved ? 'warn' : 'bad');
+  const userLine = userResolved
+    ? `<p class="muted">Active user: <strong>${escapeHtml(cp.userName || '—')}</strong></p>`
+    : `<p class="muted">No interactive console session detected. Sign in to Windows on the host first.</p>`;
+  const buttonLabel = state.claudePluginBusy
+    ? 'Working…'
+    : (registered ? 'Disconnect Claude Code' : 'Connect Claude Code');
+  const buttonClass = registered ? 'route-button' : 'route-button accent';
+  const errorLine = (cp.lastError && !registered)
+    ? `<p class="muted">${escapeHtml(cp.lastError)}</p>`
+    : '';
+  return `
+    <article class="panel-block">
+      <h3>Claude Code Control</h3>
+      <p class="big-stat ${tone}">${escapeHtml(stateText)}</p>
+      ${userLine}
+      <p class="muted">Drops <code>${escapeHtml(cp.target || '%USERPROFILE%\\.claude\\plugins\\mcos-control')}</code> as a junction onto the install directory's bundled plugin source.</p>
+      ${errorLine}
+      <button type="button" data-action="toggle-claude-plugin" class="${buttonClass}"${state.claudePluginBusy || !userResolved ? ' disabled' : ''}>${escapeHtml(buttonLabel)}</button>
+    </article>
+  `;
+}
+
+async function toggleClaudePlugin() {
+  if (state.claudePluginBusy) {
+    return;
+  }
+  state.claudePluginBusy = true;
+  renderCurrent();
+  try {
+    const result = await loadJson('/api/claude-plugin/toggle', { method: 'POST' });
+    state.claudePlugin = result;
+    if (result && result.ok === false && result.lastError) {
+      showBanner('Claude Code toggle: ' + result.lastError);
+    } else {
+      clearBanner();
+    }
+  } catch (err) {
+    showBanner('Claude Code toggle failed: ' + (err && err.message ? err.message : 'unknown'));
+  } finally {
+    state.claudePluginBusy = false;
+    renderCurrent();
+  }
 }
 
 function bindOverviewHandlers() {
@@ -551,6 +620,10 @@ function bindOverviewHandlers() {
       });
     }
   });
+  const toggleBtn = document.querySelector('[data-action="toggle-claude-plugin"]');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', toggleClaudePlugin);
+  }
 }
 
 // ---- LAN Clients ----

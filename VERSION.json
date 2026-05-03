@@ -1,11 +1,26 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.6.0",
-  "current_tag": "v0.6.0",
-  "released_at": "2026-05-01",
+  "current_version": "0.6.1",
+  "current_tag": "v0.6.1",
+  "released_at": "2026-05-03",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.6.1",
+      "tag": "v0.6.1",
+      "released_at": "2026-05-03",
+      "commit": "pending",
+      "summary": "One-click Claude Code control. The MSI now bundles the operator-side mcos-control Claude Code plugin, and the dashboard's Overview deck gains a Claude Code Control card with a Connect / Disconnect toggle. Toggling Connect drops a directory junction at the active console user's %USERPROFILE%\\.claude\\plugins\\mcos-control pointing at the install directory's bundled plugin source, so Claude Code picks up the bridge MCP server, sub-agents, slash commands, and skill on next launch. The runtime resolves the active interactive user via WTSGetActiveConsoleSessionId + WTSQueryUserToken + CreateEnvironmentBlock, so the toggle works whether MCOS is running as the Windows service (SYSTEM) or in --console mode. Disconnecting removes only the junction, never the install source.",
+      "entries": [
+        "feat(installer): MSI bundles the mcos-control Claude Code plugin under share/claude-plugins/mcos-control plus a Register-McosControlPlugin.ps1 helper at the install root for manual / scripted registration",
+        "feat(runtime): GET /api/claude-plugin/status returns {registered, activeUserResolved, userName, profileDir, source, target, lastError} for the active console user",
+        "feat(runtime): POST /api/claude-plugin/toggle flips registration via cmd /c mklink /J for create and RemoveDirectoryW for remove; uses WTSGetActiveConsoleSessionId + WTSQueryUserToken + CreateEnvironmentBlock to recover the interactive user's USERPROFILE even when the runtime is hosted as a Windows service running under SYSTEM",
+        "feat(dashboard): Overview deck adds a Claude Code Control card with Connect / Disconnect toggle, live status text (connected / disconnected / no active user), and active-user attribution; busy state suppresses double-clicks",
+        "docs(wiki): Claude-Code-Plugin documents the dashboard toggle as the primary install path; Packaging-and-Gateway-Binary lists the plugin payload and helper script as MSI-installed; Maintenance covers junction-vs-copy upgrade behavior",
+        "docs(version): bump 0.6.0 -> 0.6.1 (operator-feature minor)"
+      ]
+    },
     {
       "version": "0.6.0",
       "tag": "v0.6.0",

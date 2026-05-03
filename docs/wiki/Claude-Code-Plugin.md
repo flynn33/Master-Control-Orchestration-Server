@@ -8,26 +8,45 @@ The plugin lives in the repo at `.claude-plugin/mcos-control/`. Source of truth 
 
 ## How to install
 
-### Option A — install from the MSI (recommended)
+### Option A — one click in the dashboard (v0.6.1+)
 
-The MSI installer ships the plugin source under `share\claude-plugins\mcos-control` alongside the binaries, plus a registration helper at the install root. After installing or upgrading MCOS, run the helper once from elevated PowerShell:
+Open `http://localhost:7300/` in your browser. The **Overview** deck has a **Claude Code Control** card. Click **Connect Claude Code** and you're done — the runtime drops a directory junction at `%USERPROFILE%\.claude\plugins\mcos-control` pointing at the install directory's bundled plugin source. Restart Claude Code and `/mcos:status` works.
+
+The toggle works in both runtime hosting modes:
+- **Service** (default): runtime resolves the active console user via `WTSGetActiveConsoleSessionId` + `WTSQueryUserToken` + `CreateEnvironmentBlock` and writes the junction into that user's profile.
+- **Console** (`MasterControlServiceHost.exe --console`): the active session is the user who launched it; same path resolves there too.
+
+The card surfaces the active user's name, the source path, the target path, and any error if registration fails (e.g., no interactive console session, plugin source missing because of a tampered install). To **disconnect**, click the toggle again — the runtime calls `RemoveDirectoryW` on the junction. The install source is never touched.
+
+Backed by:
+- `GET /api/claude-plugin/status` — `{registered, activeUserResolved, userName, profileDir, source, target, lastError}`
+- `POST /api/claude-plugin/toggle` — flips state, returns the new status
+
+### Option B — bundled helper script
+
+The MSI ships `Register-McosControlPlugin.ps1` at the install root for scripted / manual flows. Run it from PowerShell (not necessarily elevated; junctions don't need admin):
 
 ```powershell
 # Default: copy the plugin into ~/.claude/plugins/mcos-control
-& "C:\Program Files\Master Control Orchestration Server\Register-McosControlPlugin.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  "C:\Program Files\Master Control Orchestration Server\Register-McosControlPlugin.ps1"
 
 # Recommended for ongoing maintenance: junction (auto-tracks MSI upgrades)
-& "C:\Program Files\Master Control Orchestration Server\Register-McosControlPlugin.ps1" -Symlink
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  "C:\Program Files\Master Control Orchestration Server\Register-McosControlPlugin.ps1" -Symlink
 ```
 
 The script copies (or junctions) the plugin into `%USERPROFILE%\.claude\plugins\mcos-control`, smoke-checks for Python on PATH, and prints next steps. Restart Claude Code and `/mcos:status` should work.
 
 To remove later:
 ```powershell
-& "C:\Program Files\Master Control Orchestration Server\Register-McosControlPlugin.ps1" -Unregister
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  "C:\Program Files\Master Control Orchestration Server\Register-McosControlPlugin.ps1" -Unregister
 ```
 
-### Option B — install from the in-repo plugin directory (developers)
+The dashboard toggle (Option A) is identical to running this helper with `-Symlink` — both create a junction. Option B is for headless / CI flows where opening a browser isn't available.
+
+### Option C — install from the in-repo plugin directory (developers)
 
 ```powershell
 Copy-Item -Recurse `
@@ -35,7 +54,7 @@ Copy-Item -Recurse `
   "$env:USERPROFILE\.claude\plugins\mcos-control"
 ```
 
-### Option C — point the project's `.mcp.json` at the bridge
+### Option D — point the project's `.mcp.json` at the bridge
 
 The repo's `.mcp.json` already includes `mcos-bridge` so any Claude Code session opened **in this repo** gets it automatically. The bridge connects to `MCOS_BASE_URL` (default `http://localhost:7300`).
 
@@ -45,9 +64,9 @@ Override the URL by setting the environment variable before starting Claude Code
 $env:MCOS_BASE_URL = "http://eng-lab-1.local:7300"
 ```
 
-### Why the MSI doesn't auto-register
+### Why the MSI doesn't register the plugin during install
 
-A perMachine MSI doesn't know which user's Claude Code installation should get the plugin — Windows Installer doesn't have a clean per-user-from-perMachine path. The bundled `Register-McosControlPlugin.ps1` is the operator's explicit "install for me" step. It's idempotent and safe to re-run.
+A perMachine MSI doesn't have a clean per-user-from-perMachine path in Windows Installer — the elevated install context doesn't reliably know which interactive user the plugin should land for. The dashboard toggle solves this: the runtime is already running, has a stable HTTP interface, and can resolve the active console user at click-time. The bundled helper script is the headless fallback.
 
 ---
 

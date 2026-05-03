@@ -9085,6 +9085,164 @@ std::string contentTypeForPath(const std::filesystem::path& path) {
     return "text/html; charset=utf-8";
 }
 
+// ----------------------------------------------------------------------
+// Claude Code plugin (mcos-control) registration toggle.
+//
+// The plugin source ships at <install-root>\share\claude-plugins\mcos-control.
+// Registering means dropping a directory junction at
+// <activeUserProfile>\.claude\plugins\mcos-control that points back at the
+// install source. Junction creation does NOT require admin privilege (unlike
+// symbolic links), and RemoveDirectoryW on a reparse point removes the link
+// only — never the target.
+//
+// Active-user resolution: when the runtime is hosted as a Windows service
+// (the default), GetEnvironmentVariableW("USERPROFILE") returns SYSTEM's
+// profile, which is the wrong target. WTSGetActiveConsoleSessionId +
+// WTSQueryUserToken + CreateEnvironmentBlock recover the interactive user's
+// USERPROFILE and USERNAME. In --console mode this still works (the active
+// console session is the user who launched the runtime).
+// ----------------------------------------------------------------------
+struct ClaudePluginState {
+    bool registered = false;
+    bool activeUserResolved = false;
+    std::string profileDir;
+    std::string userName;
+    std::string source;
+    std::string target;
+    std::string lastError;
+};
+
+inline std::string resolveActiveUserProfile(std::string& userName, std::string& errorOut) {
+    DWORD sessionId = WTSGetActiveConsoleSessionId();
+    if (sessionId == 0xFFFFFFFFu) {
+        errorOut = "No active console session.";
+        return {};
+    }
+    HANDLE userToken = nullptr;
+    if (!WTSQueryUserToken(sessionId, &userToken)) {
+        errorOut = "WTSQueryUserToken failed (Win32 errno "
+            + std::to_string(GetLastError()) + ").";
+        return {};
+    }
+    LPVOID env = nullptr;
+    if (!CreateEnvironmentBlock(&env, userToken, FALSE)) {
+        const DWORD err = GetLastError();
+        CloseHandle(userToken);
+        errorOut = "CreateEnvironmentBlock failed (Win32 errno "
+            + std::to_string(err) + ").";
+        return {};
+    }
+    std::string profile;
+    // Walk the double-NUL terminated wide environment block. Names in the
+    // block are upper-case on Windows by convention, so a plain prefix
+    // compare is correct without having to worry about case folding.
+    for (wchar_t* p = static_cast<wchar_t*>(env); *p; p += wcslen(p) + 1) {
+        const std::wstring_view entry(p);
+        if (entry.size() >= 12
+            && entry.compare(0, 12, L"USERPROFILE=") == 0) {
+            profile = utf8FromWide(std::wstring(entry.substr(12)));
+        } else if (entry.size() >= 9
+            && entry.compare(0, 9, L"USERNAME=") == 0) {
+            userName = utf8FromWide(std::wstring(entry.substr(9)));
+        }
+    }
+    DestroyEnvironmentBlock(env);
+    CloseHandle(userToken);
+    if (profile.empty()) {
+        errorOut = "Active user has no USERPROFILE in environment.";
+    }
+    return profile;
+}
+
+inline ClaudePluginState resolveClaudePluginState(const std::filesystem::path& executableDirectory) {
+    ClaudePluginState s;
+    const auto sourcePath = executableDirectory / "share" / "claude-plugins" / "mcos-control";
+    s.source = sourcePath.string();
+    s.profileDir = resolveActiveUserProfile(s.userName, s.lastError);
+    s.activeUserResolved = !s.profileDir.empty();
+    if (s.activeUserResolved) {
+        s.target = s.profileDir + "\\.claude\\plugins\\mcos-control";
+        const DWORD attrs = GetFileAttributesW(wideFromUtf8(s.target).c_str());
+        s.registered = (attrs != INVALID_FILE_ATTRIBUTES)
+            && ((attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0);
+    }
+    return s;
+}
+
+inline bool createClaudePluginJunction(const std::string& target,
+                                       const std::string& source,
+                                       std::string& errorOut) {
+    // Verify source exists and is a directory.
+    const DWORD srcAttrs = GetFileAttributesW(wideFromUtf8(source).c_str());
+    if (srcAttrs == INVALID_FILE_ATTRIBUTES || !(srcAttrs & FILE_ATTRIBUTE_DIRECTORY)) {
+        errorOut = "Plugin source not found at " + source
+            + ". The MSI may be incomplete or the install was tampered with.";
+        return false;
+    }
+    // Ensure parent (.claude\plugins) tree exists.
+    const std::filesystem::path parent = std::filesystem::path(target).parent_path();
+    std::error_code ec;
+    std::filesystem::create_directories(parent, ec);
+    if (ec) {
+        errorOut = "create_directories(" + parent.string() + "): " + ec.message();
+        return false;
+    }
+    // Spawn `cmd /c mklink /J "<target>" "<source>"` synchronously, hidden window.
+    // mklink /J creates a directory junction — no privilege required, unlike
+    // mklink /D (symlinks need SeCreateSymbolicLinkPrivilege).
+    std::wstring command = L"cmd.exe /c mklink /J \""
+        + wideFromUtf8(target) + L"\" \"" + wideFromUtf8(source) + L"\"";
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE,
+                        CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        errorOut = "CreateProcessW for mklink failed (Win32 errno "
+            + std::to_string(GetLastError()) + ").";
+        return false;
+    }
+    WaitForSingleObject(pi.hProcess, 10000);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    if (code != 0) {
+        errorOut = "mklink /J exited with code " + std::to_string(code)
+            + ". Verify that " + target + " does not already exist as a regular directory.";
+        return false;
+    }
+    return true;
+}
+
+inline bool removeClaudePluginJunction(const std::string& target, std::string& errorOut) {
+    if (RemoveDirectoryW(wideFromUtf8(target).c_str())) {
+        return true;
+    }
+    const DWORD err = GetLastError();
+    if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) {
+        return true; // already gone
+    }
+    errorOut = "RemoveDirectoryW failed (Win32 errno " + std::to_string(err) + ").";
+    return false;
+}
+
+inline nlohmann::json claudePluginStatusJson(const ClaudePluginState& s,
+                                             bool ok = true,
+                                             const std::string& explicitError = {}) {
+    return nlohmann::json{
+        {"ok", ok},
+        {"registered", s.registered},
+        {"activeUserResolved", s.activeUserResolved},
+        {"userName", s.userName},
+        {"profileDir", s.profileDir},
+        {"source", s.source},
+        {"target", s.target},
+        {"lastError", explicitError.empty() ? s.lastError : explicitError}
+    };
+}
+
 } // namespace
 
 class MasterControlApplication::Impl final {
@@ -9876,6 +10034,30 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         };
         if (request.method == "GET" && request.path == "/api/health") {
             return jsonResponse(nlohmann::json{ { "status", "ok" }, { "time", timestampNowUtc() } });
+        }
+        // -------------------------------------------------------------------
+        // Claude Code plugin (mcos-control) registration toggle.
+        //   GET  /api/claude-plugin/status — current state for the active user
+        //   POST /api/claude-plugin/toggle — flip register/unregister
+        // The actual file ops are a directory junction at
+        // <USERPROFILE>\.claude\plugins\mcos-control pointing at the install
+        // directory's bundled plugin source.
+        // -------------------------------------------------------------------
+        if (request.method == "GET" && request.path == "/api/claude-plugin/status") {
+            const auto state = resolveClaudePluginState(paths_.executableDirectory);
+            return jsonResponse(claudePluginStatusJson(state));
+        }
+        if (request.method == "POST" && request.path == "/api/claude-plugin/toggle") {
+            const auto before = resolveClaudePluginState(paths_.executableDirectory);
+            if (!before.activeUserResolved) {
+                return jsonResponse(claudePluginStatusJson(before, false));
+            }
+            std::string err;
+            const bool ok = before.registered
+                ? removeClaudePluginJunction(before.target, err)
+                : createClaudePluginJunction(before.target, before.source, err);
+            const auto after = resolveClaudePluginState(paths_.executableDirectory);
+            return jsonResponse(claudePluginStatusJson(after, ok, err));
         }
         if (request.method == "GET" && request.path == "/api/dashboard") {
             return jsonResponse(snapshot());
