@@ -1,4 +1,37 @@
-// Master Control Orchestration Server — service host icon resource.
+// Master Control Orchestration Server -- service host.
 // Same Tron-red badge embedded as icon group 1 so services.msc and
 // Task Manager identify the process with the product icon.
 1 ICON "../../resources/icons/master-control.ico"
+
+// VERSIONINFO -- baked into the EXE so Properties -> Details and
+// services.msc / Task Manager report the live VERSION.json value.
+#include <winres.h>
+
+1 VERSIONINFO
+ FILEVERSION    0,6,3,0
+ PRODUCTVERSION 0,6,3,0
+ FILEFLAGSMASK  0x3fL
+ FILEFLAGS      0x0L
+ FILEOS         VOS_NT_WINDOWS32
+ FILETYPE       VFT_APP
+ FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName",      "James Daley"
+            VALUE "FileDescription",  "Master Control Orchestration Server -- Service Host"
+            VALUE "FileVersion",      "0.6.3.0"
+            VALUE "InternalName",     "MasterControlServiceHost"
+            VALUE "LegalCopyright",   "Copyright (c) 2026 James Daley. All Rights Reserved."
+            VALUE "OriginalFilename", "MasterControlServiceHost.exe"
+            VALUE "ProductName",      "Master Control Orchestration Server"
+            VALUE "ProductVersion",   "0.6.3.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

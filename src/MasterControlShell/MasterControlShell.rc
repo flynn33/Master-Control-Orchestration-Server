@@ -1,4 +1,4 @@
-// Master Control Orchestration Server — desktop shell icon resource.
+// Master Control Orchestration Server -- desktop shell.
 //
 // Resource ID 1 ("IDI_APPICON") is the first icon group, which Windows
 // picks up automatically for the taskbar, Alt+Tab, Start search, window
@@ -6,3 +6,38 @@
 // IconLocation=MasterControlShell.exe,0 reference used by the
 // installer-created shortcuts.
 1 ICON "../../resources/icons/master-control.ico"
+
+// VERSIONINFO -- baked into the EXE so Properties -> Details and
+// PowerShell's Get-Item.VersionInfo report the live VERSION.json value.
+// Version literals are kept in sync with VERSION.json by
+// scripts\Sync-RepositoryVersionBadges.ps1.
+#include <winres.h>
+
+1 VERSIONINFO
+ FILEVERSION    0,6,3,0
+ PRODUCTVERSION 0,6,3,0
+ FILEFLAGSMASK  0x3fL
+ FILEFLAGS      0x0L
+ FILEOS         VOS_NT_WINDOWS32
+ FILETYPE       VFT_APP
+ FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName",      "James Daley"
+            VALUE "FileDescription",  "Master Control Orchestration Server -- Desktop Shell"
+            VALUE "FileVersion",      "0.6.3.0"
+            VALUE "InternalName",     "MasterControlShell"
+            VALUE "LegalCopyright",   "Copyright (c) 2026 James Daley. All Rights Reserved."
+            VALUE "OriginalFilename", "MasterControlShell.exe"
+            VALUE "ProductName",      "Master Control Orchestration Server"
+            VALUE "ProductVersion",   "0.6.3.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
