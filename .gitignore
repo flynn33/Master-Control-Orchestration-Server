@@ -1,3 +1,10 @@
+# macOS metadata (defense in depth — if anyone re-zips this Windows repo on a Mac)
+__MACOSX/
+.DS_Store
+._*
+**/.DS_Store
+**/._*
+
 # Visual Studio
 .vs/
 *.VC.db
