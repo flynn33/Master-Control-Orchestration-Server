@@ -535,4 +535,4 @@ Both hosts see the same shared fabric. Mutation authority diverges by privilege.
 - [Client Config Bundle](Client-Config-Bundle) — full bundle field reference
 - [Governance](Governance) — CLU enforcement and the approval queue
 - [API Reference](API-Reference) — every admin and client route
-- [ADR-001](Architecture-Decisions/ADR-001-lan-client-control-plane) — trusted-LAN posture rationale
+- [ADR-001](ADR-001-lan-client-control-plane) — trusted-LAN posture rationale

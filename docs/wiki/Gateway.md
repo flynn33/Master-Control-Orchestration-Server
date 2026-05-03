@@ -352,9 +352,9 @@ The `IMcpGateway` interface is the contract that survives across the swap. New m
 
 ## 10. Cross-references
 
-- **Decision** → [ADR-003 — MCP Gateway Substrate Decision](Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision)
+- **Decision** → [ADR-003 — MCP Gateway Substrate Decision](ADR-003-mcp-gateway-substrate-decision)
 - **Worker pool integration** → [Worker Pools](Worker-Pools)
 - **Operator gateway panel** → [Dashboard](Dashboard) §Gateway
 - **MCP gateway URL discovery** → [LAN Discovery](LAN-Discovery)
-- **MCPJungle install** → [Packaging and Gateway Binary](Operations/Packaging-and-Gateway-Binary)
+- **MCPJungle install** → [Packaging and Gateway Binary](Packaging-and-Gateway-Binary)
 - **Native gateway evaluation** → [docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md)

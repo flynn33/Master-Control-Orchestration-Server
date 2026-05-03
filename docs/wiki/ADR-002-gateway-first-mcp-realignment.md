@@ -5,7 +5,7 @@
 - Deciders: Product owner, engineering
 - Builds on: [ADR-001 - LAN Client Control Plane](ADR-001-lan-client-control-plane.md)
 - Supersedes (in part): ADR-001 §3 (per-client `X-MCOS-Client-Id` as the AI-client connection model) and ADR-001 §6 (the catalog read surface as the AI-client tool path)
-- Related: [docs/implementation/MCOS-REALIGNMENT-MASTER.md](../../implementation/MCOS-REALIGNMENT-MASTER.md), [docs/implementation/MCP-GATEWAY-DISCOVERY-CONTRACT.md](../../implementation/MCP-GATEWAY-DISCOVERY-CONTRACT.md), [docs/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md](../../implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md), [handoff/realignment/manifest.json](../../../handoff/realignment/manifest.json)
+- Related: [docs/implementation/MCOS-REALIGNMENT-MASTER.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/MCOS-REALIGNMENT-MASTER.md), [docs/implementation/MCP-GATEWAY-DISCOVERY-CONTRACT.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/MCP-GATEWAY-DISCOVERY-CONTRACT.md), [docs/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md), [handoff/realignment/manifest.json](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/manifest.json)
 
 ### Context
 
@@ -70,11 +70,11 @@ Neutral. MCPJungle is a supervised external dependency for the duration of PHASE
 
 ### References
 
-- Realignment master: [docs/implementation/MCOS-REALIGNMENT-MASTER.md](../../implementation/MCOS-REALIGNMENT-MASTER.md)
-- Gateway/discovery contract: [docs/implementation/MCP-GATEWAY-DISCOVERY-CONTRACT.md](../../implementation/MCP-GATEWAY-DISCOVERY-CONTRACT.md)
-- CLU governance bundle contract: [docs/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md](../../implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md)
-- Phase manifest: [handoff/realignment/manifest.json](../../../handoff/realignment/manifest.json)
-- Phase index: [handoff/realignment/00-START-HERE.md](../../../handoff/realignment/00-START-HERE.md)
-- Provider-era removal map (PHASE-00 baseline): [docs/implementation/PROVIDER-ERA-REMOVAL-MAP.md](../../implementation/PROVIDER-ERA-REMOVAL-MAP.md)
-- Architecture drift inventory (PHASE-00 baseline): [docs/implementation/ARCHITECTURE-DRIFT-INVENTORY.md](../../implementation/ARCHITECTURE-DRIFT-INVENTORY.md)
-- Forbidden-contract grep list (PHASE-00 baseline): [docs/implementation/FORBIDDEN-CONTRACT-GREP-LIST.md](../../implementation/FORBIDDEN-CONTRACT-GREP-LIST.md)
+- Realignment master: [docs/implementation/MCOS-REALIGNMENT-MASTER.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/MCOS-REALIGNMENT-MASTER.md)
+- Gateway/discovery contract: [docs/implementation/MCP-GATEWAY-DISCOVERY-CONTRACT.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/MCP-GATEWAY-DISCOVERY-CONTRACT.md)
+- CLU governance bundle contract: [docs/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md)
+- Phase manifest: [handoff/realignment/manifest.json](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/manifest.json)
+- Phase index: [handoff/realignment/00-START-HERE.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/00-START-HERE.md)
+- Provider-era removal map (PHASE-00 baseline): [docs/implementation/PROVIDER-ERA-REMOVAL-MAP.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/PROVIDER-ERA-REMOVAL-MAP.md)
+- Architecture drift inventory (PHASE-00 baseline): [docs/implementation/ARCHITECTURE-DRIFT-INVENTORY.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/ARCHITECTURE-DRIFT-INVENTORY.md)
+- Forbidden-contract grep list (PHASE-00 baseline): [docs/implementation/FORBIDDEN-CONTRACT-GREP-LIST.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/FORBIDDEN-CONTRACT-GREP-LIST.md)

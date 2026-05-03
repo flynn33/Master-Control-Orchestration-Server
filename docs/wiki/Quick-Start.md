@@ -17,7 +17,7 @@ This page is the shortest path. For deeper guides, follow the cross-references i
 | Windows 11 or Windows Server 2022 | The product is a Windows-native C++20 application |
 | Administrative privileges | The MSI runs `perMachine`, registers a Windows service, and creates firewall rules |
 | At least one LAN client machine | To verify Bonjour-style discovery works end-to-end |
-| (Optional) An MCPJungle binary | The MCP gateway substrate is operator-installed (see [Packaging](Operations/Packaging-and-Gateway-Binary)). Without it, MCOS runs in **supervised-mock mode** and reports the gateway as unhealthy honestly |
+| (Optional) An MCPJungle binary | The MCP gateway substrate is operator-installed (see [Packaging](Packaging-and-Gateway-Binary)). Without it, MCOS runs in **supervised-mock mode** and reports the gateway as unhealthy honestly |
 
 ---
 
@@ -99,7 +99,7 @@ Five checkboxes on the **Setup Options** dialog:
 | Checkbox | What gets done if checked |
 |---|---|
 | Service | Service registered + started |
-| Firewall | Four `New-NetFirewallRule` entries created on Private + Domain profiles. See the rule table in [Windows Firewall and LAN Mode](Operations/Windows-Firewall-LAN-Mode) |
+| Firewall | Four `New-NetFirewallRule` entries created on Private + Domain profiles. See the rule table in [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) |
 | Start Menu shortcut | Shortcut at `Start Menu → Master Control Orchestration Server → Master Control Orchestration Server` |
 | Desktop shortcut | Shortcut on every operator's desktop |
 | Launch on exit | Opens the WinUI shell when the installer finishes |
@@ -199,6 +199,6 @@ Ctrl+C to stop the console-mode runtime; the Windows service keeps running.
 
 - **Onboard your first AI client** → [Onboarding](Onboarding)
 - **Tune ports, instance name, advertising** → [Architecture](Architecture#configuration) or **Settings** in the WinUI shell
-- **Set up the gateway substrate** → [Gateway](Gateway) and [Packaging and Gateway Binary](Operations/Packaging-and-Gateway-Binary)
+- **Set up the gateway substrate** → [Gateway](Gateway) and [Packaging and Gateway Binary](Packaging-and-Gateway-Binary)
 - **Roll out to additional hosts** → [Operations](Operations)
 - **Diagnose problems** → [Troubleshooting](Troubleshooting)

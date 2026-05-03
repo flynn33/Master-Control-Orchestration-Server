@@ -5,8 +5,8 @@
 **Setup**
 - [⚡ Quick Start](Quick-Start)
 - [⚙️ Configuration](Configuration)
-- [🔥 Windows Firewall & LAN Mode](Operations/Windows-Firewall-LAN-Mode)
-- [📦 Packaging & Gateway Binary](Operations/Packaging-and-Gateway-Binary)
+- [🔥 Windows Firewall & LAN Mode](Windows-Firewall-LAN-Mode)
+- [📦 Packaging & Gateway Binary](Packaging-and-Gateway-Binary)
 
 **Daily use**
 - [📋 Daily Operations](Daily-Operations)
@@ -27,7 +27,7 @@
 **Maintenance**
 - [🛠️ Maintenance](Maintenance)
 - [🔧 Operations](Operations)
-- [🚦 Release Gate](Operations/Release-Gate)
+- [🚦 Release Gate](Release-Gate)
 - [🏗️ Infrastructure](Infrastructure)
 
 **Troubleshooting**
@@ -36,9 +36,9 @@
 **Reference**
 - [🏗️ Architecture](Architecture)
 - [📜 Architecture Decisions](Architecture-Decisions)
-- [📜 ADR-001 — LAN Client Control Plane](Architecture-Decisions/ADR-001-lan-client-control-plane)
-- [📜 ADR-002 — Gateway-First MCP Realignment](Architecture-Decisions/ADR-002-gateway-first-mcp-realignment)
-- [📜 ADR-003 — MCP Gateway Substrate](Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision)
+- [📜 ADR-001 — LAN Client Control Plane](ADR-001-lan-client-control-plane)
+- [📜 ADR-002 — Gateway-First MCP Realignment](ADR-002-gateway-first-mcp-realignment)
+- [📜 ADR-003 — MCP Gateway Substrate](ADR-003-mcp-gateway-substrate-decision)
 - [🌐 API Reference](API-Reference)
 - [🛰️ Sub-Agents](Sub-Agents)
 - [🎨 Tron UI Theme](Tron-UI-Theme)

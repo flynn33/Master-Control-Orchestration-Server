@@ -8,7 +8,7 @@
 
 > **Semantic versioning, hand-authored entries.**
 > Versions are tracked in [`VERSION.json`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/VERSION.json) and tagged as GitHub Releases.
-> Strategy: `minor-on-architecture-change`. Releases are gated by the CI workflow pair (`windows-build-test-package.yml` + `release.yml`); see [Release Gate](Operations/Release-Gate).
+> Strategy: `minor-on-architecture-change`. Releases are gated by the CI workflow pair (`windows-build-test-package.yml` + `release.yml`); see [Release Gate](Release-Gate).
 
 ---
 
@@ -90,7 +90,7 @@ flowchart LR
     Added --> A8[Forsetti-aligned governance profile]
 ```
 
-The full entry list lives in [`VERSION.json`](../../VERSION.json) and [`CHANGELOG.md`](../../CHANGELOG.md).
+The full entry list lives in [`VERSION.json`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/VERSION.json) and [`CHANGELOG.md`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/CHANGELOG.md).
 
 ---
 
@@ -102,7 +102,7 @@ The full entry list lives in [`VERSION.json`](../../VERSION.json) and [`CHANGELO
 | **Minor** `0.y.0` | New features, new modules, new capabilities | `0.5.0 → 0.6.0` |
 | **Major** `x.0.0` | Breaking changes (route removals, schema breaks) | `0.9.0 → 1.0.0` |
 
-The version is owned by [`VERSION.json`](../../VERSION.json) at the repo root and tagged as a GitHub Release.
+The version is owned by [`VERSION.json`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/VERSION.json) at the repo root and tagged as a GitHub Release.
 
 ```mermaid
 flowchart LR
@@ -304,7 +304,7 @@ gh release create v0.x.y \
 ## 9. Common operator FAQ
 
 > **Q: Where is the canonical version number?**
-> [`VERSION.json`](../../VERSION.json) at the repo root. The badge in `README.md` and `Home.md` should match.
+> [`VERSION.json`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/VERSION.json) at the repo root. The badge in `README.md` and `Home.md` should match.
 
 > **Q: How do I tell what version is installed?**
 > ```powershell
@@ -325,8 +325,8 @@ gh release create v0.x.y \
 
 ## 10. See also
 
-- [`VERSION.json`](../../VERSION.json) — canonical version history
-- [`CHANGELOG.md`](../../CHANGELOG.md) — hand-authored release notes
+- [`VERSION.json`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/VERSION.json) — canonical version history
+- [`CHANGELOG.md`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/CHANGELOG.md) — hand-authored release notes
 - [Automation](Automation) — current GitHub Actions (no release agent)
 - [Operations](Operations) — packaging and install lifecycle
-- [ADR-001](Architecture-Decisions/ADR-001-lan-client-control-plane) — why v0.5.0 looks the way it does
+- [ADR-001](ADR-001-lan-client-control-plane) — why v0.5.0 looks the way it does

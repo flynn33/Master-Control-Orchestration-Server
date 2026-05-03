@@ -4,7 +4,7 @@
 - Date: 2026-05-02
 - Deciders: Product owner, engineering
 - Builds on: [ADR-002 - Gateway-first MCP realignment](ADR-002-gateway-first-mcp-realignment.md) §2 (replaceable gateway adapter), §11 (vendoring rules)
-- Related: [docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md](../../implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md), [handoff/realignment/PHASE-11-native-gateway-option.md](../../../handoff/realignment/PHASE-11-native-gateway-option.md), [handoff/realignment/PHASE-11-completion-report.md](../../../handoff/realignment/PHASE-11-completion-report.md), [handoff/realignment/PHASE-02-completion-report.md](../../../handoff/realignment/PHASE-02-completion-report.md)
+- Related: [docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md), [handoff/realignment/PHASE-11-native-gateway-option.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/PHASE-11-native-gateway-option.md), [handoff/realignment/PHASE-11-completion-report.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/PHASE-11-completion-report.md), [handoff/realignment/PHASE-02-completion-report.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/PHASE-02-completion-report.md)
 
 ### Context
 
@@ -73,7 +73,7 @@ This ADR is docs-only. No runtime, no test, no schema, no contract changes. The 
 
 - [ADR-002 §2](ADR-002-gateway-first-mcp-realignment.md) — gateway-first decision
 - [ADR-002 §11](ADR-002-gateway-first-mcp-realignment.md) — vendoring rules
-- [docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md](../../implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md) — full evaluation memo
-- [handoff/realignment/PHASE-11-native-gateway-option.md](../../../handoff/realignment/PHASE-11-native-gateway-option.md) — phase file
-- [handoff/realignment/PHASE-02-completion-report.md](../../../handoff/realignment/PHASE-02-completion-report.md) — adapter spike
+- [docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md) — full evaluation memo
+- [handoff/realignment/PHASE-11-native-gateway-option.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/PHASE-11-native-gateway-option.md) — phase file
+- [handoff/realignment/PHASE-02-completion-report.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/PHASE-02-completion-report.md) — adapter spike
 - [docs/wiki/Operations/Packaging-and-Gateway-Binary.md](../Operations/Packaging-and-Gateway-Binary.md) — operator guidance for the supervised path

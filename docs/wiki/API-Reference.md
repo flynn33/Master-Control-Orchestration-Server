@@ -419,7 +419,7 @@ curl "$HOST/api/activity?since=0" | jq '.events[] | {kind, actor, target}'
 curl $HOST/api/clu/approvals
 ```
 
-The full 13-step verification scenario lives in [`plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md`](../../plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md).
+The full 13-step verification scenario lives in [`plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md).
 
 ---
 

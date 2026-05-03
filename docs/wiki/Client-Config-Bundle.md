@@ -441,4 +441,4 @@ flowchart LR
 - [Remote Client](Remote-Client) — end-to-end onboarding flow for an AI agent on another machine
 - [Governance](Governance) — CLU enforcement that the bundle's rules describe
 - [API Reference](API-Reference) — the route surface the agent calls
-- [ADR-001](Architecture-Decisions/ADR-001-lan-client-control-plane) — trusted-LAN posture and identification-by-header rationale
+- [ADR-001](ADR-001-lan-client-control-plane) — trusted-LAN posture and identification-by-header rationale

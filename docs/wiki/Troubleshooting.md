@@ -120,7 +120,7 @@ flowchart LR
     A --> E[Plan a hardening track<br/>(post-v0.5.0)]:::good
 ```
 
-The trusted-LAN posture is documented in [ADR-001](Architecture-Decisions/ADR-001-lan-client-control-plane). Hardening (bearer tokens / mTLS) is on the post-v0.5.0 track.
+The trusted-LAN posture is documented in [ADR-001](ADR-001-lan-client-control-plane). Hardening (bearer tokens / mTLS) is on the post-v0.5.0 track.
 
 ---
 
@@ -509,7 +509,7 @@ Symptom: the Gateway destination shows `state=running, health=unknown, message="
 
 This is the documented honest fallback (PHASE-02 / ADR-002 §9). It is not a bug. Two ways to move out of supervised-mock:
 
-1. **Install MCPJungle and point at it.** Download or build the MCPJungle binary, copy it somewhere stable (e.g. `C:\Program Files\Master Control Orchestration Server\bin\mcpjungle\`), and set `mcpGateway.binaryPath` in `mcos.json` to its absolute path. Restart the service. The adapter spawns it under a Job Object on next start. See [Packaging and Gateway Binary](Operations/Packaging-and-Gateway-Binary).
+1. **Install MCPJungle and point at it.** Download or build the MCPJungle binary, copy it somewhere stable (e.g. `C:\Program Files\Master Control Orchestration Server\bin\mcpjungle\`), and set `mcpGateway.binaryPath` in `mcos.json` to its absolute path. Restart the service. The adapter spawns it under a Job Object on next start. See [Packaging and Gateway Binary](Packaging-and-Gateway-Binary).
 2. **Confirm `mcpGateway.enabled=true`** in `mcos.json`. The adapter refuses to start in supervised mode if disabled.
 
 If the binary is configured but the adapter still reports supervised-mock, check `service-events.jsonl` for `CreateProcessW` errors. The most common cause is a path with embedded environment variables that didn't expand at config-load time.
@@ -524,5 +524,5 @@ If the binary is configured but the adapter still reports supervised-mock, check
 - [Governance](Governance) — CLU outcomes and the approval queue
 - [Telemetry and Activity](Telemetry-and-Activity) — the events ring + clients + gateway snapshot
 - [LAN Discovery](LAN-Discovery) — DNS-SD service types + beacon
-- [Windows Firewall and LAN Mode](Operations/Windows-Firewall-LAN-Mode) — manual firewall snippets
+- [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) — manual firewall snippets
 - [Gateway](Gateway) — supervised-mock fallback details

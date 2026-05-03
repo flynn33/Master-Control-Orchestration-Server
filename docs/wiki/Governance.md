@@ -57,7 +57,7 @@ CLU enforces the Forsetti operating principles applied to the LAN client control
 
 > **D5 — No meaningful autonomous action without declared scope.** Autonomous mode requires both the per-client `autonomousMode = true` flag **and** the global `aiAutonomyEnabled = true` configuration. Both must be true (CLU-C001 / CLU-C009).
 
-These doctrine items are encoded in [`resources/clu/governance-profile.json`](../../resources/clu/governance-profile.json) and served by `GET /api/clu`.
+These doctrine items are encoded in [`resources/clu/governance-profile.json`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/resources/clu/governance-profile.json) and served by `GET /api/clu`.
 
 ---
 
@@ -262,7 +262,7 @@ The dashboard's **Governance** destination renders pending and decided rows with
 
 ## 9. The CLU rule catalog
 
-The full text lives in [`resources/clu/governance-profile.json`](../../resources/clu/governance-profile.json) and is served by `GET /api/clu`. Identifiers shown here are the ones `enforceAction` may emit in `ruleId`.
+The full text lives in [`resources/clu/governance-profile.json`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/resources/clu/governance-profile.json) and is served by `GET /api/clu`. Identifiers shown here are the ones `enforceAction` may emit in `ruleId`.
 
 | Rule | Severity | Domain | Purpose |
 | --- | --- | --- | --- |
@@ -470,4 +470,4 @@ The ring holds the last 512 events. For long-term audit, scrape `/api/runtime/ac
 - [Client Config Bundle](Client-Config-Bundle) — bundle's `governance.*` block
 - [API Reference](API-Reference) — every governance route
 - [Architecture](Architecture) — CLU's place in the request lifecycle
-- [ADR-001](Architecture-Decisions/ADR-001-lan-client-control-plane) — why the gate is two-stage
+- [ADR-001](ADR-001-lan-client-control-plane) — why the gate is two-stage

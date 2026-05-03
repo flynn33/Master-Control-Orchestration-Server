@@ -29,7 +29,7 @@ ADR-002 supersedes part of ADR-001 (the AI-client connection model) but preserve
 
 ## ADR-001 — LAN Client Control Plane
 
-[Read the full ADR →](Architecture-Decisions/ADR-001-lan-client-control-plane)
+[Read the full ADR →](ADR-001-lan-client-control-plane)
 
 | Field | Value |
 |---|---|
@@ -57,7 +57,7 @@ ADR-002 supersedes part of ADR-001 (the AI-client connection model) but preserve
 
 ## ADR-002 — Gateway-First MCP Realignment
 
-[Read the full ADR →](Architecture-Decisions/ADR-002-gateway-first-mcp-realignment)
+[Read the full ADR →](ADR-002-gateway-first-mcp-realignment)
 
 | Field | Value |
 |---|---|
@@ -109,7 +109,7 @@ Each phase has a written completion report under `handoff/realignment/`.
 
 ## ADR-003 — MCP Gateway Substrate Decision
 
-[Read the full ADR →](Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision)
+[Read the full ADR →](ADR-003-mcp-gateway-substrate-decision)
 
 | Field | Value |
 |---|---|

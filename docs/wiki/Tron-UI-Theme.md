@@ -133,7 +133,7 @@ flowchart LR
 
 ## 5. Shell consumption
 
-All tokens live in [`src/MasterControlShell/App.xaml`](../../src/MasterControlShell/App.xaml). The shell uses **implicit styles** (no `x:Key`) so any unstyled control automatically renders Tron.
+All tokens live in [`src/MasterControlShell/App.xaml`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/src/MasterControlShell/App.xaml). The shell uses **implicit styles** (no `x:Key`) so any unstyled control automatically renders Tron.
 
 ### Implicit overrides
 
@@ -162,7 +162,7 @@ Fluent theme brushes (`TextFillColorPrimaryBrush`, `ControlFillColorDefaultBrush
 
 ## 6. Browser consumption
 
-[`resources/web/styles.css`](../../resources/web/styles.css) mirrors the same tokens as CSS variables and adds a polish layer.
+[`resources/web/styles.css`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/resources/web/styles.css) mirrors the same tokens as CSS variables and adds a polish layer.
 
 ### Token mirror
 

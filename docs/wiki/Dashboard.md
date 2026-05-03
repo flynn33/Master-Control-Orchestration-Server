@@ -205,5 +205,5 @@ The same map lives in [`docs/implementation/DASHBOARD-ROUTE-MAP.md`](https://git
 - **Why these destinations** → [Architecture](Architecture)
 - **What each route returns** → [API Reference](API-Reference)
 - **Honest telemetry** → [Telemetry and Activity](Telemetry-and-Activity)
-- **Manual firewall snippets** → [Windows Firewall and LAN Mode](Operations/Windows-Firewall-LAN-Mode)
+- **Manual firewall snippets** → [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode)
 - **Tron palette and motion** → [Tron UI Theme](Tron-UI-Theme)

@@ -156,5 +156,5 @@ The full enum lives in `include/MasterControl/MasterControlModels.h` as `Governa
 - **Operator approval queue + posture** → [Governance](Governance)
 - **Per-client privilege gates** → [Privileges](Privileges)
 - **Bundle distribution at first connect** → [Onboarding](Onboarding)
-- **Forsetti vendoring rules** → [ADR-002 §11](Architecture-Decisions/ADR-002-gateway-first-mcp-realignment) + FORBIDDEN-CONTRACT §5.1
+- **Forsetti vendoring rules** → [ADR-002 §11](ADR-002-gateway-first-mcp-realignment) + FORBIDDEN-CONTRACT §5.1
 - **Schema + contract** → [`docs/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md)

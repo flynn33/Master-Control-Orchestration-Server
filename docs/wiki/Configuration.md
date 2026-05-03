@@ -108,7 +108,7 @@ The MCP gateway substrate. Controls the AI-client-facing surface.
 |---|---|---|
 | `type` | `mcpjungle` | Future option `native` activates the conditional PHASE-12 native HTTP.sys gateway. ADR-003 keeps `mcpjungle` for v0.6.x. |
 | `enabled` | `false` | Set to `true` once you have configured a `binaryPath` AND want MCOS to spawn it. With `enabled=true` and an empty `binaryPath`, MCOS runs in supervised-mock mode and reports `health=unknown` honestly. |
-| `binaryPath` | empty | Absolute path to the MCPJungle binary on this host. Required for live gateway behavior. See [Packaging](Operations/Packaging-and-Gateway-Binary). |
+| `binaryPath` | empty | Absolute path to the MCPJungle binary on this host. Required for live gateway behavior. See [Packaging](Packaging-and-Gateway-Binary). |
 | `listenHost` | `0.0.0.0` | What host MCPJungle binds. Same multi-homed considerations as `bindAddress`. |
 | `listenPort` | `8080` | The MCP gateway port. AI clients connect here. Change if 8080 is taken. The MSI's firewall rule and the dashboard auto-template against this value. |
 | `mcpPath` | `/mcp` | Path under the listen host where MCP requests land. Almost never changes. |
@@ -226,6 +226,6 @@ To restore, copy the backup back into place and restart the service. See [Mainte
 
 - **Setting it up the first time** → [Quick Start](Quick-Start)
 - **Adding a worker pool** → [Worker Pools](Worker-Pools) §How to add
-- **Firewall rules for these ports** → [Windows Firewall and LAN Mode](Operations/Windows-Firewall-LAN-Mode)
+- **Firewall rules for these ports** → [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode)
 - **Backups, upgrades, repair** → [Maintenance](Maintenance)
 - **Field-by-field schema source** → `src/MasterControlApp/MasterControlDefaults.cpp`

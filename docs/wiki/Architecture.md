@@ -7,7 +7,7 @@
 
 Canonical map of how MCOS is structured. When in doubt, the source files referenced here are ground truth — every assertion on this page points to a real header, route, or test.
 
-The architecture target is the **gateway-first MCP host** declared in [ADR-002](Architecture-Decisions/ADR-002-gateway-first-mcp-realignment) and locked at the substrate level by [ADR-003](Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision). The original [ADR-001 LAN client identity model](Architecture-Decisions/ADR-001-lan-client-control-plane) survives as the operator surface that coexists with the AI-client gateway surface.
+The architecture target is the **gateway-first MCP host** declared in [ADR-002](ADR-002-gateway-first-mcp-realignment) and locked at the substrate level by [ADR-003](ADR-003-mcp-gateway-substrate-decision). The original [ADR-001 LAN client identity model](ADR-001-lan-client-control-plane) survives as the operator surface that coexists with the AI-client gateway surface.
 
 ---
 
@@ -61,30 +61,30 @@ flowchart TB
     end
 
     subgraph Surfaces[Operator surfaces on the host]
-        Browser[Browser dashboard<br/><code>resources/web/</code>]:::accent
-        Shell[WinUI 3 shell<br/><code>src/MasterControlShell/</code>]:::accent
+        Browser[Browser dashboard<br/>resources/web/]:::accent
+        Shell[WinUI 3 shell<br/>src/MasterControlShell/]:::accent
     end
 
     subgraph Host[Host process]
-        Service[[<b>MasterControlServiceHost.exe</b><br/>Windows service entry point]]:::accent
-        Runtime[(<b>MasterControlRuntime</b><br/>shared in-process core)]:::accent
+        Service[[MasterControlServiceHost.exe<br/>Windows service entry point]]:::accent
+        Runtime[(MasterControlRuntime<br/>shared in-process core)]:::accent
     end
 
     subgraph Services[Runtime services]
         direction TB
-        Disc[<b>DiscoveryService</b><br/>Win32 DnsServiceRegister]:::accent
-        Beacon[<b>BeaconService</b><br/>UDP discovery doc broadcast]:::accent
-        Onboard[<b>OnboardingProfileService</b>]:::accent
-        Gov[<b>GovernanceBundleService</b>]:::accent
-        Sup[<b>WorkerSupervisor</b><br/>Job Object containment]:::accent
-        Lease[<b>LeaseRouter</b><br/>sticky / least-loaded]:::accent
-        Tel[<b>TelemetryAggregator</b>]:::accent
-        Adapter[(<b>McpJungleGatewayAdapter</b><br/>or future native gateway)]:::good
-        Pools[(<b>Managed Endpoint Pools</b>)]:::good
+        Disc[DiscoveryService<br/>Win32 DnsServiceRegister]:::accent
+        Beacon[BeaconService<br/>UDP discovery doc broadcast]:::accent
+        Onboard[OnboardingProfileService]:::accent
+        Gov[GovernanceBundleService]:::accent
+        Sup[WorkerSupervisor<br/>Job Object containment]:::accent
+        Lease[LeaseRouter<br/>sticky / least-loaded]:::accent
+        Tel[TelemetryAggregator]:::accent
+        Adapter[(McpJungleGatewayAdapter<br/>or future native gateway)]:::good
+        Pools[(Managed Endpoint Pools)]:::good
     end
 
     subgraph External[External processes supervised under Job Objects]
-        Jungle[(MCPJungle binary<br/><code>operator-installed</code>)]:::sub
+        Jungle[(MCPJungle binary<br/>operator-installed)]:::sub
         Workers[(MCP server / sub-agent<br/>backend instances)]:::sub
     end
 
@@ -357,7 +357,7 @@ flowchart LR
     J --> K[Tag + GitHub Release via release.yml]:::gate
 ```
 
-The same pipeline runs in CI via `.github/workflows/windows-build-test-package.yml`. Releases gate on a successful same-SHA gate run; see [Release Gate](Operations/Release-Gate).
+The same pipeline runs in CI via `.github/workflows/windows-build-test-package.yml`. Releases gate on a successful same-SHA gate run; see [Release Gate](Release-Gate).
 
 ---
 

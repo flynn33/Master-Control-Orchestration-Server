@@ -57,7 +57,7 @@ flowchart TB
 | `canManageModules` | `POST /api/forsetti/modules/state`; `POST /api/install/{package,repo,zip}` | **HIGH** — runtime composition |
 | `canChangeGovernancePolicy` | `POST /api/clu/approvals/{id}/{approve,reject}`; future profile-edit routes | **HIGH** — overrides CLU rules |
 
-The struct definition lives at [`include/MasterControl/LanClient.h`](../../include/MasterControl/LanClient.h):
+The struct definition lives at [`include/MasterControl/LanClient.h`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/include/MasterControl/LanClient.h):
 
 ```cpp
 struct LanClientPrivileges final {
@@ -286,4 +286,4 @@ Every privilege mutation emits `lan-client-privileges-changed` with the actor (o
 - [Client Config Bundle](Client-Config-Bundle) — privileges snapshot delivery
 - [Governance](Governance) — CLU enforcement and approval queue
 - [API Reference](API-Reference#3-lan-client-identity-phase-3--4) — every route's privilege requirement
-- [ADR-001](Architecture-Decisions/ADR-001-lan-client-control-plane) — the locked decisions
+- [ADR-001](ADR-001-lan-client-control-plane) — the locked decisions

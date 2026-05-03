@@ -13,9 +13,9 @@ This page documents the GitHub Actions workflows that protect and validate the r
 
 | Workflow | Trigger | Purpose |
 | --- | --- | --- |
-| [`ai-contributor-guard.yml`](../../.github/workflows/ai-contributor-guard.yml) | `push`, `pull_request`, manual | Rejects any commit whose author / committer / trailer claims an AI vendor as contributor. |
-| [`forsetti-compliance.yml`](../../.github/workflows/forsetti-compliance.yml) | `push`, `pull_request`, manual | Runs `scripts/check-mastercontrol-forsetti.ps1` to enforce module manifest, contract, and architecture invariants. |
-| [`windows-build-test-package.yml`](../../.github/workflows/windows-build-test-package.yml) | `push`, `pull_request`, manual | Builds the Windows binaries, runs `ctest`, packages the MSI, and publishes the Windows product gate check. |
+| [`ai-contributor-guard.yml`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/.github/workflows/ai-contributor-guard.yml) | `push`, `pull_request`, manual | Rejects any commit whose author / committer / trailer claims an AI vendor as contributor. |
+| [`forsetti-compliance.yml`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/.github/workflows/forsetti-compliance.yml) | `push`, `pull_request`, manual | Runs `scripts/check-mastercontrol-forsetti.ps1` to enforce module manifest, contract, and architecture invariants. |
+| [`windows-build-test-package.yml`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/.github/workflows/windows-build-test-package.yml) | `push`, `pull_request`, manual | Builds the Windows binaries, runs `ctest`, packages the MSI, and publishes the Windows product gate check. |
 
 ```mermaid
 flowchart LR

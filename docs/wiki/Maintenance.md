@@ -43,7 +43,7 @@ The MSI's `MajorUpgrade` element is configured `Schedule="afterInstallInitialize
 - VC++ runtime + Windows App SDK
 
 ### What needs an explicit re-apply
-Nothing automatic — the MSI does not change firewall rules across upgrade, so the `MCOS *` rules from the previous install continue to point at the same `MasterControlServiceHost.exe` path. If you changed install directory between versions, run the firewall snippets again from [Windows Firewall and LAN Mode](Operations/Windows-Firewall-LAN-Mode).
+Nothing automatic — the MSI does not change firewall rules across upgrade, so the `MCOS *` rules from the previous install continue to point at the same `MasterControlServiceHost.exe` path. If you changed install directory between versions, run the firewall snippets again from [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode).
 
 ---
 
@@ -227,7 +227,7 @@ If the goal is "fix a config that broke" rather than "wipe everything," prefer t
 ## Cross-references
 
 - **Update flow + acceptance harness** → [Operations](Operations)
-- **Release gate that protects published MSIs** → [Release Gate](Operations/Release-Gate)
+- **Release gate that protects published MSIs** → [Release Gate](Release-Gate)
 - **Configuration field reference** → [Configuration](Configuration)
-- **What the MSI installs** → [Packaging and Gateway Binary](Operations/Packaging-and-Gateway-Binary)
+- **What the MSI installs** → [Packaging and Gateway Binary](Packaging-and-Gateway-Binary)
 - **Troubleshooting upgrade / repair failures** → [Troubleshooting](Troubleshooting)

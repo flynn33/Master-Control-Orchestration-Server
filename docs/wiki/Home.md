@@ -15,7 +15,7 @@ Internal-tool documentation. Use this wiki to install MCOS, configure it, run it
 |---|---|
 | Install MCOS for the first time | [Quick Start](Quick-Start) |
 | Configure ports, instance name, resource % | [Configuration](Configuration) |
-| Make MCOS discoverable on the LAN | [LAN Discovery](LAN-Discovery) + [Windows Firewall and LAN Mode](Operations/Windows-Firewall-LAN-Mode) |
+| Make MCOS discoverable on the LAN | [LAN Discovery](LAN-Discovery) + [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) |
 | Install MCPJungle so the gateway is real | [Gateway](Gateway) §How to install MCPJungle |
 | Add Start Menu / Desktop shortcuts (or remove them) | [Maintenance](Maintenance) §Shortcuts |
 
@@ -50,14 +50,14 @@ Internal-tool documentation. Use this wiki to install MCOS, configure it, run it
 | Back up configuration + data | [Maintenance](Maintenance) §Backup |
 | Uninstall cleanly | [Maintenance](Maintenance) §Uninstall |
 | Build a fresh MSI from source | [Operations](Operations) §Build pipeline |
-| Run the release gate locally | [Release Gate](Operations/Release-Gate) |
+| Run the release gate locally | [Release Gate](Release-Gate) |
 
 ### Diagnose a problem
 | Symptom | Page |
 |---|---|
 | LAN clients can't find the host | [Troubleshooting](Troubleshooting) §LAN discovery |
 | Gateway shows `state=running, health=unknown` | [Troubleshooting](Troubleshooting) §Gateway supervised-mock |
-| `Get-NetFirewallRule -DisplayName 'MCOS *'` returns nothing | [Windows Firewall and LAN Mode](Operations/Windows-Firewall-LAN-Mode) |
+| `Get-NetFirewallRule -DisplayName 'MCOS *'` returns nothing | [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) |
 | Service won't start | [Troubleshooting](Troubleshooting) §Service hung |
 | Clients connect but get 403 on a privileged action | [Troubleshooting](Troubleshooting) §Missing privilege |
 | Where are the logs? | [Troubleshooting](Troubleshooting) §Where are the logs |
@@ -80,13 +80,13 @@ These pages explain why MCOS works the way it does. Read when something is not b
 |---|---|
 | Runtime composition + diagrams | [Architecture](Architecture) |
 | Why each design choice was made | [Architecture Decisions](Architecture-Decisions) |
-| ADR-001 LAN client identity model | [ADR-001](Architecture-Decisions/ADR-001-lan-client-control-plane) |
-| ADR-002 gateway-first realignment | [ADR-002](Architecture-Decisions/ADR-002-gateway-first-mcp-realignment) |
-| ADR-003 keep MCPJungle for v0.6.x | [ADR-003](Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision) |
+| ADR-001 LAN client identity model | [ADR-001](ADR-001-lan-client-control-plane) |
+| ADR-002 gateway-first realignment | [ADR-002](ADR-002-gateway-first-mcp-realignment) |
+| ADR-003 keep MCPJungle for v0.6.x | [ADR-003](ADR-003-mcp-gateway-substrate-decision) |
 | What the IMcpGateway adapter actually does | [Gateway](Gateway) |
 | How worker pools are supervised | [Worker Pools](Worker-Pools) |
 | How LAN discovery is wired | [LAN Discovery](LAN-Discovery) |
-| Release / packaging flow | [Operations](Operations) + [Release Gate](Operations/Release-Gate) |
+| Release / packaging flow | [Operations](Operations) + [Release Gate](Release-Gate) |
 | Per-release notes and PHASE-00..PHASE-11 timeline | [Versions](Versions) |
 | Tron palette + motion (UI) | [Tron UI Theme](Tron-UI-Theme) |
 

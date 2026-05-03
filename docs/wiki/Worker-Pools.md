@@ -430,7 +430,7 @@ The dashboard's Pools panel (PHASE-09) consumes all of these.
 ## 9. Cross-references
 
 - **Gateway integration (single logical server per pool)** → [Gateway](Gateway) §5
-- **Sticky-session contract** → [ADR-002 §8](Architecture-Decisions/ADR-002-gateway-first-mcp-realignment) + FORBIDDEN-CONTRACT §2.4
+- **Sticky-session contract** → [ADR-002 §8](ADR-002-gateway-first-mcp-realignment) + FORBIDDEN-CONTRACT §2.4
 - **Pool admin via dashboard** → [Dashboard](Dashboard) §Pools
 - **Honest queueDepth** → ADR-002 §9, [Telemetry and Activity](Telemetry-and-Activity)
 - **Schema** → [`docs/implementation/schemas/managed-endpoint-pool.schema.json`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/schemas/managed-endpoint-pool.schema.json)

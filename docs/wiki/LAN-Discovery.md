@@ -282,7 +282,7 @@ This is ADR-002 §1 / §3 declared in the wire format. Clients that ship a Bonjo
 
 DNS-SD uses **UDP 5353**. The legacy beacon uses **UDP 24567** (configurable). Without inbound rules on the `Private,Domain` profiles, MCOS advertises but the broadcasts are dropped at the host firewall.
 
-The MSI's "Configure Windows Firewall rules" checkbox creates four rules covering both DNS-SD UDP 5353 and the beacon UDP port (in addition to the gateway TCP and operator TCP ports). See [Windows Firewall and LAN Mode](Operations/Windows-Firewall-LAN-Mode) for the snippets and the manual fallback if the checkbox was unticked.
+The MSI's "Configure Windows Firewall rules" checkbox creates four rules covering both DNS-SD UDP 5353 and the beacon UDP port (in addition to the gateway TCP and operator TCP ports). See [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) for the snippets and the manual fallback if the checkbox was unticked.
 
 ---
 
@@ -321,6 +321,6 @@ flowchart TB
 
 - **Schema** → [`docs/implementation/schemas/discovery-document.schema.json`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/schemas/discovery-document.schema.json)
 - **Discovery contract** → [`docs/implementation/MCP-GATEWAY-DISCOVERY-CONTRACT.md`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/MCP-GATEWAY-DISCOVERY-CONTRACT.md)
-- **Firewall rules** → [Windows Firewall and LAN Mode](Operations/Windows-Firewall-LAN-Mode)
+- **Firewall rules** → [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode)
 - **Dashboard panel** → [Dashboard](Dashboard) §Discovery
 - **Onboarding paths the discovery doc points to** → [Onboarding](Onboarding)

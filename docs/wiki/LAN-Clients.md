@@ -5,7 +5,7 @@
 ![auth](https://img.shields.io/badge/auth-trusted%20LAN-5a00e8?style=flat-square)
 ![persistence](https://img.shields.io/badge/persistence-AppConfiguration-1cf2c1?style=flat-square)
 
-A **LAN client** is a server-side record of one external AI coding agent that connects to MCOS over the LAN. The record carries identity, privileges, autonomous-mode state, and last-seen liveness. Identity is by `clientId` alone; no tokens or shared secrets are exchanged on the trusted LAN per [ADR-001](Architecture-Decisions/ADR-001-lan-client-control-plane).
+A **LAN client** is a server-side record of one external AI coding agent that connects to MCOS over the LAN. The record carries identity, privileges, autonomous-mode state, and last-seen liveness. Identity is by `clientId` alone; no tokens or shared secrets are exchanged on the trusted LAN per [ADR-001](ADR-001-lan-client-control-plane).
 
 ---
 
@@ -356,4 +356,4 @@ You hit MCOS as the operator-fallback context with full privileges. This is fine
 - [Governance](Governance) — CLU enforcement of every mutation
 - [Remote Client](Remote-Client) — full onboarding flow for an agent on another machine
 - [API Reference](API-Reference#3-lan-client-identity-phase-3--4) — every route
-- [ADR-001](Architecture-Decisions/ADR-001-lan-client-control-plane) — the architectural decision
+- [ADR-001](ADR-001-lan-client-control-plane) — the architectural decision
