@@ -19,6 +19,14 @@
     "mcos-contracts": {
       "command": "py",
       "args": ["-3", ".claude/mcp-servers/mcos-contracts/server.py"]
+    },
+    "mcos-bridge": {
+      "command": "py",
+      "args": ["-3", ".claude-plugin/mcos-control/mcp-servers/mcos-bridge/server.py"],
+      "env": {
+        "MCOS_BASE_URL": "http://localhost:7300",
+        "MCOS_TIMEOUT": "10.0"
+      }
     }
   }
 }

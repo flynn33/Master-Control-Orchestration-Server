@@ -41,6 +41,7 @@ Internal-tool documentation. Use this wiki to install MCOS, configure it, run it
 | Approve / reject a pending governance action | [Governance](Governance) §Approval queue |
 | Change a setting (port, beacon, resources) | [Configuration](Configuration) §Editing live |
 | Pull a config bundle for a LAN client | [Client Config Bundle](Client-Config-Bundle) |
+| Drive MCOS from a Claude Code session | [Claude Code Plugin](Claude-Code-Plugin) |
 
 ### Maintain it
 | Task | Page |

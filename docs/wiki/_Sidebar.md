@@ -13,6 +13,7 @@
 - [📊 Dashboard](Dashboard)
 - [📡 Telemetry & Activity](Telemetry-and-Activity)
 - [⚖️ Governance](Governance)
+- [🧩 Claude Code Plugin](Claude-Code-Plugin)
 
 **Tasks**
 - [🤝 Onboarding (clients)](Onboarding)
