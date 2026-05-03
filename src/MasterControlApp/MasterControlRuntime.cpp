@@ -9112,7 +9112,64 @@ struct ClaudePluginState {
     std::string lastError;
 };
 
+// Read a wide environment variable from the current process and return it
+// as UTF-8. Empty string if unset.
+inline std::string readProcessEnvUtf8(const wchar_t* name) {
+    const DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
+    if (required == 0) {
+        return {};
+    }
+    std::wstring buffer(static_cast<size_t>(required), L'\0');
+    const DWORD written = GetEnvironmentVariableW(name, buffer.data(),
+                                                  static_cast<DWORD>(buffer.size()));
+    if (written == 0) {
+        return {};
+    }
+    buffer.resize(written);
+    return utf8FromWide(buffer);
+}
+
+// Returns true when `path` looks like the LocalSystem profile (i.e. the
+// runtime is running as SYSTEM, typically because it's hosted as the
+// Windows service). Used to decide whether to short-circuit on the
+// process's own USERPROFILE or recover the interactive user's via
+// WTSQueryUserToken.
+inline bool looksLikeSystemProfile(const std::string& path) {
+    if (path.empty()) {
+        return true;
+    }
+    // Compare case-insensitively against the standard SYSTEM path tail.
+    static const std::string tail = "\\system32\\config\\systemprofile";
+    if (path.size() < tail.size()) {
+        return false;
+    }
+    const auto suffix = path.substr(path.size() - tail.size());
+    return _stricmp(suffix.c_str(), tail.c_str()) == 0;
+}
+
 inline std::string resolveActiveUserProfile(std::string& userName, std::string& errorOut) {
+    // Path 1: process is already running as the interactive user (this
+    // happens whenever MCOS is launched as `MasterControlServiceHost.exe
+    // --console`, or from the WinUI shell, or any non-service host).
+    // GetEnvironmentVariableW("USERPROFILE") returns the user's profile
+    // directly without any privileged Win32 calls.
+    {
+        const auto profile = readProcessEnvUtf8(L"USERPROFILE");
+        if (!profile.empty() && !looksLikeSystemProfile(profile)) {
+            const auto envUserName = readProcessEnvUtf8(L"USERNAME");
+            if (!envUserName.empty()) {
+                userName = envUserName;
+            }
+            return profile;
+        }
+    }
+
+    // Path 2: process is running as SYSTEM (service). Recover the active
+    // console user's USERPROFILE via WTSQueryUserToken +
+    // CreateEnvironmentBlock. WTSQueryUserToken requires SE_TCB_NAME, which
+    // SYSTEM has by default but other accounts do not — so this path is
+    // SYSTEM-only and we only reach it if Path 1 already concluded the
+    // process is running as SYSTEM.
     DWORD sessionId = WTSGetActiveConsoleSessionId();
     if (sessionId == 0xFFFFFFFFu) {
         errorOut = "No active console session.";
@@ -9120,8 +9177,12 @@ inline std::string resolveActiveUserProfile(std::string& userName, std::string& 
     }
     HANDLE userToken = nullptr;
     if (!WTSQueryUserToken(sessionId, &userToken)) {
+        const DWORD err = GetLastError();
         errorOut = "WTSQueryUserToken failed (Win32 errno "
-            + std::to_string(GetLastError()) + ").";
+            + std::to_string(err) + "). The runtime needs SYSTEM privilege "
+            "to recover the interactive user's profile when running as a "
+            "service. Run MCOS as the Windows service or sign in to Windows "
+            "first.";
         return {};
     }
     LPVOID env = nullptr;

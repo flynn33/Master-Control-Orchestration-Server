@@ -202,6 +202,22 @@ struct ShellOperationResult final {
     std::wstring message;
 };
 
+// Claude Code plugin (mcos-control) registration status surfaced from
+// /api/claude-plugin/status. The runtime resolves the active console user
+// via WTSGetActiveConsoleSessionId and reports back whether a junction
+// already exists at <USERPROFILE>\.claude\plugins\mcos-control.
+struct ShellClaudePluginStatus final {
+    bool reachable = false;
+    bool registered = false;
+    bool activeUserResolved = false;
+    std::wstring userName;
+    std::wstring profileDir;
+    std::wstring source;
+    std::wstring target;
+    std::wstring lastError;
+    std::wstring transportError; // network / parse error reaching the API
+};
+
 struct ShellInstallerPackageSpec final {
     ShellInstallerKind kind = ShellInstallerKind::Exe;
     std::wstring source;
@@ -386,6 +402,12 @@ public:
         int exitCode = -1;
     };
     [[nodiscard]] ShellCliDependencyInstallResult InstallCliDependency(const std::wstring& bridge) const;
+
+    // Claude Code plugin (mcos-control) registration toggle, mirroring
+    // /api/claude-plugin/{status,toggle}. Status is read-only; Toggle flips
+    // register <-> unregister and returns the new state.
+    [[nodiscard]] ShellClaudePluginStatus FetchClaudePluginStatus() const;
+    [[nodiscard]] ShellClaudePluginStatus ToggleClaudePlugin() const;
 
     // Live activity stream: poll the service's ActivityEventRing for events
     // strictly newer than `sinceId`. Pass an empty string on first call to

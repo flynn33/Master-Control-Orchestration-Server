@@ -2575,4 +2575,69 @@ ShellRuntime::ShellCliDependencyInstallResult ShellRuntime::InstallCliDependency
     return result;
 }
 
+// ---------------------------------------------------------------------------
+// Claude Code plugin (mcos-control) registration toggle.
+//
+// Mirrors GET /api/claude-plugin/status and POST /api/claude-plugin/toggle.
+// The runtime owns the active-user resolution (WTSGetActiveConsoleSessionId)
+// and the file ops (cmd /c mklink /J for create, RemoveDirectoryW for
+// remove); the shell just renders status and posts the toggle.
+// ---------------------------------------------------------------------------
+namespace {
+
+ShellClaudePluginStatus parseClaudePluginResponse(const std::string& body,
+                                                  const std::wstring& fallbackTransportError) {
+    ShellClaudePluginStatus s;
+    const auto json = parseJsonObject(body);
+    if (!json.has_value()) {
+        s.transportError = fallbackTransportError.empty()
+            ? L"Admin API returned an unreadable response."
+            : fallbackTransportError;
+        return s;
+    }
+    s.reachable = true;
+    s.registered = jsonBoolOr(*json, L"registered", false);
+    s.activeUserResolved = jsonBoolOr(*json, L"activeUserResolved", false);
+    s.userName = wideFromUtf8(jsonStringOr(*json, L"userName", ""));
+    s.profileDir = wideFromUtf8(jsonStringOr(*json, L"profileDir", ""));
+    s.source = wideFromUtf8(jsonStringOr(*json, L"source", ""));
+    s.target = wideFromUtf8(jsonStringOr(*json, L"target", ""));
+    s.lastError = wideFromUtf8(jsonStringOr(*json, L"lastError", ""));
+    return s;
+}
+
+} // namespace
+
+ShellClaudePluginStatus ShellRuntime::FetchClaudePluginStatus() const {
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    std::wstring errorMessage;
+    const auto response = httpRequest(
+        host, port, L"GET", L"/api/claude-plugin/status", {}, {}, errorMessage);
+    if (!response.has_value()) {
+        ShellClaudePluginStatus s;
+        s.transportError = errorMessage.empty()
+            ? L"Unable to reach the admin API."
+            : errorMessage;
+        return s;
+    }
+    return parseClaudePluginResponse(response->body, errorMessage);
+}
+
+ShellClaudePluginStatus ShellRuntime::ToggleClaudePlugin() const {
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    std::wstring errorMessage;
+    // POST with empty body — the runtime reads the current state and flips it.
+    const auto response = httpRequest(
+        host, port, L"POST", L"/api/claude-plugin/toggle",
+        std::string("{}"), {}, errorMessage);
+    if (!response.has_value()) {
+        ShellClaudePluginStatus s;
+        s.transportError = errorMessage.empty()
+            ? L"Unable to reach the admin API."
+            : errorMessage;
+        return s;
+    }
+    return parseClaudePluginResponse(response->body, errorMessage);
+}
+
 } // namespace MasterControlShell

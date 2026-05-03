@@ -32,6 +32,8 @@ struct SettingsSectionControl : SettingsSectionControlT<SettingsSectionControl> 
                                           Microsoft::UI::Xaml::RoutedEventArgs const&);
     void CopyFirewallBeaconRuleButton_Click(Windows::Foundation::IInspectable const&,
                                             Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void ClaudePluginToggleButton_Click(Windows::Foundation::IInspectable const&,
+                                        Microsoft::UI::Xaml::RoutedEventArgs const&);
 
 private:
     void PopulateEditorFromSnapshot();
@@ -40,6 +42,9 @@ private:
     void UpdateFirewallRuleSnippets();
     void CopyTextToClipboard(const std::wstring& text, const std::wstring& successMessage);
     winrt::Windows::Foundation::IAsyncAction ApplySettingsAsync();
+    winrt::Windows::Foundation::IAsyncAction RefreshClaudePluginAsync();
+    winrt::Windows::Foundation::IAsyncAction ToggleClaudePluginAsync();
+    void RenderClaudePluginStatus(const ::MasterControlShell::ShellClaudePluginStatus& status);
 
     ::MasterControlShell::ShellRuntime* runtime_ = nullptr;
     std::function<void()> refreshRequested_;
@@ -47,6 +52,7 @@ private:
     ::MasterControlShell::ShellSnapshot snapshot_{};
     bool dirty_ = false;
     bool suspendDirtyTracking_ = false;
+    bool claudePluginBusy_ = false;
 };
 
 } // namespace winrt::MasterControlShell::implementation

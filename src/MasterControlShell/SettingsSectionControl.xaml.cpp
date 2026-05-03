@@ -65,6 +65,8 @@ void SettingsSectionControl::AttachRuntime(::MasterControlShell::ShellRuntime* r
     refreshRequested_ = std::move(refreshRequested);
     actionRequested_ = std::move(actionRequested);
     UpdateEditorState();
+    auto ignored = RefreshClaudePluginAsync();
+    (void)ignored;
 }
 
 void SettingsSectionControl::SettingsEditor_TextChanged(
@@ -113,6 +115,13 @@ void SettingsSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnap
     }
 
     UpdateFirewallRuleSnippets();
+
+    // Refresh the Claude Code Control card whenever a fresh snapshot lands.
+    // Skip if a toggle is currently in flight so we don't clobber the UI.
+    if (runtime_ != nullptr && !claudePluginBusy_) {
+        auto ignored = RefreshClaudePluginAsync();
+        (void)ignored;
+    }
 }
 
 void SettingsSectionControl::PopulateEditorFromSnapshot() {
@@ -321,6 +330,104 @@ void SettingsSectionControl::CopyFirewallBeaconRuleButton_Click(
     Microsoft::UI::Xaml::RoutedEventArgs const&) {
     CopyTextToClipboard(std::wstring(FirewallBeaconRuleTextBox().Text().c_str()),
                         L"Copied: Discovery beacon firewall rule. Run from an elevated PowerShell.");
+}
+
+// ---------------------------------------------------------------------------
+// Claude Code Control card
+//
+// Reads /api/claude-plugin/status on attach and after every toggle. The
+// runtime owns active-user resolution and the junction file ops; the shell
+// just renders state and posts the toggle from the UI thread.
+// ---------------------------------------------------------------------------
+
+void SettingsSectionControl::RenderClaudePluginStatus(
+    const ::MasterControlShell::ShellClaudePluginStatus& status) {
+    std::wstring headline;
+    std::wstring detail;
+    std::wstring buttonContent = L"Connect Claude Code";
+    bool buttonEnabled = (runtime_ != nullptr) && !claudePluginBusy_;
+
+    if (claudePluginBusy_) {
+        headline = L"Working...";
+    } else if (!status.transportError.empty()) {
+        headline = L"Cannot reach the local admin API";
+        detail = status.transportError + L"  Make sure the Master Control Orchestration Server service is running.";
+        buttonEnabled = false;
+    } else if (!status.reachable) {
+        headline = L"Plugin status surface unavailable";
+        detail = L"The runtime returned an unreadable response. The installed version may be older than 0.6.1.";
+        buttonEnabled = false;
+    } else if (!status.activeUserResolved) {
+        headline = L"No active interactive user";
+        detail = status.lastError.empty()
+            ? L"Sign in to Windows on this host first, then click Refresh."
+            : status.lastError;
+        buttonEnabled = false;
+    } else if (status.registered) {
+        headline = L"Claude Code Control: connected as " + status.userName;
+        detail = L"Junction at " + status.target;
+        if (!status.source.empty()) {
+            detail += L"  ->  " + status.source;
+        }
+        buttonContent = L"Disconnect Claude Code";
+    } else {
+        headline = L"Claude Code Control: disconnected (" + status.userName + L")";
+        detail = L"Click Connect to drop a junction at " + status.target
+            + L"  pointing at " + status.source + L".";
+        if (!status.lastError.empty()) {
+            detail += L"  Last error: " + status.lastError;
+        }
+    }
+
+    ClaudePluginStatusText().Text(winrt::hstring(headline));
+    ClaudePluginDetailText().Text(winrt::hstring(detail));
+    ClaudePluginToggleButton().Content(winrt::box_value(winrt::hstring(buttonContent)));
+    ClaudePluginToggleButton().IsEnabled(buttonEnabled);
+}
+
+winrt::Windows::Foundation::IAsyncAction SettingsSectionControl::RefreshClaudePluginAsync() {
+    if (runtime_ == nullptr) {
+        ::MasterControlShell::ShellClaudePluginStatus s;
+        s.transportError = L"Shell runtime is not attached yet.";
+        RenderClaudePluginStatus(s);
+        co_return;
+    }
+
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+    const auto status = runtime_->FetchClaudePluginStatus();
+    co_await uiThread;
+    RenderClaudePluginStatus(status);
+}
+
+winrt::Windows::Foundation::IAsyncAction SettingsSectionControl::ToggleClaudePluginAsync() {
+    if (runtime_ == nullptr || claudePluginBusy_) {
+        co_return;
+    }
+
+    claudePluginBusy_ = true;
+    {
+        ::MasterControlShell::ShellClaudePluginStatus busy;
+        busy.reachable = true;
+        busy.activeUserResolved = true;
+        // Render the "Working..." state without changing other fields.
+        RenderClaudePluginStatus(busy);
+    }
+
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+    const auto status = runtime_->ToggleClaudePlugin();
+    co_await uiThread;
+
+    claudePluginBusy_ = false;
+    RenderClaudePluginStatus(status);
+}
+
+void SettingsSectionControl::ClaudePluginToggleButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    auto ignored = ToggleClaudePluginAsync();
+    (void)ignored;
 }
 
 } // namespace winrt::MasterControlShell::implementation
