@@ -62,6 +62,8 @@ If a command cannot run in the current environment, document the exact reason an
 - No Docker-only implementation for core Windows behavior.
 - No removal of manual setup paths; manual and import paths are first-class.
 - No modification of vendored Forsetti framework internals.
+- No AI attribution of any kind in repository-authored output. Do not identify work as produced, assisted, reviewed, generated, co-authored, or authored by an AI system, model, bot, assistant, coding agent, vendor, or tool in commits, pull requests, issues, review comments, changelogs, release notes, documentation, source comments, generated files, or metadata under agent control unless Flynn explicitly asks for that exact attribution.
+- No automated-assistance signatures, model names, assistant names, vendor names, bot names, or AI-related co-author trailers in final repository output.
 
 ## Large-project instruction structure
 
@@ -72,4 +74,3 @@ Use these files as the source of truth:
 - `.claude/agents/` for specialized review agents.
 - `handoff/realignment/` for phase implementation packets.
 - `docs/implementation/` for durable architecture, schemas, and contracts.
-
