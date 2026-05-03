@@ -8,7 +8,159 @@ Connecting an AI client to MCOS is a one-time operation. MCOS hands the client a
 
 ---
 
-## 1. The five client types
+## How to onboard, in 90 seconds
+
+### The dashboard path (recommended)
+1. Open `http://<mcos-host>:7300/` in a browser.
+2. Click **Onboarding** in the left nav.
+3. Pick the tab matching your client (`claude-code`, `codex`, `grok`, `chatgpt`, `generic-mcp`).
+4. Read the **Manual setup** numbered steps once.
+5. Click **Copy** next to the config snippet you need.
+6. Paste it into your client's config file (path shown in the manual setup steps).
+7. Restart the client.
+
+### The PowerShell path (for scripting / SSH-only hosts)
+```powershell
+# Pull the profile JSON
+$profile = Invoke-RestMethod 'http://<mcos-host>:7300/api/onboarding/claude-code'
+
+# See the manual instructions
+$profile.manualInstructions
+
+# See the copyable snippets
+$profile | Select-Object -ExpandProperty configSnippets | Format-List label, fileName, content
+
+# Save the snippet content to the destination the manual instructions named
+$profile.configSnippets[0].content | Out-File -FilePath '<destination-from-step-3>' -Encoding utf8
+```
+
+The exact destination path is in `manualInstructions` because each client has its own convention. The profile is regenerated on every request, so the URLs and ports always match the live config.
+
+---
+
+## How to onboard each client type
+
+### Claude Code
+1. Pull the profile: dashboard **Onboarding → claude-code**, or `GET /api/onboarding/claude-code`.
+2. Copy the `.mcp.json` snippet.
+3. Paste it into the project root or user-level Claude Code config:
+   - Project-level: `<project>/.mcp.json`
+   - User-level: `~/.claude/mcp.json` (or platform equivalent)
+4. Restart Claude Code.
+5. Verify: in Claude Code, the `mcos-gateway` server should appear in the tools list. Try invoking any tool — Claude Code's MCP indicator should show the request landing.
+
+The snippet looks like:
+```json
+{
+  "mcpServers": {
+    "mcos-gateway": {
+      "type": "streamable_http",
+      "url": "http://<mcos-host>:8080/mcp"
+    }
+  }
+}
+```
+Port 8080 is the default `mcpGateway.listenPort`; the snippet auto-templates from the live config.
+
+### Codex
+1. Pull the profile: dashboard **Onboarding → codex**, or `GET /api/onboarding/codex`.
+2. Copy the snippet.
+3. Paste into `~/.codex/config.json` (or wherever your Codex install reads from).
+4. Restart Codex.
+5. Verify with a Codex tools/list operation.
+
+### Grok
+1. Pull the profile: dashboard **Onboarding → grok**, or `GET /api/onboarding/grok`.
+2. Apply the snippet to your xAI / Grok MCP integration config.
+3. Restart Grok.
+4. Verify: Grok-side MCP browser should list `mcos-gateway`.
+
+### ChatGPT (connector-edge)
+1. Pull the profile: dashboard **Onboarding → chatgpt**, or `GET /api/onboarding/chatgpt`.
+2. Read the `caveats[]` block — connector-edge has constraints the other clients don't.
+3. Apply the snippet per the manual instructions. A small ChatGPT-side companion utility may be needed once it ships (deferred work).
+4. Verify per the profile's `verificationSteps`.
+
+### Generic MCP client
+For any MCP-compliant client:
+1. Pull the profile: `GET /api/onboarding/generic-mcp`.
+2. Use `gatewayMcpUrl` (e.g. `http://<host>:8080/mcp`) and `transport=streamable_http`.
+3. Tell the client `auth=none` / `trust=lan`.
+4. Restart and verify with a `tools/list` request.
+
+---
+
+## How to verify it worked
+
+After restart, run a quick check:
+
+```powershell
+# From any host on the LAN — should return a tool list
+Invoke-RestMethod -Method POST -Uri "http://<mcos-host>:8080/mcp" `
+  -ContentType 'application/json' `
+  -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+If that works but your client doesn't see tools, the issue is on the client side. If it doesn't work even from PowerShell, see [Troubleshooting](Troubleshooting) §LAN discovery and §Gateway supervised-mock.
+
+You can also watch presence land in real time:
+```powershell
+# Before client restart
+$before = (Invoke-RestMethod 'http://<mcos-host>:7300/api/telemetry/clients').Count
+
+# Restart your AI client now ...
+
+# After client connects
+$after = (Invoke-RestMethod 'http://<mcos-host>:7300/api/telemetry/clients').Count
+Write-Host "Clients: $before -> $after"
+```
+
+If the count stays the same, your client is not heartbeating MCOS — that's normal for clients that don't speak the heartbeat protocol. The presence roster only shows heartbeat-aware clients.
+
+---
+
+## How to give a client a governance bundle
+
+Some clients are configured to apply a Forsetti governance bundle when they connect. Bundles are platform-scoped:
+
+```powershell
+# Pull a bundle
+Invoke-RestMethod 'http://<mcos-host>:7300/api/governance/bundles/windows' |
+  ConvertTo-Json -Depth 6 | Out-File 'mcos-governance-windows.json' -Encoding utf8
+
+# Hand the file to the client per its convention
+```
+
+Or, from the dashboard: **Governance → Governance bundles** → tab the platform → **Download bundle JSON**.
+
+See [CLU Governance](CLU-Governance) for what's in the bundle and how clients consume it.
+
+---
+
+## How to onboard via DNS-SD (zero-config)
+
+Capable clients can chain: discover MCOS via Bonjour → fetch the discovery doc → fetch the right onboarding profile — without operator intervention.
+
+```bash
+# macOS
+dns-sd -B _mcos._tcp
+dns-sd -L mcos-<instanceId> _mcos._tcp local
+
+# Linux
+avahi-browse _mcos._tcp
+```
+
+The PTR record + TXT fields tell the client everything it needs (gateway URL, governance URL, onboarding paths, auth posture). Most AI clients today still expect a human to copy + paste a snippet; DNS-SD onboarding is forward-compatible for the day they catch up.
+
+For the wire-level details see [LAN Discovery](LAN-Discovery).
+
+---
+
+## Reference
+
+The rest of this page describes what's in a profile and why the surface looks the way it does. Skim if you're configuring something unusual.
+
+### The five client types
 
 ```mermaid
 flowchart LR

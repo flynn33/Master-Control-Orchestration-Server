@@ -2,46 +2,45 @@
 
 **[🏠 Home](Home)**
 
-**Get started**
+**Setup**
 - [⚡ Quick Start](Quick-Start)
-- [🤝 Onboarding](Onboarding)
+- [⚙️ Configuration](Configuration)
+- [🔥 Windows Firewall & LAN Mode](Operations/Windows-Firewall-LAN-Mode)
+- [📦 Packaging & Gateway Binary](Operations/Packaging-and-Gateway-Binary)
 
-**Architecture**
-- [🏗️ Architecture](Architecture)
-- [🌐 LAN Discovery](LAN-Discovery)
-- [🚪 Gateway](Gateway)
-- [🛠️ Worker Pools](Worker-Pools)
-- [📡 Telemetry & Activity](Telemetry-and-Activity)
+**Daily use**
+- [📋 Daily Operations](Daily-Operations)
 - [📊 Dashboard](Dashboard)
-- [🛰️ Sub-Agents](Sub-Agents)
-- [🌐 API Reference](API-Reference)
+- [📡 Telemetry & Activity](Telemetry-and-Activity)
+- [⚖️ Governance](Governance)
 
-**Decisions**
+**Tasks**
+- [🤝 Onboarding (clients)](Onboarding)
+- [🛠️ Worker Pools](Worker-Pools)
+- [🚪 Gateway](Gateway)
+- [🌐 LAN Discovery](LAN-Discovery)
+- [⚖️ CLU Governance Bundles](CLU-Governance)
+- [👥 LAN Clients (operator)](LAN-Clients)
+- [🔐 Privileges](Privileges)
+- [📦 Client Config Bundle](Client-Config-Bundle)
+
+**Maintenance**
+- [🛠️ Maintenance](Maintenance)
+- [🔧 Operations](Operations)
+- [🚦 Release Gate](Operations/Release-Gate)
+- [🏗️ Infrastructure](Infrastructure)
+
+**Troubleshooting**
+- [🚨 Troubleshooting](Troubleshooting)
+
+**Reference**
+- [🏗️ Architecture](Architecture)
 - [📜 Architecture Decisions](Architecture-Decisions)
 - [📜 ADR-001 — LAN Client Control Plane](Architecture-Decisions/ADR-001-lan-client-control-plane)
 - [📜 ADR-002 — Gateway-First MCP Realignment](Architecture-Decisions/ADR-002-gateway-first-mcp-realignment)
 - [📜 ADR-003 — MCP Gateway Substrate](Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision)
-
-**Governance**
-- [⚖️ CLU Governance](CLU-Governance)
-- [⚖️ Governance (operator)](Governance)
-
-**Operator surface (ADR-001)**
-- [👥 LAN Clients](LAN-Clients)
-- [🔐 Privileges](Privileges)
-- [📦 Client Config Bundle](Client-Config-Bundle)
-
-**Operations**
-- [🛠️ Operations](Operations)
-- [🔥 Windows Firewall & LAN Mode](Operations/Windows-Firewall-LAN-Mode)
-- [📦 Packaging & Gateway Binary](Operations/Packaging-and-Gateway-Binary)
-- [🚦 Release Gate](Operations/Release-Gate)
-- [🏗️ Infrastructure](Infrastructure)
-- [🚨 Troubleshooting](Troubleshooting)
-
-**UI / UX**
+- [🌐 API Reference](API-Reference)
+- [🛰️ Sub-Agents](Sub-Agents)
 - [🎨 Tron UI Theme](Tron-UI-Theme)
-
-**Project**
 - [⚙️ Automation](Automation)
 - [🏷️ Versions](Versions)

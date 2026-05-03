@@ -9,7 +9,153 @@ The fabric MCOS supervises behind the gateway. A **Managed Endpoint Pool** is a 
 
 ---
 
-## 1. Type model
+## How to add a managed pool
+
+Use `POST /api/pools` from PowerShell or the dashboard. The body is the full `ManagedEndpointPool` JSON; field-by-field reference is in [Configuration](Configuration) § `pools`.
+
+```powershell
+$body = @{
+  poolId        = 'mcos-shell-tools'
+  kind          = 'mcp-server'
+  logicalMcpUrl = 'http://localhost:18443/mcp/shell'
+  template      = @{
+    transport       = 'streamable_http'
+    executablePath  = 'C:\Program Files\my-mcp-shell\my-mcp-shell.exe'
+    arguments       = @('--port', '18443')
+    environment     = @{}
+    workingDirectory = ''
+  }
+  scalePolicy   = @{
+    minInstances              = 1
+    maxInstances              = 4
+    maxActiveLeasesPerInstance = 8
+  }
+  drainPolicy   = @{
+    gracefulSeconds         = 30
+    forceTerminateOnTimeout = $true
+  }
+  healthProbe   = @{
+    path            = '/health'
+    intervalSeconds = 10
+    timeoutMs       = 1500
+  }
+} | ConvertTo-Json -Depth 6
+
+Invoke-RestMethod -Method POST -Uri http://localhost:7300/api/pools `
+  -ContentType 'application/json' -Body $body
+```
+
+`POST /api/pools` is upsert. Re-running the same body modifies the existing pool definition.
+
+After registering, force the supervisor to honor `minInstances`:
+```powershell
+Invoke-RestMethod -Method POST http://localhost:7300/api/pools/mcos-shell-tools/scale
+```
+
+The supervisor spawns instances under Job Objects. Each transitions `Configured → Starting → Ready` (or `Failed`). Confirm via dashboard → **Pools**, or:
+
+```powershell
+Invoke-RestMethod http://localhost:7300/api/pools/mcos-shell-tools |
+  ConvertTo-Json -Depth 6
+```
+
+### Field guidance
+
+| Field | When to set what |
+|---|---|
+| `kind` | `mcp-server` for generic backends; `sub-agent` for purpose-built specialized backends |
+| `logicalMcpUrl` | A stable URL for this pool. The lease router routes requests to one instance behind it. |
+| `template.executablePath` | Absolute Windows path to the worker binary |
+| `template.arguments` | Command-line args passed at spawn |
+| `scalePolicy.minInstances` | `0` for opt-in (manual scale only); `1` to keep one warm; higher for hot-warm baselines |
+| `scalePolicy.maxInstances` | Upper bound — the supervisor will not exceed this even under saturation |
+| `scalePolicy.maxActiveLeasesPerInstance` | When every Ready instance hits this, the next lease triggers same-type scale-out |
+| `drainPolicy.gracefulSeconds` | How long to wait for in-flight leases to complete before forcing termination |
+| `healthProbe.intervalSeconds` | How often the supervisor probes `healthProbe.path`. `Starting → Ready` happens after one successful probe. |
+
+---
+
+## How to scale, drain, and remove
+
+### Scale to minInstances
+```powershell
+Invoke-RestMethod -Method POST http://localhost:7300/api/pools/<poolId>/scale
+```
+Or click **Scale to min** on the pool card.
+
+### Drain
+```powershell
+Invoke-RestMethod -Method POST http://localhost:7300/api/pools/<poolId>/drain
+```
+Or click **Drain** on the pool card.
+
+What happens:
+- Every instance moves to `Draining`.
+- Existing sticky leases keep routing to their bound instance until they release.
+- New stateless leases route to non-draining Ready instances elsewhere.
+- As leases drain to zero, instances move to `Stopped`.
+
+Hot-migration is forbidden — a stateful session never gets re-bound to a different instance mid-flight.
+
+### Remove
+```powershell
+Invoke-RestMethod -Method POST http://localhost:7300/api/pools/<poolId>/remove
+```
+Removes the pool definition from `mcos.json`. The supervisor reaps any running instances under Job Object closure.
+
+---
+
+## How to inspect lease activity
+
+```powershell
+# Active leases on a pool
+Invoke-RestMethod http://localhost:7300/api/pools/<poolId>/leases |
+  Format-Table leaseId, sessionId, instanceId, state, acquiredAtUtc -AutoSize
+
+# Saturation snapshot
+Invoke-RestMethod http://localhost:7300/api/pools/<poolId>/saturation |
+  ConvertTo-Json
+```
+
+Saturation flags:
+| Flag | Meaning | Operator action |
+|---|---|---|
+| `atSaturation: true` | Every Ready instance hit `maxActiveLeasesPerInstance` | Watch — next request triggers scale-out |
+| `scaleOutTriggered: true` | At least one scale-up happened during the saturation window | None — observable signal |
+| `atMaxInstances: true` | Pool can't grow further; new leases fail honestly | Either bump `maxInstances` or accept the failure |
+
+Dashboard surface: each pool card on the **Pools** destination renders these flags inline.
+
+---
+
+## How to acquire / release a lease manually
+
+Most operators don't do this — the gateway acquires leases on behalf of AI client requests automatically. Useful for testing.
+
+```powershell
+# Acquire
+$body = @{
+  poolId    = 'mcos-shell-tools'
+  sessionId = 'test-sess-1'
+  stateful  = $true
+  clientHint = 'manual-test'
+} | ConvertTo-Json
+$lease = Invoke-RestMethod -Method POST `
+  -Uri http://localhost:7300/api/pools/mcos-shell-tools/leases `
+  -ContentType 'application/json' -Body $body
+$lease | ConvertTo-Json
+
+# Release
+Invoke-RestMethod -Method POST "http://localhost:7300/api/leases/$($lease.leaseId)/release"
+```
+
+If the pool is at `maxInstances` and saturated, the lease comes back with `state: failed` and a status message — that's the honest-fail behavior from the four-step rule.
+
+---
+
+## Reference
+
+### 1. Type model
 
 ```mermaid
 classDiagram

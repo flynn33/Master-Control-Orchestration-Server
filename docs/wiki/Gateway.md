@@ -9,7 +9,116 @@ The MCP Gateway is the **single MCOS-advertised endpoint** every LAN AI client c
 
 ---
 
-## 1. The contract
+## How to install MCPJungle and turn the gateway on
+
+The MSI does NOT bundle MCPJungle. Operators install the binary separately, then point MCOS at it.
+
+```mermaid
+flowchart LR
+    classDef step fill:#031018,stroke:#00F6FF,color:#E6FCFF;
+    classDef good fill:#031a14,stroke:#1cf2c1,color:#a8efe0;
+
+    A[1. Download MCPJungle binary]:::step --> B[2. Place at stable path]:::step
+    B --> C[3. Set mcos.json mcpGateway]:::step
+    C --> D[4. Restart service]:::step
+    D --> E[5. Verify health probe]:::good
+```
+
+### 1. Download or build MCPJungle
+Get the Windows binary from the upstream MCPJungle release. Confirm it runs standalone first:
+```powershell
+.\mcpjungle.exe --help
+```
+
+### 2. Place at a stable path
+```powershell
+$dest = "C:\Program Files\Master Control Orchestration Server\bin\mcpjungle"
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+Copy-Item .\mcpjungle.exe -Destination $dest\
+```
+Any stable path works — MCOS reads `binaryPath` from `mcos.json` and supervises whatever you point at.
+
+### 3. Update `mcos.json`
+```powershell
+notepad "$env:ProgramData\Master Control Orchestration Server\mcos.json"
+```
+Set the `mcpGateway` block:
+```json
+{
+  "mcpGateway": {
+    "type": "mcpjungle",
+    "enabled": true,
+    "binaryPath": "C:\\Program Files\\Master Control Orchestration Server\\bin\\mcpjungle\\mcpjungle.exe",
+    "listenHost": "0.0.0.0",
+    "listenPort": 8080,
+    "mcpPath": "/mcp",
+    "healthPath": "/health",
+    "mode": "lan-trusted"
+  }
+}
+```
+
+### 4. Restart the service
+```powershell
+Restart-Service MasterControlOrchestrationServer
+```
+The adapter spawns MCPJungle under a Windows Job Object on next start.
+
+### 5. Verify
+```powershell
+Invoke-RestMethod http://localhost:7300/api/gateway/status | ConvertTo-Json
+Invoke-RestMethod http://localhost:7300/api/gateway/health | ConvertTo-Json
+```
+Expected: `state=running`, `health=healthy`, `message` field reflecting the live probe. If `health=unknown`, see [Troubleshooting](Troubleshooting) §Gateway supervised-mock.
+
+Dashboard surface: **Gateway** destination shows the same data with auto-refresh.
+
+---
+
+## How to start, stop, and restart the gateway
+
+```powershell
+# Start (the adapter handles supervision)
+Invoke-RestMethod -Method POST http://localhost:7300/api/gateway/start
+
+# Stop (Job Object closure reaps the child tree)
+Invoke-RestMethod -Method POST http://localhost:7300/api/gateway/stop
+
+# Status / health on demand
+Invoke-RestMethod http://localhost:7300/api/gateway/status | ConvertTo-Json
+Invoke-RestMethod http://localhost:7300/api/gateway/health | ConvertTo-Json
+```
+
+You generally don't need to call these — MCOS starts the gateway when the service starts, reaps it when the service stops. Use them for debugging.
+
+---
+
+## How to see what tools the gateway is serving
+
+```powershell
+Invoke-RestMethod http://localhost:7300/api/gateway/tools | ConvertTo-Json -Depth 6
+```
+
+The list aggregates tools from every registered logical pool. Dashboard surface: **Gateway** destination → "Registered tools" card.
+
+If the list is empty:
+1. Confirm the gateway is `running` and `healthy` (see above).
+2. Confirm at least one pool is registered: `Invoke-RestMethod http://localhost:7300/api/pools`. Empty by default.
+3. Add a pool: see [Worker Pools](Worker-Pools) §How to add a managed pool.
+
+---
+
+## How to switch back to supervised-mock (for testing)
+
+Set `mcpGateway.binaryPath` to empty (or to a path that does not exist) in `mcos.json` and restart the service. The adapter falls back to supervised-mock and reports `health=unknown` honestly. ADR-002 §9.
+
+---
+
+## Reference
+
+The rest of this page is the C++ contract, lifecycle states, and FORBIDDEN-CONTRACT enforcement points. Read when extending the adapter or evaluating a substrate swap.
+
+### 1. The contract
 
 ```mermaid
 classDiagram

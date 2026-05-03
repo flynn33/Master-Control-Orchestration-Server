@@ -9,7 +9,113 @@ The telemetry layer separates four concerns: a 1024-entry **events ring**, a **c
 
 ---
 
-## 1. The aggregator
+## How to read recent activity
+
+```powershell
+# Last 50 telemetry events
+Invoke-RestMethod 'http://localhost:7300/api/telemetry/events?max=50' |
+  ConvertTo-Json -Depth 6
+
+# Filter to errors only
+Invoke-RestMethod 'http://localhost:7300/api/telemetry/events?max=200' |
+  Where-Object { $_.severity -in 'error','critical' } |
+  Format-Table timestamp, category, message -AutoSize
+
+# Stream from the file directly
+Get-Content "$env:ProgramData\Master Control Orchestration Server\runtime\events.jsonl" -Tail 50 -Wait
+```
+
+Dashboard surface: **Activity** destination, top card. Refreshes every 5 seconds.
+
+The ring is capped at 1024 entries. Older events fall off the front. If you need long-term retention, copy `events.jsonl` periodically.
+
+---
+
+## How to see who's connected
+
+```powershell
+# Live presence roster
+Invoke-RestMethod http://localhost:7300/api/telemetry/clients |
+  Format-Table clientId, clientType, ipAddress, lastSeenUtc -AutoSize
+```
+
+Dashboard surface: **Clients** destination.
+
+A client only shows up if it POSTed to `/api/telemetry/heartbeat`. Clients that don't speak the heartbeat protocol are invisible to this surface — that's by design, not a bug. To check whether a non-heartbeating client is reaching the gateway, watch the gateway traffic counters instead.
+
+---
+
+## How to read gateway traffic
+
+```powershell
+Invoke-RestMethod http://localhost:7300/api/telemetry/gateway | ConvertTo-Json
+```
+
+Returns the live `GatewayTrafficSnapshot` — monotonic counters since service start, plus the live `gatewayState` and `gatewayHealth` (refreshed by an `IMcpGateway::Probe()` on each request).
+
+```powershell
+# Compute deltas over a 10-second window
+$a = Invoke-RestMethod http://localhost:7300/api/telemetry/gateway
+Start-Sleep -Seconds 10
+$b = Invoke-RestMethod http://localhost:7300/api/telemetry/gateway
+[pscustomobject]@{
+  RequestsPerSecond = ($b.requestCount - $a.requestCount) / 10.0
+  ErrorsPerSecond   = ($b.errorCount   - $a.errorCount)   / 10.0
+  BytesInPerSec     = ($b.bytesIn      - $a.bytesIn)      / 10.0
+  BytesOutPerSec    = ($b.bytesOut     - $a.bytesOut)     / 10.0
+}
+```
+
+---
+
+## How to send a test heartbeat
+
+Useful for verifying the heartbeat ingest path before configuring a real client.
+
+```powershell
+$body = @{
+  clientId   = 'test-client-1'
+  clientType = 'generic-mcp'
+  version    = 'manual-test'
+  ipAddress  = '127.0.0.1'
+  sentAtUtc  = (Get-Date).ToUniversalTime().ToString('o')
+  cpuPercent     = -1.0      # unavailable, honest
+  memoryPercent  = -1.0
+  gpuPercent     = -1.0
+  gpuMemoryMb    = -1.0
+  bytesSentPerSecond     = 0
+  bytesReceivedPerSecond = 0
+  sessionContext = @{ note = 'manual heartbeat for testing' }
+} | ConvertTo-Json -Depth 6
+
+Invoke-RestMethod -Method POST `
+  -Uri http://localhost:7300/api/telemetry/heartbeat `
+  -ContentType 'application/json' `
+  -Body $body
+
+# Confirm presence
+Invoke-RestMethod http://localhost:7300/api/telemetry/clients |
+  Where-Object clientId -eq 'test-client-1' | Format-List
+```
+
+Send `-1.0` for any metric you don't have — that's the honest-unavailable sentinel. The dashboard renders it as `unavailable`.
+
+---
+
+## How to read what "unavailable" means in the UI
+
+Dashboard cells reading `unavailable` mean the data source did not report that metric. Specifically:
+- A client did not include the metric in its heartbeat
+- A worker probe never ran or failed
+- Host-side telemetry: PDH-direct `0%` is genuine "idle" (HostTelemetrySnapshot is exempt)
+
+**Never trust** any UI that displays self-reported metrics as `0%` without context — that conflates "idle" with "unreported." The MCOS dashboard's `formatMetric()` helper is the single render path for `ClientHeartbeat` / `WorkerTelemetry` data and enforces this rule.
+
+---
+
+## Reference
+
+### 1. The aggregator
 
 ```mermaid
 classDiagram

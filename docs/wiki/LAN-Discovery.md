@@ -8,7 +8,80 @@ How AI clients on the LAN find an MCOS host without manual configuration. Two pa
 
 ---
 
-## 1. Why discovery matters
+## How to verify MCOS is discoverable on the LAN
+
+From a **second machine on the same LAN** (not from the host itself):
+
+```bash
+# macOS
+dns-sd -B _mcos._tcp                  # browse for advertisements
+dns-sd -L mcos-<instanceId> _mcos._tcp local   # full record
+
+# Linux (avahi-utils)
+avahi-browse _mcos._tcp
+avahi-resolve --name mcos-<instanceId>._mcos._tcp.local
+```
+
+```powershell
+# Windows
+Resolve-DnsName -Name _mcos._tcp.local -Type PTR -LlmnrFallback
+
+# Test direct reachability of the gateway TCP port
+Test-NetConnection -ComputerName <mcos-host-ip> -Port 8080
+
+# Pull the discovery document
+Invoke-RestMethod http://<mcos-host>:7300/.well-known/mcos.json | ConvertTo-Json -Depth 6
+```
+
+Expected:
+- `dns-sd` / `avahi-browse` shows `mcos-<instanceId>` advertised
+- `Test-NetConnection` returns `TcpTestSucceeded: True` for port 8080 (and 7300 for the operator surface)
+- The discovery doc returns valid JSON with `auth=none`, `trust=lan`, the gateway URL, and the onboarding paths
+
+If any of these fail, see [Troubleshooting](Troubleshooting) §LAN discovery for the diagnosis chain.
+
+---
+
+## How to disable / re-enable advertising
+
+Advertising fires automatically when the runtime starts. To turn it off:
+
+```powershell
+# Disable the UDP beacon (DNS-SD is independent and stays on)
+$body = @{ beaconEnabled = $false } | ConvertTo-Json
+Invoke-RestMethod -Method POST -Uri http://localhost:7300/api/config -Body $body -ContentType 'application/json'
+
+# Or stop the service entirely (kills both advertising paths)
+Stop-Service MasterControlOrchestrationServer
+```
+
+There is no current toggle to disable DNS-SD without stopping the service. If you need MCOS up but invisible on the LAN, drop the firewall rules:
+
+```powershell
+Get-NetFirewallRule -DisplayName 'MCOS *' | Disable-NetFirewallRule
+```
+
+Re-enable with `Enable-NetFirewallRule`.
+
+---
+
+## How to change the instance label
+
+The DNS-SD instance label comes from `mcos.json` `instanceId`. Edit it to a recognizable name:
+
+```powershell
+$body = @{ instanceId = 'mcos-eng-lab-1' } | ConvertTo-Json
+Invoke-RestMethod -Method POST -Uri http://localhost:7300/api/config -Body $body -ContentType 'application/json'
+Restart-Service MasterControlOrchestrationServer
+```
+
+After restart, browsers see `mcos-eng-lab-1._mcos._tcp.local` instead of the UUID-default form.
+
+---
+
+## Reference
+
+### 1. Why discovery matters
 
 Without LAN discovery, every client must be hand-configured with the host's IP address, gateway port, governance URL, and onboarding paths. Discovery turns "what's the URL?" into "browse `_mcos._tcp` on the LAN" — solved by every modern OS and most MCP-aware clients out of the box.
 
