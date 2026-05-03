@@ -8,13 +8,17 @@ The plugin lives in the repo at `.claude-plugin/mcos-control/`. Source of truth 
 
 ## How to install
 
-### Option A — one click in the dashboard (v0.6.1+)
+### Option A — one click in the GUI (v0.6.2+)
 
-Open `http://localhost:7300/` in your browser. The **Overview** deck has a **Claude Code Control** card. Click **Connect Claude Code** and you're done — the runtime drops a directory junction at `%USERPROFILE%\.claude\plugins\mcos-control` pointing at the install directory's bundled plugin source. Restart Claude Code and `/mcos:status` works.
+Either GUI surface works:
+- **Browser dashboard** at `http://localhost:7300/` → **Overview** deck → **Claude Code Control** card.
+- **WinUI desktop shell** (Start Menu / Desktop shortcut) → **Settings** section → **Claude Code Control** card at the top.
+
+Both call the same routes. Click **Connect Claude Code** and you're done — the runtime drops a directory junction at `%USERPROFILE%\.claude\plugins\mcos-control` pointing at the install directory's bundled plugin source. Restart Claude Code and `/mcos:status` works.
 
 The toggle works in both runtime hosting modes:
-- **Service** (default): runtime resolves the active console user via `WTSGetActiveConsoleSessionId` + `WTSQueryUserToken` + `CreateEnvironmentBlock` and writes the junction into that user's profile.
-- **Console** (`MasterControlServiceHost.exe --console`): the active session is the user who launched it; same path resolves there too.
+- **Service** (default Windows service install): the runtime is SYSTEM, so `GetEnvironmentVariableW("USERPROFILE")` resolves to the SYSTEM profile. The runtime falls through to `WTSGetActiveConsoleSessionId` + `WTSQueryUserToken` + `CreateEnvironmentBlock` to recover the interactive user's profile and writes the junction there.
+- **Console** (`MasterControlServiceHost.exe --console` or shell-launched): the runtime is already running as the user, so `USERPROFILE` is correct on the first try and the privileged `WTSQueryUserToken` path is never invoked. Before v0.6.2 console-mode runs failed with errno 1008 (ERROR_NO_TOKEN) because the resolver always took the SYSTEM-only path.
 
 The card surfaces the active user's name, the source path, the target path, and any error if registration fails (e.g., no interactive console session, plugin source missing because of a tampered install). To **disconnect**, click the toggle again — the runtime calls `RemoveDirectoryW` on the junction. The install source is never touched.
 

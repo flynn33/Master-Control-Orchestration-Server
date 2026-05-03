@@ -1,11 +1,24 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.6.1",
-  "current_tag": "v0.6.1",
+  "current_version": "0.6.2",
+  "current_tag": "v0.6.2",
   "released_at": "2026-05-03",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.6.2",
+      "tag": "v0.6.2",
+      "released_at": "2026-05-03",
+      "commit": "pending",
+      "summary": "Claude Code Control toggle now also lives in the WinUI desktop shell's Settings panel, and the runtime's active-user resolver works in console mode. v0.6.1 only added the toggle to the browser dashboard, and the resolver assumed the runtime had SYSTEM privilege (true for the Windows service path, false for --console / shell-launched runs). When MCOS was hosted in console mode the toggle returned errno 1008 (ERROR_NO_TOKEN) because WTSQueryUserToken needs SE_TCB_NAME and non-service processes don't carry it. v0.6.2 adds a dual-path resolver that prefers GetEnvironmentVariableW(\"USERPROFILE\") and only falls through to WTSQueryUserToken when the env var resolves to the SYSTEM profile.",
+      "entries": [
+        "feat(shell): SettingsSectionControl gains a Claude Code Control card at the top of the Settings page mirroring the dashboard card; refreshes on AttachRuntime and on every snapshot tick; async toggle handler with busy state",
+        "feat(shell-runtime): ShellRuntime::FetchClaudePluginStatus + ToggleClaudePlugin call /api/claude-plugin/{status,toggle} through the existing httpRequest pipeline; ShellClaudePluginStatus carries reachable / registered / activeUserResolved / userName / profileDir / source / target / lastError / transportError",
+        "fix(runtime): dual-path active-user resolver. Path 1 reads GetEnvironmentVariableW(\"USERPROFILE\") and uses it when it is not the SYSTEM profile (covers --console mode, shell-launched runs, any non-service host). Path 2 retains WTSGetActiveConsoleSessionId + WTSQueryUserToken + CreateEnvironmentBlock for the SYSTEM-hosted service path. Without this fix the toggle failed in console mode with errno 1008 ERROR_NO_TOKEN because WTSQueryUserToken requires SE_TCB_NAME which only SYSTEM holds",
+        "docs(version): bump 0.6.1 -> 0.6.2 (operator-feature minor + console-mode fix)"
+      ]
+    },
     {
       "version": "0.6.1",
       "tag": "v0.6.1",
