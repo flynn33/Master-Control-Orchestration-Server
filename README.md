@@ -151,11 +151,25 @@ msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.6.3-win-x6
 Invoke-RestMethod http://localhost:7300/api/health    | ConvertTo-Json
 Invoke-RestMethod http://localhost:7300/api/discovery | ConvertTo-Json -Depth 6
 
-# 4. From another LAN host: confirm Bonjour discovery
+# 4. Open the firewall for LAN clients (one-shot, self-elevating)
+#    See docs/wiki/Windows-Firewall-LAN-Mode.md for the full snippet that
+#    creates four Profile=Private,Domain rules in one UAC prompt.
+
+# 5. From another LAN host: confirm Bonjour discovery
 Resolve-DnsName -Name _mcos._tcp.local -Type PTR -LlmnrFallback
 ```
 
-The MSI installs the Windows service, registers four `Profile=Private,Domain` firewall rules covering the operator surface (TCP), the MCP gateway (TCP), DNS-SD (UDP 5353), and the discovery beacon (UDP), and creates Start Menu + Desktop shortcuts (both pre-checked, operator can opt out).
+The MSI installs the Windows service, bundles the operator-side `mcos-control` Claude Code plugin under `share\claude-plugins\mcos-control`, and creates Start Menu + Desktop shortcuts (both pre-checked, operator can opt out). LAN-side firewall rules are NOT created automatically — operators apply them after install. See [docs/wiki/Windows-Firewall-LAN-Mode.md](docs/wiki/Windows-Firewall-LAN-Mode.md) for the four `Profile=Private,Domain` rules (operator surface TCP 7300, MCP gateway TCP 8080, DNS-SD UDP 5353, discovery beacon UDP 7301) and a one-shot self-elevating PowerShell block that applies all four.
+
+### Connect Claude Code to MCOS (one click)
+
+After install, open `http://localhost:7300/` and click the **Claude Code Control** toggle on the **Overview** card. The runtime resolves the active interactive Windows user and drops `%USERPROFILE%\.claude\plugins\mcos-control` as a directory junction onto the install directory's bundled plugin source — no admin prompt, no execution-policy gymnastics. Restart Claude Code and `/mcos:status` works.
+
+The same toggle is on the WinUI desktop shell's **Overview** page. Either surface drives the same `/api/claude-plugin/{status,toggle}` routes.
+
+### Spawn the first MCP server / sub-agent pool
+
+`buildDefaultConfiguration()` ships with **no pools** — the operator chooses what to supervise. Bringing up a pool is two POSTs (upsert + scale). For copy-paste recipes that exercise both `kind=mcp-server` and `kind=sub-agent` against the official `@modelcontextprotocol/server-*` reference servers, see [docs/wiki/Worker-Pools.md §10 Verified working examples](docs/wiki/Worker-Pools.md).
 
 ---
 

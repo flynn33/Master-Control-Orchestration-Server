@@ -17,27 +17,20 @@ Use `POST /api/pools` from PowerShell or the dashboard. The body is the full `Ma
 $body = @{
   poolId        = 'mcos-shell-tools'
   kind          = 'mcp-server'
-  logicalMcpUrl = 'http://localhost:18443/mcp/shell'
+  logicalMcpUrl = 'http://0.0.0.0:8080/mcp/shell'
   template      = @{
-    transport       = 'streamable_http'
-    executablePath  = 'C:\Program Files\my-mcp-shell\my-mcp-shell.exe'
-    arguments       = @('--port', '18443')
-    environment     = @{}
+    executable       = 'C:\Program Files\my-mcp-shell\my-mcp-shell.exe'
+    args             = @('--port', '18443')
     workingDirectory = ''
+    environment      = @{}
+    transport        = 'stdio'   # or 'streamable_http'
   }
   scalePolicy   = @{
-    minInstances              = 1
-    maxInstances              = 4
+    minInstances               = 1
+    maxInstances               = 4
     maxActiveLeasesPerInstance = 8
-  }
-  drainPolicy   = @{
-    gracefulSeconds         = 30
-    forceTerminateOnTimeout = $true
-  }
-  healthProbe   = @{
-    path            = '/health'
-    intervalSeconds = 10
-    timeoutMs       = 1500
+    scaleOutQueueWaitMs        = 1500
+    scaleInIdleSeconds         = 120
   }
 } | ConvertTo-Json -Depth 6
 
@@ -47,7 +40,7 @@ Invoke-RestMethod -Method POST -Uri http://localhost:7300/api/pools `
 
 `POST /api/pools` is upsert. Re-running the same body modifies the existing pool definition.
 
-After registering, force the supervisor to honor `minInstances`:
+**Two-step contract.** Registering a pool stores its definition only — it does **not** auto-spawn instances. Force the supervisor to honor `minInstances` with an explicit follow-up:
 ```powershell
 Invoke-RestMethod -Method POST http://localhost:7300/api/pools/mcos-shell-tools/scale
 ```
@@ -59,19 +52,32 @@ Invoke-RestMethod http://localhost:7300/api/pools/mcos-shell-tools |
   ConvertTo-Json -Depth 6
 ```
 
-### Field guidance
+### Field guidance — JSON shape that the runtime actually accepts
+
+The wire shape uses these field names verbatim. Earlier copies of this page had drifted (e.g. `executablePath`, `arguments`) — the runtime accepts only the names below.
 
 | Field | When to set what |
 |---|---|
 | `kind` | `mcp-server` for generic backends; `sub-agent` for purpose-built specialized backends |
-| `logicalMcpUrl` | A stable URL for this pool. The lease router routes requests to one instance behind it. |
-| `template.executablePath` | Absolute Windows path to the worker binary |
-| `template.arguments` | Command-line args passed at spawn |
+| `logicalMcpUrl` | Stable URL for this pool. The lease router routes requests to one instance behind it. |
+| `template.executable` | Absolute Windows path to the worker binary (or `npx.cmd` / `cmd.exe` for indirection) |
+| `template.args` | Array of command-line args passed at spawn |
+| `template.workingDirectory` | CWD for the spawned process |
+| `template.environment` | Object — extra env vars merged onto the inherited block |
+| `template.transport` | `stdio` or `streamable_http` |
 | `scalePolicy.minInstances` | `0` for opt-in (manual scale only); `1` to keep one warm; higher for hot-warm baselines |
 | `scalePolicy.maxInstances` | Upper bound — the supervisor will not exceed this even under saturation |
 | `scalePolicy.maxActiveLeasesPerInstance` | When every Ready instance hits this, the next lease triggers same-type scale-out |
-| `drainPolicy.gracefulSeconds` | How long to wait for in-flight leases to complete before forcing termination |
-| `healthProbe.intervalSeconds` | How often the supervisor probes `healthProbe.path`. `Starting → Ready` happens after one successful probe. |
+| `scalePolicy.scaleOutQueueWaitMs` | Max time the lease router waits before triggering scale-out under saturation |
+| `scalePolicy.scaleInIdleSeconds` | Idle threshold before an excess instance is reclaimed |
+| `drainPolicy.drainStickySessions` (default `true`) | If `true`, lets sticky leases finish on a draining instance before reaping it |
+| `drainPolicy.drainTimeoutSeconds` (default `30`) | Hard ceiling on graceful drain |
+| `drainPolicy.routeNewSessionsToReplacement` (default `true`) | New stateful sessions skip the Draining instance |
+| `healthProbe.path` | HTTP path for `streamable_http` transports; ignored for stdio |
+| `healthProbe.transport` | `streamable_http` or empty for stdio |
+| `healthProbe.intervalMs` (default `5000`) | How often the supervisor probes the worker |
+| `healthProbe.timeoutMs` (default `1500`) | Per-probe timeout |
+| `healthProbe.unhealthyThreshold` (default `3`) | Consecutive failures before the instance is marked Failed |
 
 ---
 
@@ -133,12 +139,12 @@ Dashboard surface: each pool card on the **Pools** destination renders these fla
 Most operators don't do this — the gateway acquires leases on behalf of AI client requests automatically. Useful for testing.
 
 ```powershell
-# Acquire
+# Acquire — the runtime takes sessionId + sessionType. sessionType=stateful
+# binds the session sticky to the instance for the lifetime of the lease;
+# sessionType=stateless lets the next call route to whatever's least-loaded.
 $body = @{
-  poolId    = 'mcos-shell-tools'
-  sessionId = 'test-sess-1'
-  stateful  = $true
-  clientHint = 'manual-test'
+  sessionId   = 'test-sess-1'
+  sessionType = 'stateful'
 } | ConvertTo-Json
 $lease = Invoke-RestMethod -Method POST `
   -Uri http://localhost:7300/api/pools/mcos-shell-tools/leases `
@@ -434,3 +440,110 @@ The dashboard's Pools panel (PHASE-09) consumes all of these.
 - **Pool admin via dashboard** → [Dashboard](Dashboard) §Pools
 - **Honest queueDepth** → ADR-002 §9, [Telemetry and Activity](Telemetry-and-Activity)
 - **Schema** → [`docs/implementation/schemas/managed-endpoint-pool.schema.json`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/schemas/managed-endpoint-pool.schema.json)
+
+---
+
+## 10. Verified working examples (npx-based MCP servers)
+
+The official Model Context Protocol reference servers from `@modelcontextprotocol/*` install through `npx` on demand and run as stdio MCP servers — no API keys, no separate install, no config beyond a working directory. The recipes below have been exercised end-to-end against a fresh MCOS install and confirmed to spawn under the supervisor and accept leases.
+
+**Prerequisites:**
+- Node.js on PATH (the supervisor will spawn `C:\Program Files\nodejs\npx.cmd`).
+- The Windows Firewall rules from [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) (the four `MCOS *` rules).
+
+**Recipe — register all four official MCP servers as `mcp-server` pools, then trigger spawn:**
+```powershell
+$base = 'http://localhost:7300'
+$npx  = 'C:\Program Files\nodejs\npx.cmd'
+$cwd  = $env:USERPROFILE
+
+$pools = @(
+  @{ id='mcp-filesystem';          pkg='@modelcontextprotocol/server-filesystem';          extraArgs=@("$env:USERPROFILE\Documents") },
+  @{ id='mcp-memory';              pkg='@modelcontextprotocol/server-memory';              extraArgs=@() },
+  @{ id='mcp-everything';          pkg='@modelcontextprotocol/server-everything';          extraArgs=@() },
+  @{ id='mcp-sequential-thinking'; pkg='@modelcontextprotocol/server-sequential-thinking'; extraArgs=@() }
+)
+
+foreach ($p in $pools) {
+  $body = @{
+    poolId        = $p.id
+    kind          = 'mcp-server'
+    logicalMcpUrl = "http://0.0.0.0:8080/mcp/$($p.id -replace '^mcp-','')"
+    template      = @{
+      executable       = $npx
+      args             = @('-y', $p.pkg) + $p.extraArgs
+      workingDirectory = $cwd
+      environment      = @{}
+      transport        = 'stdio'
+    }
+    scalePolicy   = @{
+      minInstances               = 1
+      maxInstances               = 2
+      maxActiveLeasesPerInstance = 4
+      scaleOutQueueWaitMs        = 1500
+      scaleInIdleSeconds         = 180
+    }
+  } | ConvertTo-Json -Depth 6
+  Invoke-RestMethod "$base/api/pools" -Method POST -Body $body -ContentType 'application/json'
+  Invoke-RestMethod "$base/api/pools/$($p.id)/scale" -Method POST -Body '{}' -ContentType 'application/json'
+}
+```
+
+Wait ~30 seconds for the first `npx -y` to pull the package, then read the roster:
+```powershell
+Invoke-RestMethod "$base/api/pools" |
+  ForEach-Object { foreach ($i in $_.instances) { "{0,-25} {1,-12} pid={2}" -f $_.poolId, $i.state, $i.processId } }
+```
+
+Each instance should land in `state=ready` with a Win32 PID.
+
+**Recipe — same packages registered as `sub-agent` pools (lease semantics differ; same protocol underneath):**
+```powershell
+$subagents = @(
+  @{ id='subagent-coordinator'; pkg='@modelcontextprotocol/server-everything';            role='coordinator'   },
+  @{ id='subagent-memorian';    pkg='@modelcontextprotocol/server-memory';                role='memory-keeper' },
+  @{ id='subagent-thinker';     pkg='@modelcontextprotocol/server-sequential-thinking';   role='thinker'       }
+)
+foreach ($s in $subagents) {
+  $body = @{
+    poolId        = $s.id
+    kind          = 'sub-agent'
+    logicalMcpUrl = "http://0.0.0.0:8080/agents/$($s.id -replace '^subagent-','')"
+    template      = @{
+      executable       = $npx
+      args             = @('-y', $s.pkg)
+      workingDirectory = $cwd
+      environment      = @{ AGENT_ROLE = $s.role }
+      transport        = 'stdio'
+    }
+    scalePolicy   = @{
+      minInstances               = 1
+      maxInstances               = 2
+      maxActiveLeasesPerInstance = 2
+      scaleOutQueueWaitMs        = 2500
+      scaleInIdleSeconds         = 180
+    }
+  } | ConvertTo-Json -Depth 6
+  Invoke-RestMethod "$base/api/pools" -Method POST -Body $body -ContentType 'application/json'
+  Invoke-RestMethod "$base/api/pools/$($s.id)/scale" -Method POST -Body '{}' -ContentType 'application/json'
+}
+```
+
+**Smoke-test the lease router after spawn:**
+```powershell
+foreach ($id in @('mcp-filesystem','mcp-memory','mcp-everything','mcp-sequential-thinking',
+                  'subagent-coordinator','subagent-memorian','subagent-thinker')) {
+  $body = @{ sessionId = "smoke-$id"; sessionType = 'stateless' } | ConvertTo-Json
+  $lease = Invoke-RestMethod "$base/api/pools/$id/leases" -Method POST -Body $body -ContentType 'application/json'
+  "{0,-25}  leaseId={1}  -> instance={2}" -f $id, $lease.leaseId, $lease.instanceId
+}
+```
+
+If every line prints a `leaseId` and a corresponding `instanceId`, the supervisor + lease router stack is healthy end-to-end. AI clients consuming the gateway path (`http://<host>:8080/mcp/...` or `/agents/...`) inherit the same routing once MCPJungle (or any future native gateway) is bound to TCP 8080 — see [Packaging and Gateway Binary](Packaging-and-Gateway-Binary) for the gateway-binary side.
+
+**Cleanup any test pool:**
+```powershell
+Invoke-RestMethod "$base/api/pools/<poolId>/drain" -Method POST -Body '{}' -ContentType 'application/json'
+# wait a few seconds for instances to reach Stopped
+Invoke-RestMethod "$base/api/pools/<poolId>/remove" -Method POST -Body '{}' -ContentType 'application/json'
+```
