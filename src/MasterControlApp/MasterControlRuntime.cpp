@@ -36,6 +36,7 @@
 #include <Userenv.h>
 #include <WtsApi32.h>
 #include <iphlpapi.h>
+#include <psapi.h>
 #include <urlmon.h>
 #include <wincrypt.h>
 #include <winhttp.h>
@@ -7450,7 +7451,9 @@ public:
         std::vector<ManagedEndpointPool> result;
         result.reserve(pools_.size());
         for (const auto& [_, pool] : pools_) {
-            result.push_back(pool);
+            ManagedEndpointPool snapshot = pool;
+            refreshInstanceLoadLocked(snapshot);
+            result.push_back(std::move(snapshot));
         }
         std::sort(result.begin(), result.end(),
                   [](const ManagedEndpointPool& a, const ManagedEndpointPool& b) {
@@ -7465,7 +7468,9 @@ public:
         if (iterator == pools_.end()) {
             return std::nullopt;
         }
-        return iterator->second;
+        ManagedEndpointPool snapshot = iterator->second;
+        refreshInstanceLoadLocked(snapshot);
+        return snapshot;
     }
 
     OperationResult upsertPool(ManagedEndpointPool pool) override {
@@ -7571,6 +7576,15 @@ private:
 #if defined(_WIN32)
         HANDLE jobObject = nullptr;
         PROCESS_INFORMATION processInfo{};
+        // Per-instance CPU/RAM telemetry baseline. CPU% is computed from
+        // the delta of (kernel + user) FILETIMEs vs delta wallclock since
+        // the previous sample, divided by the host's logical CPU count.
+        // The first sample after spawn establishes a baseline only and
+        // returns 0% CPU; subsequent samples produce a real reading.
+        ULARGE_INTEGER lastKernelTime{};
+        ULARGE_INTEGER lastUserTime{};
+        ULARGE_INTEGER lastSampleTime{};
+        bool haveLoadBaseline = false;
 #endif
         bool active = false;
     };
@@ -7692,8 +7706,113 @@ private:
 
     mutable std::mutex mutex_;
     std::map<std::string, ManagedEndpointPool> pools_;
-    std::map<std::string, ChildProcess> children_;
+    // children_ is mutable because refreshInstanceLoadLocked() updates
+    // the per-PID FILETIME baseline on every read of pool state. The
+    // sampling state is incidental cache, not part of the supervised
+    // child contract, so it lives here under the same lock.
+    mutable std::map<std::string, ChildProcess> children_;
     std::atomic<uint64_t> nextInstanceSerial_{ 1 };
+
+#if defined(_WIN32)
+    // Cached host logical-CPU count (denominator for percent-of-system
+    // CPU). Captured once at construction; the runtime is not expected
+    // to gain or lose cores at runtime in any deployment we ship.
+    mutable DWORD cpuCount_ = 0;
+
+    // Sample one supervised instance's process load and overwrite the
+    // EndpointInstance::telemetry fields with real numbers. The first
+    // call after spawn establishes the FILETIME baseline and reports
+    // 0.0% CPU; subsequent calls yield real percentages computed from
+    // the delta. Caller holds mutex_.
+    void sampleProcessLoadLocked(EndpointInstance& instance, ChildProcess& child) const {
+        if (!child.active || child.processInfo.hProcess == nullptr) {
+            return;
+        }
+        if (cpuCount_ == 0) {
+            SYSTEM_INFO si{};
+            GetSystemInfo(&si);
+            cpuCount_ = (si.dwNumberOfProcessors > 0) ? si.dwNumberOfProcessors : 1;
+        }
+
+        FILETIME ftCreate{}, ftExit{}, ftKernel{}, ftUser{};
+        if (!GetProcessTimes(child.processInfo.hProcess,
+                             &ftCreate, &ftExit, &ftKernel, &ftUser)) {
+            return; // process gone or handle invalid; leave telemetry alone
+        }
+        ULARGE_INTEGER kernelTime{};
+        kernelTime.LowPart  = ftKernel.dwLowDateTime;
+        kernelTime.HighPart = ftKernel.dwHighDateTime;
+        ULARGE_INTEGER userTime{};
+        userTime.LowPart  = ftUser.dwLowDateTime;
+        userTime.HighPart = ftUser.dwHighDateTime;
+
+        FILETIME ftNow{};
+        GetSystemTimeAsFileTime(&ftNow);
+        ULARGE_INTEGER nowTime{};
+        nowTime.LowPart  = ftNow.dwLowDateTime;
+        nowTime.HighPart = ftNow.dwHighDateTime;
+
+        double cpuPercent = 0.0;
+        if (child.haveLoadBaseline) {
+            const ULONGLONG kernelDelta = kernelTime.QuadPart - child.lastKernelTime.QuadPart;
+            const ULONGLONG userDelta   = userTime.QuadPart   - child.lastUserTime.QuadPart;
+            const ULONGLONG wallDelta   = nowTime.QuadPart    - child.lastSampleTime.QuadPart;
+            if (wallDelta > 0) {
+                const double busy   = static_cast<double>(kernelDelta + userDelta);
+                const double window = static_cast<double>(wallDelta) * static_cast<double>(cpuCount_);
+                cpuPercent = (busy / window) * 100.0;
+                if (cpuPercent < 0.0) {
+                    cpuPercent = 0.0;
+                } else if (cpuPercent > 100.0) {
+                    cpuPercent = 100.0; // clamp transient spikes from sampler skew
+                }
+            }
+        }
+        child.lastKernelTime = kernelTime;
+        child.lastUserTime   = userTime;
+        child.lastSampleTime = nowTime;
+        child.haveLoadBaseline = true;
+
+        PROCESS_MEMORY_COUNTERS_EX memCounters{};
+        memCounters.cb = sizeof(memCounters);
+        double memMb = -1.0;
+        if (GetProcessMemoryInfo(child.processInfo.hProcess,
+                                 reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memCounters),
+                                 sizeof(memCounters))) {
+            // WorkingSetSize is the resident set size (what shows in Task
+            // Manager's "Memory" column). PrivateUsage is more meaningful
+            // for capacity planning but matches Task Manager's "Commit"
+            // column. We surface working set since that's what operators
+            // recognize from the Task Manager column.
+            memMb = static_cast<double>(memCounters.WorkingSetSize) / (1024.0 * 1024.0);
+        }
+
+        instance.telemetry.cpuPercent     = cpuPercent;
+        instance.telemetry.memoryMbytes   = memMb;
+        instance.telemetry.lastProbedAtUtc = timestampNowUtc();
+    }
+#endif
+
+    // Walk a pool snapshot's instances, refreshing telemetry from the
+    // live ChildProcess sample state. Skips instances whose ChildProcess
+    // is not in the supervisor's children_ map (supervised-mock instances,
+    // or instances that have been reaped). The persistent FILETIME
+    // baseline lives in children_ (which is mutable), so the next call
+    // re-samples and re-writes into the fresh snapshot. Caller holds
+    // mutex_.
+    void refreshInstanceLoadLocked(ManagedEndpointPool& pool) const {
+#if defined(_WIN32)
+        for (auto& instance : pool.instances) {
+            auto childIt = children_.find(instance.instanceId);
+            if (childIt == children_.end()) {
+                continue;
+            }
+            sampleProcessLoadLocked(instance, childIt->second);
+        }
+#else
+        (void)pool;
+#endif
+    }
 };
 
 // PHASE-07 (ADR-002 §8): LeaseRouter. Resolves a LeaseRequest into a

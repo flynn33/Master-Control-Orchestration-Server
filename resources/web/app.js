@@ -1756,7 +1756,11 @@ function boot() {
   renderHeading();
   renderCurrent();
   refreshAll();
-  setInterval(refreshAll, 5000);
+  // 2-second cadence matches the WinUI shell's live tick. Per-instance
+  // CPU + RAM telemetry needs at least one full cycle between samples
+  // to compute a delta, so 2s gives a fresh reading every other tick
+  // — fast enough to read as real-time, slow enough not to flood.
+  setInterval(refreshAll, 2000);
 }
 
 if (document.readyState === 'loading') {

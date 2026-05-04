@@ -1176,7 +1176,20 @@ FrameworkElement MainWindow::CreateViewForViewId(const std::wstring& viewId, con
             winrt::hstring(std::wstring(L"The shell does not have a renderer registered for ") + viewId));
     }
 
-    if (viewId == kRuntimeView || viewId == kCluView || viewId == kImportsView || viewId == kExportsView || viewId == kSecurityView) {
+    // Every view that exposes interactive controls (writes config, fires
+    // workflows, drives the supervisor) must have its runtime attached
+    // here. Without this branch, AttachRuntime never runs for the view,
+    // its runtime_ stays nullptr, and IsEnabled-gated controls (Apply
+    // Host Settings, the Claude Code Control toggle, etc.) sit greyed
+    // out forever. v0.6.3 shipped this list missing kSettingsView and
+    // kOverviewView -- both fixed in v0.6.4.
+    if (viewId == kRuntimeView
+        || viewId == kCluView
+        || viewId == kImportsView
+        || viewId == kExportsView
+        || viewId == kSecurityView
+        || viewId == kSettingsView
+        || viewId == kOverviewView) {
         const auto weakThis = get_weak();
         attachInteractiveRuntime(
             view,

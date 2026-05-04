@@ -34,6 +34,7 @@ target_link_libraries(MasterControlApp
         wtsapi32
         rpcrt4
         bcrypt
+        psapi   # GetProcessMemoryInfo for per-instance CPU/RAM telemetry
 )
 
 target_compile_definitions(MasterControlApp PUBLIC

@@ -1,11 +1,26 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.6.4",
-  "current_tag": "v0.6.4",
+  "current_version": "0.6.5",
+  "current_tag": "v0.6.5",
   "released_at": "2026-05-04",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.6.5",
+      "tag": "v0.6.5",
+      "released_at": "2026-05-04",
+      "commit": "pending",
+      "summary": "Real-time per-instance CPU/RAM telemetry for every supervised worker, plus the Apply Host Settings button is finally clickable. The shell's MainWindow.xaml.cpp had a stale gate at the attach-runtime call site that excluded kSettingsView and kOverviewView; SettingsSectionControl::AttachRuntime therefore never fired and the Apply button stayed greyed out forever. Same bug also explained why the Claude Code Control toggle on the shell's Overview was unresponsive. WorkerSupervisor now samples GetProcessTimes (kernel + user FILETIMEs) and GetProcessMemoryInfo (working set) for every supervised child PID, computes delta-CPU% over the polling interval normalized by host core count, and surfaces real numbers through EndpointInstance.telemetry on every /api/pools read. Dashboard cadence dropped to 2s to match the WinUI shell's live tick.",
+      "entries": [
+        "fix(shell): MainWindow attachInteractiveRuntime call site now includes kSettingsView and kOverviewView. v0.6.3 shipped with both missing -- Settings Apply Host Settings button stayed disabled because runtime_ stayed nullptr, and the Claude Code Control toggle on the Overview never got the runtime attached either.",
+        "feat(supervisor): WorkerSupervisor samples per-instance CPU% and working-set MB for every supervised child PID. ChildProcess gains a FILETIME baseline (lastKernelTime/lastUserTime/lastSampleTime) that sampleProcessLoadLocked uses to compute delta-CPU normalized by host logical-core count; first sample establishes baseline (0.0%), subsequent samples produce real readings clamped to [0, 100]. GetProcessMemoryInfo's WorkingSetSize is reported in MB (matches Task Manager's Memory column).",
+        "feat(supervisor): findPool() and listPools() now refresh telemetry for every instance before returning. Sampling happens under the supervisor's mutex_ on each call; the dashboard's 2s polling cadence yields a fresh reading every other tick.",
+        "feat(dashboard): refresh interval dropped from 5000ms to 2000ms to match the WinUI shell's live tick and keep the new per-instance telemetry visibly real-time.",
+        "build(runtime): MasterControlApp links psapi for GetProcessMemoryInfo and #include <psapi.h> in the Win32 includes block.",
+        "docs(version): bump 0.6.4 -> 0.6.5 (real-time per-instance telemetry + shell Apply fix)"
+      ]
+    },
     {
       "version": "0.6.4",
       "tag": "v0.6.4",
