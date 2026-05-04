@@ -142,29 +142,34 @@ if (($rcDotVersion -split '\.').Count -lt 4) {
     $rcDotVersion = $rcDotVersion + '.0' * (4 - ($rcDotVersion -split '\.').Count)
 }
 $rcChanges = @{}
+# Replacement strings here are LITERAL — no $ interpolation, no backreferences.
+# Earlier this code used capture groups + ${1} backreferences plus
+# Escape-RegexReplacement, which doubled the $ in ${1} and broke the whole
+# substitution (rendering "${1}0,6,4,0" verbatim into the .rc files). Match
+# the entire keyword and rewrite it whole-cloth instead.
 foreach ($rcPath in $rcPaths) {
     if (-not (Test-Path $rcPath)) { continue }
     $rcRaw = [System.IO.File]::ReadAllText($rcPath)
     $rcUpdated = $rcRaw
     $rcUpdated = [regex]::Replace(
         $rcUpdated,
-        '(FILEVERSION\s+)\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+',
-        (Escape-RegexReplacement ('${1}' + $rcCommaVersion))
+        'FILEVERSION\s+\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+',
+        "FILEVERSION    $rcCommaVersion"
     )
     $rcUpdated = [regex]::Replace(
         $rcUpdated,
-        '(PRODUCTVERSION\s+)\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+',
-        (Escape-RegexReplacement ('${1}' + $rcCommaVersion))
+        'PRODUCTVERSION\s+\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+',
+        "PRODUCTVERSION $rcCommaVersion"
     )
     $rcUpdated = [regex]::Replace(
         $rcUpdated,
-        '(VALUE\s+"FileVersion",\s+)"[0-9.]+"',
-        (Escape-RegexReplacement ('${1}"' + $rcDotVersion + '"'))
+        'VALUE\s+"FileVersion",\s+"[0-9.]+"',
+        ('VALUE "FileVersion",      "' + $rcDotVersion + '"')
     )
     $rcUpdated = [regex]::Replace(
         $rcUpdated,
-        '(VALUE\s+"ProductVersion",\s+)"[0-9.]+"',
-        (Escape-RegexReplacement ('${1}"' + $rcDotVersion + '"'))
+        'VALUE\s+"ProductVersion",\s+"[0-9.]+"',
+        ('VALUE "ProductVersion",   "' + $rcDotVersion + '"')
     )
     if ($rcUpdated -ne $rcRaw) {
         $rcChanges[$rcPath] = $rcUpdated

@@ -37,16 +37,23 @@ Click **Apply Host Settings** to persist. The shell calls `POST /api/config` aga
 
 ### 2. Browser dashboard (PHASE-09 Settings link is a future item — for now use the WinUI shell or the API directly)
 
-You can hit the admin API yourself:
+You can hit the admin API yourself. **`POST /api/config` is a full-document replace** — fetch first, mutate, and re-send:
 
 ```powershell
 # Read current config
-Invoke-RestMethod http://localhost:7300/api/config | ConvertTo-Json -Depth 6
+$cfg = Invoke-RestMethod http://localhost:7300/api/config
 
-# Write a single field
-$body = @{ instanceName = 'mcos-eng-lab-1' } | ConvertTo-Json
-Invoke-RestMethod -Method POST -Uri http://localhost:7300/api/config -Body $body -ContentType 'application/json'
+# Mutate one or more fields
+$cfg.instanceName = 'mcos-eng-lab-1'
+$cfg.activeProfile.preferredBindAddress = '192.168.1.7'   # see "Advertised IP" below
+
+# Send the whole document back
+Invoke-RestMethod -Method POST -Uri http://localhost:7300/api/config `
+  -Body ($cfg | ConvertTo-Json -Depth 12 -Compress) `
+  -ContentType 'application/json'
 ```
+
+Sending a partial document (e.g., `@{ instanceName = '...' }`) drops every other field on the floor. Always fetch-mutate-send.
 
 ### 3. Direct file edit (for fields the UI does not expose)
 
@@ -85,6 +92,45 @@ The defaults come from `buildDefaultConfiguration()` in `src/MasterControlApp/Ma
 | `browserPort` | `7300` | Change if 7300 conflicts. Operator dashboard + admin API live here. |
 | `beaconPort` | `7301` | Change if 7301 conflicts. Legacy UDP discovery beacon. |
 | `beaconEnabled` | `true` | Disable if your LAN has many hosts and the beacon broadcast is noisy. DNS-SD is independent and stays on. |
+
+### `activeProfile` — Advertised IP / host identity
+
+`activeProfile` is the operator-controllable identity layer. It is auto-populated on first run from `detectLocalEnvironment()` (host name, OS string, default MAC, primary IPv4) and seeded with the default endpoints. Two of its fields are commonly tuned:
+
+```json
+"activeProfile": {
+  "environmentName": "PC-GAMING-R7-58 - Windows 10 Pro 25H2 (build 26200)",
+  "macAddress": "9C:6B:00:13:77:83",
+  "preferredBindAddress": "",
+  "seededEndpoints": [ ... ]
+}
+```
+
+| Field | When to change |
+|---|---|
+| `preferredBindAddress` | Set to a specific LAN IPv4 (e.g., `192.168.1.7`) when MCOS is on a dual-stack host and the runtime's auto-pick surfaces an IPv6 ULA in `/api/discovery`. The discovery doc, `/.well-known/mcos.json`, and the DNS-SD records (`_mcos._tcp.local`, `_mcos-mcp._tcp.local`, `_mcos-onboarding._tcp.local`) all advertise this IP **as the primary source** — only falling back to `snapshot.primaryIpAddress` (auto-detect) → `bindAddress` → `127.0.0.1` if it is empty. **(v0.6.4+ behaviour.)** |
+| `environmentName` | Human-readable host description shown in the dashboard environment narrative. |
+| `macAddress` | Auto-detected; safe to leave alone. |
+| `seededEndpoints[].host` | If you change `preferredBindAddress`, also rewrite each seeded endpoint's `host` field so the dashboard's seeded-endpoint surface reports the same IP. The runtime does not re-seed these on a config write. |
+
+**Recipe — set the advertised IP in one shot:**
+
+```powershell
+$cfg = Invoke-RestMethod http://localhost:7300/api/config
+$old = '<auto-detected IPv6 ULA from your machine>'
+$new = '192.168.1.7'
+
+$cfg.activeProfile.preferredBindAddress = $new
+foreach ($ep in $cfg.activeProfile.seededEndpoints) {
+  if ($ep.host -eq $old) { $ep.host = $new }
+}
+
+Invoke-RestMethod -Method POST -Uri http://localhost:7300/api/config `
+  -Body ($cfg | ConvertTo-Json -Depth 14 -Compress) `
+  -ContentType 'application/json'
+```
+
+After the POST, re-read `/api/discovery` and `/.well-known/mcos.json` — `serverIpAddress` and every URL inside should reflect the new IP immediately.
 
 ### `mcpGateway`
 

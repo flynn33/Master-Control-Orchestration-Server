@@ -1,11 +1,23 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.6.3",
-  "current_tag": "v0.6.3",
-  "released_at": "2026-05-03",
+  "current_version": "0.6.4",
+  "current_tag": "v0.6.4",
+  "released_at": "2026-05-04",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.6.4",
+      "tag": "v0.6.4",
+      "released_at": "2026-05-04",
+      "commit": "pending",
+      "summary": "Operator-set IP wins. Both the discovery document (/.well-known/mcos.json + /api/discovery) and the Win32 DNS-SD registration now consult activeProfile.preferredBindAddress before falling back to auto-detected primaryIpAddress. Without this, on dual-stack Windows hosts the runtime's GetAdaptersAddresses(AF_UNSPEC) enumeration often surfaced the IPv6 ULA first, and LAN clients saw an unreachable IPv6 address (or one their stack didn't route to) instead of the IPv4 LAN address the operator pinned in mcos.json.",
+      "entries": [
+        "fix(discovery): DiscoveryService::currentDocument honors activeProfile.preferredBindAddress as the highest-precedence source for serverIpAddress + every URL it builds (gateway, onboarding, governance). Auto-detected primaryIpAddress is now a fallback, not the default.",
+        "fix(dns-sd): the DnsServiceRegister site that publishes _mcos._tcp.local + _mcos-mcp._tcp.local + _mcos-onboarding._tcp.local applies the same precedence chain so DNS-SD advertises the operator-chosen IP.",
+        "docs(version): bump 0.6.3 -> 0.6.4 (advertise-IP correctness)"
+      ]
+    },
     {
       "version": "0.6.3",
       "tag": "v0.6.3",

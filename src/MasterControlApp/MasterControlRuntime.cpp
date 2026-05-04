@@ -7157,7 +7157,21 @@ public:
         const auto configuration = configurationService_->current();
         const auto snapshot = telemetryService_->captureSnapshot();
 
-        std::string lanIp = snapshot.primaryIpAddress;
+        // Operator override takes precedence over auto-detected
+        // primaryIpAddress so the discovery doc advertises the LAN IP
+        // the operator chose, not whatever interface the
+        // GetAdaptersAddresses enumeration happened to surface first
+        // (which on dual-stack hosts is often the IPv6 ULA, not the
+        // IPv4 LAN address clients expect).
+        std::string lanIp;
+        const std::string& preferred =
+            configuration.activeProfile.preferredBindAddress;
+        if (!preferred.empty() && preferred != "0.0.0.0") {
+            lanIp = preferred;
+        }
+        if (lanIp.empty() || lanIp == "0.0.0.0") {
+            lanIp = snapshot.primaryIpAddress;
+        }
         if (lanIp.empty() || lanIp == "0.0.0.0") {
             lanIp = configuration.bindAddress;
         }
@@ -7314,7 +7328,19 @@ private:
         const auto instanceName = wideFromUtf8(registration.instanceLabel + "." + registration.serviceType);
         const auto hostName = wideFromUtf8(dotLocalHostName(snapshot.hostName));
 
-        std::string lanIp = snapshot.primaryIpAddress;
+        // Same precedence as DiscoveryService::currentDocument: operator
+        // override wins over auto-detection, so DNS-SD advertises the
+        // LAN IP the operator chose rather than the auto-picked
+        // (often IPv6 ULA) interface.
+        std::string lanIp;
+        const std::string& preferred =
+            configuration.activeProfile.preferredBindAddress;
+        if (!preferred.empty() && preferred != "0.0.0.0") {
+            lanIp = preferred;
+        }
+        if (lanIp.empty() || lanIp == "0.0.0.0") {
+            lanIp = snapshot.primaryIpAddress;
+        }
         if (lanIp.empty() || lanIp == "0.0.0.0") {
             lanIp = configuration.bindAddress;
         }

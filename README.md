@@ -1,7 +1,7 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.6.3-00f6ff?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--05--03-031018?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.6.4-00f6ff?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--05--04-031018?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%E2%80%A2%20Server%202022-0a1018?style=flat-square)
 ![toolchain](https://img.shields.io/badge/toolchain-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20CMake-00aacc?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
@@ -80,7 +80,11 @@ Multiple AI coding clients on the same trusted LAN need to share an MCP server a
 
 ---
 
-## v0.6.3 — what's new
+## v0.6.4 — what's new
+
+**Operator-set IP wins.** The discovery doc (`/.well-known/mcos.json`, `/api/discovery`) and DNS-SD registration now treat `activeProfile.preferredBindAddress` as the primary source for the advertised LAN IP. On dual-stack Windows hosts the runtime's interface auto-pick used to surface the IPv6 ULA first; LAN clients then saw an IPv6 address their stack didn't route to. Setting `preferredBindAddress` (e.g. `192.168.1.7`) via `POST /api/config` now propagates immediately to every advertised URL and to the DNS-SD records.
+
+## v0.6.3 — what shipped
 
 **Claude Code Control is now a real toggle switch on the Overview deck of both GUI surfaces.**
 - **Browser dashboard** → Overview → **Claude Code Control** card → CSS toggle switch backed by an accessible `<input type="checkbox">`.
@@ -144,7 +148,7 @@ ctest --test-dir build/release -C Release --output-on-failure --timeout 300
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release -SkipBuild
 
 # 2. Install (interactive UI)
-msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.6.3-win-x64\MasterControlOrchestrationServer-v0.6.3-win-x64.msi"
+msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.6.4-win-x64\MasterControlOrchestrationServer-v0.6.4-win-x64.msi"
 
 # 3. Verify (after install)
 & "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output
