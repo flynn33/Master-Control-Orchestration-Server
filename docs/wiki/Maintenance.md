@@ -13,7 +13,7 @@ The MSI handles upgrades cleanly via WiX `MajorUpgrade` — installing a new MSI
 ### From a release MSI
 ```powershell
 # 1. Stop the service so the upgrade does not collide with running children
-Stop-Service MasterControlOrchestrationServer
+Stop-Service MasterControlProgram
 
 # 2. Run the new MSI (interactive)
 msiexec /i "<path>\MasterControlOrchestrationServer-vX.Y.Z-win-x64.msi"
@@ -22,7 +22,7 @@ msiexec /i "<path>\MasterControlOrchestrationServer-vX.Y.Z-win-x64.msi"
 msiexec /i "<...>.msi" /qn /l*v "$env:TEMP\mcos-upgrade-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
 
 # 3. Confirm it came up
-Get-Service MasterControlOrchestrationServer | Format-Table -AutoSize
+Get-Service MasterControlProgram | Format-Table -AutoSize
 & "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output
 ```
 
@@ -115,9 +115,9 @@ Write-Host "Archive: $dest.zip"
 Stop the service, copy the backup files back into `%ProgramData%\Master Control Orchestration Server\`, restart the service.
 
 ```powershell
-Stop-Service MasterControlOrchestrationServer
+Stop-Service MasterControlProgram
 Copy-Item -Recurse -Force "$dest\*" "$env:ProgramData\Master Control Orchestration Server\"
-Start-Service MasterControlOrchestrationServer
+Start-Service MasterControlProgram
 ```
 
 ---
@@ -189,7 +189,7 @@ Remove-Item -Recurse -Force "$env:ProgramData\Master Control Orchestration Serve
 Get-NetFirewallRule -DisplayName 'MCOS *' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 
 # Confirm
-Get-Service MasterControlOrchestrationServer -ErrorAction SilentlyContinue
+Get-Service MasterControlProgram -ErrorAction SilentlyContinue
 ```
 
 After a clean uninstall, the host has no MCOS state at all. Re-installing from the MSI gives a fresh `mcos.json` with default values.
@@ -219,13 +219,13 @@ After step 8, AI clients on the LAN need to re-discover the new host. DNS-SD typ
 ## Reset to factory defaults
 
 ```powershell
-Stop-Service MasterControlOrchestrationServer
+Stop-Service MasterControlProgram
 
 # Delete operator config (keep runtime/ for diagnostic history)
 Remove-Item "$env:ProgramData\Master Control Orchestration Server\mcos.json" -Force -ErrorAction SilentlyContinue
 
 # Restart — MCOS regenerates mcos.json with default values from buildDefaultConfiguration
-Start-Service MasterControlOrchestrationServer
+Start-Service MasterControlProgram
 
 & "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output
 ```

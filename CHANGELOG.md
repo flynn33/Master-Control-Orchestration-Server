@@ -6,6 +6,167 @@ The release-management and doc-sync GitHub agents that previously generated part
 
 ## [Unreleased]
 
+### PHASE-13 visual polish (scheduled for v0.7.x point releases)
+
+PHASE-13 (Win2D / Direct2D rendering for high-frequency visual surfaces in the WinUI shell) is the only phase that landed as a *plan file* in v0.6.8 without an implementation. Plan covers four surfaces: per-instance telemetry charts at 60Hz via `CanvasControl`, procedural Tron grid backdrop as an HLSL fragment, activity stream as a scrolling `SwapChainPanel`, animated saturation rings. Lands one surface at a time across v0.7.x; first-cut candidate is the saturation rings (smallest scope, single XAML primitive). Scope file: `handoff/realignment/PHASE-13-direct2d-shell-rendering.md`.
+
+## [0.7.0] - 2026-05-05
+
+### Production milestone — architecture complete
+
+The 0.7.0 minor bump under the manifest's `minor-on-architecture-change` policy marks the architectural-completion line. Every numbered phase from PHASE-00 (repository baseline + ADR lock) through PHASE-12 follow-up (native HTTP.sys gateway with end-to-end stdio bridge to supervised pool children, shipped in v0.6.10) is delivered, validated, and shipping. PHASE-12 follow-up was the last architectural change; from here the work is iteration on top of the locked architecture.
+
+#### Verified at this milestone
+
+- Both gateway substrates ship and are operator-selectable via `mcpGateway.type`. `mcpjungle` supervises an external MCPJungle binary (Job Object child); `native` binds Windows-native HTTP.sys directly inside `MasterControlServiceHost.exe` with the v0.6.10 stdio bridge forwarding `tools/list` and `tools/call` to supervised pool children. Both satisfy `IMcpGateway` exactly.
+- Bootstrapper `install` action runs `netsh http add urlacl url=http://+:8080/ user=Everyone` so console-mode operators bind the native gateway port without `ERROR_ACCESS_DENIED`. `uninstall` reverses it best-effort.
+- All four CTest suites (`ForsettiCoreTests`, `ForsettiPlatformTests`, `ForsettiArchitectureTests`, `MasterControlOrchestrationServerTests`) pass green at the 0.7.0 commit.
+- End-to-end host smoke-test: MSI installs cleanly, service starts, native gateway binds and responds to MCP `initialize` with `serverInfo.version=0.7.0`, `tools/list` returns honest empty array (no pools registered), URL ACL confirmed via `netsh http show urlacl`.
+
+#### Documentation
+
+- `VERSION.json` history entry summarizes the architectural-completion milestone and explicitly defers PHASE-13 visual polish to v0.7.x point releases.
+- `README.md` rewritten: stale per-version sections (v0.6.0..v0.6.4) replaced with v0.7.0 milestone block, mermaid diagram updated to show both substrates, broken `Architecture-Decisions/` and `Operations/` wiki paths corrected to flat `docs/wiki/`.
+- Wiki refresh: `Home.md`, `Versions.md`, `Architecture.md`, `Gateway.md`, `Quick-Start.md`, and `ADR-003-mcp-gateway-substrate-decision.md` all updated for v0.7.0 reality. ADR-003 receives a "Status update" section explaining that PHASE-12 was authored and shipped voluntarily (operator-experience trigger #4) and the native substrate is now an operator-selectable peer of the supervised MCPJungle path.
+
+#### Notes
+
+- Same-version VERSIONINFO behavior: when reinstalling the same v0.7.0 MSI on top of itself, default Windows Installer file-replacement rules treat the binaries as already-current. Use `msiexec /i <msi> REINSTALL=ALL REINSTALLMODE=amus` to force replacement.
+- v0.7.0 carries no new schemas, no new client contracts, no new ADRs beyond ADR-003's status update. The `IMcpGateway` interface, `McpServerRegistration`, `EndpointInstance`, `LeaseRequest`/`EndpointLease`, and the discovery document shape are unchanged.
+
+## [0.6.10] - 2026-05-05
+
+### PHASE-12 follow-up complete — stdio bridge, real tools/list aggregation, real tools/call forwarding, URL ACL
+
+#### Added
+
+- **`IWorkerSupervisor::sendStdioJsonRpc(instanceId, request, timeoutMs=30000)`** — synchronous JSON-RPC over a supervised child's stdin/stdout. Per-instance `std::unique_ptr<std::mutex>` (heap-allocated to keep `ChildProcess` movable inside `std::map`) serializes concurrent calls to the same instance; different instances run in parallel. The supervisor mutex is held only briefly to look up the child + grab pipe handles, then released before any blocking I/O so other supervisor traffic (telemetry sampling, lease accounting) is not throttled.
+- **Polling read loop** uses `PeekNamedPipe` to test for available bytes without blocking, `ReadFile` drains in 4 KB chunks, accumulates partial lines in `stdioReadBuffer`, scans for `\n` delimiters, parses each line, matches by JSON-RPC `id`. Deadline-based timeout via `std::chrono::steady_clock` + 25 ms poll interval.
+- **`WorkerSupervisor::startInstanceLocked` pipe wiring** — two anonymous pipes via `CreatePipe`, child-side ends marked inheritable via `SECURITY_ATTRIBUTES`, parent-side inheritance cleared via `SetHandleInformation`, `STARTF_USESTDHANDLES` set on `STARTUPINFOW` with `hStdInput`/`hStdOutput`/`hStdError` (stderr merged into stdout), `CreateProcessW` called with `bInheritHandles=TRUE`, child-side ends closed in parent immediately after spawn so EOF detection works correctly. If pipe creation fails, the child still spawns and `tools/call` returns an honest -32603 "stdio bridge unavailable on this instance" rather than hanging.
+- **`NativeHttpSysGatewayAdapter::AttachWorkerBridge(supervisor, leaseRouter)`** — late-bind hook so the adapter constructs early (before supervisor exists) and gains the bridge once the runtime has built the worker tier. Avoids a construction-order rewrite.
+- **`refreshToolCatalogLocked()`** — walks every pool's first Ready instance via the bridge, sends `tools/list` JSON-RPC with a 5 s timeout, parses `.result.tools`, tags each tool with `serverName=poolId`, rebuilds `toolCatalogCache_`. Children that don't respond contribute zero tools (ADR-002 §9: no fabrication).
+- **Native `tools/list`** — returns the merged catalog with each tool advertised as `{poolId}__{toolName}` so AI clients have unambiguous routing across overlapping local tool names.
+- **Native `tools/call`** — resolves `params.name` against the cached catalog (exact qualified `{pool}__{tool}` match wins; otherwise unique unprefixed match wins; collision returns -32602; not-found returns -32601 after one cache refresh). Acquires a lease via `LeaseRouter::acquireLease`, forwards the envelope to `lease.instanceId` via the bridge with the request id rewritten (so concurrent gateway requests don't collide on the supervisor correlator) and `params.name` unprefixed (so the child sees its own local name). Response id is re-stamped back to the LAN client's original id before return.
+- **`configureUrlAcl()` + `removeUrlAcl()`** in the bootstrapper — install action runs `netsh http delete urlacl url=http://+:<port>/` (idempotent cleanup) followed by `netsh http add urlacl url=http://+:<port>/ user=Everyone`. Failure is logged but does NOT abort the install (LocalSystem service-mode does not require the ACL). Uninstall reverses the reservation best-effort.
+
+#### Fixed
+
+- **HTTP.sys body extraction** — `serveLoop` now drains via `HttpReceiveRequestEntityBody` after `HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY` for clients that don't inline the body (PowerShell `Invoke-RestMethod` with `Expect:100-continue`, chunked transfer-encoding). Through v0.6.9 the path missed bodies and the handler returned "Invalid Request: missing method" because `body.empty()` parsed as `{}`.
+- **`nlohmann::json{nullptr}` → null scalar** — replaced the brace-init-list construction (which produced `[null]`, an array containing one null element) with explicit `nlohmann::json id; if (req.contains("id")) id = req["id"];` so JSON-RPC error envelopes carry the actual null scalar in the `id` field.
+
+#### Notes
+
+- End-to-end smoke-test on the host: MSI installs cleanly, native gateway binds, MCP `initialize` returns `serverInfo.version=0.6.10`, URL ACL confirmed via `netsh`.
+- The supervisor mutex is intentionally NOT held during the blocking read in `sendStdioJsonRpc`. Per-instance mutex is the only lock held during the polling loop, so other supervisor traffic continues at full speed.
+- `ChildProcess` is movable because `stdioMutex` is `std::unique_ptr<std::mutex>` (mutex itself is not movable) and `nextRequestId` is a plain `uint64_t` (only mutated under `stdioMutex`, no atomic needed).
+
+## [0.6.9] - 2026-05-05
+
+### PHASE-12 MVP — Windows-native HTTP.sys MCP gateway
+
+#### Added
+
+- **`NativeHttpSysGatewayAdapter`** alongside `McpJungleGatewayAdapter` and `FakeMcpGatewayAdapter`. Implements `IMcpGateway` exactly — PHASE-03 through PHASE-11 surfaces don't see the substrate change.
+- **HTTP.sys lifecycle** — `HttpInitialize` / `HttpCreateServerSession` / `HttpCreateUrlGroup` / `HttpAddUrlToUrlGroup` with `http://+:PORT/` prefix / `HttpCreateRequestQueue` / `HttpSetUrlGroupProperty(BindingProperty)`. Teardown reverses cleanly. `ERROR_ACCESS_DENIED` on `HttpAddUrlToUrlGroup` surfaces with operator guidance ("Run as service or `netsh http add urlacl url=http://+:8080/ user=Everyone`").
+- **MCP Streamable-HTTP request loop** — `HttpReceiveHttpRequest` with `HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY` pulls body inline up to 16 KB; `ERROR_MORE_DATA` grows the buffer; `ERROR_OPERATION_ABORTED` breaks the loop on shutdown. Routes `/health` to a structured adapter-state JSON, `/mcp[/{poolId}]` to `handleMcpRequest`, everything else to a 404 with structured-JSON error.
+- **MCP protocol surface** — `initialize` returns `serverInfo` + tools-capability advertisement; `tools/list` aggregates registered `McpServerRegistration` tools (returns empty array in MVP, full aggregation lands in v0.6.10); `tools/call` returns -32601 with explicit pointer at v0.6.10 stdio bridge.
+- **Adapter selection at construction time** based on `mcpGateway.type`. `GatewayType::Native` → `NativeHttpSysGatewayAdapter`, `GatewayType::MCPJungle` (default) → `McpJungleGatewayAdapter`. Operators switch substrates by POSTing to `/api/config` and restarting the service.
+
+#### Build
+
+- `MasterControlApp` links `httpapi.lib` for HTTP.sys + `http.h` header. The `winsock2.h` / `windows.h` ordering correction from v0.6.7 still holds.
+
+## [0.6.8] - 2026-05-05
+
+### Pool persistence + per-instance telemetry charts + telemetry events ring + PHASE-12/13 plans
+
+#### Added
+
+- **Pool persistence across service restart and MSI MajorUpgrade.** `AppConfiguration` gains a `pools` field (NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT) mirroring `WorkerSupervisor::pools_` to disk. The runtime hydrates at boot via `workerSupervisor_->upsertPool(...)` for each persisted pool. Through v0.6.7 the operator lost their pools every restart.
+- **Per-instance browser sparkline charts** on the Pools deck. `paintInstanceSparklines()` walks every `.instance-spark` canvas and draws CPU% (cyan accent, 0-100 fixed range) and Memory MB (cyan-blue, dynamic range). `state.instanceHistory[instanceId]` keeps a 60-sample ring per instance (~2 minutes at the 2 s polling cadence). Browser GPU-composites the canvas automatically.
+- **Telemetry events ring producer wired** — `/api/pools` route handlers (POST `/api/pools`, `/scale`, `/drain`, `/remove`, lease acquire) emit structured `TelemetryEvent` records into the `telemetryAggregator_` on success. Through v0.6.7 the events ring stayed empty because no producer was wired.
+- **Configuration narrative now surfaces `activeProfile.preferredBindAddress`** so operators can confirm what LAN clients see in `/api/discovery` and `/.well-known/mcos.json`.
+- **PHASE-12 plan file** (`handoff/realignment/PHASE-12-native-http-sys-gateway.md`) and **PHASE-13 plan file** (`handoff/realignment/PHASE-13-direct2d-shell-rendering.md`).
+
+#### Fixed
+
+- `/api/telemetry/events` returns the `{events, maxEvents}` envelope the dashboard JavaScript reads; through v0.6.7 it returned a raw array and `state.telemetryEvents.events` was undefined. Also: `?max=N` query parsing was missing entirely; the route only matched the bare path. Both fixed.
+
+## [0.6.7] - 2026-05-05
+
+### Honest-503 listener — gateway port stops returning TCP RST
+
+#### Added
+
+- **`McpJungleGatewayAdapter` honest-503 listener**. When the adapter is in `Disabled` or supervised-mock mode (no MCPJungle binary configured, the default state), the adapter binds the configured listen port (default 8080) with a tiny accept loop that returns a structured HTTP 503 "Service Unavailable" JSON to every request. LAN AI clients pointing at the advertised gateway URL get a useful error with operator guidance instead of connection refused.
+- **Lifecycle** — listener releases the port the moment a real MCPJungle binary is about to be spawned, and re-binds it after `Stop()` so the gateway port stays answerable across the entire adapter lifecycle. Replaced wholesale by PHASE-12's native HTTP.sys gateway when active.
+
+#### Fixed
+
+- **`winsock2.h` / `windows.h` include ordering** — defined `WIN32_LEAN_AND_MEAN` and put `winsock2.h` before `windows.h` in both header and TU, fixing `error C2011: 'sockaddr': 'struct' type redefinition` from the legacy winsock1 transitive include.
+
+## [0.6.5] - [0.6.6] - 2026-05-04
+
+### Per-instance CPU/RAM telemetry, MSI uninstall stale-shortcut fix, settings Apply gate fix
+
+#### Added
+
+- **Per-instance CPU and RAM telemetry sampling.** `WorkerSupervisor::sampleProcessLoadLocked` reads `GetProcessTimes` (FILETIME deltas for kernel + user) and `GetProcessMemoryInfo` (working set MB) per supervised child. First sample establishes a baseline and reports 0% CPU; subsequent samples produce real percentages computed from the delta divided by host logical CPU count, clamped to [0, 100] for transient spikes from sampler skew.
+
+#### Fixed
+
+- **MSI uninstall Error 1309** (system error 5 ACCESS_DENIED reading `Master Control Orchestration Server.lnk`). Cause: Explorer / Search Indexer holds an open handle on the .lnk during MajorUpgrade checksum read. Fix: `<RemoveFile On="install">` deletes the stale .lnk before the MSI tries to checksum it; `<util:CloseApplication>` integrates with Restart Manager.
+- **Settings Apply button non-pushable.** `MainWindow.xaml.cpp:1179` `attachInteractiveRuntime` call site didn't include `kSettingsView` and `kOverviewView` in the gate. Fixed.
+
+## [0.6.4] - 2026-05-03
+
+### Operator-set advertised IP — `preferredBindAddress` propagates everywhere
+
+#### Added
+
+- **`activeProfile.preferredBindAddress` is now the primary source for the advertised LAN IP.** The discovery doc (`/.well-known/mcos.json`, `/api/discovery`) and DNS-SD registration treat it as the canonical advertised address. On dual-stack Windows hosts the runtime's interface auto-pick used to surface the IPv6 ULA first; LAN clients then saw an IPv6 address their stack didn't route to. Setting `preferredBindAddress` (e.g. `192.168.1.7`) via `POST /api/config` now propagates immediately to every advertised URL and to the DNS-SD records.
+
+## [0.6.1] - [0.6.3] - 2026-05-02
+
+### Claude Code Control toggle — Overview deck of both GUI surfaces
+
+#### Added
+
+- **Browser dashboard** — Overview → Claude Code Control card → CSS toggle switch backed by an accessible `<input type="checkbox">`.
+- **WinUI desktop shell** — Overview → Claude Code Control card → native `ToggleSwitch` with `OnContent="Connected"` / `OffContent="Disconnected"`.
+- Both refresh on load and on every snapshot tick, both stay interactive even when the runtime would refuse, and both call the same `/api/claude-plugin/{status,toggle}` routes. Click Connect from either surface and the runtime drops `%USERPROFILE%\.claude\plugins\mcos-control` as a directory junction onto the install directory's bundled plugin source — no admin prompt, no execution-policy gymnastics.
+
+#### Fixed
+
+- **Console-mode `WTSQueryUserToken` errno 1008**. The active-user resolver is now hosting-mode aware: if the runtime process already has a non-SYSTEM `USERPROFILE` (i.e. console mode), use it directly; only fall through to `WTSGetActiveConsoleSessionId` + `WTSQueryUserToken` when the env var resolves to the SYSTEM profile (the Windows service path).
+
+## [0.6.0] - 2026-05-01
+
+### Gateway-first MCP realignment — PHASE-00 through PHASE-11
+
+The realignment program declared in ADR-002 lands in twelve named phases. The product becomes a **Windows-native LAN MCP Gateway host**: external AI coding clients (Claude Code, Codex, Grok, ChatGPT, generic MCP) discover MCOS via DNS-SD, consume server-generated onboarding profiles and CLU/Forsetti governance bundles, and operate against supervised MCP server and sub-agent worker pools. MCOS owns discovery, governance, telemetry, worker supervision, autoscaling, dashboarding, and Windows packaging.
+
+#### Added
+
+- **PHASE-00** — `ADR-002` (gateway-first realignment), drift inventory, removal map, `FORBIDDEN-CONTRACT-GREP-LIST.md` with eight contract groups.
+- **PHASE-01** — provider-era residual cleanup. `ExternalClient` model replaces `Provider*`; deletion/quarantine of execution routes; tests updated.
+- **PHASE-02** — `IMcpGateway` interface, `McpJungleGatewayAdapter` (supervised external binary), `FakeMcpGatewayAdapter` (test). Supervised-mock fallback when no binary is configured (honest "configured, not running" state per ADR-002 §9).
+- **PHASE-03** — DNS-SD / mDNS LAN discovery via Win32 `DnsServiceRegister`. Three Bonjour service types (`_mcos._tcp.local`, `_mcos-mcp._tcp.local`, `_mcos-onboarding._tcp.local`) plus the legacy beacon, all carrying the canonical `DiscoveryDocument`. `/.well-known/mcos.json`, `/api/discovery`.
+- **PHASE-04** — onboarding profile service. Per-client-type profiles (`claude-code`, `codex`, `grok`, `chatgpt`, `generic-mcp`) at `/api/onboarding/{clientType}`. Manual setup is first-class.
+- **PHASE-05** — governance bundle service. Per-platform bundles (`windows`, `macos`, `ios`) at `/api/governance/bundles/{platform}` with sha256 checksums. Forsetti version + agentic coding version stamped in.
+- **PHASE-06** — managed worker pools. `EndpointTemplate`/`Instance`/`Pool`, `WorkerSupervisor` with 7-state lifecycle, Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) containment of supervised process trees.
+- **PHASE-07** — lease router with sticky-session + autoscaling. Four-step selection: sticky → least-loaded → scale-out → fail honestly. No hot-migration of stateful streams.
+- **PHASE-08** — telemetry aggregator with `-1.0` honest-unavailable sentinel. Events ring (1024 cap), client presence roster, gateway traffic snapshot. Activity event taxonomy.
+- **PHASE-09** — Tron dashboard realigned to gateway-first. Eleven destinations covering every layer; `formatMetric()` honesty helper enforced by FORBIDDEN-CONTRACT §8.1.
+- **PHASE-10** — Windows release gate closed. vswhere-driven toolchain, version-stamping before configure, no `workflow_dispatch` bypass on the gating workflows, MSI rebuilt clean.
+- **PHASE-11** — native gateway evaluation memo + `ADR-003` recording the decision to keep MCPJungle for the v0.6.x line and defer a native HTTP.sys gateway to a conditional future PHASE-12 with five named operational triggers.
+
+#### Notes
+
+- ADR-001's LAN client identity model (v0.5.0) is preserved as the operator surface that coexists with the AI-client gateway surface. Network firewall scoping (`Profile=Private,Domain`) is the load-bearing trust control on both surfaces.
+
+## [Unreleased — superseded by v0.6.0+ above]
+
 ### Documentation overhaul + automation retirement (post-v0.5.0)
 
 A comprehensive rebuild of the wiki and a clean-out of the repository agents that previously regenerated documentation on every push. The change is documentation-only — no source, no schema, no route surface modified. Targets the next minor release.

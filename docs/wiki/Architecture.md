@@ -2,12 +2,12 @@
 
 ![governing](https://img.shields.io/badge/governing-ADR--002-5a00e8?style=flat-square)
 ![layer](https://img.shields.io/badge/layer-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20vanilla%20JS-00f6ff?style=flat-square)
-![phases](https://img.shields.io/badge/realignment-12%2F12%20phases-00aacc?style=flat-square)
-![modules](https://img.shields.io/badge/Forsetti%20modules-16-1cf2c1?style=flat-square)
+![phases](https://img.shields.io/badge/architecture-PHASE--00..PHASE--12-00aacc?style=flat-square)
+![substrates](https://img.shields.io/badge/gateway%20substrates-mcpjungle%20%2B%20native-1cf2c1?style=flat-square)
 
 Canonical map of how MCOS is structured. When in doubt, the source files referenced here are ground truth — every assertion on this page points to a real header, route, or test.
 
-The architecture target is the **gateway-first MCP host** declared in [ADR-002](ADR-002-gateway-first-mcp-realignment) and locked at the substrate level by [ADR-003](ADR-003-mcp-gateway-substrate-decision). The original [ADR-001 LAN client identity model](ADR-001-lan-client-control-plane) survives as the operator surface that coexists with the AI-client gateway surface.
+The architecture target is the **gateway-first MCP host** declared in [ADR-002](ADR-002-gateway-first-mcp-realignment) and the substrate question is decided by [ADR-003](ADR-003-mcp-gateway-substrate-decision) (status-updated 2026-05-05: both supervised MCPJungle and Windows-native HTTP.sys now ship and are operator-selectable). The original [ADR-001 LAN client identity model](ADR-001-lan-client-control-plane) survives as the operator surface that coexists with the AI-client gateway surface. v0.7.0 marks the architecture-complete milestone — every numbered phase from PHASE-00 (repo baseline + ADR lock) through PHASE-12 follow-up (native gateway with stdio bridge to supervised pool children, v0.6.10) is delivered. PHASE-13 visual polish is scheduled for v0.7.x point releases.
 
 ---
 
@@ -76,15 +76,15 @@ flowchart TB
         Beacon[BeaconService<br/>UDP discovery doc broadcast]:::accent
         Onboard[OnboardingProfileService]:::accent
         Gov[GovernanceBundleService]:::accent
-        Sup[WorkerSupervisor<br/>Job Object containment]:::accent
+        Sup[WorkerSupervisor<br/>Job Object + stdio bridge]:::accent
         Lease[LeaseRouter<br/>sticky / least-loaded]:::accent
         Tel[TelemetryAggregator]:::accent
-        Adapter[(McpJungleGatewayAdapter<br/>or future native gateway)]:::good
+        Adapter[(IMcpGateway:<br/>McpJungleGatewayAdapter OR<br/>NativeHttpSysGatewayAdapter)]:::good
         Pools[(Managed Endpoint Pools)]:::good
     end
 
-    subgraph External[External processes supervised under Job Objects]
-        Jungle[(MCPJungle binary<br/>operator-installed)]:::sub
+    subgraph External[Spawned processes under Job Object containment]
+        Jungle[(MCPJungle binary<br/>only when type=mcpjungle)]:::sub
         Workers[(MCP server / sub-agent<br/>backend instances)]:::sub
     end
 
@@ -105,8 +105,9 @@ flowchart TB
     Runtime --> Lease
     Runtime --> Tel
     Runtime --> Adapter
-    Adapter ==>|"supervises"| Jungle
-    Sup ==>|"spawns + supervises"| Workers
+    Adapter ==>|"type=mcpjungle: supervises"| Jungle
+    Adapter ==>|"type=native: tools/call via stdio bridge"| Sup
+    Sup ==>|"spawns + supervises<br/>+ redirects stdin/stdout"| Workers
     Adapter -->|"registers logical pools"| Sup
     Lease -->|"route requests to"| Pools
     Sup -->|"manages"| Pools
@@ -121,14 +122,14 @@ ADR-002 §1 fixes the vocabulary. Use these terms exactly throughout the codebas
 
 | Term | Meaning | Lives in |
 |---|---|---|
-| **MCP Gateway** | The single MCOS-advertised MCP endpoint AI clients connect to | `IMcpGateway` / `McpJungleGatewayAdapter` |
+| **MCP Gateway** | The single MCOS-advertised MCP endpoint AI clients connect to | `IMcpGateway` / `McpJungleGatewayAdapter` / `NativeHttpSysGatewayAdapter` |
 | **LAN Discovery Service** | DNS-SD + UDP beacon advertising the gateway URL | `DiscoveryService` |
 | **Client Onboarding Profile** | Per-client-type config bundle MCOS hands out at first connect | `IOnboardingProfileService` + `/api/onboarding/{clientType}` |
 | **Governance Bundle** | Forsetti + agentic-coding instructions per platform | `IGovernanceBundleService` + `/api/governance/bundles/{platform}` |
 | **Managed Endpoint Pool** | A group of MCP-server or sub-agent instances under one supervisor | `ManagedEndpointPool` |
 | **Endpoint Instance** | A single supervised backend in a pool | `EndpointInstance` |
 | **Endpoint Lease** | One client-to-instance binding | `EndpointLease` |
-| **Worker Supervisor** | Spawns and reaps pool instances under Windows Job Objects | `WorkerSupervisor` |
+| **Worker Supervisor** | Spawns and reaps pool instances under Windows Job Objects; redirects child stdin/stdout for the v0.6.10 stdio bridge | `WorkerSupervisor` (`IWorkerSupervisor::sendStdioJsonRpc`) |
 | **Lease Router** | Selects an instance per request (sticky or least-loaded) | `LeaseRouter` |
 | **Telemetry Aggregator** | Events ring + client roster + gateway traffic snapshot | `TelemetryAggregator` |
 | **(IMcpGateway adapter)** | The replaceable C++ interface that abstracts the gateway substrate | `IMcpGateway` |
@@ -170,10 +171,10 @@ flowchart TB
       JobObj[Windows Job Objects]:::D
     end
 
-    subgraph L4[Layer 4 - External processes]
+    subgraph L4[Layer 4 - Spawned processes]
       direction LR
-      JungleBin[MCPJungle binary<br/>operator-installed]:::D
-      Backends[Backend MCP servers and sub-agents<br/>spawned by supervisor]:::D
+      JungleBin[MCPJungle binary<br/>only when mcpGateway.type=mcpjungle]:::D
+      Backends[Backend MCP servers and sub-agents<br/>spawned by supervisor with stdin/stdout pipes]:::D
     end
 
     L1 --> L2

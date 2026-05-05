@@ -1,8 +1,8 @@
 # Versions
 
 ![scheme](https://img.shields.io/badge/scheme-semver-00f6ff?style=flat-square)
-![current](https://img.shields.io/badge/current-v0.6.0-1cf2c1?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--05--01-031018?style=flat-square)
+![current](https://img.shields.io/badge/current-v0.7.0-1cf2c1?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--05--05-031018?style=flat-square)
 ![strategy](https://img.shields.io/badge/strategy-hand%20authored-5a00e8?style=flat-square)
 ![license](https://img.shields.io/badge/license-Proprietary-00aacc?style=flat-square)
 
@@ -16,18 +16,20 @@
 
 | Field | Value |
 | --- | --- |
-| **Version** | `v0.6.0` |
-| **Released** | `2026-05-01` |
-| **Theme** | Gateway-First MCP Realignment (ADR-002 / ADR-003) — PHASE-00..PHASE-11 complete |
-| **Tag** | [`v0.6.0`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.6.0) |
+| **Version** | `v0.7.0` |
+| **Released** | `2026-05-05` |
+| **Theme** | Production milestone — MCOS architecture complete (PHASE-00..PHASE-12 follow-up) |
+| **Tag** | [`v0.7.0`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.7.0) |
+| **Gateway substrates** | `mcpjungle` (supervised binary) **and** `native` (in-process HTTP.sys) — both ship; operator-selectable |
+| **Next** | PHASE-13 visual-polish surfaces (Win2D charts, procedural Tron HLSL backdrop, SwapChainPanel activity stream, animated saturation rings) — incremental v0.7.x point releases per the [PHASE-13 plan file](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/handoff/realignment/PHASE-13-direct2d-shell-rendering.md) |
 
-### What v0.6.0 ships
+### What v0.7.0 represents
 
-The realignment program in twelve named phases:
+Architectural-completion milestone under the manifest's `minor-on-architecture-change` policy. Every numbered phase from PHASE-00 (repository baseline + ADR lock) through PHASE-12 follow-up (native HTTP.sys gateway with end-to-end stdio bridge to supervised pool children, shipped in v0.6.10) is delivered, validated, and shipping. The 0.7.0 minor bump records the architectural-completion line: PHASE-12 follow-up was the last architectural change, and from here the work is iteration on top of the locked architecture.
 
 ```mermaid
 gantt
-    title MCOS Realignment (v0.5.0 → v0.6.0)
+    title MCOS Realignment (v0.5.0 → v0.7.0)
     dateFormat  YYYY-MM-DD
     axisFormat  %m-%d
 
@@ -52,20 +54,36 @@ gantt
     PHASE-09 Tron dashboard realignment    :done, p9, after p8, 1d
     PHASE-10 Windows hardening + CI + MSI  :done, p10, after p9, 1d
     PHASE-11 Native gateway evaluation     :done, p11, after p10, 1d
+
+    section Native gateway
+    PHASE-12 MVP NativeHttpSysGatewayAdapter :done, p12a, 2026-05-04, 1d
+    PHASE-12 follow-up stdio bridge        :done, p12b, after p12a, 1d
+    v0.7.0 production milestone            :milestone, m1, 2026-05-05, 0d
+
+    section Visual polish
+    PHASE-13 Win2D charts + Tron HLSL + SwapChainPanel :active, p13, after m1, 14d
 ```
 
-### Highlights
+### Highlights across v0.6.x → v0.7.0
 
-- **`IMcpGateway` + `McpJungleGatewayAdapter`** — the LAN MCP gateway is now a single advertised endpoint. Replaceable adapter; supervised-mock fallback when no binary configured (PHASE-02).
+- **`IMcpGateway` with three concrete adapters** — `McpJungleGatewayAdapter` (supervised external binary, the original v0.6.x substrate), `NativeHttpSysGatewayAdapter` (Windows-native HTTP.sys, in-process, no external binary), `FakeMcpGatewayAdapter` (test harness). Operators select via `mcpGateway.type`.
+- **Stdio bridge** (v0.6.10) — `IWorkerSupervisor::sendStdioJsonRpc(instanceId, request, timeoutMs)` writes a `\n`-terminated JSON-RPC envelope to a supervised child's stdin, polls stdout via `PeekNamedPipe` + deadline-based `ReadFile`, parses newline-delimited JSON, matches by `id`. Per-instance mutex serializes concurrent calls. Native gateway uses this to forward `tools/call` end-to-end.
 - **DNS-SD + UDP beacon advertising** — three Bonjour service types (`_mcos._tcp.local`, `_mcos-mcp._tcp.local`, `_mcos-onboarding._tcp.local`) plus the legacy beacon, all carrying the canonical `DiscoveryDocument` (PHASE-03).
 - **Per-client-type onboarding profiles** — `claude-code`, `codex`, `grok`, `chatgpt`, `generic-mcp`. Manual setup is first-class (PHASE-04).
 - **Per-platform governance bundles** — `windows`, `macos`, `ios`. sha256 checksums; Forsetti version + agentic coding version stamped in (PHASE-05).
-- **Managed Endpoint Pools + Worker Supervisor** — 7-state lifecycle, Job Object containment, supervised process trees (PHASE-06).
+- **Managed Endpoint Pools + Worker Supervisor** — 7-state lifecycle, Job Object containment, supervised process trees with redirected stdin/stdout (PHASE-06 + v0.6.10).
+- **Pool persistence** (v0.6.8) — pool definitions survive service restart and MSI MajorUpgrade. Through v0.6.7 the operator lost their pools every restart; `AppConfiguration` now mirrors `WorkerSupervisor::pools_` to disk and the runtime hydrates at boot.
 - **Lease Router with sticky-session + autoscaling** — four-step selection (sticky → least-loaded → scale-out → fail honestly). No hot-migration of stateful streams (PHASE-07).
+- **Per-instance CPU/RAM telemetry** (v0.6.5) — `GetProcessTimes` (FILETIME deltas) + `GetProcessMemoryInfo` (working set MB) sampled per supervised child; first sample establishes baseline, subsequent samples produce real percentages.
 - **Telemetry Aggregator with `-1.0` honest-unavailable sentinel** — events ring (1024 cap), client presence roster, gateway traffic snapshot (PHASE-08).
 - **Tron dashboard realigned to gateway-first** — eleven destinations covering every layer; `formatMetric()` honesty helper enforced by FORBIDDEN-CONTRACT §8.1 (PHASE-09).
+- **Per-instance browser sparkline charts** (v0.6.8) — Pools deck Canvas-rendered CPU% + RAM MB time-series, 60-sample ring per instance (~2 minutes at the 2 s polling cadence). Browser GPU-composites the canvas.
+- **Honest-503 listener** (v0.6.7) — gateway port returns structured JSON 503 instead of TCP RST when the supervised substrate has no binary configured. Replaced wholesale by the native HTTP.sys substrate when active.
+- **PHASE-12 MVP** (v0.6.9) — `NativeHttpSysGatewayAdapter` ships alongside `McpJungleGatewayAdapter`. Full HTTP.sys lifecycle (`HttpInitialize` → `HttpCreateServerSession` → `HttpCreateUrlGroup` → `HttpAddUrlToUrlGroup` → `HttpCreateRequestQueue` → `HttpSetUrlGroupProperty(BindingProperty)`); MCP `initialize` and `tools/list` end-to-end; `tools/call` returned an honest "stdio bridge pending" error pending v0.6.10.
+- **PHASE-12 follow-up** (v0.6.10) — stdio bridge implementation, real `tools/list` aggregation across pools (with `serverName=poolId` attribution and qualified `{poolId}__{toolName}` advertisement), real `tools/call` forwarding via lease-router-selected instance, bootstrapper-installed URL ACL via `netsh http add urlacl url=http://+:<port>/ user=Everyone`. Plus correctness fixes shaken loose during smoke-test: HTTP.sys body extraction now drains via `HttpReceiveRequestEntityBody` after `HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY` (the v0.6.9 path missed bodies from PowerShell `Invoke-RestMethod` and chunked-TE clients), and `nlohmann::json{nullptr}` was producing `[null]` arrays in JSON-RPC error envelopes (replaced with explicit null-scalar construction).
+- **Claude Code Control toggle** (v0.6.1 / 0.6.3) — one-click directory-junction install of the bundled `mcos-control` plugin under `%USERPROFILE%\.claude\plugins\`. Toggle switch on the Overview deck of both browser dashboard and WinUI shell.
+- **Operator-set advertised IP** (v0.6.4) — `activeProfile.preferredBindAddress` is the primary source for the advertised LAN IP. On dual-stack hosts, the runtime no longer surfaces an IPv6 ULA when the operator pinned IPv4.
 - **Windows release gate closed** — vswhere-driven toolchain, version-stamping before configure, no `workflow_dispatch` bypass on the gating workflows, MSI rebuilt clean (PHASE-10).
-- **MCPJungle locked as the v0.6.x substrate** — native HTTP.sys gateway documented as conditional PHASE-12 with five named operational triggers (PHASE-11 / ADR-003).
 
 ### What v0.5.0 ships
 
@@ -122,9 +140,17 @@ flowchart LR
 
 | Version | Date | Theme |
 | --- | --- | --- |
+| `v0.7.0` | 2026-05-05 | **Production milestone** — architecture complete; PHASE-13 visual polish scheduled for v0.7.x |
+| `v0.6.10` | 2026-05-05 | PHASE-12 follow-up complete — stdio bridge, real `tools/list` + `tools/call` forwarding, URL ACL |
+| `v0.6.9` | 2026-05-05 | PHASE-12 MVP — `NativeHttpSysGatewayAdapter` ships alongside MCPJungle adapter |
+| `v0.6.8` | 2026-05-05 | Pool persistence, per-instance browser sparkline charts, telemetry events ring producer, PHASE-12 + PHASE-13 plan files |
+| `v0.6.7` | 2026-05-05 | Honest-503 listener on gateway port (no more TCP RST in supervised-mock mode) |
+| `v0.6.5..v0.6.6` | 2026-05-04 | Per-instance CPU/RAM telemetry sampling, MSI uninstall stale-shortcut fix, settings Apply gate fix |
+| `v0.6.4` | 2026-05-03 | `activeProfile.preferredBindAddress` propagation to discovery + DNS-SD |
+| `v0.6.1..v0.6.3` | 2026-05-02 | Claude Code Control toggle on Overview deck (browser + WinUI shell) |
+| `v0.6.0` | 2026-05-01 | **Gateway-first MCP realignment** — PHASE-00..PHASE-11 |
 | `v0.5.0` | 2026-04-25 | **LAN Client Control Plane** — ADR-001 nine-phase rebuild |
 | `v0.4.5-rc.5` | 2026-04-24 | Non-security remediation pass (packaging, docs, shared-auth fixes) |
-| `v0.4.5-rc.4` | 2026-04-22 | Earlier remediation candidate |
 | `v0.2.0` | 2026-04-11 | Tron-density UX rework, end-to-end on Windows Server 2022 |
 | `v0.1.x` | 2026-04 (early) | Pre-rebuild dev releases |
 
@@ -143,11 +169,25 @@ gantt
     v0.4.5-rc.x         :b1, 2026-04-22, 3d
 
     section LAN Control Plane
-    Phase 1 ADR + inventory :c1, 2026-04-23, 1d
-    Phase 2 remove provider stack :c2, after c1, 1d
-    Phases 3-7 LAN client + CLU   :c3, after c2, 1d
-    Phases 8-9 UI + docs          :c4, after c3, 1d
-    v0.5.0 cut                    :milestone, m1, 2026-04-25, 0d
+    Phases 1-9 ADR-001          :c1, 2026-04-23, 2d
+    v0.5.0 cut                  :milestone, m1, 2026-04-25, 0d
+
+    section Gateway-first MCP
+    PHASE-00..PHASE-11          :d1, 2026-04-30, 1d
+    v0.6.0 cut                  :milestone, m2, 2026-05-01, 0d
+
+    section v0.6.x iteration
+    Claude Code Control toggle  :e1, 2026-05-02, 1d
+    Bind address + telemetry    :e2, 2026-05-03, 2d
+    Pool persistence + charts   :e3, 2026-05-05, 1d
+    PHASE-12 MVP (v0.6.9)       :e4, 2026-05-05, 1d
+    PHASE-12 follow-up (v0.6.10) :e5, after e4, 1d
+
+    section Production milestone
+    v0.7.0 cut                  :milestone, m3, 2026-05-05, 0d
+
+    section Visual polish
+    PHASE-13 v0.7.x             :active, p13, after m3, 14d
 ```
 
 ---
@@ -212,6 +252,32 @@ The schema is designed for additive change:
 - New privilege flags add to `LanClientPrivileges` (default `false`, no migration needed)
 - New governance action kinds add to the enum (existing routes unaffected)
 - New CLU rule ids add to the profile (existing rules continue to fire as written)
+
+Major version bump (`v1.0.0`) reserved for: bearer-token / mTLS hardening track, Windows Server Core support, or a header rename. None are imminent.
+
+### v0.6.x → v0.7.0
+
+```mermaid
+flowchart LR
+    classDef accent fill:#031018,stroke:#00F6FF,color:#E6FCFF;
+    classDef good fill:#031a14,stroke:#1cf2c1,color:#a8efe0;
+    classDef warn fill:#1a0f00,stroke:#FFA500,color:#FFE6BF;
+
+    Old[v0.6.x install] --> MSI[Run v0.7.0 MSI<br/>MajorUpgrade reaps the old version]:::accent
+    MSI --> URL[Bootstrapper installs URL ACL<br/>http://+:8080/ user=Everyone]:::accent
+    MSI --> Pools[Pools persisted from v0.6.8+<br/>survive the upgrade]:::good
+    Pools --> Substrate[Decide: keep mcpjungle<br/>or switch to native]:::accent
+    Substrate --> Native[Set mcpGateway.type='native']:::good
+    Substrate --> Jungle[Keep mcpGateway.type='mcpjungle']:::good
+```
+
+> ⚠️ Pool definitions persist across MajorUpgrade since v0.6.8 (`AppConfiguration.pools`). Operators who upgrade from v0.6.0..v0.6.7 to v0.7.0 still need to re-register their pools, since pre-v0.6.8 installs did not write them to disk. Pools registered at v0.6.8 or later survive the v0.7.0 upgrade automatically.
+
+> ⚠️ Same-version VERSIONINFO note: when reinstalling the same v0.7.0 MSI on top of itself, default Windows Installer file-replacement rules treat the binaries as already-current. To force replacement, use `msiexec /i <msi> REINSTALL=ALL REINSTALLMODE=amus`.
+
+### v0.7.0 → future (v0.7.x)
+
+The architecture is locked. v0.7.x point releases land PHASE-13 visual-polish surfaces incrementally, each independently usable. No schema changes, no client contract changes, no new ADRs. The PHASE-13 plan file ([handoff/realignment/PHASE-13-direct2d-shell-rendering.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/handoff/realignment/PHASE-13-direct2d-shell-rendering.md)) is the source of truth for delivery order.
 
 Major version bump (`v1.0.0`) reserved for: bearer-token / mTLS hardening track, Windows Server Core support, or a header rename. None are imminent.
 
@@ -313,13 +379,16 @@ gh release create v0.x.y \
 > Or hit `/api/health` — the response includes `version`.
 
 > **Q: Is there an LTS line?**
-> No. v0.5.0 is the active line; backports are on a case-by-case basis. Hand-authored CHANGELOG entries note when a fix is also applied to an older tag.
+> No. v0.7.0 is the active line; backports are on a case-by-case basis. Hand-authored `VERSION.json` and `CHANGELOG.md` entries note when a fix is also applied to an older tag.
 
 > **Q: Can I use older versions with the LAN client control plane?**
 > No. v0.4.x and earlier are provider-era. The schemas and routes are incompatible.
 
+> **Q: Which gateway substrate should I pick?**
+> Default to `mcpGateway.type = "native"` for fresh installs. The native HTTP.sys substrate is in-process, has no external binary to manage, and the bootstrapper has already registered the URL ACL during install. Keep `"mcpjungle"` if you have an existing MCPJungle deployment, want to track an upstream that may add features faster than MCOS does, or you specifically want the supervised-binary architecture.
+
 > **Q: Why not `v1.0.0`?**
-> `v1.0.0` is reserved for the hardening track (bearer tokens / mTLS) or a header rename — anything that breaks the trusted-LAN posture documented in ADR-001. Until that lands, `v0.x` signals "additive change against a stable architecture."
+> `v1.0.0` is reserved for the hardening track (bearer tokens / mTLS) or a header rename — anything that breaks the trusted-LAN posture documented in ADR-001. Until that lands, `v0.x` signals "additive change against a stable architecture." v0.7.0's "production milestone" framing is about completing the realignment program, not about graduating from `v0.x` to `v1.0.0`.
 
 ---
 

@@ -438,7 +438,7 @@ An unstyled control is rendering with the default Fluent brushes.
 
 Make sure the control is inside a `RootGrid` with `RequestedTheme="Dark"` and that there's an implicit `Style TargetType` entry in `App.xaml` for the control's type. Fluent theme brushes (`TextFillColorPrimaryBrush`, etc.) should also be remapped — see the existing entries in `App.xaml`.
 
-(In v0.5.0 the shell is in a deferred-cleanup state — the browser dashboard is the canonical UI.)
+(The shell ships fully wired as of v0.6.0+; the browser dashboard and shell are co-equal operator surfaces.)
 
 ---
 
@@ -474,7 +474,7 @@ flowchart TB
     classDef good fill:#031a14,stroke:#1cf2c1,color:#a8efe0;
     classDef bad fill:#1a0a0a,stroke:#ff7a90,color:#ffd2d8;
 
-    A[Service running?]:::step --> A1{Get-Service<br/>MasterControlOrchestrationServer<br/>Status?}
+    A[Service running?]:::step --> A1{Get-Service<br/>MasterControlProgram<br/>Status?}
     A1 -->|Running| B[Network profile?]:::step
     A1 -->|Stopped| Aerr[Start-Service ...]:::bad
 

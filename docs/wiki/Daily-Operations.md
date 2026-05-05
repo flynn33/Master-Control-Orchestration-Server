@@ -23,7 +23,7 @@ If any card is empty or shows an error, drill into the matching destination.
 ### From PowerShell
 ```powershell
 # Service status
-Get-Service MasterControlOrchestrationServer | Format-Table -AutoSize
+Get-Service MasterControlProgram | Format-Table -AutoSize
 
 # Health endpoint (operator surface)
 Invoke-RestMethod http://localhost:7300/api/health | ConvertTo-Json
@@ -238,7 +238,7 @@ If the field is on the WinUI Settings panel, edit there and click Apply Host Set
 notepad "$env:ProgramData\Master Control Orchestration Server\mcos.json"
 
 # Restart so the runtime re-reads
-Restart-Service MasterControlOrchestrationServer
+Restart-Service MasterControlProgram
 ```
 
 Some changes (instance name, browser port, beacon port, beacon enabled, resource policy) hot-apply via `POST /api/config`. See [Configuration](Configuration) for the field-by-field reference.

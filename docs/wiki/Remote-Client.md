@@ -248,7 +248,7 @@ flowchart LR
     D --> Drop
 ```
 
-There's no signature, no token rotation, no proof-of-possession on v0.5.0 — the bundle is the ergonomic equivalent of "here's the URL, here's the header value to send". The trust model is the LAN itself.
+There's no signature, no token rotation, no proof-of-possession as of v0.7.0 — the bundle is the ergonomic equivalent of "here's the URL, here's the header value to send". The trust model is the LAN itself, scoped by Windows Firewall `Profile=Private,Domain` rules.
 
 ---
 

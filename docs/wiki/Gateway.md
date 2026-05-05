@@ -1,17 +1,55 @@
 # Gateway
 
 ![interface](https://img.shields.io/badge/contract-IMcpGateway-00f6ff?style=flat-square)
-![substrate](https://img.shields.io/badge/v0.6.x%20substrate-MCPJungle-1cf2c1?style=flat-square)
-![phase](https://img.shields.io/badge/landed-PHASE--02-00aacc?style=flat-square)
-![decision](https://img.shields.io/badge/locked%20by-ADR--003-5a00e8?style=flat-square)
+![substrates](https://img.shields.io/badge/substrates-mcpjungle%20OR%20native-1cf2c1?style=flat-square)
+![phase](https://img.shields.io/badge/landed-PHASE--02%20%2B%20PHASE--12-00aacc?style=flat-square)
+![decision](https://img.shields.io/badge/decided%20by-ADR--003-5a00e8?style=flat-square)
 
-The MCP Gateway is the **single MCOS-advertised endpoint** every LAN AI client connects to. Per ADR-002 §2 it is wrapped behind a replaceable C++ interface (`IMcpGateway`) so the substrate can change without breaking client contracts. ADR-003 locks the v0.6.x substrate as MCPJungle (operator-installed external binary, supervised by MCOS).
+The MCP Gateway is the **single MCOS-advertised endpoint** every LAN AI client connects to. Per ADR-002 §2 it is wrapped behind a replaceable C++ interface (`IMcpGateway`) so the substrate can change without breaking client contracts. As of v0.6.9 / v0.7.0, **two substrates ship and are operator-selectable**:
+
+- `mcpjungle` — `McpJungleGatewayAdapter` supervises an external MCPJungle binary as a Job Object child. The original v0.6.x path; ADR-003's conservative default. v0.6.7's honest-503 listener fills the port when no binary is configured.
+- `native` — `NativeHttpSysGatewayAdapter` binds Windows-native HTTP.sys directly inside MCOS. No external binary. v0.6.10 stdio bridge forwards `tools/list` and `tools/call` to supervised pool children. Bootstrapper auto-registers the URL ACL at install time.
+
+Both satisfy `IMcpGateway` exactly. PHASE-03 through PHASE-12 surfaces don't see the substrate change.
 
 ---
 
-## How to install MCPJungle and turn the gateway on
+## Substrate selection
 
-The MSI does NOT bundle MCPJungle. Operators install the binary separately, then point MCOS at it.
+Operators flip a single field. Default for fresh installs is `mcpjungle` for backward compatibility; new deployments are encouraged to use `native`.
+
+```powershell
+# Pull current configuration
+$cfg = Invoke-RestMethod http://localhost:7300/api/config
+
+# Pick substrate
+$cfg.mcpGateway.type = 'native'      # in-process HTTP.sys, no external binary
+# $cfg.mcpGateway.type = 'mcpjungle' # supervised external binary (default)
+
+$cfg.mcpGateway.enabled = $true
+
+Invoke-RestMethod http://localhost:7300/api/config -Method Post `
+  -Body ($cfg | ConvertTo-Json -Depth 12) -ContentType 'application/json' `
+  -Headers @{ 'X-Confirm-Unsafe' = '1' }
+
+Restart-Service MasterControlProgram
+Invoke-RestMethod http://localhost:7300/api/gateway/start -Method Post
+```
+
+| Question | `mcpjungle` | `native` |
+|---|---|---|
+| External binary required? | yes — operator installs MCPJungle separately | no |
+| Spawn model | Job Object child process | in-process HTTP.sys server in `MasterControlServiceHost.exe` |
+| URL ACL | not needed (the supervised child manages its own listener) | auto-installed by the bootstrapper at MSI install (`netsh http add urlacl url=http://+:8080/ user=Everyone`) |
+| `tools/list` source | MCPJungle's own catalog | aggregated by walking each pool's first Ready instance via the v0.6.10 stdio bridge |
+| `tools/call` forwarding | MCPJungle handles internally | MCOS lease router selects an instance, supervisor's `sendStdioJsonRpc` writes to child stdin and reads stdout |
+| When the substrate is unconfigured | v0.6.7 honest-503 listener returns structured JSON 503 | adapter reports `state=disabled` until enabled via `/api/config` |
+
+---
+
+## How to install MCPJungle and turn the supervised substrate on
+
+If you picked `mcpGateway.type = "mcpjungle"`, the MSI does NOT bundle the binary. Operators install MCPJungle separately, then point MCOS at it.
 
 ```mermaid
 flowchart LR
@@ -60,9 +98,9 @@ Set the `mcpGateway` block:
 
 ### 4. Restart the service
 ```powershell
-Restart-Service MasterControlOrchestrationServer
+Restart-Service MasterControlProgram
 ```
-The adapter spawns MCPJungle under a Windows Job Object on next start.
+The adapter spawns MCPJungle under a Windows Job Object on next start. The Windows service is registered as `MasterControlProgram` (display name "Master Control Orchestration Server"); pre-v0.5.0 docs called it `MasterControlOrchestrationServer` — that name is no longer in use.
 
 ### 5. Verify
 ```powershell
@@ -72,6 +110,79 @@ Invoke-RestMethod http://localhost:7300/api/gateway/health | ConvertTo-Json
 Expected: `state=running`, `health=healthy`, `message` field reflecting the live probe. If `health=unknown`, see [Troubleshooting](Troubleshooting) §Gateway supervised-mock.
 
 Dashboard surface: **Gateway** destination shows the same data with auto-refresh.
+
+---
+
+## How to enable the native HTTP.sys substrate
+
+The native substrate has no separate binary to install — `MasterControlServiceHost.exe` binds HTTP.sys directly. The MSI's bootstrapper has already registered the matching URL ACL during install.
+
+### 1. Confirm the URL ACL is registered
+
+```powershell
+netsh http show urlacl url=http://+:8080/
+```
+
+Expected output:
+
+```
+URL Reservations:
+    Reserved URL            : http://+:8080/
+        User: \Everyone
+            Listen: Yes
+            Delegate: No
+```
+
+If the reservation is missing, re-run the bootstrapper's install action or apply the ACL manually:
+
+```powershell
+netsh http add urlacl url=http://+:8080/ user=Everyone
+```
+
+(LocalSystem service-mode does not require the ACL — Windows grants the binding privilege automatically. The ACL is for console-mode operators running `MasterControlServiceHost.exe --console` as a regular user.)
+
+### 2. Switch the configuration to `native`
+
+```powershell
+$cfg = Invoke-RestMethod http://localhost:7300/api/config
+$cfg.mcpGateway.type = 'native'
+$cfg.mcpGateway.enabled = $true
+Invoke-RestMethod http://localhost:7300/api/config -Method Post `
+  -Body ($cfg | ConvertTo-Json -Depth 12) -ContentType 'application/json' `
+  -Headers @{ 'X-Confirm-Unsafe' = '1' }
+Restart-Service MasterControlProgram
+Invoke-RestMethod http://localhost:7300/api/gateway/start -Method Post
+```
+
+The `X-Confirm-Unsafe` header is required by the configuration service when any field that touches security posture is being written; the substrate field qualifies. The header confirms the operator's intent.
+
+### 3. Verify
+
+```powershell
+(Invoke-RestMethod http://localhost:7300/api/discovery).gateway | ConvertTo-Json -Depth 4
+```
+
+Expected: `state=running`, `type=native`. The native adapter binds HTTP.sys via `HttpInitialize` → `HttpCreateServerSession` → `HttpCreateUrlGroup` → `HttpAddUrlToUrlGroup` → `HttpCreateRequestQueue` → `HttpSetUrlGroupProperty(BindingProperty)` and a serve thread reads requests via `HttpReceiveHttpRequest`.
+
+Smoke-test the MCP `initialize` handshake from any LAN host pointed at the advertised IP and port:
+
+```powershell
+$initBody = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0"}}}'
+Invoke-RestMethod -Method Post -Uri http://<MCOS-IP>:8080/mcp `
+  -Body $initBody -ContentType 'application/json'
+```
+
+Expected reply: `serverInfo.name = "MCOS Native Gateway"`, `serverInfo.version = "0.7.0"`, `protocolVersion = "2024-11-05"`, `capabilities.tools.listChanged = false`.
+
+### How tools/list and tools/call work under the native substrate
+
+**tools/list** walks every supervised pool's first Ready instance via the v0.6.10 stdio bridge. For each instance that responds within 5 s, it parses the `.result.tools` array and merges entries with `serverName = poolId` attribution. Each tool is advertised to the LAN client as `{poolId}__{toolName}` so AI clients have unambiguous routing across pools that happen to expose the same local tool name.
+
+**tools/call** receives a `params.name` from the LAN client, resolves it against the cached catalog (exact qualified `{poolId}__{toolName}` match wins; otherwise a unique unprefixed match wins; collision returns -32602; not-found returns -32601 after one cache refresh). Once resolved, it acquires a lease via `LeaseRouter::acquireLease` for the matching pool, forwards the JSON-RPC envelope to `lease.instanceId` via `WorkerSupervisor::sendStdioJsonRpc` (with the bridge-internal id rewritten so concurrent calls don't collide on the supervisor's correlator and `params.name` unprefixed so the child sees its own local name), and re-stamps the response id back to the LAN client's original id.
+
+Per-instance pipes are wired in `WorkerSupervisor::startInstanceLocked`: two `CreatePipe` pairs, child-side ends marked inheritable via `SECURITY_ATTRIBUTES`, parent-side inheritance cleared via `SetHandleInformation`, `STARTF_USESTDHANDLES` set on `STARTUPINFOW` with `hStdInput`/`hStdOutput`/`hStdError` (stderr merged into stdout). After `CreateProcessW` with `bInheritHandles=TRUE`, the parent closes the child-side ends so EOF detection works correctly when the child exits.
+
+If pipe creation fails at spawn time, the child still runs in no-bridge mode and `tools/call` returns an honest -32603 "stdio bridge unavailable on this instance" rather than hanging.
 
 ---
 

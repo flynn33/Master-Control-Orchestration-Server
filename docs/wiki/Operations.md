@@ -181,7 +181,7 @@ Each script self-documents `--help` output. Most accept `-Preset` / `-Source` / 
 | Surface | Default location | Purpose |
 | --- | --- | --- |
 | Windows service host | `MasterControlServiceHost.exe` (service name `MasterControlProgram`) | Long-running orchestration runtime |
-| Desktop shell | `MasterControlShell.exe` | Optional WinUI shell (deferred-cleanup state in v0.5.0) |
+| Desktop shell | `MasterControlShell.exe` | Optional WinUI shell — ships fully wired since v0.6.0; PHASE-13 visual polish lands in v0.7.x |
 | Browser dashboard | `http://127.0.0.1:7300/` on the host | Operator surface — the canonical UI |
 | ProgramData | `%ProgramData%\Master Control Orchestration Server\` | Configuration, logs, exports, sub-agent registrations |
 

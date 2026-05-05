@@ -183,7 +183,7 @@ The legacy folder is preserved (not deleted) after migration in case the operato
 | Setup launcher | Tron-themed UI, elevation, payload extraction, bootstrapper invocation | ~3 MB |
 | Bootstrapper | Lifecycle engine: preflight / install / validate / upgrade / repair / uninstall | ~6 MB |
 | Service host | The orchestration runtime, registered as a Windows service | ~14 MB |
-| WinUI shell | Optional desktop UI (deferred-cleanup state in v0.5.0) | ~10 MB |
+| WinUI shell | Optional desktop UI; ships fully wired since v0.6.0 (Overview, Pools, Telemetry, Settings, Claude Code Control toggle) | ~10 MB |
 | Browser assets | Static HTML/CSS/JS served by the runtime at `:7300` | ~120 KB |
 | Forsetti manifests | 16 module manifests | ~32 KB |
 | CLU profile defaults | Governance doctrine + rules | ~8 KB |
@@ -230,7 +230,7 @@ flowchart LR
     JSON --> Render[Render destinations]:::good
 ```
 
-The dashboard is the **canonical operator surface** in v0.5.0. The WinUI shell is deferred — every operation is reachable through the browser.
+The browser dashboard and the WinUI desktop shell are **co-equal operator surfaces** as of v0.6.0+. Both consume the same admin API and present the same data; operators pick whichever fits the deployment. The WinUI shell adds a native ToggleSwitch for Claude Code Control; the browser dashboard adds Canvas-rendered per-instance sparkline charts (PHASE-13 will add equivalent Win2D charts to the shell across v0.7.x).
 
 ---
 

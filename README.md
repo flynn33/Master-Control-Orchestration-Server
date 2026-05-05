@@ -33,10 +33,10 @@ flowchart LR
 
     subgraph MCOS[Master Control Orchestration Server]
         Discovery[LAN Discovery<br/>DNS-SD + UDP beacon]:::accent
-        Gateway[MCP Gateway<br/>MCPJungle adapter]:::accent
+        Gateway[MCP Gateway<br/>MCPJungle OR Native HTTP.sys]:::accent
         Onboarding[Onboarding Profiles<br/>per client type]:::accent
         Governance[Governance Bundles<br/>Windows / macOS / iOS]:::accent
-        Supervisor[Worker Supervisor<br/>+ Lease Router]:::accent
+        Supervisor[Worker Supervisor<br/>+ Lease Router + stdio bridge]:::accent
         Telemetry[Telemetry Aggregator]:::accent
         Pools[(Managed Endpoint Pools<br/>MCP servers + sub-agents)]:::good
     end
@@ -52,7 +52,7 @@ flowchart LR
     LANClients -.->|on demand| Governance
 ```
 
-The architecture target is the **gateway-first MCP host** declared in [ADR-002](docs/wiki/Architecture-Decisions/ADR-002-gateway-first-mcp-realignment.md) and locked at the substrate level by [ADR-003](docs/wiki/Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision.md). The original [ADR-001 LAN client identity model](docs/wiki/Architecture-Decisions/ADR-001-lan-client-control-plane.md) survives as the operator surface that coexists with the AI-client gateway surface.
+The architecture target is the **gateway-first MCP host** declared in [ADR-002](docs/wiki/ADR-002-gateway-first-mcp-realignment.md) and locked at the substrate level by [ADR-003](docs/wiki/ADR-003-mcp-gateway-substrate-decision.md). As of v0.6.9 / v0.7.0 both substrates ship: the original supervised MCPJungle adapter (the conservative path from PHASE-02) and the in-process Windows-native HTTP.sys adapter (PHASE-12, completed end-to-end in v0.6.10). Operators select via `mcpGateway.type = "mcpjungle" | "native"`. The original [ADR-001 LAN client identity model](docs/wiki/ADR-001-lan-client-control-plane.md) survives as the operator surface that coexists with the AI-client gateway surface.
 
 ---
 
@@ -62,8 +62,12 @@ The architecture target is the **gateway-first MCP host** declared in [ADR-002](
 - **Quick Start** → [docs/wiki/Quick-Start.md](docs/wiki/Quick-Start.md)
 - **Architecture** → [docs/wiki/Architecture.md](docs/wiki/Architecture.md)
 - **Architecture Decisions** → [docs/wiki/Architecture-Decisions.md](docs/wiki/Architecture-Decisions.md)
+- **Gateway (substrate selection, install, health probe)** → [docs/wiki/Gateway.md](docs/wiki/Gateway.md)
+- **Worker Pools** → [docs/wiki/Worker-Pools.md](docs/wiki/Worker-Pools.md)
 - **Onboarding an AI client** → [docs/wiki/Onboarding.md](docs/wiki/Onboarding.md)
+- **Versions** → [docs/wiki/Versions.md](docs/wiki/Versions.md)
 - **CHANGELOG** → [`CHANGELOG.md`](CHANGELOG.md)
+- **VERSION.json** (canonical) → [`VERSION.json`](VERSION.json)
 
 ---
 
@@ -80,58 +84,58 @@ Multiple AI coding clients on the same trusted LAN need to share an MCP server a
 
 ---
 
-## v0.6.4 — what's new
+## v0.7.0 — production milestone
 
-**Operator-set IP wins.** The discovery doc (`/.well-known/mcos.json`, `/api/discovery`) and DNS-SD registration now treat `activeProfile.preferredBindAddress` as the primary source for the advertised LAN IP. On dual-stack Windows hosts the runtime's interface auto-pick used to surface the IPv6 ULA first; LAN clients then saw an IPv6 address their stack didn't route to. Setting `preferredBindAddress` (e.g. `192.168.1.7`) via `POST /api/config` now propagates immediately to every advertised URL and to the DNS-SD records.
+**Architecture complete.** Every numbered phase from PHASE-00 (repository baseline + ADR lock) through PHASE-12 follow-up (native HTTP.sys gateway with end-to-end stdio bridge to supervised pool children, shipped in v0.6.10) is delivered, validated, and shipping. The 0.7.0 minor bump under the manifest's `minor-on-architecture-change` policy marks the architectural-completion line: PHASE-12 follow-up was the last architectural change.
 
-## v0.6.3 — what shipped
+Both gateway substrates ship and are operator-selectable via `mcpGateway.type`:
 
-**Claude Code Control is now a real toggle switch on the Overview deck of both GUI surfaces.**
-- **Browser dashboard** → Overview → **Claude Code Control** card → CSS toggle switch backed by an accessible `<input type="checkbox">`.
-- **WinUI desktop shell** → Overview → **Claude Code Control** card → native `ToggleSwitch` with `OnContent="Connected"` / `OffContent="Disconnected"`.
-
-The shell's card moved out of Settings and onto Overview alongside the dashboard counterpart. Both refresh on load and on every snapshot tick, both stay interactive even when the runtime would refuse, and both call the same `/api/claude-plugin/{status,toggle}` routes.
-
-## v0.6.2 — what shipped
-
-Claude Code Control card initial cut + console-mode resolver fix:
-- **Browser dashboard** → Overview deck → **Claude Code Control** card.
-- **WinUI desktop shell** → **Settings** section → **Claude Code Control** card at the top.
-
-Both call the same `/api/claude-plugin/{status,toggle}` routes. Click Connect from either place and the runtime drops `%USERPROFILE%\.claude\plugins\mcos-control` as a directory junction onto the install directory's bundled plugin source — no admin prompt, no execution-policy gymnastics, no PowerShell knowledge required. Restart Claude Code and `/mcos:status` works.
-
-The active-user resolver is now hosting-mode aware:
-1. If the runtime process already has a non-SYSTEM `USERPROFILE` (i.e. it's running in `--console` mode, launched from the shell, or any non-service host), use it directly.
-2. Only fall through to `WTSGetActiveConsoleSessionId` + `WTSQueryUserToken` when the env var resolves to the SYSTEM profile (the Windows service path).
-
-Without that, console-mode runs failed with errno 1008 (ERROR_NO_TOKEN) because `WTSQueryUserToken` requires `SE_TCB_NAME` privilege which only SYSTEM holds.
-
-## v0.6.1 — what shipped
-
-One-click Claude Code control via the browser dashboard's Overview deck. Disconnect removes only the junction; the install source is never touched. The plugin itself ships 5 sub-agents, 12 slash commands, the `mcos-bridge` MCP server (43 tools), and the `mcos-operations` skill — see [docs/wiki/Claude-Code-Plugin.md](docs/wiki/Claude-Code-Plugin.md).
-
----
-
-## v0.6.0 — what shipped
-
-The realignment program in twelve named phases (PHASE-00..PHASE-11):
-
-| Phase | Theme | Commit |
+| `type` value | Substrate | When to pick |
 |---|---|---|
-| PHASE-00 | Repo baseline + ADR-002 | `d8758ac` |
-| PHASE-01 | Provider-era residual cleanup | `a784ffb` |
-| PHASE-02 | `IMcpGateway` + `McpJungleGatewayAdapter` + supervised-mock fallback | `86695c3` |
-| PHASE-03 | DNS-SD + UDP beacon + discovery document | `6f37cf0` |
-| PHASE-04 | Onboarding profiles per client type | `f2d51bc` |
-| PHASE-05 | CLU/Forsetti governance bundles per platform | `aa4087a` |
-| PHASE-06 | Managed worker pools + Job Object containment | `c8077f0` |
-| PHASE-07 | Lease router + autoscaling | `0cb9b48` |
-| PHASE-08 | Telemetry aggregator with `-1.0` honesty rule | `228e944` |
-| PHASE-09 | Tron dashboard realignment (11 destinations) | `c241440` |
-| PHASE-10 | Windows hardening + CI + MSI + release gate | `d98b074` |
-| PHASE-11 | Native gateway evaluation → ADR-003 | `f21e868` |
+| `"mcpjungle"` | Supervises an external MCPJungle binary as a Job Object child. v0.6.7 honest-503 listener fills the port when no binary is configured. | Conservative path. Operators with an existing MCPJungle deployment, or who want to track an upstream that may add features faster than MCOS does. |
+| `"native"` | In-process Windows-native HTTP.sys server bound directly inside MCOS. No external binary. v0.6.10 stdio bridge forwards `tools/list` and `tools/call` to supervised pool children. | Default for fresh installs. No second binary to manage. URL ACL self-registered by the bootstrapper at install time. |
 
-Each phase has a written completion report in [`handoff/realignment/`](handoff/realignment/).
+What v0.7.0 brings together:
+
+- **PHASE-00 through PHASE-11** — gateway-first realignment (ADR-002), worker pool fabric, lease routing, real-time telemetry, Tron dashboard, Windows hardening, native gateway evaluation (ADR-003).
+- **PHASE-12 MVP** (v0.6.9) — `NativeHttpSysGatewayAdapter` alongside `McpJungleGatewayAdapter` and `FakeMcpGatewayAdapter`. HTTP.sys lifecycle, MCP `initialize` and `tools/list` handshakes.
+- **PHASE-12 follow-up** (v0.6.10) — `IWorkerSupervisor::sendStdioJsonRpc` synchronous JSON-RPC over child stdin/stdout with deadline-based polling and per-instance mutex; `tools/list` aggregates by walking each pool's first Ready instance via the bridge; `tools/call` resolves `params.name` against the cached catalog (qualified `{poolId}__{toolName}` or unique unprefixed match), acquires a lease, forwards via the bridge, re-stamps response id; bootstrapper installs URL ACL `http://+:<port>/ user=Everyone` so console-mode operators bind without elevation.
+- **PHASE-13** — Win2D / Direct2D high-frequency visual surfaces in the WinUI shell (per-instance telemetry charts at 60Hz, procedural Tron HLSL backdrop, SwapChainPanel activity stream, animated saturation rings) is explicitly visual-polish work, not architectural, and is scheduled to land incrementally across v0.7.x point releases per the [plan file](handoff/realignment/PHASE-13-direct2d-shell-rendering.md).
+
+## What landed across v0.6.x
+
+Each v0.6.x point release is hand-authored — the [`VERSION.json`](VERSION.json) `history[]` carries the full entries.
+
+| Version | Theme |
+|---|---|
+| `v0.6.10` | PHASE-12 follow-up complete: stdio bridge end-to-end, native gateway forwards `tools/call` to supervised children, bootstrapper URL ACL. |
+| `v0.6.9` | PHASE-12 MVP: `NativeHttpSysGatewayAdapter` ships alongside the MCPJungle adapter; HTTP.sys lifecycle + MCP `initialize` + `tools/list`. |
+| `v0.6.8` | Pool persistence (operator no longer loses pools on every restart), per-instance browser sparkline charts, telemetry events ring producer, PHASE-12 + PHASE-13 plan files. |
+| `v0.6.7` | Honest-503 listener on the gateway port so LAN clients see structured JSON instead of TCP RST in supervised-mock mode. |
+| `v0.6.5..v0.6.6` | Per-instance CPU/RAM telemetry sampling backend (`GetProcessTimes` + `GetProcessMemoryInfo` with first-sample baseline), MSI uninstall stale-shortcut fix, settings Apply gate fix, `preferredBindAddress` propagation. |
+| `v0.6.0..v0.6.4` | The realignment program in twelve named phases (PHASE-00..PHASE-11), Claude Code Control toggle on Overview, operator-set advertised IP. |
+
+## Realignment phase ledger
+
+| Phase | Theme | First release |
+|---|---|---|
+| PHASE-00 | Repo baseline + ADR-002 | v0.6.0 |
+| PHASE-01 | Provider-era residual cleanup | v0.6.0 |
+| PHASE-02 | `IMcpGateway` + `McpJungleGatewayAdapter` + supervised-mock fallback | v0.6.0 |
+| PHASE-03 | DNS-SD + UDP beacon + discovery document | v0.6.0 |
+| PHASE-04 | Onboarding profiles per client type | v0.6.0 |
+| PHASE-05 | CLU/Forsetti governance bundles per platform | v0.6.0 |
+| PHASE-06 | Managed worker pools + Job Object containment | v0.6.0 |
+| PHASE-07 | Lease router + autoscaling | v0.6.0 |
+| PHASE-08 | Telemetry aggregator with `-1.0` honesty rule | v0.6.0 |
+| PHASE-09 | Tron dashboard realignment (11 destinations) | v0.6.0 |
+| PHASE-10 | Windows hardening + CI + MSI + release gate | v0.6.0 |
+| PHASE-11 | Native gateway evaluation → ADR-003 | v0.6.0 |
+| PHASE-12 (MVP) | `NativeHttpSysGatewayAdapter` + HTTP.sys lifecycle | v0.6.9 |
+| PHASE-12 (follow-up) | Stdio bridge, real `tools/list` aggregation, real `tools/call` forwarding, URL ACL | v0.6.10 |
+| PHASE-13 | Win2D / Direct2D shell rendering | scheduled v0.7.x (visual polish, not architecture) |
+
+Each architectural phase has a written completion report in [`handoff/realignment/`](handoff/realignment/).
 
 ---
 
@@ -161,9 +165,22 @@ Invoke-RestMethod http://localhost:7300/api/discovery | ConvertTo-Json -Depth 6
 
 # 5. From another LAN host: confirm Bonjour discovery
 Resolve-DnsName -Name _mcos._tcp.local -Type PTR -LlmnrFallback
+
+# 6. (Optional) Switch the gateway substrate to the native HTTP.sys adapter.
+#    Default is "mcpjungle" for backward compatibility with v0.6.x deployments.
+#    The native adapter requires no external binary and the bootstrapper has
+#    already registered the matching URL ACL during install.
+$cfg = Invoke-RestMethod http://localhost:7300/api/config
+$cfg.mcpGateway.type = 'native'
+$cfg.mcpGateway.enabled = $true
+Invoke-RestMethod http://localhost:7300/api/config -Method Post `
+  -Body ($cfg | ConvertTo-Json -Depth 12) -ContentType 'application/json' `
+  -Headers @{ 'X-Confirm-Unsafe' = '1' }
+Restart-Service MasterControlProgram
+Invoke-RestMethod http://localhost:7300/api/gateway/start -Method Post
 ```
 
-The MSI installs the Windows service, bundles the operator-side `mcos-control` Claude Code plugin under `share\claude-plugins\mcos-control`, and creates Start Menu + Desktop shortcuts (both pre-checked, operator can opt out). LAN-side firewall rules are NOT created automatically — operators apply them after install. See [docs/wiki/Windows-Firewall-LAN-Mode.md](docs/wiki/Windows-Firewall-LAN-Mode.md) for the four `Profile=Private,Domain` rules (operator surface TCP 7300, MCP gateway TCP 8080, DNS-SD UDP 5353, discovery beacon UDP 7301) and a one-shot self-elevating PowerShell block that applies all four.
+The MSI installs the Windows service (`MasterControlProgram`), bundles the operator-side `mcos-control` Claude Code plugin under `share\claude-plugins\mcos-control`, registers the native gateway URL ACL via `netsh http add urlacl`, and creates Start Menu + Desktop shortcuts (both pre-checked, operator can opt out). LAN-side firewall rules are NOT created automatically — operators apply them after install. See [docs/wiki/Windows-Firewall-LAN-Mode.md](docs/wiki/Windows-Firewall-LAN-Mode.md) for the four `Profile=Private,Domain` rules (operator surface TCP 7300, MCP gateway TCP 8080, DNS-SD UDP 5353, discovery beacon UDP 7301) and a one-shot self-elevating PowerShell block that applies all four.
 
 ### Connect Claude Code to MCOS (one click)
 
@@ -181,13 +198,14 @@ The same toggle is on the WinUI desktop shell's **Overview** page. Either surfac
 
 | Surface | What it does | Where |
 |---|---|---|
-| **AI-client gateway** | One advertised MCP URL; auth=none, trust=lan | `IMcpGateway` + `McpJungleGatewayAdapter` |
+| **AI-client gateway** | One advertised MCP URL; auth=none, trust=lan | `IMcpGateway` + `McpJungleGatewayAdapter` (supervised binary) **or** `NativeHttpSysGatewayAdapter` (in-process HTTP.sys) |
+| **Stdio bridge** | Forwards `tools/call` JSON-RPC from gateway to supervised pool children via stdin/stdout | `IWorkerSupervisor::sendStdioJsonRpc` (PHASE-12 follow-up, v0.6.10) |
 | **LAN discovery** | DNS-SD + UDP beacon + `/.well-known/mcos.json` | `DiscoveryService` + `BeaconService` |
 | **Onboarding profiles** | Per-client-type config + manual instructions | `OnboardingProfileService` + `/api/onboarding/{type}` |
 | **Governance bundles** | Forsetti + agentic coding instructions per platform | `GovernanceBundleService` + `/api/governance/bundles/{platform}` |
-| **Worker supervision** | 7-state lifecycle, Job Object containment | `WorkerSupervisor` |
+| **Worker supervision** | 7-state lifecycle, Job Object containment, redirected stdin/stdout | `WorkerSupervisor` |
 | **Lease routing + autoscaling** | Sticky-session + same-type scale-out | `LeaseRouter` |
-| **Telemetry aggregator** | Events ring (1024 cap), client roster, gateway snapshot | `TelemetryAggregator` |
+| **Telemetry aggregator** | Events ring (1024 cap), client roster, gateway snapshot, per-instance CPU/RAM sampling | `TelemetryAggregator` + `WorkerSupervisor::sampleProcessLoadLocked` |
 | **Operator surface (ADR-001)** | Browser dashboard + WinUI shell | `resources/web/` + `src/MasterControlShell/` |
 
 Full layered diagram: [docs/wiki/Architecture.md](docs/wiki/Architecture.md).
@@ -239,7 +257,7 @@ master-control-dashboard-main/
 | Test release | `ctest --test-dir build/release -C Release --output-on-failure --timeout 300` |
 | Package MSI | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release -SkipBuild` |
 
-CI runs the same pipeline. See [docs/wiki/Operations/Release-Gate.md](docs/wiki/Operations/Release-Gate.md) for the release flow + the no-`workflow_dispatch` rule.
+CI runs the same pipeline. See [docs/wiki/Release-Gate.md](docs/wiki/Release-Gate.md) for the release flow + the no-`workflow_dispatch` rule.
 
 ---
 

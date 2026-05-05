@@ -15,9 +15,9 @@ This page is the shortest path. For deeper guides, follow the cross-references i
 | Requirement | Why |
 |---|---|
 | Windows 11 or Windows Server 2022 | The product is a Windows-native C++20 application |
-| Administrative privileges | The MSI runs `perMachine`, registers a Windows service, and creates firewall rules |
+| Administrative privileges | The MSI runs `perMachine`, registers a Windows service, creates firewall rules, and registers an HTTP.sys URL ACL |
 | At least one LAN client machine | To verify Bonjour-style discovery works end-to-end |
-| (Optional) An MCPJungle binary | The MCP gateway substrate is operator-installed (see [Packaging](Packaging-and-Gateway-Binary)). Without it, MCOS runs in **supervised-mock mode** and reports the gateway as unhealthy honestly |
+| (Optional) An MCPJungle binary | Only required if you choose `mcpGateway.type=mcpjungle`. The native HTTP.sys substrate (`type=native`, recommended for fresh installs) needs no external binary. See [Gateway §Substrate selection](Gateway) |
 
 ---
 
@@ -57,16 +57,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterContro
 The MSI lands at:
 
 ```
-<REPO>\dist\packages\release\MasterControlOrchestrationServer-v0.6.0-win-x64\MasterControlOrchestrationServer-v0.6.0-win-x64.msi
+<REPO>\dist\packages\release\MasterControlOrchestrationServer-v0.7.0-win-x64\MasterControlOrchestrationServer-v0.7.0-win-x64.msi
 ```
+
+(Substitute the current version from `VERSION.json` for any later release.)
 
 ---
 
 ### 2. Run the installer
 
 ```powershell
-msiexec /i "<REPO>\dist\packages\release\MasterControlOrchestrationServer-v0.6.0-win-x64\MasterControlOrchestrationServer-v0.6.0-win-x64.msi"
+msiexec /i "<REPO>\dist\packages\release\MasterControlOrchestrationServer-v0.7.0-win-x64\MasterControlOrchestrationServer-v0.7.0-win-x64.msi"
 ```
+
+If you are reinstalling the same version on top of itself and notice files are not being replaced, force the file copies:
+
+```powershell
+msiexec /i "<...>.msi" REINSTALL=ALL REINSTALLMODE=amus /qn /l*v "$env:TEMP\mcos-reinstall.log"
+```
+
+This bypasses the default Windows Installer rule that skips replacement when the existing files match the package's VERSIONINFO.
 
 For a silent install with logging:
 
@@ -98,8 +108,9 @@ Five checkboxes on the **Setup Options** dialog:
 
 | Checkbox | What gets done if checked |
 |---|---|
-| Service | Service registered + started |
+| Service | Service registered as `MasterControlProgram` (display name "Master Control Orchestration Server") + started |
 | Firewall | Four `New-NetFirewallRule` entries created on Private + Domain profiles. See the rule table in [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) |
+| URL ACL | `netsh http add urlacl url=http://+:8080/ user=Everyone` registered automatically by the bootstrapper, so the native HTTP.sys gateway can bind without elevation in console mode |
 | Start Menu shortcut | Shortcut at `Start Menu → Master Control Orchestration Server → Master Control Orchestration Server` |
 | Desktop shortcut | Shortcut on every operator's desktop |
 | Launch on exit | Opens the WinUI shell when the installer finishes |
@@ -143,14 +154,42 @@ avahi-browse _mcos._tcp
 
 You should see `mcos-<instance>` advertised. If you do not:
 
-1. Confirm the service is running: `Get-Service MasterControlOrchestrationServer`.
+1. Confirm the service is running: `Get-Service MasterControlProgram`.
 2. Confirm the firewall rules: `Get-NetFirewallRule -DisplayName 'MCOS *'`.
 3. Confirm the network profile is Private or Domain (not Public): `Get-NetConnectionProfile`.
 4. Open the **Discovery** destination in the dashboard — it shows what MCOS thinks it is advertising. If it advertises nothing, [Troubleshooting](Troubleshooting#lan-discovery) covers the failure modes.
 
 ---
 
-### 6. Connect a first AI client
+### 6. Pick a gateway substrate
+
+Both substrates ship as of v0.6.9 / v0.7.0. The default for fresh installs is `mcpjungle` (the conservative path inherited from v0.6.x); fresh deployments are encouraged to switch to `native`.
+
+```powershell
+$cfg = Invoke-RestMethod http://localhost:7300/api/config
+
+# Pick one:
+$cfg.mcpGateway.type = 'native'      # in-process Windows-native HTTP.sys, no external binary
+# $cfg.mcpGateway.type = 'mcpjungle' # supervised external binary (default; needs MCPJungle install)
+
+$cfg.mcpGateway.enabled = $true
+
+Invoke-RestMethod http://localhost:7300/api/config -Method Post `
+  -Body ($cfg | ConvertTo-Json -Depth 12) -ContentType 'application/json' `
+  -Headers @{ 'X-Confirm-Unsafe' = '1' }
+
+Restart-Service MasterControlProgram
+Invoke-RestMethod http://localhost:7300/api/gateway/start -Method Post
+(Invoke-RestMethod http://localhost:7300/api/discovery).gateway | ConvertTo-Json -Depth 4
+```
+
+Expected: `state=running`, `type=native` (or `mcpjungle`).
+
+If you picked `mcpjungle` and have not yet installed the binary, the gateway will run in v0.6.7's honest-503 listener mode (returns structured JSON 503 to LAN clients) until you complete [Gateway §How to install MCPJungle](Gateway).
+
+---
+
+### 7. Connect a first AI client
 
 Each AI coding client connects differently. MCOS generates per-client-type onboarding profiles served at `/api/onboarding/{clientType}`:
 
@@ -187,8 +226,13 @@ Invoke-RestMethod http://localhost:7300/api/health | ConvertTo-Json
 # discovery document
 Invoke-RestMethod http://localhost:7300/api/discovery | ConvertTo-Json -Depth 6
 
-# gateway status (will show supervised-mock if no MCPJungle binary)
+# gateway status (state + adapter type + advertised URL)
 Invoke-RestMethod http://localhost:7300/api/gateway/status | ConvertTo-Json
+
+# Probe the live MCP endpoint (works against both substrates)
+$initBody = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0"}}}'
+Invoke-RestMethod -Method Post -Uri http://localhost:8080/mcp `
+  -Body $initBody -ContentType 'application/json'
 ```
 
 Ctrl+C to stop the console-mode runtime; the Windows service keeps running.

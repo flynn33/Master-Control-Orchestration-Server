@@ -1,10 +1,13 @@
 # Master Control Orchestration Server — Operator Wiki
 
-![version](https://img.shields.io/badge/version-v0.6.0-00f6ff?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--05--01-031018?style=flat-square)
-![purpose](https://img.shields.io/badge/purpose-internal%20tool-1cf2c1?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.7.0-00f6ff?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--05--05-031018?style=flat-square)
+![architecture](https://img.shields.io/badge/architecture-complete-1cf2c1?style=flat-square)
+![purpose](https://img.shields.io/badge/purpose-internal%20tool-5a00e8?style=flat-square)
 
 Internal-tool documentation. Use this wiki to install MCOS, configure it, run it day to day, and use each feature. Architecture and decisions live at the back as reference for when something is not behaving the way it should.
+
+> **v0.7.0 ships the production architecture milestone.** Every numbered phase from PHASE-00 through PHASE-12 follow-up is delivered. Both gateway substrates ship and are operator-selectable: supervised MCPJungle (the conservative path) and Windows-native HTTP.sys (in-process, no external binary). Pick by setting `mcpGateway.type` in `mcos.json` or via `POST /api/config`. PHASE-13 (Win2D / Direct2D shell rendering) is visual-polish work scheduled for v0.7.x point releases.
 
 ---
 
@@ -16,7 +19,8 @@ Internal-tool documentation. Use this wiki to install MCOS, configure it, run it
 | Install MCOS for the first time | [Quick Start](Quick-Start) |
 | Configure ports, instance name, resource % | [Configuration](Configuration) |
 | Make MCOS discoverable on the LAN | [LAN Discovery](LAN-Discovery) + [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) |
-| Install MCPJungle so the gateway is real | [Gateway](Gateway) §How to install MCPJungle |
+| Pick a gateway substrate (native HTTP.sys vs supervised MCPJungle) | [Gateway](Gateway) §Substrate selection |
+| Install MCPJungle (only if `mcpGateway.type=mcpjungle`) | [Gateway](Gateway) §How to install MCPJungle |
 | Add Start Menu / Desktop shortcuts (or remove them) | [Maintenance](Maintenance) §Shortcuts |
 
 ### Connect AI clients
@@ -83,12 +87,12 @@ These pages explain why MCOS works the way it does. Read when something is not b
 | Why each design choice was made | [Architecture Decisions](Architecture-Decisions) |
 | ADR-001 LAN client identity model | [ADR-001](ADR-001-lan-client-control-plane) |
 | ADR-002 gateway-first realignment | [ADR-002](ADR-002-gateway-first-mcp-realignment) |
-| ADR-003 keep MCPJungle for v0.6.x | [ADR-003](ADR-003-mcp-gateway-substrate-decision) |
+| ADR-003 substrate decision (status-updated for PHASE-12 ship) | [ADR-003](ADR-003-mcp-gateway-substrate-decision) |
 | What the IMcpGateway adapter actually does | [Gateway](Gateway) |
 | How worker pools are supervised | [Worker Pools](Worker-Pools) |
 | How LAN discovery is wired | [LAN Discovery](LAN-Discovery) |
 | Release / packaging flow | [Operations](Operations) + [Release Gate](Release-Gate) |
-| Per-release notes and PHASE-00..PHASE-11 timeline | [Versions](Versions) |
+| Per-release notes (v0.6.0..v0.7.0) and full phase ledger | [Versions](Versions) |
 | Tron palette + motion (UI) | [Tron UI Theme](Tron-UI-Theme) |
 
 ---
@@ -97,8 +101,11 @@ These pages explain why MCOS works the way it does. Read when something is not b
 
 | Field | Value |
 |---|---|
-| Version | `v0.6.0` |
-| Released | `2026-05-01` |
-| Theme | Gateway-first MCP realignment (PHASE-00..PHASE-11) |
-| Tag | [`v0.6.0`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.6.0) |
+| Version | `v0.7.0` |
+| Released | `2026-05-05` |
+| Theme | Production milestone — architecture complete (PHASE-00..PHASE-12 follow-up) |
+| Tag | [`v0.7.0`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.7.0) |
+| Gateway substrates | `mcpjungle` (supervised binary) **and** `native` (in-process HTTP.sys) — operator-selectable |
+| Stdio bridge | shipped in v0.6.10; native gateway forwards `tools/list` + `tools/call` to supervised pool children |
+| Scheduled next | PHASE-13 visual polish (Win2D charts, Tron HLSL backdrop, SwapChainPanel activity stream) — v0.7.x point releases |
 | Repository | [Master-Control-Orchestration-Server](https://github.com/flynn33/Master-Control-Orchestration-Server) |

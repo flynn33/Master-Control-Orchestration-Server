@@ -367,7 +367,7 @@ await fetch(`${bundle.mcosServer}${bundle.catalogs.mcpServers}`, {
 - `schemaVersion` strictly increments. **Producers** add new top-level fields; **consumers** MUST tolerate unknown fields (forward-compatible).
 - The `rules` array is human-readable. Don't pattern-match it.
 - Bundle issue is **idempotent** — re-fetching produces a fresh `issuedAtUtc` but otherwise the same content for an unchanged record.
-- Bundles are **not signed** in v0.5.0. The trusted-LAN posture (ADR-001) does not require it; a future hardening track can add detached signatures without changing the schema.
+- Bundles are **not signed** as of v0.7.0. The trusted-LAN posture (ADR-001) does not require it; a future hardening track (bearer tokens / mTLS) can add detached signatures without changing the schema.
 
 ---
 

@@ -60,7 +60,7 @@ Sending a partial document (e.g., `@{ instanceName = '...' }`) drops every other
 ```powershell
 notepad "$env:ProgramData\Master Control Orchestration Server\mcos.json"
 # After saving, restart the service so the new config is read:
-Restart-Service MasterControlOrchestrationServer
+Restart-Service MasterControlProgram
 ```
 
 The Settings UI exposes the fields most operators change. Everything else (gateway substrate config, security flags, advanced policy) is only via direct file edit or the API.
@@ -249,7 +249,7 @@ A few legacy fields from ADR-001 are still honored on the operator surface — `
 
 ```powershell
 # Restart command for changes that need the service to re-read mcos.json:
-Restart-Service MasterControlOrchestrationServer
+Restart-Service MasterControlProgram
 ```
 
 ---

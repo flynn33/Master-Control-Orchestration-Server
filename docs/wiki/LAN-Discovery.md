@@ -52,7 +52,7 @@ $body = @{ beaconEnabled = $false } | ConvertTo-Json
 Invoke-RestMethod -Method POST -Uri http://localhost:7300/api/config -Body $body -ContentType 'application/json'
 
 # Or stop the service entirely (kills both advertising paths)
-Stop-Service MasterControlOrchestrationServer
+Stop-Service MasterControlProgram
 ```
 
 There is no current toggle to disable DNS-SD without stopping the service. If you need MCOS up but invisible on the LAN, drop the firewall rules:
@@ -72,7 +72,7 @@ The DNS-SD instance label comes from `mcos.json` `instanceId`. Edit it to a reco
 ```powershell
 $body = @{ instanceId = 'mcos-eng-lab-1' } | ConvertTo-Json
 Invoke-RestMethod -Method POST -Uri http://localhost:7300/api/config -Body $body -ContentType 'application/json'
-Restart-Service MasterControlOrchestrationServer
+Restart-Service MasterControlProgram
 ```
 
 After restart, browsers see `mcos-eng-lab-1._mcos._tcp.local` instead of the UUID-default form.
@@ -294,7 +294,7 @@ flowchart TB
     classDef good fill:#031a14,stroke:#1cf2c1,color:#a8efe0;
     classDef bad fill:#1a0a0a,stroke:#ff7a90,color:#ffd2d8;
 
-    A[Service running?]:::step --> A1{Get-Service<br/>MasterControlOrchestrationServer}
+    A[Service running?]:::step --> A1{Get-Service<br/>MasterControlProgram}
     A1 -->|Running| B[Firewall rules?]:::step
     A1 -->|Stopped| Aerr[Start the service]:::bad
 

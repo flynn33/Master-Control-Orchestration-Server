@@ -1,10 +1,34 @@
-## ADR-003 - MCP Gateway Substrate: Keep MCPJungle for v0.6.x
+## ADR-003 - MCP Gateway Substrate: Two Substrates Ship (status-updated)
 
-- Status: Accepted
-- Date: 2026-05-02
+- Status: Accepted (status updated 2026-05-05)
+- Original date: 2026-05-02
+- Status update date: 2026-05-05 (v0.6.9 / v0.6.10 / v0.7.0)
 - Deciders: Product owner, engineering
 - Builds on: [ADR-002 - Gateway-first MCP realignment](ADR-002-gateway-first-mcp-realignment.md) §2 (replaceable gateway adapter), §11 (vendoring rules)
-- Related: [docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md), [handoff/realignment/PHASE-11-native-gateway-option.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/PHASE-11-native-gateway-option.md), [handoff/realignment/PHASE-11-completion-report.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/PHASE-11-completion-report.md), [handoff/realignment/PHASE-02-completion-report.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/PHASE-02-completion-report.md)
+- Related: [docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md), [handoff/realignment/PHASE-11-native-gateway-option.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/handoff/realignment/PHASE-11-native-gateway-option.md), [handoff/realignment/PHASE-12-native-http-sys-gateway.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/handoff/realignment/PHASE-12-native-http-sys-gateway.md)
+
+### Status update (v0.6.9 / v0.6.10 / v0.7.0)
+
+The original ADR-003 decision (recorded below for the historical record) was to **keep MCPJungle as the v0.6.x substrate** and defer a native HTTP.sys gateway to a conditional PHASE-12 gated on five operational triggers. That decision held through v0.6.0 through v0.6.8.
+
+In v0.6.9, **PHASE-12 was authored and shipped voluntarily**, not because any of the five named triggers fired in measurement, but because the operator-experience trigger (#4 in the original list) became visible during day-to-day use: the supervised-binary path required a separate download and configure step that was real friction for fresh installs. The conservative path remains valid; the additional substrate is purely additive.
+
+What v0.6.9 / v0.6.10 / v0.7.0 actually deliver:
+
+- v0.6.9 — `NativeHttpSysGatewayAdapter` ships alongside `McpJungleGatewayAdapter`. Both satisfy `IMcpGateway` exactly. HTTP.sys lifecycle, MCP `initialize` and `tools/list` end-to-end. `tools/call` returned an honest "stdio bridge pending" -32601 with explicit pointer at v0.6.10.
+- v0.6.10 — stdio bridge complete. `IWorkerSupervisor::sendStdioJsonRpc` writes a `\n`-terminated JSON-RPC envelope to a supervised child's stdin and reads stdout via `PeekNamedPipe` + deadline-based `ReadFile`, parsing newline-delimited JSON and matching by `id`. Per-instance mutex serializes concurrent calls. Native `tools/list` aggregates by walking each pool's first Ready instance via the bridge; native `tools/call` resolves `params.name` to a pool, acquires a lease, forwards via the bridge, re-stamps the response id. Bootstrapper installs URL ACL `http://+:<port>/ user=Everyone` so console-mode operators bind without elevation.
+- v0.7.0 — production milestone. Both substrates ship; operators select via `mcpGateway.type`. The `IMcpGateway` interface is unchanged.
+
+What this status update changes about the original decision:
+
+- The five operational triggers are no longer "deferred". Trigger #4 (operator-experience friction) was acted on. Triggers #1, #2, #3, #5 remain unmeasured but moot now that the native substrate exists.
+- "Keep MCPJungle for v0.6.x" → "Both substrates ship; operators select." The ADR-002 §2 reversibility guarantee is satisfied in both directions.
+- The `IMcpGateway` interface, `McpJungleGatewayAdapter`, `FakeMcpGatewayAdapter`, the gateway HTTP routes (`/api/gateway/*`), and the dashboard panels all remain exactly as they shipped through PHASE-10 — additive only.
+- Default for fresh installs as of v0.7.0 is encouraged to be `mcpGateway.type = "native"` because there is no separate binary to install. Existing v0.6.x deployments stay on `mcpjungle` unless they choose to switch.
+
+The original decision text follows below for historical record.
+
+---
 
 ### Context
 
@@ -76,4 +100,5 @@ This ADR is docs-only. No runtime, no test, no schema, no contract changes. The 
 - [docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md) — full evaluation memo
 - [handoff/realignment/PHASE-11-native-gateway-option.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/PHASE-11-native-gateway-option.md) — phase file
 - [handoff/realignment/PHASE-02-completion-report.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/PHASE-02-completion-report.md) — adapter spike
-- [docs/wiki/Operations/Packaging-and-Gateway-Binary.md](../Operations/Packaging-and-Gateway-Binary.md) — operator guidance for the supervised path
+- [Packaging-and-Gateway-Binary](Packaging-and-Gateway-Binary) — operator guidance for the supervised path
+- [Gateway](Gateway) — substrate selection, MCPJungle install steps, native HTTP.sys enablement, stdio bridge behavior
