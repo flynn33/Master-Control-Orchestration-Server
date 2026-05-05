@@ -620,6 +620,22 @@
                                ],
                       "source":  "226670d",
                       "ts":  "2026-05-05T10:02:51Z"
+                  },
+                  {
+                      "id":  "427c64c65674",
+                      "kind":  "release-event",
+                      "title":  "v0.6.8 shipped (pool persistence + Canvas charts + telemetry ring + PHASE-12/13 plans)",
+                      "body":  "Commit 06a09e2. The biggest operator-pain item is gone: pool definitions now persist across restart and MSI upgrade via AppConfiguration.pools. Runtime hydrates pools at boot, POST /api/pools and remove call persistSupervisedPoolsToConfiguration to write back. Browser dashboard gains per-instance Canvas sparklines (CPU% + RAM MB time-series, 60-sample ring at 2s cadence). Telemetry events ring producer wired (pool/lease lifecycle events). /api/telemetry/events now returns {events, maxEvents} envelope and honors ?max=N. Shell config narrative surfaces preferredBindAddress. PHASE-12 plan file (full native HTTP.sys gateway, replaces honest-503 listener with real impl) and PHASE-13 plan file (Win2D rendering for high-rate visuals in shell) shipped. Implementation deferred to next releases.",
+                      "tags":  [
+                                   "release",
+                                   "v0.6.8",
+                                   "pool-persistence",
+                                   "graphic-telemetry",
+                                   "phase-12-plan",
+                                   "phase-13-plan"
+                               ],
+                      "source":  "06a09e2",
+                      "ts":  "2026-05-05T10:24:07Z"
                   }
               ],
     "phaseState":  {
