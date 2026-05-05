@@ -1885,6 +1885,16 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                         << L"Browser port: " << browserPort << L'\n'
                         << L"Beacon port: " << beaconPort << L'\n'
                         << L"Bind address: " << wideFromUtf8(bindAddress) << L'\n'
+                        // v0.6.8: surface the operator-set preferred LAN
+                        // IP. Discovery doc + DNS-SD records use this when
+                        // it's non-empty (v0.6.4 advertise side, v0.6.6
+                        // dashboard telemetry side); shell should display
+                        // it so operators can confirm what LAN clients see.
+                        << L"Preferred bind (advertised): "
+                            << (preferredBindAddress.empty()
+                                    ? std::wstring(L"(auto-detected)")
+                                    : wideFromUtf8(preferredBindAddress))
+                            << L'\n'
                         << L"Beacon enabled: " << boolLabel(beaconEnabled) << L'\n'
                         << L"AI autonomy: " << boolLabel(aiAutonomyEnabled) << L'\n'
                         << L"Security protocols: " << boolLabel(securityProtocolsEnabled) << L'\n'

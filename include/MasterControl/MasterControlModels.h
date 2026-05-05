@@ -1119,6 +1119,20 @@ struct AppConfiguration final {
     std::vector<AppleRemoteHost> appleRemoteHosts;
     ManagedNodeProfile activeProfile;
     McpGatewayConfiguration mcpGateway;
+    // PHASE-06 worker pool definitions, persisted across restart and
+    // upgrade. WorkerSupervisor::pools_ is the in-memory authority; this
+    // field is the on-disk mirror. Load-on-start: runtime reads
+    // configuration.pools and calls workerSupervisor_->upsertPool() for
+    // each. Write-on-upsert/remove: pool admin routes update both the
+    // supervisor (immediate effect) and the configuration (next-restart
+    // survival). Pool definitions stored here include scalePolicy /
+    // drainPolicy / template / healthProbe / logicalMcpUrl. Instance
+    // state (PIDs, ready/busy/draining lifecycle, telemetry) is
+    // intentionally NOT persisted -- supervised processes don't survive
+    // an MCOS restart by design (Job Object containment), so re-reading
+    // stale instance rows would lie. The runtime re-creates instances
+    // on demand from scalePolicy.minInstances after load.
+    std::vector<ManagedEndpointPool> pools;
 };
 
 std::string to_string(EndpointKind value);
@@ -1768,7 +1782,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     lanClients,
     appleRemoteHosts,
     activeProfile,
-    mcpGateway)
+    mcpGateway,
+    pools)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     McpGatewayConfiguration,

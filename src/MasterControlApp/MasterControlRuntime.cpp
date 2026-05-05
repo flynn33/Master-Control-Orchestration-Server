@@ -9579,6 +9579,10 @@ private:
     OperationResult manageForsettiModule(const std::string& moduleId, const std::string& action);
     HttpResponse handleHttpRequest(const HttpRequest& request);
     HttpResponse staticFileResponse(std::string path) const;
+    // v0.6.8: mirror WorkerSupervisor::pools_ into AppConfiguration.pools
+    // and persist to disk. Called from /api/pools POST and /api/pools/{id}/remove
+    // so pool definitions survive service restart / MSI upgrade.
+    void persistSupervisedPoolsToConfiguration();
 
     template <typename T>
     static HttpResponse jsonResponse(const T& value, int statusCode = 200) {
@@ -9686,10 +9690,26 @@ bool MasterControlApplication::Impl::initialize() {
 
     // PHASE-06 (ADR-002 §7): construct the worker supervisor. PHASE-06
     // ships in-memory pool registration + Job Object child supervision;
-    // PHASE-07 layers leases + autoscale on top. Empty supervisor at
-    // boot — operators register pools via POST /api/pools or future
-    // module manifests.
+    // PHASE-07 layers leases + autoscale on top.
+    //
+    // v0.6.8 added pool persistence: AppConfiguration carries the pool
+    // definition list, mirroring WorkerSupervisor::pools_ to disk on
+    // every upsert/remove, and we hydrate the supervisor here at boot
+    // so pool definitions survive service restart and MSI MajorUpgrade.
+    // Through v0.6.7 the supervisor came up empty, the operator's
+    // registered pools were memory-only, and every restart wiped them.
     workerSupervisor_ = std::make_shared<WorkerSupervisor>();
+    {
+        const auto bootCfg = configurationService_->current();
+        for (const auto& persistedPool : bootCfg.pools) {
+            // upsertPool returns success even on duplicate; passing the
+            // freshly-loaded definition is idempotent. instances are not
+            // hydrated -- supervised processes don't survive a restart by
+            // design (Job Object KILL_ON_JOB_CLOSE), so re-spawning is
+            // operator-triggered via POST /api/pools/{id}/scale.
+            workerSupervisor_->upsertPool(persistedPool);
+        }
+    }
 
     // PHASE-07 (ADR-002 §8): construct the lease router that resolves
     // LeaseRequest -> EndpointLease using sticky-session + least-loaded
@@ -10508,10 +10528,34 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "POST" && request.path == "/api/pools") {
             try {
-                auto pool = nlohmann::json::parse(request.body).get<ManagedEndpointPool>();
-                return jsonResponse(workerSupervisor_
-                    ? workerSupervisor_->upsertPool(std::move(pool))
-                    : OperationResult{ false, false, "Worker supervisor is not running." });
+                auto poolBody = nlohmann::json::parse(request.body).get<ManagedEndpointPool>();
+                if (!workerSupervisor_) {
+                    return jsonResponse(OperationResult{ false, false, "Worker supervisor is not running." });
+                }
+                const std::string poolIdEvt = poolBody.poolId;
+                const std::string poolKindEvt = to_string(poolBody.kind);
+                const auto result = workerSupervisor_->upsertPool(std::move(poolBody));
+                if (result.succeeded) {
+                    // v0.6.8 persistence: mirror the supervisor's pool list
+                    // to disk so the definition survives restart / upgrade.
+                    persistSupervisedPoolsToConfiguration();
+                    // v0.6.8 telemetry events ring producer: emit a
+                    // categorized event so the dashboard's Recent Telemetry
+                    // Events panel and /api/telemetry/events surface this
+                    // lifecycle event. Through v0.6.7 only /api/activity
+                    // had a producer; the telemetry events ring stayed
+                    // empty.
+                    if (telemetryAggregator_) {
+                        TelemetryEvent evt;
+                        evt.category = TelemetryCategory::Worker;
+                        evt.severity = TelemetrySeverity::Info;
+                        evt.message = std::string("Pool registered: ") + poolIdEvt
+                            + " (kind=" + poolKindEvt + ")";
+                        evt.poolId = poolIdEvt;
+                        telemetryAggregator_->recordEvent(std::move(evt));
+                    }
+                }
+                return jsonResponse(result);
             } catch (const std::exception& ex) {
                 return jsonResponse(OperationResult{ false, false, std::string("Invalid pool JSON: ") + ex.what() });
             }
@@ -10529,13 +10573,44 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 return jsonResponse(OperationResult{ false, false, "Worker supervisor is not running." });
             }
             if (action == "remove") {
-                return jsonResponse(workerSupervisor_->removePool(poolId));
+                const auto result = workerSupervisor_->removePool(poolId);
+                if (result.succeeded) {
+                    persistSupervisedPoolsToConfiguration();
+                    if (telemetryAggregator_) {
+                        TelemetryEvent evt;
+                        evt.category = TelemetryCategory::Worker;
+                        evt.severity = TelemetrySeverity::Info;
+                        evt.message = "Pool removed: " + poolId;
+                        evt.poolId = poolId;
+                        telemetryAggregator_->recordEvent(std::move(evt));
+                    }
+                }
+                return jsonResponse(result);
             }
             if (action == "scale") {
-                return jsonResponse(workerSupervisor_->ensureMinInstances(poolId));
+                const auto result = workerSupervisor_->ensureMinInstances(poolId);
+                if (result.succeeded && telemetryAggregator_) {
+                    TelemetryEvent evt;
+                    evt.category = TelemetryCategory::Worker;
+                    evt.severity = TelemetrySeverity::Info;
+                    evt.message = "Pool scaled to minInstances: " + poolId;
+                    evt.poolId = poolId;
+                    telemetryAggregator_->recordEvent(std::move(evt));
+                }
+                return jsonResponse(result);
             }
             if (action == "drain") {
-                return jsonResponse(workerSupervisor_->drainPool(poolId));
+                const auto result = workerSupervisor_->drainPool(poolId);
+                if (result.succeeded && telemetryAggregator_) {
+                    TelemetryEvent evt;
+                    evt.category = TelemetryCategory::Worker;
+                    evt.severity = TelemetrySeverity::Warning;
+                    evt.message = "Pool draining: " + poolId
+                        + " (existing sticky leases finish on their bound instance; new sessions route elsewhere)";
+                    evt.poolId = poolId;
+                    telemetryAggregator_->recordEvent(std::move(evt));
+                }
+                return jsonResponse(result);
             }
             // PHASE-07 lease acquire: POST /api/pools/{poolId}/leases
             if (action == "leases") {
@@ -10552,7 +10627,22 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                         // Empty / malformed body falls back to a stateless lease.
                     }
                 }
-                return jsonResponse(leaseRouter_->acquireLease(leaseRequest));
+                const auto lease = leaseRouter_->acquireLease(leaseRequest);
+                if (telemetryAggregator_) {
+                    TelemetryEvent evt;
+                    evt.category = TelemetryCategory::Worker;
+                    evt.severity = (lease.state == LeaseState::Failed)
+                        ? TelemetrySeverity::Warning
+                        : TelemetrySeverity::Info;
+                    evt.message = (lease.state == LeaseState::Failed)
+                        ? std::string("Lease acquire failed for pool ") + poolId + ": " + lease.statusMessage
+                        : std::string("Lease ") + lease.leaseId + " acquired on pool " + poolId
+                            + " -> instance " + lease.instanceId;
+                    evt.poolId = poolId;
+                    evt.instanceId = lease.instanceId;
+                    telemetryAggregator_->recordEvent(std::move(evt));
+                }
+                return jsonResponse(lease);
             }
             return jsonResponse(OperationResult{ false, false, "Unknown pool action; expected remove|scale|drain|leases." });
         }
@@ -10562,12 +10652,32 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         // GET  /api/telemetry/clients       -> connected-client roster.
         // GET  /api/telemetry/gateway       -> gateway traffic snapshot.
         // POST /api/telemetry/heartbeat     -> AI-client heartbeat ingest.
-        if (request.method == "GET" && request.path == "/api/telemetry/events") {
-            std::size_t maxEvents = 100;
-            // Honor ?max=N if present in the path-style query string.
-            return jsonResponse(telemetryAggregator_
+        if (request.method == "GET" && request.path.rfind("/api/telemetry/events", 0) == 0) {
+            // Honor ?max=N. Through v0.6.7 the route only matched the
+            // bare path; ?max=N produced a 404 and the route also
+            // returned a raw array instead of the {events, maxEvents}
+            // envelope the dashboard expects. Both fixed in v0.6.8.
+            std::size_t maxEvents = 1024;
+            const auto query = request.path.find('?');
+            if (query != std::string::npos) {
+                const auto qs = request.path.substr(query + 1);
+                const auto maxAt = qs.find("max=");
+                if (maxAt != std::string::npos) {
+                    auto value = qs.substr(maxAt + 4);
+                    const auto amp = value.find('&');
+                    if (amp != std::string::npos) value = value.substr(0, amp);
+                    try { maxEvents = static_cast<std::size_t>(std::stoul(value)); } catch (...) {}
+                    if (maxEvents == 0) maxEvents = 1024;
+                }
+            }
+            const auto events = telemetryAggregator_
                 ? telemetryAggregator_->recentEvents(maxEvents)
-                : std::vector<TelemetryEvent>{});
+                : std::vector<TelemetryEvent>{};
+            nlohmann::json body = {
+                { "events", events },
+                { "maxEvents", maxEvents }
+            };
+            return HttpResponse{ 200, "application/json", body.dump() };
         }
         if (request.method == "GET" && request.path == "/api/telemetry/clients") {
             return jsonResponse(telemetryAggregator_
@@ -11647,6 +11757,30 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
     }
 
     return response;
+}
+
+void MasterControlApplication::Impl::persistSupervisedPoolsToConfiguration() {
+    if (!workerSupervisor_ || !configurationService_) {
+        return;
+    }
+    // Snapshot the live supervisor pools, strip live instance state
+    // (PIDs / Ready/Busy lifecycle / sampled telemetry) so we serialize
+    // only the persistent definition. Instance state is not durable
+    // across an MCOS process restart -- supervised processes die when
+    // their Job Object closes -- so persisting them would lie. The
+    // operator re-spawns via POST /api/pools/{id}/scale after load.
+    auto live = workerSupervisor_->listPools();
+    for (auto& pool : live) {
+        pool.instances.clear();
+    }
+
+    auto cfg = configurationService_->current();
+    cfg.pools = std::move(live);
+    // confirmUnsafeChanges=false: this is operator-driven (POST /api/pools
+    // from the dashboard or the bridge plugin), so it does not require
+    // CLU governance approval. The configuration update goes through the
+    // normal save path.
+    configurationService_->update(cfg, false);
 }
 
 HttpResponse MasterControlApplication::Impl::staticFileResponse(std::string path) const {

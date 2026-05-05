@@ -1,11 +1,35 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.6.7",
-  "current_tag": "v0.6.7",
+  "current_version": "0.6.8",
+  "current_tag": "v0.6.8",
   "released_at": "2026-05-05",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.6.8",
+      "tag": "v0.6.8",
+      "released_at": "2026-05-05",
+      "commit": "pending",
+      "summary": "The biggest operator-pain item is gone: pool definitions now persist across service restart and MSI upgrade. AppConfiguration carries a pools field (mirror of WorkerSupervisor::pools_), the runtime hydrates it at boot, and pool admin routes write back to disk on every upsert / remove. Operator no longer loses the 7 carefully-configured pools every time MCOS restarts. Plus: per-instance graphic telemetry sparkline charts on the dashboard's Pools deck (Canvas, GPU-composited automatically), telemetry events ring producer wired (supervisor lifecycle + lease router fire structured events into /api/telemetry/events instead of leaving the ring empty), and /api/telemetry/events now returns the {events, maxEvents} envelope the dashboard expects + honors ?max=N. PHASE-12 (full native HTTP.sys gateway, replacing MCPJungle dependency) and PHASE-13 (Win2D / Direct2D rendering in the shell) plan files written.",
+      "entries": [
+        "feat(persistence): AppConfiguration gains a pools field (NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT) so pool definitions are mirrored to disk in the persisted config file. Instance state (PIDs, Ready/Busy lifecycle, sampled telemetry) is intentionally NOT persisted -- supervised processes don't survive a restart by design (Job Object KILL_ON_JOB_CLOSE), so re-reading stale instance rows would lie. The runtime re-creates instances on demand from scalePolicy.minInstances after load.",
+        "feat(persistence): runtime reads configuration.pools at boot and calls workerSupervisor_->upsertPool(...) for each. Hydrates after configurationService_ is constructed but before the worker supervisor accepts external requests, so the API surface sees the persisted pools immediately on startup.",
+        "feat(persistence): POST /api/pools and POST /api/pools/{id}/remove now call persistSupervisedPoolsToConfiguration() after the in-memory operation succeeds. Helper snapshots WorkerSupervisor::pools_, strips instance state, and sends the updated AppConfiguration through configurationService_->update() which triggers the persisted-config-file write.",
+        "feat(dashboard): per-instance live sparkline charts on the Pools deck. New paintInstanceSparklines() walks every .instance-spark canvas and draws CPU% (cyan accent, 0-100 fixed range) and Memory MB (cyan-blue, dynamic range) time-series. State.instanceHistory[instanceId] keeps a 60-sample ring per instance (~2 minutes at the 2 s polling cadence). Browser GPU-composites the canvas automatically.",
+        "feat(dashboard-css): .instance-spark + .instance-telemetry-table styles for the new charts. 120x32 canvas with subtle Tron-themed border and translucent radial gradient background.",
+        "feat(telemetry): /api/pools route handlers (POST /api/pools, /scale, /drain, /remove, lease acquire) emit structured TelemetryEvent records into the telemetryAggregator_ on success. Through v0.6.7 the events ring stayed empty because no producer was wired; v0.6.8 makes Recent Telemetry Events on the dashboard's Overview deck and /api/telemetry/events both populate with real lifecycle activity.",
+        "fix(telemetry): /api/telemetry/events now returns the {events, maxEvents} envelope the dashboard JavaScript reads. Through v0.6.7 the route returned a raw array, the dashboard's state.telemetryEvents.events was therefore undefined, and the Overview deck rendered an empty list. Also: ?max=N query parsing was missing entirely; the route only matched the bare path. Fixed both.",
+        "feat(shell): the Configuration Narrative panel now surfaces activeProfile.preferredBindAddress so operators can confirm what LAN clients see in /api/discovery and /.well-known/mcos.json. Through v0.6.7 the panel showed bindAddress (the listen target, often 0.0.0.0) but not the advertised IP override.",
+        "docs(phases): PHASE-12 plan file (handoff/realignment/PHASE-12-native-http-sys-gateway.md) -- full native HTTP.sys MCP gateway in C++, replacing the v0.6.7 honest-503 listener with a real implementation. ADR-003 trigger fired. Estimated 1-2 weeks for MVP, 4-8 weeks for production-ready. NativeHttpSysGatewayAdapter alongside the existing McpJungleGatewayAdapter; mcpGateway.type switches between them.",
+        "docs(phases): PHASE-13 plan file (handoff/realignment/PHASE-13-direct2d-shell-rendering.md) -- Win2D / Direct2D rendering for high-rate live visuals in the WinUI shell. Per-instance telemetry charts at 60Hz, Tron grid backdrop as procedural shader, activity stream as scrolling SwapChainPanel, saturation rings with smooth interpolation. WinUI 3 already runs on DX11 via Composition; PHASE-13 cuts the four high-frequency surfaces out of XAML's layout pass.",
+        "docs(version): bump 0.6.7 -> 0.6.8 (pool persistence + per-instance graphic telemetry + telemetry events ring + shell config narrative + PHASE-12 + PHASE-13 plans)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-12 (full native HTTP.sys gateway in C++) -- replaces the v0.6.7 honest-503 listener with a real gateway. Plan file shipped this release; implementation in a future release.",
+        "PHASE-13 (Win2D / Direct2D rendering in the WinUI shell) -- per-instance live charts at 60Hz, Tron grid as procedural shader, activity stream as scrolling SwapChainPanel. Plan file shipped this release; implementation in a future release."
+      ]
+    },
     {
       "version": "0.6.7",
       "tag": "v0.6.7",

@@ -1378,14 +1378,105 @@ function renderPoolCard(pool) {
   `;
 }
 
+// In-memory time-series buffer for per-instance telemetry sparklines.
+// state.instanceHistory[instanceId] = { cpu: [...], mem: [...], lastTs: '' }
+// Each refresh appends one sample per known instance, capped at 60 points
+// (~2 minutes of history at the 2 s polling cadence). The DOM render
+// turns these into <canvas>-drawn sparklines that update in place
+// without rebuilding the row.
+const TELEMETRY_HISTORY_LIMIT = 60;
+function recordInstanceTelemetry(pool) {
+  if (!state.instanceHistory) state.instanceHistory = {};
+  for (const inst of (pool.instances || [])) {
+    const id = inst.instanceId;
+    if (!id) continue;
+    const tel = inst.telemetry || {};
+    const buf = state.instanceHistory[id] || { cpu: [], mem: [], lastTs: '' };
+    if (tel.lastProbedAtUtc && tel.lastProbedAtUtc !== buf.lastTs) {
+      buf.lastTs = tel.lastProbedAtUtc;
+      const cpu = Number.isFinite(tel.cpuPercent) && tel.cpuPercent >= 0 ? tel.cpuPercent : null;
+      const mem = Number.isFinite(tel.memoryMbytes) && tel.memoryMbytes >= 0 ? tel.memoryMbytes : null;
+      buf.cpu.push(cpu);
+      buf.mem.push(mem);
+      while (buf.cpu.length > TELEMETRY_HISTORY_LIMIT) buf.cpu.shift();
+      while (buf.mem.length > TELEMETRY_HISTORY_LIMIT) buf.mem.shift();
+      state.instanceHistory[id] = buf;
+    }
+  }
+}
+
+function drawSparkline(canvas, samples, options) {
+  if (!canvas || !canvas.getContext) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  // Subtle Tron grid: faint center line and accent fill area.
+  const accent = options.accent || 'rgba(28, 242, 193, 0.95)';
+  const fill = options.fill || 'rgba(28, 242, 193, 0.18)';
+  const numericSamples = samples.filter((v) => Number.isFinite(v));
+  if (numericSamples.length === 0) {
+    ctx.fillStyle = 'rgba(232, 243, 247, 0.4)';
+    ctx.font = '10px Cascadia Code, Consolas, monospace';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('idle', 6, h / 2);
+    return;
+  }
+  const maxFloor = Number.isFinite(options.maxFloor) ? options.maxFloor : 0;
+  const explicitMax = Number.isFinite(options.fixedMax) ? options.fixedMax : null;
+  const seriesMax = explicitMax !== null ? explicitMax : Math.max(maxFloor, ...numericSamples);
+  const range = Math.max(seriesMax, 1);
+  ctx.strokeStyle = 'rgba(118, 224, 255, 0.18)';
+  ctx.beginPath();
+  ctx.moveTo(0, h - 0.5);
+  ctx.lineTo(w, h - 0.5);
+  ctx.stroke();
+  // Build the line.
+  const stepX = w / Math.max(samples.length - 1, 1);
+  ctx.beginPath();
+  let firstDrawn = true;
+  for (let i = 0; i < samples.length; i++) {
+    const v = samples[i];
+    if (!Number.isFinite(v)) continue;
+    const x = i * stepX;
+    const y = h - (v / range) * (h - 4) - 2;
+    if (firstDrawn) {
+      ctx.moveTo(x, y);
+      firstDrawn = false;
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.lineWidth = 1.4;
+  ctx.strokeStyle = accent;
+  ctx.stroke();
+  // Fill below the line.
+  ctx.lineTo(w, h);
+  ctx.lineTo(0, h);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  // Latest value badge.
+  const latest = numericSamples[numericSamples.length - 1];
+  const label = (options.formatLatest || ((v) => v.toFixed(0)))(latest);
+  ctx.fillStyle = accent;
+  ctx.font = 'bold 10px Cascadia Code, Consolas, monospace';
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'right';
+  ctx.fillText(label, w - 4, 2);
+}
+
 function renderPoolInstances(pool) {
   const instances = (pool.instances || []);
   if (instances.length === 0) {
     return '<p class="muted">No instances yet. Scale to min spawns workers via Job Object–contained <code>CreateProcessW</code>.</p>';
   }
+  // Capture the latest sample BEFORE rendering so the sparkline draws
+  // include the freshest reading from the current poll cycle.
+  recordInstanceTelemetry(pool);
   return `
-    <table class="runtime-table">
-      <thead><tr><th>Instance</th><th>State</th><th>Supervised</th><th>CPU</th><th>Mem (MB)</th><th>Last probe</th></tr></thead>
+    <table class="runtime-table instance-telemetry-table">
+      <thead><tr><th>Instance</th><th>State</th><th>Supervised</th><th>CPU %</th><th>Memory MB</th><th>Last probe</th></tr></thead>
       <tbody>
         ${instances.map((inst) => {
           const tel = inst.telemetry || {};
@@ -1393,14 +1484,54 @@ function renderPoolInstances(pool) {
             <td><code>${escapeHtml(inst.instanceId || '')}</code></td>
             <td>${escapeHtml((inst.state || '').toString())}</td>
             <td>${inst.supervised ? 'yes' : 'no'}</td>
-            <td>${escapeHtml(formatMetric(tel.cpuPercent, { suffix: '%' }))}</td>
-            <td>${escapeHtml(formatMetric(tel.memoryMbytes, { digits: 0 }))}</td>
+            <td>
+              <div class="instance-spark" data-spark-instance="${escapeHtml(inst.instanceId || '')}" data-spark-metric="cpu">
+                <canvas width="120" height="32"></canvas>
+                <span class="muted">${escapeHtml(formatMetric(tel.cpuPercent, { suffix: '%' }))}</span>
+              </div>
+            </td>
+            <td>
+              <div class="instance-spark" data-spark-instance="${escapeHtml(inst.instanceId || '')}" data-spark-metric="mem">
+                <canvas width="120" height="32"></canvas>
+                <span class="muted">${escapeHtml(formatMetric(tel.memoryMbytes, { digits: 0 }))}</span>
+              </div>
+            </td>
             <td>${escapeHtml(relativeAgo(tel.lastProbedAtUtc))}</td>
           </tr>`;
         }).join('')}
       </tbody>
     </table>
   `;
+}
+
+// Walk every .instance-spark canvas in the DOM and draw the latest
+// time-series. Called from bindPoolsHandlers (which runs after
+// renderPoolsPanel injects new HTML on each refresh).
+function paintInstanceSparklines() {
+  if (!state.instanceHistory) return;
+  for (const node of document.querySelectorAll('.instance-spark')) {
+    const id = node.getAttribute('data-spark-instance');
+    const metric = node.getAttribute('data-spark-metric');
+    const buf = state.instanceHistory[id];
+    if (!buf) continue;
+    const canvas = node.querySelector('canvas');
+    if (!canvas) continue;
+    if (metric === 'cpu') {
+      drawSparkline(canvas, buf.cpu, {
+        accent: 'rgba(28, 242, 193, 0.95)',
+        fill: 'rgba(28, 242, 193, 0.18)',
+        fixedMax: 100,
+        formatLatest: (v) => v.toFixed(1) + '%'
+      });
+    } else if (metric === 'mem') {
+      drawSparkline(canvas, buf.mem, {
+        accent: 'rgba(0, 246, 255, 0.95)',
+        fill: 'rgba(0, 246, 255, 0.16)',
+        maxFloor: 16,
+        formatLatest: (v) => v.toFixed(0) + ' MB'
+      });
+    }
+  }
 }
 
 function renderPoolLeases(pool, leases) {
@@ -1449,6 +1580,11 @@ function bindPoolsHandlers() {
       }
     });
   });
+  // v0.6.8: per-instance live sparklines. Painted on every renderCurrent
+  // tick so the lines slide left as new samples come in. The browser
+  // GPU-composites the canvas automatically; rendering cost is one path
+  // + one fill rectangle per chart on each 2 s refresh.
+  paintInstanceSparklines();
 }
 
 // ---- Telemetry clients (presence roster) ----
