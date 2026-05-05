@@ -7571,6 +7571,13 @@ public:
         return OperationResult{ true, false, "All pools shut down." };
     }
 
+    // PHASE-12 follow-up (v0.6.10): see IWorkerSupervisor::sendStdioJsonRpc
+    // contract in MasterControlContracts.h. Implementation lives in private:
+    // section below; this is the override declaration.
+    StdioBridgeResult sendStdioJsonRpc(const std::string& instanceId,
+                                       const std::string& request,
+                                       int timeoutMs) override;
+
 private:
     struct ChildProcess final {
 #if defined(_WIN32)
@@ -7585,6 +7592,25 @@ private:
         ULARGE_INTEGER lastUserTime{};
         ULARGE_INTEGER lastSampleTime{};
         bool haveLoadBaseline = false;
+        // PHASE-12 follow-up (v0.6.10): stdio bridge pipes. The parent (MCOS)
+        // owns the read-end of the child's stdout (`childStdoutRead`) and the
+        // write-end of the child's stdin (`childStdinWrite`). The other ends
+        // are inherited by the child via STARTUPINFO and closed in the parent
+        // immediately after CreateProcessW. Both handles are nullptr on the
+        // supervised-mock path or if pipe creation failed (the child still
+        // runs; tools/call against it returns -32603 with a clear message).
+        // `stdioMutex` serializes concurrent JSON-RPC requests to the SAME
+        // instance (multiple LAN clients hitting the same lease, or one
+        // client issuing parallel calls). It is heap-allocated so this
+        // struct stays movable for std::map storage.
+        // `stdioReadBuffer` accumulates partial lines across ReadFile calls.
+        // `nextRequestId` is monotonic per-child and only incremented under
+        // stdioMutex, so no atomic is needed.
+        HANDLE childStdoutRead = nullptr;
+        HANDLE childStdinWrite = nullptr;
+        std::unique_ptr<std::mutex> stdioMutex;
+        std::string stdioReadBuffer;
+        uint64_t nextRequestId = 1;
 #endif
         bool active = false;
     };
@@ -7612,12 +7638,52 @@ private:
 
 #if defined(_WIN32)
         ChildProcess child;
+        child.stdioMutex = std::make_unique<std::mutex>();
         child.jobObject = CreateJobObjectW(nullptr, nullptr);
         if (child.jobObject != nullptr) {
             JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
             limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
             SetInformationJobObject(child.jobObject, JobObjectExtendedLimitInformation,
                                     &limits, sizeof(limits));
+        }
+
+        // PHASE-12 follow-up (v0.6.10): stdio bridge. Create two anonymous
+        // pipes -- one for the parent to read the child's stdout, one for
+        // the parent to write to the child's stdin. The child-side ends
+        // are marked inheritable via SECURITY_ATTRIBUTES; the parent-side
+        // ends are explicitly cleared via SetHandleInformation so the child
+        // does not inherit them. CreateProcessW is called with
+        // bInheritHandles=TRUE so the child receives the inheritable ends.
+        // After spawn, the parent closes the child-side ends (they are now
+        // open in the child process) so EOF-detection works correctly when
+        // the child exits. If pipe creation fails, the child still runs in
+        // no-bridge mode -- tools/call against it returns a -32603 with a
+        // clear "stdio bridge unavailable" message rather than a hang.
+        SECURITY_ATTRIBUTES pipeSecurity{};
+        pipeSecurity.nLength        = sizeof(SECURITY_ATTRIBUTES);
+        pipeSecurity.bInheritHandle = TRUE;
+        pipeSecurity.lpSecurityDescriptor = nullptr;
+
+        HANDLE childStdoutWrite = nullptr;  // child-side, inherited
+        HANDLE parentStdoutRead = nullptr;  // parent-side, NOT inherited
+        HANDLE childStdinRead   = nullptr;  // child-side, inherited
+        HANDLE parentStdinWrite = nullptr;  // parent-side, NOT inherited
+        bool bridgeAvailable = false;
+
+        if (CreatePipe(&parentStdoutRead, &childStdoutWrite, &pipeSecurity, 0)
+            && CreatePipe(&childStdinRead, &parentStdinWrite, &pipeSecurity, 0)) {
+            // Parent-side ends must NOT be inherited by the child --
+            // otherwise the child holds a copy and EOF never fires.
+            SetHandleInformation(parentStdoutRead, HANDLE_FLAG_INHERIT, 0);
+            SetHandleInformation(parentStdinWrite, HANDLE_FLAG_INHERIT, 0);
+            bridgeAvailable = true;
+        } else {
+            // Clean up any partial allocation; child will still spawn but
+            // without a bridge.
+            if (parentStdoutRead) { CloseHandle(parentStdoutRead); parentStdoutRead = nullptr; }
+            if (childStdoutWrite) { CloseHandle(childStdoutWrite); childStdoutWrite = nullptr; }
+            if (childStdinRead)   { CloseHandle(childStdinRead);   childStdinRead   = nullptr; }
+            if (parentStdinWrite) { CloseHandle(parentStdinWrite); parentStdinWrite = nullptr; }
         }
 
         std::wstring commandLine = L"\"" + wideFromUtf8(pool.template_.executable) + L"\"";
@@ -7631,6 +7697,12 @@ private:
         startupInfo.cb = sizeof(startupInfo);
         startupInfo.dwFlags = STARTF_USESHOWWINDOW;
         startupInfo.wShowWindow = SW_HIDE;
+        if (bridgeAvailable) {
+            startupInfo.dwFlags    |= STARTF_USESTDHANDLES;
+            startupInfo.hStdOutput = childStdoutWrite;
+            startupInfo.hStdError  = childStdoutWrite;  // merge stderr into stdout
+            startupInfo.hStdInput  = childStdinRead;
+        }
 
         PROCESS_INFORMATION processInfo{};
         std::wstring workingDir = wideFromUtf8(pool.template_.workingDirectory);
@@ -7638,7 +7710,7 @@ private:
             nullptr,
             mutableCommandLine.data(),
             nullptr, nullptr,
-            FALSE,
+            bridgeAvailable ? TRUE : FALSE,
             CREATE_NO_WINDOW | CREATE_SUSPENDED,
             nullptr,
             workingDir.empty() ? nullptr : workingDir.c_str(),
@@ -7648,6 +7720,10 @@ private:
             if (child.jobObject) {
                 CloseHandle(child.jobObject);
             }
+            if (parentStdoutRead) CloseHandle(parentStdoutRead);
+            if (childStdoutWrite) CloseHandle(childStdoutWrite);
+            if (childStdinRead)   CloseHandle(childStdinRead);
+            if (parentStdinWrite) CloseHandle(parentStdinWrite);
             transitionInstanceLocked(instance, EndpointInstanceState::Failed,
                                      "CreateProcessW failed for the configured pool template.");
             return instance;
@@ -7659,11 +7735,22 @@ private:
         child.processInfo = processInfo;
         child.active = true;
 
+        // Close the child-side ends in the parent so EOF detection works
+        // when the child exits. Keep the parent-side ends in ChildProcess.
+        if (bridgeAvailable) {
+            CloseHandle(childStdoutWrite);
+            CloseHandle(childStdinRead);
+            child.childStdoutRead = parentStdoutRead;
+            child.childStdinWrite = parentStdinWrite;
+        }
+
         instance.processId = processInfo.dwProcessId;
         instance.supervised = true;
         children_.emplace(instance.instanceId, std::move(child));
         transitionInstanceLocked(instance, EndpointInstanceState::Ready,
-                                 "Instance started under MCOS Job Object supervision.");
+                                 bridgeAvailable
+                                 ? "Instance started under MCOS Job Object supervision (stdio bridge active)."
+                                 : "Instance started under MCOS Job Object supervision (stdio bridge unavailable).");
 #else
         transitionInstanceLocked(instance, EndpointInstanceState::Failed,
                                  "Process supervision requires Windows.");
@@ -7685,6 +7772,19 @@ private:
             const auto childIterator = children_.find(instance.instanceId);
             if (childIterator != children_.end()) {
                 ChildProcess& child = childIterator->second;
+                // PHASE-12 follow-up (v0.6.10): close stdio bridge pipes
+                // before destroying the Job Object. Closing childStdinWrite
+                // signals EOF to the child's stdin reader; closing
+                // childStdoutRead releases the parent's read end. Both are
+                // optional (may be nullptr if pipe creation failed at spawn).
+                if (child.childStdinWrite != nullptr) {
+                    CloseHandle(child.childStdinWrite);
+                    child.childStdinWrite = nullptr;
+                }
+                if (child.childStdoutRead != nullptr) {
+                    CloseHandle(child.childStdoutRead);
+                    child.childStdoutRead = nullptr;
+                }
                 if (child.jobObject != nullptr) {
                     CloseHandle(child.jobObject);
                     child.jobObject = nullptr;
@@ -7814,6 +7914,245 @@ private:
 #endif
     }
 };
+
+// PHASE-12 follow-up (v0.6.10): WorkerSupervisor::sendStdioJsonRpc.
+// See IWorkerSupervisor::sendStdioJsonRpc contract in MasterControlContracts.h.
+//
+// Synchronous stdin write -> stdout poll-read loop with deadline-based timeout.
+// Uses PeekNamedPipe to test for available bytes without blocking, ReadFile
+// to drain whatever is available, and parses newline-delimited JSON lines
+// from `stdioReadBuffer` until a line carrying the JSON-RPC `id` we sent
+// arrives. The JSON-RPC spec for stdio MCP transports is line-delimited:
+// each request and response occupies one '\n'-terminated line of UTF-8 JSON.
+// We do NOT depend on the child producing exactly one line per request --
+// MCP servers may emit log lines, notifications, or progress messages
+// interleaved with responses; we filter by matching `id`.
+//
+// Concurrency model: a per-instance `stdioMutex` serializes calls to the
+// SAME instance. Different instances are independent. The supervisor's
+// pool-mutex (`mutex_`) is held only briefly to look up the ChildProcess,
+// then released before the blocking I/O so other supervisor traffic
+// (telemetry sampling, lease accounting) is not blocked on a 30s RPC.
+StdioBridgeResult WorkerSupervisor::sendStdioJsonRpc(const std::string& instanceId,
+                                                      const std::string& request,
+                                                      int timeoutMs) {
+    StdioBridgeResult result{};
+#if !defined(_WIN32)
+    (void)instanceId; (void)request; (void)timeoutMs;
+    result.errorMessage = "stdio bridge requires Windows";
+    return result;
+#else
+    // Phase 1: under the supervisor mutex, look up the child and grab the
+    // pipe handles + per-instance stdio mutex. Release the supervisor
+    // mutex before any blocking I/O so other paths (telemetry, scaling)
+    // are not throttled by long RPCs.
+    HANDLE writeHandle = nullptr;
+    HANDLE readHandle  = nullptr;
+    std::mutex* perInstanceMutex = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = children_.find(instanceId);
+        if (it == children_.end()) {
+            result.errorMessage = "instance not found in supervisor (instanceId=" + instanceId + ")";
+            return result;
+        }
+        ChildProcess& child = it->second;
+        if (!child.active || child.processInfo.hProcess == nullptr) {
+            result.errorMessage = "instance is not active";
+            return result;
+        }
+        if (child.childStdinWrite == nullptr || child.childStdoutRead == nullptr) {
+            result.errorMessage = "stdio bridge unavailable on this instance (pipe creation failed at spawn, or supervised-mock mode)";
+            return result;
+        }
+        if (!child.stdioMutex) {
+            result.errorMessage = "stdio bridge mutex missing (internal bug)";
+            return result;
+        }
+        writeHandle      = child.childStdinWrite;
+        readHandle       = child.childStdoutRead;
+        perInstanceMutex = child.stdioMutex.get();
+    }
+
+    // Phase 2: per-instance stdio lock. Concurrent requests to the same
+    // instance queue here; concurrent requests to different instances run
+    // in parallel.
+    std::lock_guard<std::mutex> perInstanceLock(*perInstanceMutex);
+
+    // Phase 3: write request + '\n' to child stdin. WriteFile may make a
+    // partial write on a full pipe, so loop until the whole envelope is
+    // out the door. The supervisor child-stdin pipe is synchronous and
+    // anonymous (CreatePipe), so WriteFile blocks until kernel buffer
+    // space is available; that is acceptable here because we hold only
+    // the per-instance mutex, not the supervisor mutex.
+    std::string framed = request;
+    if (framed.empty() || framed.back() != '\n') {
+        framed.push_back('\n');
+    }
+    {
+        const char* cursor = framed.data();
+        DWORD remaining = static_cast<DWORD>(framed.size());
+        while (remaining > 0) {
+            DWORD written = 0;
+            if (!WriteFile(writeHandle, cursor, remaining, &written, nullptr) || written == 0) {
+                result.errorMessage = "WriteFile to child stdin failed (child likely exited)";
+                return result;
+            }
+            cursor += written;
+            remaining -= written;
+        }
+    }
+
+    // Phase 4: parse the desired id out of the JSON-RPC envelope so we
+    // can match the response. Tolerant of whitespace; the wire format is
+    // produced by NativeHttpSysGatewayAdapter so we know the exact shape,
+    // but we still pull `id` defensively rather than assuming a position.
+    std::string targetId;
+    {
+        try {
+            const auto parsed = nlohmann::json::parse(request);
+            if (parsed.contains("id")) {
+                // id may be string, integer, or null (notification). For
+                // notifications we don't expect a response -- skip the read
+                // loop and return empty success.
+                if (parsed["id"].is_null()) {
+                    result.succeeded = true;
+                    return result;
+                }
+                targetId = parsed["id"].dump();  // canonical form: "42" or "\"abc\""
+            } else {
+                result.succeeded = true;  // notification -- no response expected
+                return result;
+            }
+        } catch (const std::exception& ex) {
+            result.errorMessage = std::string("could not parse request envelope to extract id: ") + ex.what();
+            return result;
+        }
+    }
+
+    // Phase 5: read-with-deadline loop. Re-grab the supervisor mutex only
+    // for the ChildProcess buffer mutation (so children_ isn't being
+    // resized concurrently); release between sleeps.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    constexpr int kPollIntervalMs = 25;
+    constexpr DWORD kReadChunkBytes = 4096;
+    std::vector<char> readChunk(kReadChunkBytes);
+
+    while (std::chrono::steady_clock::now() < deadline) {
+        // Probe pipe for available bytes without blocking.
+        DWORD bytesAvailable = 0;
+        if (!PeekNamedPipe(readHandle, nullptr, 0, nullptr, &bytesAvailable, nullptr)) {
+            const DWORD err = GetLastError();
+            result.errorMessage = "PeekNamedPipe failed (child likely exited); GetLastError=" + std::to_string(err);
+            return result;
+        }
+        if (bytesAvailable > 0) {
+            const DWORD toRead = (bytesAvailable < kReadChunkBytes) ? bytesAvailable : kReadChunkBytes;
+            DWORD readBytes = 0;
+            if (!ReadFile(readHandle, readChunk.data(), toRead, &readBytes, nullptr) || readBytes == 0) {
+                result.errorMessage = "ReadFile from child stdout failed";
+                return result;
+            }
+
+            // Append to buffer under supervisor mutex (children_ may be
+            // mutated by other threads; we need consistent access).
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                auto it = children_.find(instanceId);
+                if (it == children_.end()) {
+                    result.errorMessage = "instance disappeared while reading";
+                    return result;
+                }
+                it->second.stdioReadBuffer.append(readChunk.data(), readBytes);
+            }
+
+            // Scan buffered lines for a JSON object whose `id` matches.
+            // Drain consumed bytes from the buffer so subsequent calls
+            // see only unconsumed input.
+            std::string consumed;
+            std::string remaining;
+            std::string snapshot;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                auto it = children_.find(instanceId);
+                if (it == children_.end()) {
+                    result.errorMessage = "instance disappeared while scanning";
+                    return result;
+                }
+                snapshot = it->second.stdioReadBuffer;
+            }
+
+            std::size_t pos = 0;
+            std::size_t consumedThrough = 0;
+            bool matched = false;
+            while (pos < snapshot.size()) {
+                const std::size_t newlineAt = snapshot.find('\n', pos);
+                if (newlineAt == std::string::npos) {
+                    break;  // partial line at tail; keep for next read
+                }
+                std::string line = snapshot.substr(pos, newlineAt - pos);
+                pos = newlineAt + 1;
+
+                // Skip empty lines and lines that do not look like JSON.
+                bool jsonish = false;
+                for (char c : line) {
+                    if (!std::isspace(static_cast<unsigned char>(c))) {
+                        jsonish = (c == '{' || c == '[');
+                        break;
+                    }
+                }
+                if (!jsonish) {
+                    consumedThrough = pos;
+                    continue;
+                }
+
+                try {
+                    const auto envelope = nlohmann::json::parse(line);
+                    if (envelope.is_object() && envelope.contains("id") && !envelope["id"].is_null()) {
+                        if (envelope["id"].dump() == targetId) {
+                            result.succeeded   = true;
+                            result.responseBody = line;
+                            matched = true;
+                            consumedThrough = pos;
+                            break;
+                        }
+                    }
+                    // Not our reply; drop line, advance.
+                    consumedThrough = pos;
+                } catch (...) {
+                    // Not parseable JSON; drop line, advance.
+                    consumedThrough = pos;
+                }
+            }
+
+            // Trim consumed prefix from the live buffer.
+            if (consumedThrough > 0) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                auto it = children_.find(instanceId);
+                if (it != children_.end()) {
+                    if (consumedThrough >= it->second.stdioReadBuffer.size()) {
+                        it->second.stdioReadBuffer.clear();
+                    } else {
+                        it->second.stdioReadBuffer.erase(0, consumedThrough);
+                    }
+                }
+            }
+
+            if (matched) {
+                return result;
+            }
+            // Fall through to continue polling -- response may arrive in
+            // a subsequent ReadFile.
+        } else {
+            // No data; back off briefly and re-poll.
+            std::this_thread::sleep_for(std::chrono::milliseconds(kPollIntervalMs));
+        }
+    }
+
+    result.errorMessage = "stdio bridge timed out after " + std::to_string(timeoutMs) + " ms (no response with matching id=" + targetId + ")";
+    return result;
+#endif
+}
 
 // PHASE-07 (ADR-002 §8): LeaseRouter. Resolves a LeaseRequest into a
 // concrete EndpointLease bound to one Ready instance. The selection
@@ -9730,6 +10069,17 @@ bool MasterControlApplication::Impl::initialize() {
     // maxActiveLeasesPerInstance and the pool has not reached its
     // scalePolicy.maxInstances ceiling.
     leaseRouter_ = std::make_shared<LeaseRouter>(workerSupervisor_);
+
+    // PHASE-12 follow-up (v0.6.10): wire the native HTTP.sys gateway to
+    // the supervisor + lease router so tools/call can forward to a
+    // supervised pool instance via the stdio bridge. The MCPJungle adapter
+    // does not need this -- MCPJungle handles its own forwarding. The
+    // dynamic_pointer_cast is null when mcpGateway.type != "native"; the
+    // attach is silently skipped in that case.
+    if (auto nativeAdapter =
+            std::dynamic_pointer_cast<NativeHttpSysGatewayAdapter>(mcpGateway_)) {
+        nativeAdapter->AttachWorkerBridge(workerSupervisor_, leaseRouter_);
+    }
 
     // PHASE-08 (ADR-002 §9): construct the telemetry aggregator that
     // owns the activity event ring, the connected-client roster, and

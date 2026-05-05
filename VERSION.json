@@ -1,11 +1,60 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.6.9",
-  "current_tag": "v0.6.9",
+  "current_version": "0.7.0",
+  "current_tag": "v0.7.0",
   "released_at": "2026-05-05",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.7.0",
+      "tag": "v0.7.0",
+      "released_at": "2026-05-05",
+      "commit": "pending",
+      "summary": "Production milestone: MCOS architecture is complete. Every numbered architectural phase from PHASE-00 (repository baseline + ADR lock) through PHASE-12 follow-up (native HTTP.sys gateway with end-to-end stdio bridge to supervised pool children, shipped in v0.6.10) is delivered, validated, and shipping. The 0.7.0 minor bump under the manifest's 'minor-on-architecture-change' policy marks the architectural-completion line: PHASE-12 follow-up was the last architectural change, and from here the work is iteration on top of the locked architecture. PHASE-13 (Win2D / Direct2D rendering for high-frequency visual surfaces in the WinUI shell -- per-instance telemetry charts at 60Hz, Tron grid backdrop as procedural HLSL fragment, activity stream as SwapChainPanel, animated saturation rings) is explicitly visual-polish work, not architectural, and is scheduled to land incrementally across v0.7.x point releases per the plan file's 'one-surface-at-a-time' delivery model. The product as it ships at 0.7.0: external AI clients (Claude Code, Codex, Grok, ChatGPT, generic MCP) on the trusted LAN discover MCOS via DNS-SD, consume server-generated onboarding profiles and CLU/Forsetti governance bundles, connect to one MCOS-advertised MCP gateway URL, and operate against supervised MCP server and sub-agent worker pools with autoscaling lease routing, real-time per-instance telemetry, and an honest dashboard. Both gateway substrates (MCPJungle adapter and the native HTTP.sys adapter) ship and are operator-selectable.",
+      "entries": [
+        "release(milestone): 0.7.0 marks production-ready. Every architectural phase from PHASE-00 through PHASE-12 follow-up is delivered. The architecture is locked.",
+        "release(scope): PHASE-13 (visual-polish phase: Win2D-rendered per-instance charts at 60Hz, procedural Tron grid HLSL shader, SwapChainPanel activity stream, animated saturation rings) is explicitly out-of-scope for the architectural-completion milestone. Plan file in handoff/realignment/PHASE-13-direct2d-shell-rendering.md remains the source of truth for v0.7.x point-release delivery.",
+        "release(verified): both gateway substrates ship and pass smoke-test on this host. mcpGateway.type='mcpjungle' supervises an external MCPJungle binary (with v0.6.7 honest-503 fallback when the binary is absent). mcpGateway.type='native' binds HTTP.sys directly, handles MCP initialize / tools/list / tools/call end-to-end, with the v0.6.10 stdio bridge forwarding to supervised pool instances.",
+        "release(verified): URL ACL self-registration (v0.6.10) runs in the bootstrapper install action; after MSI install, `netsh http show urlacl url=http://+:8080/` shows `User: \\Everyone, Listen: Yes, Delegate: No` so console-mode operators can bind the native gateway port without ERROR_ACCESS_DENIED.",
+        "release(verified): all four CTest suites (ForsettiCoreTests, ForsettiPlatformTests, ForsettiArchitectureTests, MasterControlOrchestrationServerTests) pass green at the 0.7.0 commit.",
+        "docs(version): bump 0.6.10 -> 0.7.0 (production milestone; PHASE-13 scheduled for v0.7.x point releases)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 surface 1 of 4: per-instance telemetry charts at 60Hz via Win2D CanvasControl. Today the shell renders host-level CPU/RAM/disk via XAML ProgressBar; the browser dashboard already has per-instance Canvas sparklines (v0.6.8). Shell parity is a v0.7.x deliverable.",
+        "PHASE-13 surface 2 of 4: Tron grid backdrop as a procedural HLSL fragment shader rendered through CanvasAnimatedControl. Today the shell uses a static `<Border>` background. Visual-identity work; v0.7.x.",
+        "PHASE-13 surface 3 of 4: activity stream as a SwapChainPanel with smooth-scrolling severity-coded text. Today the shell uses an `ItemsControl` that rebuilds the visual tree on every snapshot tick. v0.7.x.",
+        "PHASE-13 surface 4 of 4: animated saturation rings with smooth angular interpolation, replacing the existing ProgressBar-per-pool. Smallest of the four surfaces; v0.7.x first-cut candidate."
+      ]
+    },
+    {
+      "version": "0.6.10",
+      "tag": "v0.6.10",
+      "released_at": "2026-05-05",
+      "commit": "pending",
+      "summary": "PHASE-12 follow-up: the native HTTP.sys gateway can now actually forward tools/call to supervised pool children. Three pieces land: (1) WorkerSupervisor stdio bridge -- ChildProcess gains stdin/stdout pipes wired through STARTUPINFO::hStdInput/hStdOutput, plus a per-instance mutex serializing concurrent JSON-RPC requests; new IWorkerSupervisor::sendStdioJsonRpc(instanceId, request, timeoutMs) writes one '\\n'-terminated JSON-RPC envelope to stdin and reads stdout with PeekNamedPipe + deadline-based polling, parsing newline-delimited JSON lines and matching by `id`. (2) NativeHttpSysGatewayAdapter::handleMcpRequest tools/list now aggregates by walking each pool's first Ready instance via the bridge and merging their tools/list responses with serverName=poolId attribution; tools/call resolves params.name against the cached catalog (qualified `{poolId}__{toolName}` or unique unprefixed match), acquires a lease, forwards the envelope to the leased instanceId via the bridge, and re-stamps the response id back to the LAN client. (3) Bootstrapper install action now runs `netsh http add urlacl` for the gateway port so console-mode operators (./MasterControlServiceHost --console as a regular user) can bind http://+:<port>/ without ERROR_ACCESS_DENIED; uninstall reverses it best-effort. End-to-end: an external Claude Code on a LAN host can now point at the MCOS-advertised gateway URL, see the live aggregated tool catalog, and execute tool calls against MCOS-supervised npx-spawned MCP server children.",
+      "entries": [
+        "feat(supervisor): IWorkerSupervisor::sendStdioJsonRpc(instanceId, request, timeoutMs=30000) -- synchronous JSON-RPC request/response over the supervised child's stdin/stdout. Per-instance mutex serializes concurrent calls to the same instance; different instances run in parallel.",
+        "feat(supervisor): WorkerSupervisor::ChildProcess gains childStdoutRead, childStdinWrite (HANDLEs), unique_ptr<mutex> stdioMutex, stdioReadBuffer, nextRequestId. Heap-allocated mutex keeps the struct movable for std::map storage.",
+        "feat(supervisor): WorkerSupervisor::startInstanceLocked creates two anonymous pipes via CreatePipe, marks child-side ends inheritable via SECURITY_ATTRIBUTES, clears parent-side inheritance via SetHandleInformation, sets STARTF_USESTDHANDLES + hStdInput/hStdOutput/hStdError on STARTUPINFOW, calls CreateProcessW with bInheritHandles=TRUE, then closes the child-side ends in the parent so EOF detection works correctly. stderr is merged into stdout. If pipe creation fails the child still spawns and tools/call returns an honest -32603 'stdio bridge unavailable on this instance' rather than hanging.",
+        "feat(supervisor): WorkerSupervisor::sendStdioJsonRpc implementation -- WriteFile loop drives the request envelope to stdin in full; read loop uses PeekNamedPipe to test for available bytes without blocking, ReadFile drains in 4 KB chunks, accumulates partial lines in stdioReadBuffer, scans for '\\n' delimiters, parses each line, matches by `id` against the request, returns the matching line as responseBody. Deadline-based timeout via std::chrono::steady_clock + 25 ms poll interval. Releases supervisor mutex_ during long blocking waits so other supervisor traffic (telemetry sampling, lease accounting) is not throttled.",
+        "feat(supervisor): WorkerSupervisor::terminateInstancesLocked closes childStdinWrite and childStdoutRead before destroying the Job Object so the child sees EOF on stdin and the parent's read end releases cleanly.",
+        "feat(gateway): NativeHttpSysGatewayAdapter gains AttachWorkerBridge(supervisor, leaseRouter) called from the runtime once both are constructed. The adapter is constructed early (before the supervisor exists) so the late-bind hook avoids a construction-order rewrite.",
+        "feat(gateway): NativeHttpSysGatewayAdapter::refreshToolCatalogLocked walks every pool's first Ready instance, sends a tools/list JSON-RPC envelope via the stdio bridge with a 5 s timeout, parses .result.tools, tags each tool with serverName=poolId, and rebuilds toolCatalogCache_. Children that don't respond contribute zero tools (ADR-002 §9: no fabrication).",
+        "feat(gateway): tools/list now returns the merged catalog with each tool name advertised as `{poolId}__{toolName}` so AI clients have unambiguous routing across overlapping local tool names.",
+        "feat(gateway): tools/call resolves params.name against the cached catalog -- exact qualified match wins, otherwise a unique unprefixed match wins, otherwise a -32602 'multiple pools expose this name' error. If the catalog is stale (no tools/list since startup), the lookup refreshes once and retries before giving up. Acquires a lease via leaseRouter_->acquireLease(poolId), forwards the envelope to lease.instanceId via supervisor->sendStdioJsonRpc with the bridge re-writing the JSON-RPC id (so concurrent calls don't collide on the supervisor correlator) and unprefixing params.name (so the child sees its own local name). Response id is re-stamped back to the LAN client's original id before return.",
+        "feat(bootstrapper): install action now calls configureUrlAcl which runs `netsh http delete urlacl url=http://+:<port>/` (idempotent cleanup) followed by `netsh http add urlacl url=http://+:<port>/ user=Everyone`. Failure is logged but does NOT abort the install -- LocalSystem service-mode does not require the ACL, so a netsh failure (e.g., from a sandboxed install context) leaves the service-mode path working.",
+        "feat(bootstrapper): uninstall reverses the URL ACL best-effort via removeUrlAcl. Old install-state files (pre-0.6.10) carry a zero gatewayPort and the function early-returns true.",
+        "fix(gateway): native gateway initialize handshake now reports serverInfo.version = '0.6.10'.",
+        "docs(version): bump 0.6.9 -> 0.6.10 (PHASE-12 follow-up complete: stdio bridge + tools/list + tools/call + URL ACL)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-12 follow-up: SSE streaming for long-running tool calls. Today the bridge is request/response only -- the LAN client waits up to 30s for a single response line. Streaming progress events back through the gateway to the client is a v0.6.11+ task.",
+        "PHASE-12 follow-up: path-based pool scoping. tools/call routes by params.name; /mcp/{poolId} as an alternative routing surface is parsed but not yet honored. v0.6.11+.",
+        "PHASE-12 follow-up: preserve child-reported inputSchema. tools/list currently advertises a stub `{type:'object'}` inputSchema for every tool because McpToolDescriptor doesn't carry the schema. v0.6.11+ extends the descriptor and propagates the child's schema verbatim.",
+        "PHASE-13: Win2D / Direct2D rendering in the WinUI shell. Plan file shipped in v0.6.8."
+      ]
+    },
     {
       "version": "0.6.9",
       "tag": "v0.6.9",

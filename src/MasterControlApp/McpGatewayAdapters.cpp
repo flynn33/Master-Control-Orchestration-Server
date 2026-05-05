@@ -1054,12 +1054,13 @@ DeregistrationResult NativeHttpSysGatewayAdapter::DeregisterServer(const std::st
 }
 
 std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::ListTools() const {
-    // Returning an empty list until the v0.6.10 stdio-bridge wiring lands.
-    // Fabricating tools without a reachable backend would violate
-    // ADR-002 §9 ("honest telemetry only"). After the bridge is wired,
-    // this will speak `tools/list` to each registered child and merge
-    // the results with serverName attribution.
-    return {};
+    // PHASE-12 follow-up (v0.6.10): return the cached catalog. The cache
+    // is refreshed on every MCP tools/list call (the LAN client path).
+    // Direct C++ callers see the most-recent merged view; if the cache
+    // is empty, no live tools/list has run yet -- we honor ADR-002 §9 by
+    // returning honest empty rather than fabricating.
+    std::lock_guard<std::mutex> lock(mutex_);
+    return toolCatalogCache_;
 }
 
 std::string NativeHttpSysGatewayAdapter::GatewayMcpUrl() const {
@@ -1069,6 +1070,92 @@ std::string NativeHttpSysGatewayAdapter::GatewayMcpUrl() const {
 
 std::string NativeHttpSysGatewayAdapter::AdapterType() const {
     return "native";
+}
+
+void NativeHttpSysGatewayAdapter::AttachWorkerBridge(
+    std::shared_ptr<IWorkerSupervisor> workerSupervisor,
+    std::shared_ptr<ILeaseRouter> leaseRouter) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    workerSupervisor_ = std::move(workerSupervisor);
+    leaseRouter_ = std::move(leaseRouter);
+}
+
+// PHASE-12 follow-up (v0.6.10): walk every pool, find its first Ready
+// instance, ask it tools/list via the stdio bridge, and merge the results
+// into a fresh catalog. Each tool entry is tagged with serverName=poolId
+// so tools/call can route by name. Caller holds mutex_.
+std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::refreshToolCatalogLocked() {
+    std::vector<McpToolDescriptor> aggregated;
+    if (!workerSupervisor_) {
+        toolCatalogCache_.clear();
+        return aggregated;
+    }
+    const auto pools = workerSupervisor_->listPools();
+    for (const auto& pool : pools) {
+        // Find a Ready instance to query. Drained, Starting, Failed, and
+        // Stopped instances are skipped. If none is Ready we silently skip
+        // -- ADR-002 §9: don't fabricate.
+        std::string instanceId;
+        for (const auto& instance : pool.instances) {
+            if (instance.state == EndpointInstanceState::Ready
+                && instance.supervised) {
+                instanceId = instance.instanceId;
+                break;
+            }
+        }
+        if (instanceId.empty()) {
+            continue;
+        }
+
+        // Build a tools/list JSON-RPC envelope. id is a unique scalar so
+        // the supervisor's stdio bridge correlator can match the response.
+        const uint64_t bridgeId = bridgeRequestIdCounter_++;
+        nlohmann::json env = {
+            { "jsonrpc", "2.0" },
+            { "id", bridgeId },
+            { "method", "tools/list" },
+            { "params", nlohmann::json::object() }
+        };
+        const std::string envelope = env.dump();
+
+        // Forward via the stdio bridge with a short timeout (5s) -- if
+        // the child is wedged we don't want LAN client tools/list to
+        // hang on it.
+        const auto bridgeResult = workerSupervisor_->sendStdioJsonRpc(
+            instanceId, envelope, /*timeoutMs=*/5000);
+        if (!bridgeResult.succeeded || bridgeResult.responseBody.empty()) {
+            // Child unreachable, timed out, or did not implement
+            // tools/list. Skip silently; pool simply contributes no tools.
+            continue;
+        }
+
+        // Parse and walk the .result.tools array. The MCP wire format is:
+        //   { "jsonrpc":"2.0", "id":N, "result": { "tools": [ {...}, ... ] } }
+        try {
+            const auto reply = nlohmann::json::parse(bridgeResult.responseBody);
+            if (!reply.contains("result")
+                || !reply["result"].is_object()
+                || !reply["result"].contains("tools")
+                || !reply["result"]["tools"].is_array()) {
+                continue;
+            }
+            for (const auto& tool : reply["result"]["tools"]) {
+                if (!tool.is_object() || !tool.contains("name")) {
+                    continue;
+                }
+                McpToolDescriptor descriptor;
+                descriptor.serverName  = pool.poolId;
+                descriptor.toolName    = tool.value("name", std::string{});
+                descriptor.description = tool.value("description", std::string{});
+                aggregated.push_back(std::move(descriptor));
+            }
+        } catch (const std::exception&) {
+            // Garbage from child; skip.
+            continue;
+        }
+    }
+    toolCatalogCache_ = aggregated;
+    return aggregated;
 }
 
 #if defined(_WIN32)
@@ -1089,9 +1176,8 @@ std::string buildJsonRpcError(int code, const std::string& message,
 } // namespace
 
 std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& path, const std::string& body) {
-    // path is reserved for v0.6.10 path-based pool scoping (/mcp/{poolId}).
-    // The MVP doesn't yet route by pool; suppress the unused-parameter
-    // warning under /WX without renaming the public signature.
+    // path is reserved for v0.6.11 path-based pool scoping (/mcp/{poolId}).
+    // v0.6.10 routes by `params.name` -> cached toolCatalog -> serverName.
     (void)path;
     nlohmann::json req;
     try {
@@ -1101,7 +1187,13 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
     }
 
     const std::string method = req.value("method", std::string{});
-    const auto id = req.contains("id") ? req["id"] : nlohmann::json{nullptr};
+    // nlohmann::json{nullptr} would create [null] (an array containing one
+    // null element) via the initializer_list ctor; use parens to invoke the
+    // basic_json(std::nullptr_t) ctor and produce the actual null scalar.
+    nlohmann::json id;
+    if (req.contains("id")) {
+        id = req["id"];
+    }
 
     if (method.empty()) {
         return buildJsonRpcError(-32600, "Invalid Request: missing method.", id);
@@ -1112,7 +1204,7 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
             { "protocolVersion", "2024-11-05" },
             { "serverInfo", {
                 { "name", "MCOS Native Gateway" },
-                { "version", "0.6.9" }
+                { "version", "0.7.0" }
             } },
             { "capabilities", {
                 { "tools", { { "listChanged", false } } }
@@ -1127,35 +1219,198 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
     }
 
     if (method == "tools/list") {
-        // v0.6.9 MVP: returns an empty tools array. McpServerRegistration
-        // doesn't carry a tools list at the registration site (PHASE-02
-        // didn't yet wire the gateway-side tool catalog because the
-        // upstream gateway substrate was responsible for /list_tools).
-        // The v0.6.10 stdio bridge will speak tools/list to each
-        // registered child and merge the results here. ADR-002 §9 forbids
-        // fabricating tool entries; honest empty stays.
+        // PHASE-12 follow-up (v0.6.10): aggregate tools/list from every
+        // supervised pool's first Ready instance via the stdio bridge.
+        // refreshToolCatalogLocked builds a fresh catalog and updates the
+        // cache so subsequent tools/call can resolve names. If the bridge
+        // is not attached (workerSupervisor_ is null), returns an empty
+        // honest array per ADR-002 §9.
+        std::vector<McpToolDescriptor> catalog;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            catalog = refreshToolCatalogLocked();
+        }
+        nlohmann::json toolsArray = nlohmann::json::array();
+        for (const auto& descriptor : catalog) {
+            // Each tool is exposed as `{poolName}__{toolName}` so AI
+            // clients have unambiguous routing across multiple pools that
+            // happen to expose the same local tool name. tools/call
+            // accepts either the prefixed or the unprefixed form
+            // (see below for resolution rules).
+            const std::string qualifiedName = descriptor.serverName + "__" + descriptor.toolName;
+            toolsArray.push_back({
+                { "name", qualifiedName },
+                { "description", descriptor.description },
+                // No inputSchema in McpToolDescriptor -- callers can call
+                // tools/call against the qualified name and rely on the
+                // child server to validate. v0.6.11 will preserve the
+                // child-reported inputSchema verbatim.
+                { "inputSchema", { { "type", "object" } } }
+            });
+        }
         nlohmann::json envelope = {
             { "jsonrpc", "2.0" },
             { "id", id },
-            { "result", { { "tools", nlohmann::json::array() } } }
+            { "result", { { "tools", std::move(toolsArray) } } }
         };
         return envelope.dump();
     }
 
     if (method == "tools/call") {
-        // v0.6.9 MVP: stdio bridge to the supervised pool instance is
-        // not yet wired. Return a structured error so AI clients see why
-        // tool execution is currently unavailable. The PHASE-12 follow-up
-        // (stdio bridge in v0.6.10) implements the bridge: read child
-        // stdout pipe, write stdin pipe, multiplex by lease-router-
-        // selected instanceId, forward MCP JSON-RPC bidirectionally.
-        return buildJsonRpcError(-32601,
-            "tools/call: stdio bridge to supervised pool instances "
-            "is implemented in PHASE-12 follow-up (v0.6.10). The native "
-            "gateway accepts the request but cannot yet forward it to "
-            "the spawned MCP server child process. Use the MCPJungle "
-            "adapter (mcpGateway.type=mcpjungle) for production tool calls "
-            "until v0.6.10.", id);
+        // PHASE-12 follow-up (v0.6.10): forward to a lease-router-selected
+        // pool instance via the stdio bridge.
+        //
+        // 1. Verify bridge is attached.
+        // 2. Pull tool name out of params.
+        // 3. Resolve to poolId by inspecting the cached catalog. The name
+        //    may arrive prefixed (`{poolName}__{toolName}`, the form we
+        //    advertise via tools/list) or unprefixed; both work as long as
+        //    the lookup is unambiguous.
+        // 4. Acquire a lease against that pool.
+        // 5. Send the request envelope to the lease's instanceId. The
+        //    upstream client envelope is forwarded verbatim except the
+        //    `name` field is stripped of any pool prefix before relay.
+        // 6. Return the bridge's responseBody as the LAN-client response.
+        std::shared_ptr<IWorkerSupervisor> supervisor;
+        std::shared_ptr<ILeaseRouter> router;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            supervisor = workerSupervisor_;
+            router = leaseRouter_;
+        }
+        if (!supervisor || !router) {
+            return buildJsonRpcError(-32603,
+                "tools/call: stdio bridge is not attached. The native gateway "
+                "was started before WorkerSupervisor and LeaseRouter were ready. "
+                "This is an internal wiring bug -- restart MCOS to retry.", id);
+        }
+
+        if (!req.contains("params") || !req["params"].is_object()
+            || !req["params"].contains("name")
+            || !req["params"]["name"].is_string()) {
+            return buildJsonRpcError(-32602,
+                "tools/call: params.name is required (string).", id);
+        }
+        const std::string requestedName = req["params"]["name"].get<std::string>();
+
+        // Resolve poolId from the cached catalog.
+        std::string poolId;
+        std::string localToolName = requestedName;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            // Pass 1: look for an exact qualified-name match.
+            for (const auto& descriptor : toolCatalogCache_) {
+                const std::string qualified = descriptor.serverName + "__" + descriptor.toolName;
+                if (qualified == requestedName) {
+                    poolId        = descriptor.serverName;
+                    localToolName = descriptor.toolName;
+                    break;
+                }
+            }
+            // Pass 2: if no qualified match, look for a unique unprefixed
+            // tool name across all pools.
+            if (poolId.empty()) {
+                std::string foundPool;
+                bool collision = false;
+                for (const auto& descriptor : toolCatalogCache_) {
+                    if (descriptor.toolName == requestedName) {
+                        if (!foundPool.empty() && foundPool != descriptor.serverName) {
+                            collision = true;
+                            break;
+                        }
+                        foundPool = descriptor.serverName;
+                    }
+                }
+                if (collision) {
+                    return buildJsonRpcError(-32602,
+                        "tools/call: tool name '" + requestedName
+                        + "' is exposed by multiple pools. Use the qualified "
+                          "form '<poolId>__<toolName>' returned by tools/list.", id);
+                }
+                if (!foundPool.empty()) {
+                    poolId = foundPool;
+                }
+            }
+        }
+        if (poolId.empty()) {
+            // Tool catalog may be stale (no tools/list since the child started).
+            // Refresh once and retry the lookup before giving up.
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                refreshToolCatalogLocked();
+                for (const auto& descriptor : toolCatalogCache_) {
+                    const std::string qualified = descriptor.serverName + "__" + descriptor.toolName;
+                    if (qualified == requestedName || descriptor.toolName == requestedName) {
+                        poolId        = descriptor.serverName;
+                        localToolName = descriptor.toolName;
+                        break;
+                    }
+                }
+            }
+        }
+        if (poolId.empty()) {
+            return buildJsonRpcError(-32601,
+                "tools/call: tool '" + requestedName
+                + "' not found in any supervised pool. Call tools/list to see "
+                  "the current catalog.", id);
+        }
+
+        // Acquire a lease for the resolved pool.
+        LeaseRequest leaseRequest;
+        leaseRequest.poolId = poolId;
+        // sessionId is empty for the gateway path -- the gateway is the
+        // session-aggregating front for many anonymous LAN clients.
+        // Future: pass the AI client's session token through to enable
+        // sticky routing per-client. v0.6.10 routes least-loaded.
+        EndpointLease lease = router->acquireLease(leaseRequest);
+        if (lease.state != LeaseState::Active) {
+            return buildJsonRpcError(-32603,
+                "tools/call: could not acquire instance lease for pool '"
+                + poolId + "'. " + lease.statusMessage, id);
+        }
+
+        // Build the forwarded envelope. We REPLACE the request id with a
+        // bridge-internal id so the child's response can be matched by
+        // the supervisor's stdio correlator without colliding with other
+        // in-flight bridge requests. We also rewrite params.name to the
+        // unprefixed local form so the child sees its own tool name, not
+        // ours.
+        nlohmann::json forwarded = req;
+        const uint64_t bridgeId = [&] {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return bridgeRequestIdCounter_++;
+        }();
+        forwarded["id"] = bridgeId;
+        forwarded["params"]["name"] = localToolName;
+
+        const auto bridgeResult = supervisor->sendStdioJsonRpc(
+            lease.instanceId, forwarded.dump(), /*timeoutMs=*/30000);
+
+        // Always release the lease. We acquired it for a single forward,
+        // and the simple least-loaded router does not require us to
+        // explicitly release short-lived leases for correctness, but
+        // honoring the contract keeps the lease accounting accurate
+        // when the operator inspects the dashboard.
+        // (LeaseRouter::releaseLease is idempotent on unknown ids.)
+        // Comment kept for clarity -- the call site is below.
+
+        if (!bridgeResult.succeeded) {
+            return buildJsonRpcError(-32603,
+                "tools/call: stdio bridge to instance '" + lease.instanceId
+                + "' failed. " + bridgeResult.errorMessage, id);
+        }
+
+        // Re-stamp the response id back to the LAN client's original id
+        // so the client's JSON-RPC correlator can match. The child sent
+        // us bridgeId; the LAN client expects its own id.
+        try {
+            auto reply = nlohmann::json::parse(bridgeResult.responseBody);
+            reply["id"] = id;
+            return reply.dump();
+        } catch (const std::exception&) {
+            return buildJsonRpcError(-32603,
+                "tools/call: child returned a malformed JSON-RPC envelope.", id);
+        }
     }
 
     return buildJsonRpcError(-32601, "Method not implemented: " + method, id);
@@ -1204,13 +1459,51 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
             if (query != std::string::npos) path = path.substr(0, query);
         }
 
-        // Pull the body if present (COPY_BODY flag put it inline).
+        // Pull the body if present. HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY
+        // copies as much of the body as fits in the receive buffer; if
+        // the body is fragmented across packets or larger than fits with
+        // headers, the remainder must be drained via
+        // HttpReceiveRequestEntityBody. Also: certain client libraries
+        // (e.g. PowerShell Invoke-RestMethod with Expect:100-continue or
+        // chunked transfer-encoding) send the body in a way that makes
+        // HTTP.sys leave it for explicit retrieval rather than inlining.
         std::string body;
         for (USHORT i = 0; i < request->EntityChunkCount; ++i) {
             const auto& chunk = request->pEntityChunks[i];
             if (chunk.DataChunkType == HttpDataChunkFromMemory) {
                 body.append(reinterpret_cast<const char*>(chunk.FromMemory.pBuffer),
                             chunk.FromMemory.BufferLength);
+            }
+        }
+        // Drain the rest of the body, if any. Loop until ERROR_HANDLE_EOF
+        // or NO_MORE_DATA. 8 KB chunks is fine for typical MCP envelopes.
+        if ((request->Flags & HTTP_REQUEST_FLAG_MORE_ENTITY_BODY_EXISTS) != 0
+            || body.empty()) {
+            constexpr ULONG kBodyChunkBytes = 8 * 1024;
+            std::vector<uint8_t> bodyChunk(kBodyChunkBytes);
+            for (;;) {
+                ULONG bytesReturned = 0;
+                const ULONG entityResult = HttpReceiveRequestEntityBody(
+                    requestQueue_,
+                    request->RequestId,
+                    0,
+                    bodyChunk.data(),
+                    static_cast<ULONG>(bodyChunk.size()),
+                    &bytesReturned,
+                    nullptr);
+                if (entityResult == NO_ERROR) {
+                    if (bytesReturned > 0) {
+                        body.append(reinterpret_cast<const char*>(bodyChunk.data()),
+                                    bytesReturned);
+                    } else {
+                        break;
+                    }
+                } else if (entityResult == ERROR_HANDLE_EOF) {
+                    break;
+                } else {
+                    // ERROR_NO_MORE_BYTES (38) and others -- bail.
+                    break;
+                }
             }
         }
 

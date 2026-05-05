@@ -237,6 +237,20 @@ public:
 //
 // In-memory only at PHASE-06. Persistence across restarts is intentional
 // later work (PHASE-08/PHASE-09 may add disk backing).
+// PHASE-12 follow-up (v0.6.10): result of a synchronous stdio JSON-RPC
+// request to a supervised pool instance. The native HTTP.sys gateway
+// uses this when a LAN AI client invokes tools/call: lease-router-
+// selected instance receives the JSON-RPC envelope on its stdin pipe,
+// and its stdout response (one or more lines, until a line carrying
+// the matching id arrives or timeout fires) comes back as `responseBody`.
+// `succeeded=false` means timeout, dead pipe, or no-such-instance --
+// `errorMessage` carries the diagnostic.
+struct StdioBridgeResult final {
+    bool succeeded = false;
+    std::string responseBody;   // raw JSON line(s) from child stdout
+    std::string errorMessage;
+};
+
 class IWorkerSupervisor {
 public:
     virtual std::vector<ManagedEndpointPool> listPools() const = 0;
@@ -251,6 +265,18 @@ public:
     virtual std::string scaleUpOnce(const std::string& poolId) = 0;
     virtual OperationResult drainPool(const std::string& poolId) = 0;
     virtual OperationResult shutdownAll() = 0;
+    // PHASE-12 follow-up (v0.6.10): synchronous JSON-RPC request/response
+    // to a single supervised pool instance via its stdin/stdout pipes.
+    // Caller composes the JSON-RPC envelope (with a unique numeric id);
+    // supervisor writes "{request}\n" to the child's stdin, reads stdout
+    // until a JSON line whose id matches arrives, returns it as
+    // responseBody. Used by NativeHttpSysGatewayAdapter::handleMcpRequest
+    // to forward tools/call calls. Times out after timeoutMs (default 30s).
+    // Calls are serialized per-instance via an internal mutex; concurrent
+    // calls to the SAME instanceId queue.
+    virtual StdioBridgeResult sendStdioJsonRpc(const std::string& instanceId,
+                                               const std::string& request,
+                                               int timeoutMs = 30000) = 0;
     virtual ~IWorkerSupervisor() = default;
 };
 

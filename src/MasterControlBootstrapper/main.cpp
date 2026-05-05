@@ -1599,6 +1599,49 @@ bool configureFirewallRules(const InstallationState& state) {
     return success;
 }
 
+// PHASE-12 follow-up (v0.6.10): pre-register a Windows HTTP.sys URL ACL so
+// the native gateway substrate (mcpGateway.type="native") can bind
+// http://+:<port>/ without admin rights at runtime. The Windows service
+// itself runs as LocalSystem (which already has the binding privilege),
+// but operators who run MasterControlServiceHost --console as a regular
+// user need the ACL or the Start() call returns ERROR_ACCESS_DENIED.
+//
+// The "Everyone" SDDL keyword (S-1-1-0) reserves the URL prefix to all
+// users on the local machine, which is appropriate for a LAN-trusted
+// gateway. Registration is idempotent: if an ACL already exists for the
+// same URL, netsh prints a "URL reservation already exists" message and
+// returns success (we treat any non-zero exit as a soft warning, not a
+// hard install failure, since LocalSystem service-mode does not require
+// the ACL).
+bool configureUrlAcl(const InstallationState& state) {
+    if (!state.gatewayAdvertised || state.gatewayPort == 0) {
+        return true;  // gateway disabled -> nothing to register
+    }
+    const std::wstring urlPrefix = L"http://+:" + std::to_wstring(state.gatewayPort) + L"/";
+    // Try delete first so re-runs on a port change don't accumulate stale
+    // reservations for old ports. The delete is best-effort.
+    {
+        const std::wstring deleteCmd = L"netsh.exe http delete urlacl url=" + urlPrefix;
+        (void)runProcess(deleteCmd, {}, CREATE_NO_WINDOW);
+    }
+    // Add the new reservation. Failure here is logged but not fatal: the
+    // LocalSystem service path still binds, console-mode operators can
+    // re-run the bootstrapper or run the netsh command themselves.
+    const std::wstring addCmd = L"netsh.exe http add urlacl url=" + urlPrefix
+                                + L" user=Everyone";
+    return runProcess(addCmd, {}, CREATE_NO_WINDOW) == 0;
+}
+
+// Reverse of configureUrlAcl. Best-effort cleanup during uninstall.
+bool removeUrlAcl(const InstallationState& state) {
+    if (state.gatewayPort == 0) {
+        return true;
+    }
+    const std::wstring urlPrefix = L"http://+:" + std::to_wstring(state.gatewayPort) + L"/";
+    const std::wstring deleteCmd = L"netsh.exe http delete urlacl url=" + urlPrefix;
+    return runProcess(deleteCmd, {}, CREATE_NO_WINDOW) == 0;
+}
+
 bool stopServiceIfPresent() {
     SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
     if (scm == nullptr) {
@@ -2521,6 +2564,14 @@ bool installLike(const std::wstring& mode,
         return failInstall(L"Failed to configure firewall rules.");
     }
 
+    // PHASE-12 follow-up (v0.6.10): register a URL ACL for the native
+    // HTTP.sys gateway so console-mode runs (./MasterControlServiceHost
+    // --console as a regular user) can bind http://+:<port>/ without
+    // ERROR_ACCESS_DENIED. LocalSystem service-mode does not require it,
+    // so we treat URL ACL registration as soft -- a failure is logged but
+    // does not abort the install.
+    (void)configureUrlAcl(*stagedState);
+
     if (options.manageShortcuts && !configureShortcuts(*stagedState)) {
         return failInstall(L"Failed to create shortcuts.");
     }
@@ -2659,6 +2710,12 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
     if (options.manageFirewall) {
         removeFirewallRules();
     }
+
+    // PHASE-12 follow-up (v0.6.10): tear down the URL ACL the install
+    // step created. Best-effort -- if it was never registered (state file
+    // is older than v0.6.10) the netsh delete returns "no such reservation"
+    // and we ignore it.
+    (void)removeUrlAcl(*state);
 
     if (options.manageShortcuts) {
         removeShortcuts(*state);

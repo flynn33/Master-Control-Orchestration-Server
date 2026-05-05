@@ -120,22 +120,29 @@ private:
 // mcpGateway.type = "native". Replaces the v0.6.7 honest-503 listener
 // when active.
 //
-// Coverage in v0.6.9 MVP:
+// Coverage in v0.6.10:
 //   * HTTP.sys URL group + request queue bound to mcpGateway.listenPort
 //   * MCP Streamable-HTTP transport: parses POST {/mcp, /mcp/{poolId},
 //     /agents/{poolId}} JSON-RPC envelopes
-//   * `initialize` and `tools/list` handshakes
-//   * `tools/call` forwarded to the supervised pool instance via stdio
-//     bridge (when stdio bridge is configured; honest error when not yet
-//     wired)
+//   * `initialize` handshake
+//   * `tools/list` aggregated from supervised pool instances via the
+//     stdio bridge (PHASE-12 follow-up); each instance is asked for its
+//     own tools/list and the merged catalog is returned with serverName
+//     attribution. Cached so subsequent tools/call can resolve names.
+//   * `tools/call` forwarded to a lease-router-selected pool instance via
+//     stdio bridge JSON-RPC. Per-instance stdin/stdout pipes, request id
+//     correlation, 30s default timeout.
 //   * health probe at mcpGateway.healthPath returns adapter-state JSON
 //
-// Out of scope for the MVP (PHASE-12 follow-ups):
+// Out of scope for v0.6.10 (PHASE-12 follow-ups):
 //   * SSE streaming for long-running tool calls
-//   * URL ACL self-registration via netsh http add urlacl (operator step
-//     for now -- documented in Gateway.md)
 //   * TLS termination via HTTP.sys binding (operator-side task)
 //   * Multi-tenant LAN auth (LAN-trusted-only per ADR-002 §1)
+//
+// Wiring: the runtime constructs the adapter early (see
+// MasterControlRuntime construction), then later calls AttachWorkerBridge
+// once WorkerSupervisor and LeaseRouter exist. tools/call returns a
+// structured -32603 if the bridge is not attached at request time.
 class NativeHttpSysGatewayAdapter final : public IMcpGateway {
 public:
     explicit NativeHttpSysGatewayAdapter(McpGatewayConfiguration configuration);
@@ -155,15 +162,44 @@ public:
     std::string GatewayMcpUrl() const override;
     std::string AdapterType() const override;
 
+    // PHASE-12 follow-up (v0.6.10): late-bind the worker supervisor + lease
+    // router after they exist in the runtime. Called exactly once during
+    // construction. Until this is called, tools/call returns an honest
+    // -32603 indicating the bridge is unconfigured. tools/list returns an
+    // empty catalog rather than silently returning stale data.
+    void AttachWorkerBridge(std::shared_ptr<IWorkerSupervisor> workerSupervisor,
+                            std::shared_ptr<ILeaseRouter> leaseRouter);
+
 private:
     void serveLoop();
     void teardownHttpSysLocked();
     std::string handleMcpRequest(const std::string& path, const std::string& body);
 
+    // PHASE-12 follow-up (v0.6.10): walk every pool's first Ready instance,
+    // ask it tools/list via the stdio bridge, and rebuild the cached
+    // catalog. Returns the full catalog (serverName-attributed). Caller
+    // holds mutex_.
+    std::vector<McpToolDescriptor> refreshToolCatalogLocked();
+
     mutable std::mutex mutex_;
     McpGatewayConfiguration configuration_;
     GatewayStatus status_;
     std::map<std::string, McpServerRegistration> registry_;
+
+    // PHASE-12 follow-up (v0.6.10): bridge to supervised pool instances.
+    // workerSupervisor_ owns the stdio pipes; leaseRouter_ picks which
+    // instance to forward to. Both are nullable until AttachWorkerBridge
+    // is called.
+    std::shared_ptr<IWorkerSupervisor> workerSupervisor_;
+    std::shared_ptr<ILeaseRouter> leaseRouter_;
+
+    // PHASE-12 follow-up (v0.6.10): cached tools catalog, refreshed on
+    // every tools/list. Used by tools/call to resolve a tool name to the
+    // pool that hosts it. serverName == poolId (worker pool name).
+    mutable std::vector<McpToolDescriptor> toolCatalogCache_;
+    // monotonic JSON-RPC id counter used when the gateway speaks to its
+    // own pool children (out-of-band from the LAN-client request stream)
+    mutable uint64_t bridgeRequestIdCounter_ = 1;
 
 #if defined(_WIN32)
     HANDLE requestQueue_ = nullptr;
