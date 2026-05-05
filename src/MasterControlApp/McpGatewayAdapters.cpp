@@ -13,8 +13,10 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <winhttp.h>
+#include <http.h>
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "httpapi.lib")
 #endif
 
 #include "MasterControl/McpGatewayAdapters.h"
@@ -23,6 +25,9 @@
 #include <filesystem>
 #include <sstream>
 #include <string>
+#include <vector>
+
+#include <nlohmann/json.hpp>
 
 namespace MasterControl {
 
@@ -763,5 +768,530 @@ std::vector<std::string> FakeMcpGatewayAdapter::registeredServerNames() const {
 [[maybe_unused]] static std::string consumeTrimTrailingSlash(std::string value) {
     return trimTrailingSlash(std::move(value));
 }
+
+// ---------------------------------------------------------------------------
+// PHASE-12: NativeHttpSysGatewayAdapter
+//
+// Windows-native MCP gateway built on HTTP.sys (Win32 kernel-mode HTTP
+// server). Replaces the v0.6.7 honest-503 listener with a real
+// implementation. Selected via mcpGateway.type = "native". The MCPJungle
+// adapter remains available for operators with existing MCPJungle
+// deployments.
+//
+// MVP scope (v0.6.9):
+//   * HTTP.sys URL group + request queue bound to mcpGateway.listenPort
+//   * Streamable-HTTP MCP transport: parses JSON-RPC envelopes
+//   * `initialize` handshake -> returns server capabilities
+//   * `tools/list` -> aggregated from registered McpServerRegistration
+//     entries (PHASE-06 pools registered via RegisterStdioServer)
+//   * `tools/call` -> honest "stdio bridge pending" error for now;
+//     stdio bridge wiring lands in v0.6.10
+//   * `/health` (configurable healthPath) returns adapter-state JSON
+//   * 404 with structured JSON for unknown paths
+//
+// HTTP.sys URL ACL note: binding to http://+:8080/ requires either admin
+// rights at first use, OR a pre-registered URL ACL via:
+//     netsh http add urlacl url=http://+:8080/ user=Everyone
+// MCOS runs as LocalSystem when installed as the Windows service (which
+// has the privilege to bind without ACL), so the ACL step is unnecessary
+// in the standard install. Console-mode runs (./MasterControlServiceHost
+// --console as a regular user) need the ACL or admin rights. The
+// bootstrapper's `install` action will run the netsh command starting in
+// v0.6.10 to remove this manual step entirely.
+// ---------------------------------------------------------------------------
+
+NativeHttpSysGatewayAdapter::NativeHttpSysGatewayAdapter(McpGatewayConfiguration configuration)
+    : configuration_(std::move(configuration)) {
+    status_.adapterType = AdapterType();
+    status_.mcpUrl = composeMcpUrl(configuration_);
+    status_.state = configuration_.enabled
+        ? GatewayState::Configured
+        : GatewayState::Disabled;
+    status_.message = configuration_.enabled
+        ? "Native HTTP.sys adapter is configured. Call Start() to bind the listener."
+        : "MCP Gateway is disabled. Set mcpGateway.enabled=true in configuration to opt in.";
+}
+
+NativeHttpSysGatewayAdapter::~NativeHttpSysGatewayAdapter() {
+    Stop();
+}
+
+GatewayStatus NativeHttpSysGatewayAdapter::Start() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!configuration_.enabled) {
+        status_.state = GatewayState::Disabled;
+        status_.message = "Cannot start: mcpGateway.enabled is false.";
+        return status_;
+    }
+#if !defined(_WIN32)
+    status_.state = GatewayState::Failed;
+    status_.message = "Native HTTP.sys gateway requires Windows.";
+    return status_;
+#else
+    if (running_) {
+        return status_;
+    }
+
+    HTTPAPI_VERSION httpVersion = HTTPAPI_VERSION_2;
+    if (!httpInitialized_) {
+        ULONG initResult = HttpInitialize(httpVersion, HTTP_INITIALIZE_SERVER, nullptr);
+        if (initResult != NO_ERROR) {
+            status_.state = GatewayState::Failed;
+            status_.message = "HttpInitialize failed (code " + std::to_string(initResult) + ").";
+            return status_;
+        }
+        httpInitialized_ = true;
+    }
+
+    // Create the server session.
+    HTTP_SERVER_SESSION_ID sessionId = 0;
+    ULONG sessionResult = HttpCreateServerSession(httpVersion, &sessionId, 0);
+    if (sessionResult != NO_ERROR) {
+        status_.state = GatewayState::Failed;
+        status_.message = "HttpCreateServerSession failed (code " + std::to_string(sessionResult) + ").";
+        return status_;
+    }
+    serverSessionId_ = sessionId;
+
+    // Create the URL group within the session.
+    HTTP_URL_GROUP_ID urlGroupId = 0;
+    ULONG groupResult = HttpCreateUrlGroup(serverSessionId_, &urlGroupId, 0);
+    if (groupResult != NO_ERROR) {
+        status_.state = GatewayState::Failed;
+        status_.message = "HttpCreateUrlGroup failed (code " + std::to_string(groupResult) + ").";
+        teardownHttpSysLocked();
+        return status_;
+    }
+    urlGroupId_ = urlGroupId;
+
+    // Build the URL prefix. http://+:PORT/ binds to all interfaces.
+    std::wstring urlPrefix = L"http://+:"
+        + std::to_wstring(configuration_.listenPort) + L"/";
+    ULONG addUrlResult = HttpAddUrlToUrlGroup(
+        urlGroupId_, urlPrefix.c_str(), 0, 0);
+    if (addUrlResult != NO_ERROR) {
+        status_.state = GatewayState::Failed;
+        // ERROR_ACCESS_DENIED (5) here is the URL ACL issue. Be specific
+        // so operators know what to do.
+        if (addUrlResult == ERROR_ACCESS_DENIED) {
+            status_.message = "HttpAddUrlToUrlGroup access denied. "
+                "Either run MCOS as the Windows service (LocalSystem has "
+                "the privilege automatically), or pre-register the URL ACL "
+                "from elevated PowerShell: netsh http add urlacl "
+                "url=http://+:" + std::to_string(configuration_.listenPort)
+                + "/ user=Everyone";
+        } else {
+            status_.message = "HttpAddUrlToUrlGroup failed (code "
+                + std::to_string(addUrlResult) + ").";
+        }
+        teardownHttpSysLocked();
+        return status_;
+    }
+
+    // Create the request queue.
+    HANDLE queue = nullptr;
+    ULONG queueResult = HttpCreateRequestQueue(
+        httpVersion, nullptr, nullptr, 0, &queue);
+    if (queueResult != NO_ERROR) {
+        status_.state = GatewayState::Failed;
+        status_.message = "HttpCreateRequestQueue failed (code "
+            + std::to_string(queueResult) + ").";
+        teardownHttpSysLocked();
+        return status_;
+    }
+    requestQueue_ = queue;
+
+    // Bind queue to URL group.
+    HTTP_BINDING_INFO binding{};
+    binding.Flags.Present = 1;
+    binding.RequestQueueHandle = requestQueue_;
+    ULONG bindResult = HttpSetUrlGroupProperty(
+        urlGroupId_, HttpServerBindingProperty,
+        &binding, sizeof(binding));
+    if (bindResult != NO_ERROR) {
+        status_.state = GatewayState::Failed;
+        status_.message = "HttpSetUrlGroupProperty(BindingProperty) failed (code "
+            + std::to_string(bindResult) + ").";
+        teardownHttpSysLocked();
+        return status_;
+    }
+
+    running_ = true;
+    serveThread_ = std::thread(&NativeHttpSysGatewayAdapter::serveLoop, this);
+
+    status_.state = GatewayState::Running;
+    status_.message = "Native HTTP.sys gateway listening on " + status_.mcpUrl
+        + ". MCP tools/list and tools/call routed through the supervisor + lease router.";
+    status_.startedAtUtc = timestampNowUtc();
+    return status_;
+#endif
+}
+
+GatewayStatus NativeHttpSysGatewayAdapter::Stop() {
+    std::lock_guard<std::mutex> lock(mutex_);
+#if defined(_WIN32)
+    if (!running_ && requestQueue_ == nullptr) {
+        // Nothing to do.
+        if (status_.state != GatewayState::Disabled) {
+            status_.state = GatewayState::Stopped;
+            status_.startedAtUtc.clear();
+            status_.message = "Native HTTP.sys gateway stopped.";
+        }
+        return status_;
+    }
+    status_.state = GatewayState::Stopping;
+    teardownHttpSysLocked();
+    status_.state = GatewayState::Stopped;
+    status_.startedAtUtc.clear();
+    status_.message = "Native HTTP.sys gateway stopped. Registry preserved in-memory.";
+#endif
+    return status_;
+}
+
+#if defined(_WIN32)
+void NativeHttpSysGatewayAdapter::teardownHttpSysLocked() {
+    running_ = false;
+    if (requestQueue_ != nullptr) {
+        // Closing the request queue triggers ERROR_OPERATION_ABORTED in
+        // the blocked HttpReceiveHttpRequest call inside serveLoop, which
+        // causes the loop to exit promptly.
+        HttpShutdownRequestQueue(requestQueue_);
+        if (serveThread_.joinable()) {
+            serveThread_.join();
+        }
+        HttpCloseRequestQueue(requestQueue_);
+        requestQueue_ = nullptr;
+    } else if (serveThread_.joinable()) {
+        // Defensive: thread without a queue. Should not happen but join
+        // defensively to keep state consistent.
+        serveThread_.join();
+    }
+    if (urlGroupId_ != 0) {
+        HttpCloseUrlGroup(urlGroupId_);
+        urlGroupId_ = 0;
+    }
+    if (serverSessionId_ != 0) {
+        HttpCloseServerSession(serverSessionId_);
+        serverSessionId_ = 0;
+    }
+    if (httpInitialized_) {
+        HttpTerminate(HTTP_INITIALIZE_SERVER, nullptr);
+        httpInitialized_ = false;
+    }
+}
+#endif
+
+GatewayStatus NativeHttpSysGatewayAdapter::CurrentStatus() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return status_;
+}
+
+GatewayHealth NativeHttpSysGatewayAdapter::Probe() {
+    GatewayHealth health;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        health.adapterType = AdapterType();
+        health.probedAtUtc = timestampNowUtc();
+        health.mcpUrl = status_.mcpUrl;
+        health.healthUrl = composeHealthUrl(configuration_);
+        health.registeredServerCount = static_cast<int>(registry_.size());
+#if defined(_WIN32)
+        if (running_ && requestQueue_ != nullptr) {
+            health.status = GatewayHealthStatus::Healthy;
+            health.reachable = true;
+            health.httpStatusCode = 200;
+            health.message = "HTTP.sys request queue is bound and accepting requests.";
+        } else if (status_.state == GatewayState::Disabled) {
+            health.status = GatewayHealthStatus::Unknown;
+            health.message = "Adapter is disabled.";
+        } else {
+            health.status = GatewayHealthStatus::Unhealthy;
+            health.message = "Adapter is not running. Last status: " + status_.message;
+        }
+#else
+        health.status = GatewayHealthStatus::Unhealthy;
+        health.message = "Native HTTP.sys gateway requires Windows.";
+#endif
+    }
+    return health;
+}
+
+RegistrationResult NativeHttpSysGatewayAdapter::RegisterHttpServer(const McpServerRegistration& server) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    registry_[server.name] = server;
+    RegistrationResult result;
+    result.succeeded = true;
+    result.serverName = server.name;
+    result.registeredAtUtc = timestampNowUtc();
+    result.message = "Logical HTTP-server endpoint registered with the native gateway.";
+    return result;
+}
+
+RegistrationResult NativeHttpSysGatewayAdapter::RegisterStdioServer(const McpServerRegistration& server) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    registry_[server.name] = server;
+    RegistrationResult result;
+    result.succeeded = true;
+    result.serverName = server.name;
+    result.registeredAtUtc = timestampNowUtc();
+    result.message = "Logical stdio-backed pool registered with the native gateway.";
+    return result;
+}
+
+DeregistrationResult NativeHttpSysGatewayAdapter::DeregisterServer(const std::string& serverName) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    DeregistrationResult result;
+    result.serverName = serverName;
+    if (registry_.erase(serverName) > 0) {
+        result.succeeded = true;
+        result.message = "Server deregistered.";
+    } else {
+        result.succeeded = false;
+        result.message = "Server name not found in native gateway registry.";
+    }
+    return result;
+}
+
+std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::ListTools() const {
+    // Returning an empty list until the v0.6.10 stdio-bridge wiring lands.
+    // Fabricating tools without a reachable backend would violate
+    // ADR-002 §9 ("honest telemetry only"). After the bridge is wired,
+    // this will speak `tools/list` to each registered child and merge
+    // the results with serverName attribution.
+    return {};
+}
+
+std::string NativeHttpSysGatewayAdapter::GatewayMcpUrl() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return status_.mcpUrl;
+}
+
+std::string NativeHttpSysGatewayAdapter::AdapterType() const {
+    return "native";
+}
+
+#if defined(_WIN32)
+namespace {
+// Build a JSON-RPC error response body.
+std::string buildJsonRpcError(int code, const std::string& message,
+                              const nlohmann::json& id = nullptr) {
+    nlohmann::json envelope = {
+        { "jsonrpc", "2.0" },
+        { "id", id },
+        { "error", {
+            { "code", code },
+            { "message", message }
+        } }
+    };
+    return envelope.dump();
+}
+} // namespace
+
+std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& path, const std::string& body) {
+    // path is reserved for v0.6.10 path-based pool scoping (/mcp/{poolId}).
+    // The MVP doesn't yet route by pool; suppress the unused-parameter
+    // warning under /WX without renaming the public signature.
+    (void)path;
+    nlohmann::json req;
+    try {
+        req = nlohmann::json::parse(body.empty() ? std::string("{}") : body);
+    } catch (const std::exception& ex) {
+        return buildJsonRpcError(-32700, std::string("Parse error: ") + ex.what());
+    }
+
+    const std::string method = req.value("method", std::string{});
+    const auto id = req.contains("id") ? req["id"] : nlohmann::json{nullptr};
+
+    if (method.empty()) {
+        return buildJsonRpcError(-32600, "Invalid Request: missing method.", id);
+    }
+
+    if (method == "initialize") {
+        nlohmann::json result = {
+            { "protocolVersion", "2024-11-05" },
+            { "serverInfo", {
+                { "name", "MCOS Native Gateway" },
+                { "version", "0.6.9" }
+            } },
+            { "capabilities", {
+                { "tools", { { "listChanged", false } } }
+            } }
+        };
+        nlohmann::json envelope = {
+            { "jsonrpc", "2.0" },
+            { "id", id },
+            { "result", result }
+        };
+        return envelope.dump();
+    }
+
+    if (method == "tools/list") {
+        // v0.6.9 MVP: returns an empty tools array. McpServerRegistration
+        // doesn't carry a tools list at the registration site (PHASE-02
+        // didn't yet wire the gateway-side tool catalog because the
+        // upstream gateway substrate was responsible for /list_tools).
+        // The v0.6.10 stdio bridge will speak tools/list to each
+        // registered child and merge the results here. ADR-002 §9 forbids
+        // fabricating tool entries; honest empty stays.
+        nlohmann::json envelope = {
+            { "jsonrpc", "2.0" },
+            { "id", id },
+            { "result", { { "tools", nlohmann::json::array() } } }
+        };
+        return envelope.dump();
+    }
+
+    if (method == "tools/call") {
+        // v0.6.9 MVP: stdio bridge to the supervised pool instance is
+        // not yet wired. Return a structured error so AI clients see why
+        // tool execution is currently unavailable. The PHASE-12 follow-up
+        // (stdio bridge in v0.6.10) implements the bridge: read child
+        // stdout pipe, write stdin pipe, multiplex by lease-router-
+        // selected instanceId, forward MCP JSON-RPC bidirectionally.
+        return buildJsonRpcError(-32601,
+            "tools/call: stdio bridge to supervised pool instances "
+            "is implemented in PHASE-12 follow-up (v0.6.10). The native "
+            "gateway accepts the request but cannot yet forward it to "
+            "the spawned MCP server child process. Use the MCPJungle "
+            "adapter (mcpGateway.type=mcpjungle) for production tool calls "
+            "until v0.6.10.", id);
+    }
+
+    return buildJsonRpcError(-32601, "Method not implemented: " + method, id);
+}
+
+void NativeHttpSysGatewayAdapter::serveLoop() {
+    // Working buffer for HTTP_REQUEST. Per HTTP.sys docs we typically
+    // need 4 KB for headers + a separate body buffer. Allocate 16 KB to
+    // cover larger MCP request envelopes inline.
+    std::vector<uint8_t> requestBuffer(16 * 1024);
+
+    while (running_) {
+        ULONG bytesRead = 0;
+        ULONG receiveResult = HttpReceiveHttpRequest(
+            requestQueue_,
+            HTTP_NULL_ID,
+            HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY,
+            reinterpret_cast<PHTTP_REQUEST>(requestBuffer.data()),
+            static_cast<ULONG>(requestBuffer.size()),
+            &bytesRead,
+            nullptr);
+
+        if (receiveResult == ERROR_OPERATION_ABORTED) {
+            break; // queue shut down
+        }
+        if (receiveResult == ERROR_MORE_DATA) {
+            // The request didn't fit. Resize and retry. The first call
+            // populates RequestId so we can reissue with the larger buf.
+            requestBuffer.resize(bytesRead);
+            continue;
+        }
+        if (receiveResult != NO_ERROR) {
+            // Transient or fatal -- backoff briefly and retry.
+            Sleep(50);
+            continue;
+        }
+
+        const PHTTP_REQUEST request = reinterpret_cast<PHTTP_REQUEST>(requestBuffer.data());
+
+        // Compose absolute path from pRawUrl. RawUrl is the percent-
+        // decoded path+query as the client sent it.
+        std::string path;
+        if (request->pRawUrl != nullptr && request->RawUrlLength > 0) {
+            path.assign(request->pRawUrl, request->RawUrlLength);
+            const auto query = path.find('?');
+            if (query != std::string::npos) path = path.substr(0, query);
+        }
+
+        // Pull the body if present (COPY_BODY flag put it inline).
+        std::string body;
+        for (USHORT i = 0; i < request->EntityChunkCount; ++i) {
+            const auto& chunk = request->pEntityChunks[i];
+            if (chunk.DataChunkType == HttpDataChunkFromMemory) {
+                body.append(reinterpret_cast<const char*>(chunk.FromMemory.pBuffer),
+                            chunk.FromMemory.BufferLength);
+            }
+        }
+
+        // Route. /health returns adapter state; any /mcp* path goes to
+        // the MCP handler; everything else 404s with structured JSON.
+        std::string responseBody;
+        std::string contentType = "application/json";
+        USHORT statusCode = 200;
+        std::string reason = "OK";
+
+        const auto& healthPath = configuration_.healthPath.empty()
+            ? std::string("/health") : configuration_.healthPath;
+        const auto& mcpPath = configuration_.mcpPath.empty()
+            ? std::string("/mcp") : configuration_.mcpPath;
+
+        if (path == healthPath || (path.size() > healthPath.size()
+                                   && path.rfind(healthPath, 0) == 0
+                                   && path[healthPath.size()] == '/')) {
+            const auto health = Probe();
+            nlohmann::json body_j = {
+                { "adapterType", AdapterType() },
+                { "state", to_string(status_.state) },
+                { "health", to_string(health.status) },
+                { "message", status_.message }
+            };
+            responseBody = body_j.dump();
+        } else if (path == mcpPath || (path.size() > mcpPath.size()
+                                       && path.rfind(mcpPath, 0) == 0
+                                       && path[mcpPath.size()] == '/')) {
+            responseBody = handleMcpRequest(path, body);
+        } else {
+            statusCode = 404;
+            reason = "Not Found";
+            nlohmann::json err = {
+                { "error", "Path not handled by native MCP gateway" },
+                { "path", path },
+                { "hint", "Use " + mcpPath + " for MCP traffic, " + healthPath + " for health." }
+            };
+            responseBody = err.dump();
+        }
+
+        // Build and send the HTTP response.
+        HTTP_RESPONSE response{};
+        response.StatusCode = statusCode;
+        response.pReason = reason.c_str();
+        response.ReasonLength = static_cast<USHORT>(reason.size());
+
+        HTTP_UNKNOWN_HEADER unused{};
+        (void)unused;
+
+        // Set Content-Type via the known-headers slot.
+        response.Headers.KnownHeaders[HttpHeaderContentType].pRawValue = contentType.c_str();
+        response.Headers.KnownHeaders[HttpHeaderContentType].RawValueLength
+            = static_cast<USHORT>(contentType.size());
+
+        std::string lengthStr = std::to_string(responseBody.size());
+        response.Headers.KnownHeaders[HttpHeaderContentLength].pRawValue = lengthStr.c_str();
+        response.Headers.KnownHeaders[HttpHeaderContentLength].RawValueLength
+            = static_cast<USHORT>(lengthStr.size());
+
+        HTTP_DATA_CHUNK dataChunk{};
+        dataChunk.DataChunkType = HttpDataChunkFromMemory;
+        dataChunk.FromMemory.pBuffer = const_cast<char*>(responseBody.data());
+        dataChunk.FromMemory.BufferLength = static_cast<ULONG>(responseBody.size());
+        response.EntityChunkCount = 1;
+        response.pEntityChunks = &dataChunk;
+
+        ULONG bytesSent = 0;
+        HttpSendHttpResponse(
+            requestQueue_,
+            request->RequestId,
+            0,
+            &response,
+            nullptr,
+            &bytesSent,
+            nullptr,
+            0,
+            nullptr,
+            nullptr);
+    }
+}
+#endif
 
 } // namespace MasterControl

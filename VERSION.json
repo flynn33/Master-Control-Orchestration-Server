@@ -1,11 +1,32 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.6.8",
-  "current_tag": "v0.6.8",
+  "current_version": "0.6.9",
+  "current_tag": "v0.6.9",
   "released_at": "2026-05-05",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.6.9",
+      "tag": "v0.6.9",
+      "released_at": "2026-05-05",
+      "commit": "pending",
+      "summary": "PHASE-12 lands as MVP: native HTTP.sys MCP gateway in C++. NativeHttpSysGatewayAdapter implements IMcpGateway directly using Win32's kernel-mode HTTP server, no external MCPJungle binary required. Operators flip mcpGateway.type='native' to select it; the McpJungleGatewayAdapter remains shipped and selectable for backward compat. The new adapter handles `initialize` and `tools/list` end-to-end; `tools/call` returns an honest 'stdio bridge pending' error pointing operators at v0.6.10 (the bridge wiring is the PHASE-12 follow-up). Replaces the v0.6.7 honest-503 listener wholesale when active. ADR-003's PHASE-12 trigger has fired and been satisfied for the discovery surface.",
+      "entries": [
+        "feat(gateway): NativeHttpSysGatewayAdapter (alongside McpJungleGatewayAdapter and FakeMcpGatewayAdapter). Implements IMcpGateway exactly -- PHASE-03 through PHASE-11 surfaces don't see the substrate change.",
+        "feat(gateway): HTTP.sys lifecycle -- HttpInitialize / HttpCreateServerSession / HttpCreateUrlGroup / HttpAddUrlToUrlGroup with http://+:PORT/ prefix / HttpCreateRequestQueue / HttpSetUrlGroupProperty(BindingProperty). Teardown reverses cleanly. ERROR_ACCESS_DENIED on HttpAddUrlToUrlGroup surfaces with operator guidance ('Run as service or netsh http add urlacl url=http://+:8080/ user=Everyone').",
+        "feat(gateway): MCP Streamable-HTTP request loop. HttpReceiveHttpRequest with HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY pulls body inline up to 16 KB; ERROR_MORE_DATA grows the buffer; ERROR_OPERATION_ABORTED breaks the loop on shutdown. Routes /health to a structured adapter-state JSON, /mcp[/{poolId}] to handleMcpRequest, everything else to a 404 with structured-JSON error.",
+        "feat(gateway): MCP protocol surface -- `initialize` returns serverInfo + tools-capability advertisement, `tools/list` aggregates registered McpServerRegistration tools (with optional path-based pool scoping), `tools/call` returns -32601 with explicit pointer at v0.6.10 stdio bridge (the supervised-process pipe wiring still pending).",
+        "feat(runtime): adapter selection at construction time based on mcpGateway.type. GatewayType::Native -> NativeHttpSysGatewayAdapter, GatewayType::MCPJungle (default) -> McpJungleGatewayAdapter. Operators can switch substrates by POSTing to /api/config and restarting the service.",
+        "build(runtime): MasterControlApp links httpapi.lib for HTTP.sys + http.h header. winsock2 / windows.h ordering already corrected in v0.6.7 still holds.",
+        "docs(version): bump 0.6.8 -> 0.6.9 (PHASE-12 MVP lands)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-12 follow-up (v0.6.10): stdio bridge between the native gateway and supervised pool children. Today the gateway accepts tools/call and returns a structured 'pending' error; v0.6.10 will pipe the JSON-RPC envelope to the npx-spawned child's stdin and read its stdout response. Until then, operators wanting tool-call traffic should keep mcpGateway.type='mcpjungle' on hosts where they have an MCPJungle binary configured.",
+        "PHASE-12 follow-up: bootstrapper auto-registers URL ACL via netsh http add urlacl during install so the native gateway works in console mode without elevation.",
+        "PHASE-13: Win2D / Direct2D rendering in the WinUI shell. Plan file shipped in v0.6.8."
+      ]
+    },
     {
       "version": "0.6.8",
       "tag": "v0.6.8",

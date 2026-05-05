@@ -9659,11 +9659,24 @@ bool MasterControlApplication::Impl::initialize() {
     registerConfigurationDefaults();
     createForsettiRuntime();
 
-    // PHASE-02 (ADR-002 §2): construct the MCP Gateway adapter from current
-    // configuration. Default config disables the gateway; operators flip
-    // mcpGateway.enabled=true once an MCPJungle binary is installed.
-    mcpGateway_ = std::make_shared<McpJungleGatewayAdapter>(
-        configurationService_->current().mcpGateway);
+    // PHASE-02 (ADR-002 §2) / PHASE-12: construct the MCP Gateway adapter
+    // from current configuration. mcpGateway.type selects the substrate:
+    //   - "mcpjungle" (default for backward compat) -> McpJungleGatewayAdapter
+    //     supervises an external MCPJungle binary (or runs in supervised-mock
+    //     mode with a 503 listener if no binary is configured)
+    //   - "native" -> NativeHttpSysGatewayAdapter binds HTTP.sys directly,
+    //     no external binary required (PHASE-12)
+    //
+    // Either substrate satisfies IMcpGateway exactly; PHASE-03 through
+    // PHASE-11 are substrate-agnostic by construction.
+    {
+        const auto gatewayConfig = configurationService_->current().mcpGateway;
+        if (gatewayConfig.type == GatewayType::Native) {
+            mcpGateway_ = std::make_shared<NativeHttpSysGatewayAdapter>(gatewayConfig);
+        } else {
+            mcpGateway_ = std::make_shared<McpJungleGatewayAdapter>(gatewayConfig);
+        }
+    }
 
     // PHASE-03 (ADR-002 §4): construct the LAN Discovery Service that owns
     // DNS-SD registration and the canonical DiscoveryDocument shape.

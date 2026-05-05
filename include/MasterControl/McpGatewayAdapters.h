@@ -114,6 +114,67 @@ private:
     std::atomic<bool> childProcessActive_{ false };
 };
 
+// PHASE-12 native gateway substrate. Implements `IMcpGateway` directly
+// using HTTP.sys (Win32 kernel-mode HTTP server) instead of supervising
+// MCPJungle as an external child process. Operator selects via
+// mcpGateway.type = "native". Replaces the v0.6.7 honest-503 listener
+// when active.
+//
+// Coverage in v0.6.9 MVP:
+//   * HTTP.sys URL group + request queue bound to mcpGateway.listenPort
+//   * MCP Streamable-HTTP transport: parses POST {/mcp, /mcp/{poolId},
+//     /agents/{poolId}} JSON-RPC envelopes
+//   * `initialize` and `tools/list` handshakes
+//   * `tools/call` forwarded to the supervised pool instance via stdio
+//     bridge (when stdio bridge is configured; honest error when not yet
+//     wired)
+//   * health probe at mcpGateway.healthPath returns adapter-state JSON
+//
+// Out of scope for the MVP (PHASE-12 follow-ups):
+//   * SSE streaming for long-running tool calls
+//   * URL ACL self-registration via netsh http add urlacl (operator step
+//     for now -- documented in Gateway.md)
+//   * TLS termination via HTTP.sys binding (operator-side task)
+//   * Multi-tenant LAN auth (LAN-trusted-only per ADR-002 §1)
+class NativeHttpSysGatewayAdapter final : public IMcpGateway {
+public:
+    explicit NativeHttpSysGatewayAdapter(McpGatewayConfiguration configuration);
+    ~NativeHttpSysGatewayAdapter() override;
+
+    NativeHttpSysGatewayAdapter(const NativeHttpSysGatewayAdapter&) = delete;
+    NativeHttpSysGatewayAdapter& operator=(const NativeHttpSysGatewayAdapter&) = delete;
+
+    GatewayStatus Start() override;
+    GatewayStatus Stop() override;
+    GatewayStatus CurrentStatus() const override;
+    GatewayHealth Probe() override;
+    RegistrationResult RegisterHttpServer(const McpServerRegistration& server) override;
+    RegistrationResult RegisterStdioServer(const McpServerRegistration& server) override;
+    DeregistrationResult DeregisterServer(const std::string& serverName) override;
+    std::vector<McpToolDescriptor> ListTools() const override;
+    std::string GatewayMcpUrl() const override;
+    std::string AdapterType() const override;
+
+private:
+    void serveLoop();
+    void teardownHttpSysLocked();
+    std::string handleMcpRequest(const std::string& path, const std::string& body);
+
+    mutable std::mutex mutex_;
+    McpGatewayConfiguration configuration_;
+    GatewayStatus status_;
+    std::map<std::string, McpServerRegistration> registry_;
+
+#if defined(_WIN32)
+    HANDLE requestQueue_ = nullptr;
+    uint64_t serverSessionId_ = 0;     // HTTP_SERVER_SESSION_ID
+    uint64_t urlGroupId_ = 0;          // HTTP_URL_GROUP_ID
+    bool httpInitialized_ = false;
+    std::thread serveThread_;
+    std::atomic<bool> running_{ false };
+#endif
+};
+
 // In-process fake. State transitions and registry behavior match
 // `McpJungleGatewayAdapter`'s contract, but Probe() returns whatever the
 // test scripts via `setNextProbe(...)`. Used by
