@@ -636,6 +636,35 @@
                                ],
                       "source":  "06a09e2",
                       "ts":  "2026-05-05T10:24:07Z"
+                  },
+                  {
+                      "id":  "d6807dc85c9e",
+                      "kind":  "release-event",
+                      "title":  "v0.6.9 shipped (PHASE-12 MVP -- native HTTP.sys gateway)",
+                      "body":  "Commit b585cc7. NativeHttpSysGatewayAdapter implements IMcpGateway via Win32 HTTP.sys. mcpGateway.type=native selects it; mcpjungle (default) still uses McpJungleGatewayAdapter. Adapter handles initialize + tools/list + /health end-to-end; tools/call returns -32601 pointing at v0.6.10 stdio bridge follow-up. Build links httpapi.lib. ADR-003 trigger #4 (operator-experience friction) addressed for the discovery surface. Stdio bridge for actual tool-call forwarding is the v0.6.10 follow-up.",
+                      "tags":  [
+                                   "release",
+                                   "v0.6.9",
+                                   "phase-12-mvp",
+                                   "native-gateway",
+                                   "http-sys"
+                               ],
+                      "source":  "b585cc7",
+                      "ts":  "2026-05-05T10:38:14Z"
+                  },
+                  {
+                      "id":  "d52679397ded",
+                      "kind":  "session-handoff",
+                      "title":  "Open work for next session (post v0.6.9)",
+                      "body":  "Roadmap state after v0.6.9:\n\nDONE:\n- v0.6.6: uninstaller Error 1309 fix, activity ring polish, telemetry IP override\n- v0.6.7: honest 503 listener on gateway port (Option D)\n- v0.6.8: pool persistence, per-instance Canvas charts, telemetry events ring producer, /api/telemetry/events envelope fix, shell config narrative surfaces preferredBindAddress\n- v0.6.9: PHASE-12 MVP - NativeHttpSysGatewayAdapter on HTTP.sys, adapter selection via mcpGateway.type\n\nNEXT (v0.6.10 -- PHASE-12 follow-up):\n1. Stdio bridge for native gateway. Modify WorkerSupervisor.startInstanceLocked to redirect child stdin/stdout pipes; add WorkerSupervisor::getInstanceStdio(instanceId) accessor; in NativeHttpSysGatewayAdapter::handleMcpRequest tools/call branch, look up the lease-router-selected instance, send JSON-RPC to its stdin pipe, read response from stdout pipe. ~400-600 lines of C++.\n2. Bootstrapper URL ACL registration: add `netsh http add urlacl url=http://+:8080/ user=Everyone` to MasterControlBootstrapper install action so console-mode users don\u0027t need elevation.\n3. Once stdio bridge works, NativeHttpSysGatewayAdapter::ListTools and tools/list return real aggregated tools from each pool child (speak tools/list to each on registration).\n\nNEXT (v0.7.0 -- PHASE-13):\n4. Win2D / Direct2D rendering in WinUI shell. Plan file at handoff/realignment/PHASE-13-direct2d-shell-rendering.md. Per-instance telemetry charts at 60Hz, Tron grid backdrop as procedural HLSL, activity stream as scrolling SwapChainPanel, saturation rings with smooth interpolation. ~2 weeks.\n\nKey context:\n- Live MCOS install at C:\\Program Files\\Master Control Orchestration Server\\\n- Service: MasterControlProgram (LocalSystem)\n- Operator port http://localhost:7300/ - dashboard + admin API\n- Gateway port 8080 - now handles two adapters: McpJungleGatewayAdapter (with v0.6.7 honest-503 listener as fallback) or NativeHttpSysGatewayAdapter (HTTP.sys-based)\n- Pool persistence works as of v0.6.8: pools survive restart + upgrade\n- Per-instance CPU/RAM telemetry sparklines on the dashboard\u0027s Pools deck (browser-side)\n- 7 reference pools the operator originally registered (mcp-filesystem, mcp-memory, mcp-everything, mcp-sequential-thinking, subagent-coordinator, subagent-memorian, subagent-thinker) -- need to be POSTed once after install of v0.6.8+ to land in persisted config; then they survive every upgrade.\n- AI contributor guard: NEVER use Co-Authored-By or any AI attribution in commits.\n- Sync-RepositoryVersionBadges.ps1 keeps README badges + vcpkg.json + the 3 .rc VERSIONINFO blocks in lock-step with VERSION.json. Run after every version bump.\n- mcos-memory MCP server at .claude/mcp-servers/mcos-memory/server.py with state at .claude/mcp-state/mcos-memory.json -- 45+ facts, search via recall tool.",
+                      "tags":  [
+                                   "session-handoff",
+                                   "next-cycle",
+                                   "v0.6.10-prep",
+                                   "phase-12-followup"
+                               ],
+                      "source":  "b585cc7",
+                      "ts":  "2026-05-05T10:38:14Z"
                   }
               ],
     "phaseState":  {
