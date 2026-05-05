@@ -36,6 +36,24 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of Master Control Orchestration Server is already installed."
                   Schedule="afterInstallInitialize"/>
 
+    <!-- Restart Manager integration. Politely ask the desktop shell + the
+         WinUI launcher to close before the upgrade tries to overwrite their
+         binaries / shortcuts. CloseMessage sends WM_CLOSE; if a shell
+         instance ignores it for 15s we force termination so an upgrade
+         never blocks indefinitely on a hung process. RebootPrompt=no
+         because MSI shouldn't ask the operator to reboot for a routine
+         shell upgrade. -->
+    <util:CloseApplication Id="CloseShell"
+                           Target="MasterControlShell.exe"
+                           CloseMessage="yes"
+                           RebootPrompt="no"
+                           TerminateProcess="15"/>
+    <util:CloseApplication Id="CloseLauncher"
+                           Target="MasterControlOrchestrationServer.exe"
+                           CloseMessage="yes"
+                           RebootPrompt="no"
+                           TerminateProcess="15"/>
+
     <!-- Single compressed cab inside the MSI. -->
     <MediaTemplate EmbedCab="yes"/>
 

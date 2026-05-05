@@ -8700,6 +8700,19 @@ public:
         snapshot.installHistory = installerOrchestrator_->history();
         snapshot.exports = exportService_->generateExports();
         const auto configuration = configurationService_->current();
+        // Operator override for advertised host IP. WindowsHostTelemetryService
+        // auto-picks an interface via GetAdaptersAddresses(AF_UNSPEC) and on
+        // dual-stack hosts often surfaces the IPv6 ULA before the IPv4 LAN
+        // address. Same precedence as DiscoveryService::currentDocument
+        // (v0.6.4): operator-set preferredBindAddress wins, otherwise the
+        // auto-detected primaryIpAddress is preserved. v0.6.6 carries this
+        // override through to dashboard telemetry so the WinUI shell + the
+        // browser dashboard's host-network panel see the same chosen IP
+        // that LAN clients see.
+        const std::string& preferredAdvertiseIp = configuration.activeProfile.preferredBindAddress;
+        if (!preferredAdvertiseIp.empty() && preferredAdvertiseIp != "0.0.0.0") {
+            snapshot.telemetry.primaryIpAddress = preferredAdvertiseIp;
+        }
         snapshot.resourceAllocation = configuration.resourceAllocation;
         snapshot.security = configuration.security;
         snapshot.governance = commandLogicUnitService_->currentGovernance();
@@ -11610,8 +11623,13 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
     }
     })();  // end of request-handler lambda
 
-    // Emit activity event for every non-polling route.
-    if (!skipActivity) {
+    // Emit activity event for every non-polling route. Drop entries that
+    // came from malformed HTTP traffic (port-scanner probes, half-open
+    // keep-alive checks, bare TCP connects from monitoring agents) which
+    // SimpleHttpServer::parseRequest produces with empty method/path. Those
+    // were polluting the Live Command Stream with empty rows and rendering
+    // as "  -> 200 (0ms)" in the dashboard.
+    if (!skipActivity && !request.method.empty() && !request.path.empty()) {
         const auto latency = static_cast<int>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - requestStart).count());

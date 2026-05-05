@@ -1,11 +1,31 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.6.5",
-  "current_tag": "v0.6.5",
-  "released_at": "2026-05-04",
+  "current_version": "0.6.6",
+  "current_tag": "v0.6.6",
+  "released_at": "2026-05-05",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.6.6",
+      "tag": "v0.6.6",
+      "released_at": "2026-05-05",
+      "commit": "pending",
+      "summary": "Fixes the MsiInstaller Error 1309 dialog every operator saw on upgrade ('Error reading from file: ...Master Control Orchestration Server.lnk, system error 5'). Cause: WiX wrote the Start Menu and Desktop shortcuts as non-advertised (file-content) shortcuts, so during MajorUpgrade the runtime tried to checksum the existing .lnk before overwriting it; Explorer or Search Indexer often had a handle on the .lnk, the read returned ACCESS_DENIED, and Windows surfaced the 1309 dialog. Switched both shortcuts to Advertise=yes (no physical .lnk to lock; Windows resolves them at click-time) and added util:CloseApplication entries so the Restart Manager politely closes the WinUI shell + launcher before file overwrites. Also: dashboard activity ring now drops malformed-request entries (empty method/path from port-scanner probes were polluting the Live Command Stream); host telemetry's primaryIpAddress now honors activeProfile.preferredBindAddress so the WinUI shell + dashboard host-network panel match what /api/discovery and DNS-SD advertise (v0.6.4 fixed this for advertise-side only).",
+      "entries": [
+        "fix(installer): switched StartMenuShortcut + DesktopShortcut to Advertise=yes. Eliminates the MsiInstaller Error 1309 dialog every upgrade — the .lnk no longer exists as a physical file to lock; Windows resolves advertised shortcuts via the registry at click-time. Trade-off is a single MSI repair on first click after install (transparent).",
+        "fix(installer): added util:CloseApplication entries for MasterControlShell.exe and MasterControlOrchestrationServer.exe (the launcher). MajorUpgrade now uses Restart Manager to politely send WM_CLOSE to those processes before file overwrites, with a 15s grace period before force-termination. Belt-and-suspenders fix on top of the advertised-shortcut change.",
+        "fix(runtime): activity ring drops admin_api_request entries with empty method+path. Through v0.6.5 the SimpleHttpServer parsed bare-TCP-connect probes (port scanners, half-open keep-alive checks) into HttpRequest{method='', path=''} which then landed in the activity ring as '  -> 200 (0ms)' rows polluting the dashboard's Live Command Stream. Guarded the append site so only well-formed requests are recorded.",
+        "fix(runtime): host telemetry primaryIpAddress honors activeProfile.preferredBindAddress. v0.6.4 fixed this for the discovery-doc / DNS-SD advertise side; v0.6.6 carries the same override through to the dashboard snapshot's telemetry block so the WinUI shell environment narrative + the dashboard host-network panel match what LAN clients see.",
+        "docs(version): bump 0.6.5 -> 0.6.6 (uninstaller fix + activity ring polish + telemetry IP override)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "Pool definitions live in WorkerSupervisor::pools_ (memory only) and are lost on every service restart / upgrade. AppConfiguration doesn't carry a pools field. v0.6.7 will add it, wire load-on-start, and write-back-on-upsert.",
+        "Telemetry events ring at /api/telemetry/events returns count=0 because no producer is wired to it (only the activity ring at /api/activity is populated). v0.6.7 will route supervisor lifecycle + lease router events into the telemetry events ring.",
+        "Per-instance graphic telemetry (CPU / RAM / disk-IO charts) for each pool instance is requested but not yet implemented. v0.6.7 will add Canvas-based mini-charts to the pool cards on the dashboard's Pools deck.",
+        "MCP Gateway TCP 8080 has no listener until MCPJungle is supervised. Until then, LAN clients pointing at http://<host>:8080/mcp get connection refused. Honest-fallback per ADR-002 §9 + PHASE-02. v0.6.7 will surface a clearer dashboard hint."
+      ]
+    },
     {
       "version": "0.6.5",
       "tag": "v0.6.5",

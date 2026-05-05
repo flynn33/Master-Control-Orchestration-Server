@@ -7,6 +7,28 @@
   Conditions on the components drive checkbox behavior:
     * INSTALL_START_MENU_SHORTCUT=1 is the default; operator must uncheck to skip
     * INSTALL_DESKTOP_SHORTCUT=1 must be explicitly checked by the operator
+
+  Through v0.6.5 these were non-advertised (file-content) shortcuts. MSI
+  writes them as physical .lnk files in
+  C:\ProgramData\Microsoft\Windows\Start Menu\Programs\... . During every
+  MajorUpgrade, MSI tried to checksum the existing .lnk before overwriting
+  it; if Explorer or the Search Indexer had a handle on the file, the read
+  failed with system error 5 (access denied) and Windows surfaced
+  Error 1309 ("Error reading from file: ...lnk") to the operator. The
+  error was non-fatal (the install completed), but it produced a
+  confusing dialog every upgrade.
+
+  v0.6.6 fix: keep the non-advertised shortcut shape (Target= is required
+  for our component layout because the target file lives in a different
+  auto-generated Files.wxs component, not this one) BUT add explicit
+  <RemoveFile> directives that delete the existing .lnk early. With
+  RemoveFile On="install", MSI deletes the old .lnk file during the
+  RemoveFiles standard action — BEFORE it tries to read/checksum the
+  existing file for upgrade comparison. There's no file to lock, no
+  ACCESS_DENIED, and no Error 1309 dialog. Combined with the
+  util:CloseApplication entries in the parent .wxs (which Restart-Manager-
+  asks the shell + launcher to release any of their handles first), the
+  upgrade path is now lock-clean.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Fragment>
@@ -23,6 +45,15 @@
                   Target="[#MasterControlOrchestrationServerExe]"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="MasterControlIcon.ico"/>
+        <!-- Delete any stale .lnk left over from a prior install. With
+             On="install", MSI runs RemoveFiles BEFORE InstallFiles, so the
+             old shortcut is gone before anyone tries to read it for
+             checksum comparison. This is what eliminates Error 1309 on
+             upgrade. -->
+        <RemoveFile Id="RemoveStartMenuShortcut"
+                    Name="Master Control Orchestration Server.lnk"
+                    Directory="ApplicationProgramsFolder"
+                    On="install"/>
         <RemoveFolder Id="RemoveApplicationProgramsFolder"
                       Directory="ApplicationProgramsFolder"
                       On="uninstall"/>
@@ -45,6 +76,11 @@
                   Target="[#MasterControlOrchestrationServerExe]"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="MasterControlIcon.ico"/>
+        <!-- Same early-delete pattern as the Start Menu shortcut. -->
+        <RemoveFile Id="RemoveDesktopShortcut"
+                    Name="Master Control Orchestration Server.lnk"
+                    Directory="DesktopFolder"
+                    On="install"/>
         <RegistryValue Root="HKCU"
                        Key="Software\Master Control Orchestration Server\Shortcuts"
                        Name="Desktop"
