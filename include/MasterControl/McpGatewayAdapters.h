@@ -28,9 +28,20 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if defined(_WIN32)
+// winsock2.h MUST come before windows.h. windows.h transitively includes
+// the legacy winsock.h which collides with winsock2.h on every struct
+// (sockaddr, fd_set, WSAData, ...) and every API (accept, bind, ...).
+// Pulling winsock2.h first wins the typedef race; WIN32_LEAN_AND_MEAN
+// then suppresses the legacy include from windows.h's transitive set
+// for any TU that includes us before defining its own.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
 #include <windows.h>
 #endif
 
@@ -65,6 +76,31 @@ private:
     RegistrationResult registerInternal(McpServerRegistration server);
     GatewayHealth probeOverHttp() const;
     void terminateChildProcessTreeIfRunning();
+
+    // PHASE-12 prelude (Option D from v0.6.7 plan): when no real gateway
+    // substrate is bound to mcpGateway.listenPort, run a small honest-503
+    // listener so LAN clients see a structured "gateway unavailable"
+    // response instead of TCP RST. This eliminates the connection-refused
+    // confusion the operator's remote Claude Code instance hit when
+    // pointing at http://<host>:8080/mcp.
+    //
+    // Lifecycle:
+    //   - Started when adapter enters Disabled, Configured (no binary), or
+    //     supervised-mock Running.
+    //   - Stopped before spawning a real MCPJungle binary (so the binary
+    //     can claim the port) and on Stop().
+    //
+    // The listener is intentionally tiny: a single accept loop on a
+    // blocking socket, returning a fixed JSON 503 to every request.
+    // Replaced wholesale by the PHASE-12 native gateway when that lands.
+    void startHonestUnavailableListenerLocked();
+    void stopHonestUnavailableListenerLocked();
+#if defined(_WIN32)
+    void honestUnavailableServeLoop();
+    SOCKET honestListenerSocket_ = INVALID_SOCKET;
+    std::thread honestListenerThread_;
+    std::atomic<bool> honestListenerRunning_{ false };
+#endif
 
     mutable std::mutex mutex_;
     McpGatewayConfiguration configuration_;

@@ -1,11 +1,30 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.6.6",
-  "current_tag": "v0.6.6",
+  "current_version": "0.6.7",
+  "current_tag": "v0.6.7",
   "released_at": "2026-05-05",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.6.7",
+      "tag": "v0.6.7",
+      "released_at": "2026-05-05",
+      "commit": "pending",
+      "summary": "MCP Gateway port stops returning TCP RST. Option D from the PHASE-11 evaluation memo: when the gateway adapter is in Disabled or supervised-mock mode (no MCPJungle binary configured, the default state), McpJungleGatewayAdapter now binds the configured listen port (default 8080) with a tiny accept loop that returns a structured HTTP 503 'Service Unavailable' JSON to every request. LAN AI clients pointing at the advertised gateway URL get a useful error with operator guidance instead of connection refused. The placeholder listener releases the port the moment a real MCPJungle binary is about to be spawned, and re-binds it after Stop() so the gateway port stays answerable across the entire adapter lifecycle. Replaced wholesale by PHASE-12's native HTTP.sys gateway when that lands.",
+      "entries": [
+        "feat(gateway): McpJungleGatewayAdapter starts an honest 503 listener on mcpGateway.listenHost:listenPort whenever no real binary is supervising the port. Returns Content-Type: application/json with adapterState, guidance, and a pointer at /api/gateway/status for full diagnostic state. Eliminates the connection-refused experience LAN AI clients hit when pointing at the advertised gateway URL before MCPJungle is configured.",
+        "feat(gateway): listener integrates cleanly with the lifecycle: started on enter-Disabled, started on enter-supervised-mock-Running, stopped on enter-real-binary-Running (so MCPJungle's bind() doesn't fail with EADDRINUSE), restarted on Stop(), torn down in the destructor. WSAStartup is refcounted so the adapter is safe to construct alongside other Winsock consumers.",
+        "feat(gateway): bind failures (e.g., port already in use by a stale MCPJungle from a previous run) silently skip listener creation rather than escalating. The adapter's own state surface in /api/gateway/status is the source of truth; the listener is best-effort sugar.",
+        "docs(version): bump 0.6.6 -> 0.6.7 (Option D: gateway port honest-503 listener)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "Pool definitions live in WorkerSupervisor::pools_ (memory only) and are lost on every service restart / upgrade. AppConfiguration doesn't carry a pools field. Refactor planned for v0.6.8.",
+        "Per-instance graphic telemetry charts (CPU/RAM/disk-IO) for sub-agents — Canvas-based mini-charts on each pool card in the browser dashboard, plus formal PHASE-13 plan for Win2D/Direct2D charts in the WinUI shell.",
+        "Telemetry events ring at /api/telemetry/events returns count=0 because no producer is wired to it (only the activity ring is populated). Supervisor lifecycle + lease router events should also feed it.",
+        "PHASE-12 (full native HTTP.sys MCP gateway in C++) — replaces the honest-503 listener with a real gateway. Plan file forthcoming."
+      ]
+    },
     {
       "version": "0.6.6",
       "tag": "v0.6.6",

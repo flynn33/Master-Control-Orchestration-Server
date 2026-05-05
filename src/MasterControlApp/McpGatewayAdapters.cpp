@@ -2,17 +2,27 @@
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 
+// winsock2 MUST come before windows.h. The header (McpGatewayAdapters.h)
+// includes them in the right order; doing it here too defends against any
+// future TU-level include-order regression.
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "ws2_32.lib")
+#endif
+
 #include "MasterControl/McpGatewayAdapters.h"
 
 #include <chrono>
 #include <filesystem>
 #include <sstream>
-
-#if defined(_WIN32)
-#include <windows.h>
-#include <winhttp.h>
-#pragma comment(lib, "winhttp.lib")
-#endif
+#include <string>
 
 namespace MasterControl {
 
@@ -87,6 +97,13 @@ McpJungleGatewayAdapter::McpJungleGatewayAdapter(McpGatewayConfiguration configu
 
 McpJungleGatewayAdapter::~McpJungleGatewayAdapter() {
     terminateChildProcessTreeIfRunning();
+    // Make sure the honest-503 listener thread is joined cleanly before
+    // members start tearing down. Guarded by the same mutex the start /
+    // stop path uses.
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stopHonestUnavailableListenerLocked();
+    }
 }
 
 GatewayStatus McpJungleGatewayAdapter::Start() {
@@ -96,6 +113,12 @@ GatewayStatus McpJungleGatewayAdapter::Start() {
         status_.state = GatewayState::Disabled;
         status_.message = "Cannot start: mcpGateway.enabled is false.";
         status_.startedAtUtc.clear();
+        // Even when disabled, claim the gateway port with an honest 503
+        // listener so LAN clients get a structured error instead of TCP
+        // RST. Eliminates the "connection refused" confusion when remote
+        // AI clients point at the advertised gateway URL before MCPJungle
+        // is configured.
+        startHonestUnavailableListenerLocked();
         return status_;
     }
     if (status_.state == GatewayState::Running || status_.state == GatewayState::Starting) {
@@ -117,6 +140,10 @@ GatewayStatus McpJungleGatewayAdapter::Start() {
 
 #if defined(_WIN32)
     if (binaryPresent) {
+        // Real binary about to take the port — release our placeholder
+        // listener first so MCPJungle's bind() doesn't fail with EADDRINUSE.
+        stopHonestUnavailableListenerLocked();
+
         if (jobObject_ == nullptr) {
             jobObject_ = CreateJobObjectW(nullptr, nullptr);
             if (jobObject_ != nullptr) {
@@ -177,6 +204,10 @@ GatewayStatus McpJungleGatewayAdapter::Start() {
     } else {
         status_.message = "No MCPJungle binary path configured. Adapter is in supervised-mock mode (state machine + registration only; health probe will report unknown).";
     }
+    // Honest 503 listener for the supervised-mock window — same reasoning
+    // as the disabled branch above: claim the port with a real listener
+    // so LAN clients see a structured response instead of TCP RST.
+    startHonestUnavailableListenerLocked();
     return status_;
 }
 
@@ -184,6 +215,10 @@ GatewayStatus McpJungleGatewayAdapter::Stop() {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (status_.state == GatewayState::Stopped || status_.state == GatewayState::Disabled) {
+        // Already inert. Make sure the placeholder listener is also down
+        // (Stop on an already-disabled adapter shouldn't leave the port
+        // listening with a stale-state body).
+        stopHonestUnavailableListenerLocked();
         return status_;
     }
 
@@ -191,10 +226,14 @@ GatewayStatus McpJungleGatewayAdapter::Stop() {
     status_.message = "Stopping MCPJungle adapter.";
 
     terminateChildProcessTreeIfRunning();
+    // Bring the placeholder listener back up so the gateway port keeps
+    // its honest 503 response after Stop() completes.
+    stopHonestUnavailableListenerLocked();
 
     status_.state = GatewayState::Stopped;
     status_.startedAtUtc.clear();
     status_.message = "MCPJungle adapter stopped. Registry preserved in-memory.";
+    startHonestUnavailableListenerLocked();
     return status_;
 }
 
@@ -422,6 +461,139 @@ void McpJungleGatewayAdapter::terminateChildProcessTreeIfRunning() {
 #endif
     childProcessActive_ = false;
 }
+
+// ---------------------------------------------------------------------------
+// Honest "service unavailable" placeholder listener (Option D from the
+// PHASE-11 / PHASE-12 evaluation). Binds the configured gateway port so a
+// LAN AI client pointing at http://<host>:8080/mcp gets a structured 503
+// JSON instead of TCP RST. Replaced wholesale by PHASE-12's native gateway
+// when that lands.
+// ---------------------------------------------------------------------------
+
+void McpJungleGatewayAdapter::startHonestUnavailableListenerLocked() {
+#if defined(_WIN32)
+    if (honestListenerRunning_) {
+        return;
+    }
+    if (configuration_.listenPort == 0) {
+        return;
+    }
+
+    // Initialize Winsock — safe to call repeatedly; refcounted internally.
+    WSADATA wsaData{};
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+    SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (listener == INVALID_SOCKET) {
+        return;
+    }
+
+    int reuse = 1;
+    setsockopt(listener, SOL_SOCKET, SO_REUSEADDR,
+               reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(configuration_.listenPort);
+    const std::string& host = configuration_.listenHost.empty()
+        ? std::string("0.0.0.0")
+        : configuration_.listenHost;
+    if (host == "0.0.0.0") {
+        addr.sin_addr.s_addr = INADDR_ANY;
+    } else {
+        inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
+    }
+
+    if (bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+        // Port already in use (often a lingering MCPJungle from a previous
+        // run, or another process owns it). Don't escalate -- the gateway
+        // adapter's own state surfaces in /api/gateway/status, and the
+        // caller will see "no listener" the same way they did pre-v0.6.7.
+        closesocket(listener);
+        return;
+    }
+    if (listen(listener, 8) == SOCKET_ERROR) {
+        closesocket(listener);
+        return;
+    }
+
+    honestListenerSocket_ = listener;
+    honestListenerRunning_ = true;
+    honestListenerThread_ = std::thread(&McpJungleGatewayAdapter::honestUnavailableServeLoop, this);
+#endif
+}
+
+void McpJungleGatewayAdapter::stopHonestUnavailableListenerLocked() {
+#if defined(_WIN32)
+    if (!honestListenerRunning_) {
+        return;
+    }
+    honestListenerRunning_ = false;
+    if (honestListenerSocket_ != INVALID_SOCKET) {
+        // Closing the listening socket triggers WSAEINTR / WSAENOTSOCK in
+        // the accept() blocked in honestUnavailableServeLoop, which causes
+        // the loop to exit promptly.
+        closesocket(honestListenerSocket_);
+        honestListenerSocket_ = INVALID_SOCKET;
+    }
+    if (honestListenerThread_.joinable()) {
+        honestListenerThread_.join();
+    }
+#endif
+}
+
+#if defined(_WIN32)
+void McpJungleGatewayAdapter::honestUnavailableServeLoop() {
+    // Snapshot listener socket once -- mutex is held at start and we
+    // observe stop-flag without re-locking on the hot path.
+    SOCKET listener = honestListenerSocket_;
+    while (honestListenerRunning_ && listener != INVALID_SOCKET) {
+        sockaddr_in clientAddr{};
+        int clientLen = sizeof(clientAddr);
+        SOCKET client = accept(listener, reinterpret_cast<sockaddr*>(&clientAddr), &clientLen);
+        if (client == INVALID_SOCKET) {
+            // Either we were stopped (stop flag clear), or a transient
+            // error. Either way, exit the loop -- caller already cleaned
+            // up on the stop path.
+            break;
+        }
+
+        // Drain whatever the client sent (we don't actually parse the
+        // request -- every method/path gets the same 503). 4 KB is
+        // generous for a request line + headers.
+        char drain[4096];
+        recv(client, drain, sizeof(drain), 0);
+
+        // Compose a structured JSON response so dashboards / debug tools
+        // hitting this port see something useful.
+        const std::string body =
+            "{"
+            "\"error\":\"MCP gateway not configured\","
+            "\"adapterState\":\"disabled-or-supervised-mock\","
+            "\"adapterType\":\"mcpjungle\","
+            "\"guidance\":\"This MCOS instance has no live MCP gateway substrate "
+            "behind the advertised mcpGateway.listenPort. Either configure "
+            "mcpGateway.binaryPath to point at an MCPJungle binary and set "
+            "mcpGateway.enabled=true, or wait for PHASE-12's native HTTP.sys "
+            "gateway. See /api/gateway/status on the operator port for full "
+            "diagnostic state.\","
+            "\"hint\":\"GET http://<host>:7300/api/gateway/status\""
+            "}";
+
+        std::ostringstream stream;
+        stream << "HTTP/1.1 503 Service Unavailable\r\n"
+               << "Content-Type: application/json\r\n"
+               << "Content-Length: " << body.size() << "\r\n"
+               << "Cache-Control: no-store\r\n"
+               << "Connection: close\r\n\r\n"
+               << body;
+        const auto raw = stream.str();
+        send(client, raw.c_str(), static_cast<int>(raw.size()), 0);
+        shutdown(client, SD_BOTH);
+        closesocket(client);
+    }
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // FakeMcpGatewayAdapter
