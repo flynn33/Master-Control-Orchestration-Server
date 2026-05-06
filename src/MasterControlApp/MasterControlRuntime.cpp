@@ -11906,6 +11906,51 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 }
             }
             const auto result = adminApiService_->upsertSubAgentJson(request.body);
+            // v0.7.2: auto-promote a sub-agent registration to a managed
+            // pool when the registration carries a `command` field. This
+            // makes the autoscale + utilization story turn-key: the
+            // operator POSTs once to /api/runtime/subagents with command/
+            // args/workingDirectory and the runtime mirrors it into the
+            // worker supervisor's pool registry with poolId == endpoint.id
+            // and a default scale policy of {minInstances=0, maxInstances=
+            // autoscaleMaxInstances, maxActiveLeasesPerInstance=
+            // autoscaleMaxLeasesPerInstance}. The same lease router that
+            // serves managed pools then transparently autoscales the
+            // sub-agent under saturation. Sub-agents without a `command`
+            // (network-addressable sub-agents at host:port) still register
+            // as inventory entries only -- no pool, no autoscale, and the
+            // dashboard's per-sub-agent panel renders honest-unavailable
+            // for them.
+            if (result.succeeded && workerSupervisor_) {
+                try {
+                    const auto requestJson = nlohmann::json::parse(request.body);
+                    const auto endpoint = requestJson.get<RuntimeEndpoint>();
+                    if (endpoint.kind == EndpointKind::SubAgent
+                        && !endpoint.id.empty()
+                        && !endpoint.command.empty()) {
+                        ManagedEndpointPool autoPool;
+                        autoPool.poolId      = endpoint.id;
+                        autoPool.kind        = EndpointPoolKind::SubAgent;
+                        autoPool.displayName = endpoint.displayName.empty()
+                            ? endpoint.id
+                            : endpoint.displayName;
+                        autoPool.template_.executable       = endpoint.command;
+                        autoPool.template_.args             = endpoint.args;
+                        autoPool.template_.workingDirectory = endpoint.workingDirectory;
+                        autoPool.template_.environment      = endpoint.environment;
+                        autoPool.scalePolicy.minInstances              = 0;
+                        autoPool.scalePolicy.maxInstances              = (std::max)(1, endpoint.autoscaleMaxInstances);
+                        autoPool.scalePolicy.maxActiveLeasesPerInstance = (std::max)(1, endpoint.autoscaleMaxLeasesPerInstance);
+                        (void)workerSupervisor_->upsertPool(autoPool);
+                    }
+                } catch (...) {
+                    // Body shape didn't deserialize cleanly into a
+                    // RuntimeEndpoint with the v0.7.2 fields. The base
+                    // sub-agent registration still succeeded; we just
+                    // skip auto-promotion and let the operator wire the
+                    // pool manually via /api/pools.
+                }
+            }
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         if (request.method == "POST" && request.path == "/api/runtime/subagents/remove") {
@@ -11923,6 +11968,13 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 return *governance;
             }
             const auto result = adminApiService_->removeSubAgentJson(request.body);
+            // v0.7.2: mirror the removal into the worker supervisor's
+            // pool registry so an auto-promoted pool is reaped together
+            // with its sub-agent inventory entry. removePool drains
+            // existing instances under their Job Object before erasing.
+            if (result.succeeded && workerSupervisor_ && !removalTarget.empty()) {
+                (void)workerSupervisor_->removePool(removalTarget);
+            }
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         if (request.method == "POST" && request.path == "/api/runtime/subagent-groups") {

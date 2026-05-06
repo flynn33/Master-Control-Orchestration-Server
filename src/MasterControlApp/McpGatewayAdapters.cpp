@@ -21,6 +21,7 @@
 
 #include "MasterControl/McpGatewayAdapters.h"
 
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <sstream>
@@ -1175,9 +1176,15 @@ std::string buildJsonRpcError(int code, const std::string& message,
 }
 } // namespace
 
-std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& path, const std::string& body) {
+std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& path,
+                                                          const std::string& body,
+                                                          const std::string& clientIpAddress,
+                                                          const std::string& clientType) {
     // path is reserved for v0.6.11 path-based pool scoping (/mcp/{poolId}).
     // v0.6.10 routes by `params.name` -> cached toolCatalog -> serverName.
+    // v0.7.2: clientIpAddress + clientType are best-effort attribution
+    // fields used only when forwarding tools/call so the lease carries
+    // who-acquired-it metadata into the dashboard.
     (void)path;
     nlohmann::json req;
     try {
@@ -1204,7 +1211,7 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
             { "protocolVersion", "2024-11-05" },
             { "serverInfo", {
                 { "name", "MCOS Native Gateway" },
-                { "version", "0.7.0" }
+                { "version", "0.7.2" }
             } },
             { "capabilities", {
                 { "tools", { { "listChanged", false } } }
@@ -1362,6 +1369,13 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
         // session-aggregating front for many anonymous LAN clients.
         // Future: pass the AI client's session token through to enable
         // sticky routing per-client. v0.6.10 routes least-loaded.
+        // v0.7.2: stamp client identity onto the lease request so
+        // LeaseRouter::bindLeaseLocked carries it into the bound lease
+        // and the dashboard's per-sub-agent active-clients panel can
+        // attribute usage. Either field may be empty -- the dashboard
+        // handles 'unknown' gracefully.
+        leaseRequest.clientIpAddress = clientIpAddress;
+        leaseRequest.clientType      = clientType;
         EndpointLease lease = router->acquireLease(leaseRequest);
         if (lease.state != LeaseState::Active) {
             return buildJsonRpcError(-32603,
@@ -1507,6 +1521,69 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
             }
         }
 
+        // v0.7.2: extract LAN-client identity from the HTTP request so
+        // tools/call leases can carry attribution into the dashboard's
+        // per-sub-agent active-clients panel. clientIpAddress comes from
+        // HTTP_REQUEST::Address.pRemoteAddress (sockaddr* over AF_INET /
+        // AF_INET6), formatted to a printable form via inet_ntop. clientType
+        // is read from X-MCOS-Client-Type or X-MCOS-Client-Id header
+        // (operator-set), falling back to best-effort User-Agent inference
+        // (claude-code / codex / grok / chatgpt / generic-mcp). Both fields
+        // are best-effort: empty strings flow through fine and the
+        // dashboard simply renders 'unknown'.
+        std::string clientIpAddress;
+        if (request->Address.pRemoteAddress != nullptr) {
+            char buffer[64] = { 0 };
+            const auto* family = request->Address.pRemoteAddress;
+            if (family->sa_family == AF_INET) {
+                const auto* in4 = reinterpret_cast<const sockaddr_in*>(family);
+                if (inet_ntop(AF_INET, &in4->sin_addr, buffer, sizeof(buffer)) != nullptr) {
+                    clientIpAddress.assign(buffer);
+                }
+            } else if (family->sa_family == AF_INET6) {
+                const auto* in6 = reinterpret_cast<const sockaddr_in6*>(family);
+                if (inet_ntop(AF_INET6, &in6->sin6_addr, buffer, sizeof(buffer)) != nullptr) {
+                    clientIpAddress.assign(buffer);
+                }
+            }
+        }
+
+        std::string clientType;
+        // Walk the unknown-headers list (HTTP.sys puts custom X- headers
+        // here) and the User-Agent slot in known-headers.
+        for (USHORT h = 0; h < request->Headers.UnknownHeaderCount; ++h) {
+            const auto& uh = request->Headers.pUnknownHeaders[h];
+            if (uh.pName == nullptr || uh.pRawValue == nullptr) continue;
+            std::string name(uh.pName, uh.NameLength);
+            // Case-insensitive compare against X-MCOS-Client-Type / -Id.
+            std::string lower;
+            lower.reserve(name.size());
+            for (char c : name) {
+                lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+            }
+            if (lower == "x-mcos-client-type" || lower == "x-mcos-client-id") {
+                clientType.assign(uh.pRawValue, uh.RawValueLength);
+                break;
+            }
+        }
+        if (clientType.empty()) {
+            const auto& uaHeader = request->Headers.KnownHeaders[HttpHeaderUserAgent];
+            if (uaHeader.pRawValue != nullptr && uaHeader.RawValueLength > 0) {
+                std::string ua(uaHeader.pRawValue, uaHeader.RawValueLength);
+                std::string uaLower;
+                uaLower.reserve(ua.size());
+                for (char c : ua) {
+                    uaLower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+                }
+                if (uaLower.find("claude") != std::string::npos)        clientType = "claude-code";
+                else if (uaLower.find("codex") != std::string::npos)    clientType = "codex";
+                else if (uaLower.find("grok") != std::string::npos)     clientType = "grok";
+                else if (uaLower.find("chatgpt") != std::string::npos
+                      || uaLower.find("openai") != std::string::npos)   clientType = "chatgpt";
+                else                                                    clientType = "generic-mcp";
+            }
+        }
+
         // Route. /health returns adapter state; any /mcp* path goes to
         // the MCP handler; everything else 404s with structured JSON.
         std::string responseBody;
@@ -1533,7 +1610,7 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
         } else if (path == mcpPath || (path.size() > mcpPath.size()
                                        && path.rfind(mcpPath, 0) == 0
                                        && path[mcpPath.size()] == '/')) {
-            responseBody = handleMcpRequest(path, body);
+            responseBody = handleMcpRequest(path, body, clientIpAddress, clientType);
         } else {
             statusCode = 404;
             reason = "Not Found";

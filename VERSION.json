@@ -1,11 +1,30 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.7.1",
-  "current_tag": "v0.7.1",
+  "current_version": "0.7.2",
+  "current_tag": "v0.7.2",
   "released_at": "2026-05-06",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.7.2",
+      "tag": "v0.7.2",
+      "released_at": "2026-05-06",
+      "commit": "pending",
+      "summary": "Closes the v0.7.1 deferred-work backlog. Three landing groups. (1) RuntimeEndpoint gains optional process-template fields (command, args, workingDirectory, environment, autoscaleMaxInstances, autoscaleMaxLeasesPerInstance). When a sub-agent is registered via POST /api/runtime/subagents with a non-empty command, the runtime auto-promotes it to a managed worker pool with poolId == endpoint.id and a default scale policy of {minInstances=0, maxInstances=autoscaleMaxInstances, maxActiveLeasesPerInstance=autoscaleMaxLeasesPerInstance}. The lease router that already serves managed pools transparently autoscales the sub-agent under saturation, exactly the 'Recon hits 100% -> spawn a second Recon' behavior the operator asked for. Removal mirrors: POST /api/runtime/subagents/remove also tears down the auto-promoted pool. Sub-agents without a command (network-addressable HTTP sub-agents at host:port) skip the auto-promote path -- inventory only, no pool, no autoscale. (2) NativeHttpSysGatewayAdapter::serveLoop now extracts the LAN client's identity from each incoming request: clientIpAddress comes from HTTP_REQUEST::Address.pRemoteAddress (sockaddr* over AF_INET / AF_INET6 formatted via inet_ntop), clientType from X-MCOS-Client-Type / X-MCOS-Client-Id headers with a User-Agent fallback that infers claude-code / codex / grok / chatgpt / generic-mcp. handleMcpRequest stamps both onto the LeaseRequest used for tools/call, LeaseRouter::bindLeaseLocked carries them into the bound lease, and the dashboard's per-sub-agent active-clients panel (added v0.7.1) finally populates with real attribution -- 'Recon: 192.168.1.42 (claude-code)' lights up automatically when an external Claude Code instance pointed at the gateway invokes a tool. (3) Cold-start /api/config 10 s wait was investigated and confirmed accumulated-state-dependent (not universal): a fresh v0.7.1 install measured 0.005 s on first /api/config GET across all routes, while the legacy install carrying state from v0.6.x took ~10.5 s on the first GET only. v0.7.1's WinHTTP receive timeout bump (10 s -> 30 s) already protects the shell's Apply Settings path against accumulated-state slowness, so no further runtime work was needed. Documented in this release note for the historical record.",
+      "entries": [
+        "feat(catalog): RuntimeEndpoint gains optional command, args, workingDirectory, environment, autoscaleMaxInstances, autoscaleMaxLeasesPerInstance fields. NLOHMANN serializer extended; existing callers that don't set the fields continue to work (defaults: empty command means 'no auto-promote', max 4 instances, max 2 leases per instance).",
+        "feat(runtime): /api/runtime/subagents POST now auto-promotes the sub-agent to a managed pool when the registration carries a `command`. The pool is wired with poolId == endpoint.id, kind = SubAgent, template = {executable, args, workingDirectory, environment} from the registration, and scale policy {minInstances=0, maxInstances=autoscaleMaxInstances, maxActiveLeasesPerInstance=autoscaleMaxLeasesPerInstance}. The same LeaseRouter::acquireLease that handles MCP server pools transparently autoscales the sub-agent at saturation, satisfying the 'Recon at 100% -> spawn a second Recon' requirement.",
+        "feat(runtime): /api/runtime/subagents/remove POST now also tears down the auto-promoted pool via WorkerSupervisor::removePool, which drains existing instances under their Job Object before erasing. Network-addressable sub-agents (no command field, no auto-promoted pool) skip the cleanup -- removePool is a no-op on unknown poolIds.",
+        "feat(gateway): NativeHttpSysGatewayAdapter::serveLoop extracts LAN-client identity from the incoming HTTP request. clientIpAddress is formatted from HTTP_REQUEST::Address.pRemoteAddress via inet_ntop (handles AF_INET and AF_INET6). clientType is pulled from X-MCOS-Client-Type or X-MCOS-Client-Id headers (case-insensitive, walks UnknownHeaders). Falls back to User-Agent inference (claude-code / codex / grok / chatgpt / generic-mcp) when no explicit header is set.",
+        "feat(gateway): handleMcpRequest signature gains clientIpAddress + clientType arguments (default empty for legacy callers). The tools/call branch stamps both onto LeaseRequest before LeaseRouter::acquireLease, so LeaseRouter::bindLeaseLocked (v0.7.1) carries the attribution into the bound lease and the dashboard's per-sub-agent active-clients panel populates without operator intervention.",
+        "fix(diagnostic): cold-start /api/config 10 s delay was investigated and traced to accumulated state on legacy installs (provider-credentials.json, activation-state.json, entitlements.json from v0.6.x history). A fresh install measures 0.005 s on first GET across all routes (/api/health, /api/config, /api/dashboard, /api/discovery, /api/exports, /api/clu); legacy installs hit ~10.5 s only on the first GET to whichever route triggers the lazy hydration. v0.7.1's WinHTTP receive timeout bump (10 s -> 30 s) already shields the shell's Apply Settings path. No further runtime change is necessary.",
+        "docs(version): bump 0.7.1 -> 0.7.2 (auto-promote sub-agent -> pool, gateway client identity propagation, cold-start root cause traced)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13: Win2D / Direct2D rendering in the WinUI shell. Plan file shipped in v0.6.8."
+      ]
+    },
     {
       "version": "0.7.1",
       "tag": "v0.7.1",

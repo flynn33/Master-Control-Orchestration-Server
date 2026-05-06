@@ -173,7 +173,16 @@ public:
 private:
     void serveLoop();
     void teardownHttpSysLocked();
-    std::string handleMcpRequest(const std::string& path, const std::string& body);
+    // v0.7.2: handleMcpRequest gains optional clientIpAddress + clientType
+    // arguments so the gateway can attribute leases to the originating
+    // LAN client. serveLoop fills both from HTTP_REQUEST::Address and
+    // headers (X-MCOS-Client-Id, X-MCOS-Client-Type, falling back to
+    // best-effort User-Agent inference). Empty strings are valid -- the
+    // dashboard renders 'unknown' honestly when either field is absent.
+    std::string handleMcpRequest(const std::string& path,
+                                 const std::string& body,
+                                 const std::string& clientIpAddress = std::string{},
+                                 const std::string& clientType = std::string{});
 
     // PHASE-12 follow-up (v0.6.10): walk every pool's first Ready instance,
     // ask it tools/list via the stdio bridge, and rebuild the cached

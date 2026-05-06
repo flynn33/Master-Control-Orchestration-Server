@@ -162,6 +162,22 @@ struct RuntimeEndpoint final {
     std::string specialization;
     bool userDefined = false;
     bool isTemplate = false;
+    // v0.7.2: optional process-template fields. When `command` is non-empty
+    // on a SubAgent registration, the runtime auto-promotes it to a
+    // managed pool (poolId == endpoint.id) so autoscale + utilization
+    // light up out of the box. Operators registering a network-addressable
+    // sub-agent (host:port) leave `command` empty and the auto-promote
+    // path is skipped. The default scale policy spawns up to
+    // `autoscaleMaxInstances` instances with up to
+    // `autoscaleMaxLeasesPerInstance` concurrent leases each, matching
+    // the user's stated intent for v0.7.x ("Recon hits 100 % -> spawn a
+    // second Recon and offload new requests to the new agent").
+    std::string command;                        // executable path; empty = no auto-promote
+    std::vector<std::string> args;
+    std::string workingDirectory;
+    std::map<std::string, std::string> environment;
+    int autoscaleMaxInstances = 4;
+    int autoscaleMaxLeasesPerInstance = 2;
 };
 
 struct ManagedNodeProfile final {
@@ -1311,7 +1327,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     routePath,
     specialization,
     userDefined,
-    isTemplate)
+    isTemplate,
+    command,
+    args,
+    workingDirectory,
+    environment,
+    autoscaleMaxInstances,
+    autoscaleMaxLeasesPerInstance)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ManagedNodeProfile,
