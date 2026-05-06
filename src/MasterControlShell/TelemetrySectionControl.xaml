@@ -66,7 +66,7 @@
                                     <StackPanel Spacing="8">
                                         <TextBlock Text="CPU LOAD" Style="{StaticResource ShellLabelTextStyle}" />
                                         <TextBlock x:Name="CpuValueText" Style="{StaticResource ShellValueTextStyle}" />
-                                        <ProgressBar x:Name="CpuProgressBar" Height="8" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                                        <ProgressRing x:Name="CpuProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
                                         <TextBlock x:Name="CpuDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Live host utilization." />
                                     </StackPanel>
                                 </Border>
@@ -75,7 +75,7 @@
                                     <StackPanel Spacing="8">
                                         <TextBlock Text="MEMORY PRESSURE" Style="{StaticResource ShellLabelTextStyle}" />
                                         <TextBlock x:Name="MemoryValueText" Style="{StaticResource ShellValueTextStyle}" />
-                                        <ProgressBar x:Name="MemoryProgressBar" Height="8" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                                        <ProgressRing x:Name="MemoryProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
                                         <TextBlock x:Name="MemoryDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Resident memory pressure." />
                                     </StackPanel>
                                 </Border>
@@ -84,7 +84,7 @@
                                     <StackPanel Spacing="8">
                                         <TextBlock Text="DISK OCCUPANCY" Style="{StaticResource ShellLabelTextStyle}" />
                                         <TextBlock x:Name="DiskValueText" Style="{StaticResource ShellValueTextStyle}" />
-                                        <ProgressBar x:Name="DiskProgressBar" Height="8" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                                        <ProgressRing x:Name="DiskProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
                                         <TextBlock x:Name="DiskDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Payload and runtime storage pressure." />
                                     </StackPanel>
                                 </Border>
@@ -133,7 +133,7 @@
                                     <StackPanel Spacing="8">
                                         <TextBlock Text="CPU BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
                                         <TextBlock x:Name="CpuAllocationValueText" Style="{StaticResource ShellValueTextStyle}" />
-                                        <ProgressBar x:Name="CpuAllocationProgressBar" Height="8" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                                        <ProgressRing x:Name="CpuAllocationProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
                                         <TextBlock x:Name="CpuAllocationDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Governed launch budget." />
                                     </StackPanel>
                                 </Border>
@@ -142,7 +142,7 @@
                                     <StackPanel Spacing="8">
                                         <TextBlock Text="RAM BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
                                         <TextBlock x:Name="MemoryAllocationValueText" Style="{StaticResource ShellValueTextStyle}" />
-                                        <ProgressBar x:Name="MemoryAllocationProgressBar" Height="8" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                                        <ProgressRing x:Name="MemoryAllocationProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
                                         <TextBlock x:Name="MemoryAllocationDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Governed memory budget." />
                                     </StackPanel>
                                 </Border>
@@ -151,7 +151,7 @@
                                     <StackPanel Spacing="8">
                                         <TextBlock Text="BANDWIDTH BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
                                         <TextBlock x:Name="BandwidthAllocationValueText" Style="{StaticResource ShellValueTextStyle}" />
-                                        <ProgressBar x:Name="BandwidthAllocationProgressBar" Height="8" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                                        <ProgressRing x:Name="BandwidthAllocationProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
                                         <TextBlock x:Name="BandwidthAllocationDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Governed transfer budget." />
                                     </StackPanel>
                                 </Border>
@@ -160,7 +160,7 @@
                                     <StackPanel Spacing="8">
                                         <TextBlock Text="STORAGE BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
                                         <TextBlock x:Name="StorageAllocationValueText" Style="{StaticResource ShellValueTextStyle}" />
-                                        <ProgressBar x:Name="StorageAllocationProgressBar" Height="8" Maximum="100" Foreground="{StaticResource ShellAccentBrush}" />
+                                        <ProgressRing x:Name="StorageAllocationProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
                                         <TextBlock x:Name="StorageAllocationDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Governed storage budget." />
                                     </StackPanel>
                                 </Border>

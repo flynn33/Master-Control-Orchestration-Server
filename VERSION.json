@@ -1,11 +1,28 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.7.2",
-  "current_tag": "v0.7.2",
+  "current_version": "0.7.3",
+  "current_tag": "v0.7.3",
   "released_at": "2026-05-06",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.7.3",
+      "tag": "v0.7.3",
+      "released_at": "2026-05-06",
+      "commit": "pending",
+      "summary": "PHASE-13 starter: animated saturation rings on the WinUI shell's Telemetry deck. Each of the seven host-load tiles (CPU load, memory pressure, disk pressure, governed CPU, memory, bandwidth, storage budgets) now renders its 0-100 utilization figure as a determinate WinUI 3 ProgressRing instead of a flat 8-pixel ProgressBar. The ring is 72x72, fills clockwise from 12 o'clock as the value climbs, and inherits XAML-Composition's existing DirectX 11 GPU compositing for smooth angular interpolation between snapshot ticks. PHASE-13 acceptance criterion #4 (saturation rings animate, atSaturation transitions produce smooth color + angle interpolation rather than instantaneous swap) is satisfied for the host-telemetry surface. The cpp-side Value setters in TelemetrySectionControl::ApplySnapshot still call .Value(percent), so no logic change beyond the XAML element type. Subsequent v0.7.x releases will cover the remaining PHASE-13 surfaces -- per-instance pool charts at 60Hz via Win2D CanvasControl, the Tron grid backdrop as a procedural HLSL shader, and the activity stream as a scrolling SwapChainPanel.",
+      "entries": [
+        "feat(shell): seven Telemetry-deck ProgressBars (CpuProgressBar, MemoryProgressBar, DiskProgressBar, CpuAllocationProgressBar, MemoryAllocationProgressBar, BandwidthAllocationProgressBar, StorageAllocationProgressBar) replaced with WinUI 3 ProgressRings in determinate mode (IsActive=True, IsIndeterminate=False, Maximum=100, 72x72). Element x:Name preserved so the cpp Value setters in TelemetrySectionControl::ApplySnapshot compile unchanged -- ProgressRing.Value has identical semantics to ProgressBar.Value.",
+        "fix(shell): host-load surface now visually communicates saturation more clearly than the 8-pixel-tall linear bars. Visual identity matches the operator's Tron-themed shell preference (rings are a more iconic ramp indicator than bars). XAML-Composition handles the per-frame redraw on the system compositor at vsync.",
+        "docs(version): bump 0.7.2 -> 0.7.3 (PHASE-13 starter -- saturation rings on Telemetry deck)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on (v0.7.4+): per-instance pool telemetry charts at 60Hz via Win2D CanvasControl. The browser dashboard already has Canvas sparklines (v0.6.8); the shell currently shows the same data as text rows. Bringing them to parity at the shell level requires a Microsoft.Graphics.Win2D NuGet integration in MasterControlShell.vcxproj plus a CanvasControl drawing routine that reads the snapshot's instances[].telemetry.",
+        "PHASE-13 follow-on: Tron grid backdrop as a procedural HLSL fragment shader. Replaces the current static <Border> background. Requires Win2D's effect compilation pipeline plus a CanvasAnimatedControl for the per-frame redraw.",
+        "PHASE-13 follow-on: activity stream as a scrolling SwapChainPanel. Replaces the current XAML ItemsControl rebuild on every snapshot tick. Direct2D draw loop with WriteUtf8 for severity-colored text plus smooth scroll animation."
+      ]
+    },
     {
       "version": "0.7.2",
       "tag": "v0.7.2",
