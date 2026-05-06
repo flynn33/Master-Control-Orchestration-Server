@@ -537,10 +537,91 @@ function renderOverview() {
         <p class="muted">Host metrics are PDH-direct; <code>0%</code> means idle.</p>
       </article>
       ${renderClaudePluginCard()}
+      ${renderSubAgentUtilizationPanel({ deck: 'overview' })}
       <article class="panel-block wide">
         <h3>Recent Telemetry Events</h3>
         ${renderTelemetryEventRows(recentEvents, { compact: true })}
       </article>
+    </div>
+  `;
+}
+
+// v0.7.1: per-sub-agent live utilization panel.
+// Reads state.dashboard.subAgentRuntimeStats. For each sub-agent the
+// runtime knows about, renders a card showing the live utilization bar
+// (active leases / capacity * 100), the spawned-instance count, and the
+// list of LAN clients currently holding leases. utilizationPercent =
+// -1.0 means "no managed pool wraps this sub-agent" -- ADR-002 §9 says
+// don't fabricate, so we render an honest-unavailable state with a
+// pointer at the docs.
+function renderSubAgentUtilizationPanel(options) {
+  options = options || {};
+  const stats = (state.dashboard && state.dashboard.subAgentRuntimeStats) || [];
+  if (stats.length === 0) {
+    if (options.deck === 'overview') {
+      // On the Overview deck, hide the panel entirely when there are no
+      // sub-agents. Operators don't need a "you have 0 sub-agents" tile
+      // crowding the overview.
+      return '';
+    }
+    return `
+      <article class="panel-block wide">
+        <h3>Sub-Agents</h3>
+        <p class="muted">No sub-agents registered. Use <code>POST /api/runtime/subagents</code> to register one. To enable autoscale + utilization tracking, also register a managed pool with the same id via <code>POST /api/pools</code>.</p>
+      </article>
+    `;
+  }
+  const cards = stats.map(renderSubAgentCard).join('');
+  return `
+    <article class="panel-block wide subagent-panel">
+      <h3>Sub-Agents (${stats.length})</h3>
+      <p class="muted">Live utilization. Per-sub-agent leases routed through the gateway, capacity = readyInstances * maxLeasesPerInstance. Autoscale fires when every Ready instance is at capacity and the pool isn't yet at <code>scalePolicy.maxInstances</code>.</p>
+      <div class="subagent-card-grid">
+        ${cards}
+      </div>
+    </article>
+  `;
+}
+
+function renderSubAgentCard(stat) {
+  const utilization = (typeof stat.utilizationPercent === 'number') ? stat.utilizationPercent : -1;
+  const hasPool = !!(stat.poolId && stat.poolId.length);
+  const utilizationLabel = utilization < 0
+    ? 'unavailable'
+    : `${utilization.toFixed(0)}%`;
+  const utilizationTone = utilization < 0
+    ? 'unknown'
+    : (utilization >= 95 ? 'critical' : (utilization >= 75 ? 'warn' : 'good'));
+  const barWidth = utilization < 0 ? 0 : Math.max(0, Math.min(100, utilization));
+  const clients = stat.activeClients || [];
+  const clientRows = clients.length === 0
+    ? '<p class="muted">No active clients.</p>'
+    : `<ul class="subagent-client-list">${clients.map((c) => {
+        const ip = escapeHtml(c.ipAddress || 'unknown');
+        const ct = escapeHtml(c.clientType || 'unknown-client');
+        return `<li><code>${ip}</code> <span class="subagent-client-type">${ct}</span></li>`;
+      }).join('')}</ul>`;
+  const poolNote = hasPool
+    ? `<p class="muted">Pool <code>${escapeHtml(stat.poolId)}</code> · ${stat.readyInstanceCount}/${stat.totalInstanceCount} Ready · max ${stat.maxInstancesAllowed} · autoscale ${stat.autoscaleEnabled ? 'on' : 'off'}</p>`
+    : '<p class="muted">No managed pool registered. Utilization unavailable until you POST a pool with matching id.</p>';
+  return `
+    <div class="subagent-card" data-sub-agent-id="${escapeHtml(stat.subAgentId)}">
+      <div class="subagent-card-head">
+        <h4>${escapeHtml(stat.displayName || stat.subAgentId)}</h4>
+        <span class="subagent-spec">${escapeHtml(stat.specialization || '—')}</span>
+      </div>
+      <div class="subagent-utilization-row">
+        <span class="subagent-utilization-label ${utilizationTone}">${utilizationLabel}</span>
+        <div class="subagent-utilization-bar-track">
+          <div class="subagent-utilization-bar-fill ${utilizationTone}" style="width: ${barWidth}%;"></div>
+        </div>
+        <span class="subagent-utilization-counts">${stat.activeLeaseCount} / ${stat.leaseCapacity}</span>
+      </div>
+      ${poolNote}
+      <div class="subagent-clients">
+        <h5>Active clients (${clients.length})</h5>
+        ${clientRows}
+      </div>
     </div>
   `;
 }
@@ -1139,9 +1220,58 @@ function renderRuntime() {
       </article>
       <article class="panel-block wide">
         <h3>Sub-Agents (${subs.length})</h3>
-        ${endpointTable(subs)}
+        <p class="muted">Specialized lanes. Each sub-agent is also surfaced in the per-agent utilization panel on the Overview / Telemetry decks.</p>
+        ${subAgentTable(subs)}
       </article>
     </div>
+  `;
+}
+
+// v0.7.1: extended sub-agents table with live utilization + active-client
+// columns sourced from state.dashboard.subAgentRuntimeStats. The base
+// inventory columns (id / name / host / port / status / specialization)
+// stay; the new columns light up only when a managed pool wraps the
+// sub-agent (operator wires this with `POST /api/pools` using poolId
+// equal to the sub-agent's id). For sub-agents without a managed pool,
+// the new columns render `unavailable` honestly per ADR-002 §9.
+function subAgentTable(endpoints) {
+  if (endpoints.length === 0) {
+    return '<p class="muted">No entries registered yet.</p>';
+  }
+  const stats = (state.dashboard && state.dashboard.subAgentRuntimeStats) || [];
+  const statById = {};
+  stats.forEach((s) => { statById[s.subAgentId] = s; });
+  return `
+    <table class="runtime-table">
+      <thead><tr>
+        <th>Id</th><th>Display name</th><th>Host</th><th>Port</th><th>Status</th>
+        <th>Specialization</th><th>Utilization</th><th>Instances</th><th>Active clients</th>
+      </tr></thead>
+      <tbody>
+        ${endpoints.map((e) => {
+          const stat = statById[e.id];
+          const utilization = stat && typeof stat.utilizationPercent === 'number' ? stat.utilizationPercent : -1;
+          const utilLabel = utilization < 0 ? 'unavailable' : `${utilization.toFixed(0)}%`;
+          const instances = stat ? `${stat.readyInstanceCount}/${stat.totalInstanceCount}` : '—';
+          const clientList = stat && stat.activeClients && stat.activeClients.length > 0
+            ? stat.activeClients.map((c) => `${c.ipAddress || 'unknown'} (${c.clientType || 'unknown-client'})`).join(', ')
+            : (stat ? '—' : 'unavailable');
+          return `
+            <tr>
+              <td><code>${escapeHtml(e.id)}</code></td>
+              <td>${escapeHtml(e.displayName || '')}</td>
+              <td>${escapeHtml(e.host || '')}</td>
+              <td>${escapeHtml(String(e.port || ''))}</td>
+              <td>${escapeHtml(e.status || '')}</td>
+              <td>${escapeHtml(e.specialization || '')}</td>
+              <td>${escapeHtml(utilLabel)}</td>
+              <td>${escapeHtml(instances)}</td>
+              <td>${escapeHtml(clientList)}</td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
   `;
 }
 
@@ -1591,12 +1721,17 @@ function bindPoolsHandlers() {
 
 function renderTelemetryClients() {
   const clients = state.telemetryClients || [];
+  // v0.7.1: the Telemetry destination now also surfaces the per-sub-agent
+  // utilization panel so operators looking at "what's hot right now"
+  // don't have to bounce to the Overview deck. Same data, same cards.
+  const subAgentPanel = renderSubAgentUtilizationPanel({ deck: 'telemetry' });
   if (clients.length === 0) {
     return `
       <article class="panel-block wide">
         <h3>No connected clients</h3>
         <p class="muted">No client has POSTed <code>/api/telemetry/heartbeat</code> yet. Clients self-report; metrics they don't supply render as "unavailable" rather than "0%" (ADR-002 §9).</p>
       </article>
+      ${subAgentPanel}
     `;
   }
   return `
@@ -1629,6 +1764,7 @@ function renderTelemetryClients() {
       </table>
       <p class="muted">Cells reading <em>unavailable</em> mean the client did not supply that metric in its heartbeat. They are <strong>never</strong> rendered as <code>0%</code>.</p>
     </article>
+    ${subAgentPanel}
   `;
 }
 

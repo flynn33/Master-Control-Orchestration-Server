@@ -1,11 +1,35 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.7.0",
-  "current_tag": "v0.7.0",
-  "released_at": "2026-05-05",
+  "current_version": "0.7.1",
+  "current_tag": "v0.7.1",
+  "released_at": "2026-05-06",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.7.1",
+      "tag": "v0.7.1",
+      "released_at": "2026-05-06",
+      "commit": "pending",
+      "summary": "v0.7.0 operator-pain bug fix + sub-agent live-utilization visualization. Three landing groups. (1) WinUI shell Apply Settings now actually lands -- the shell's WinHTTP receive timeout is bumped from 10 s to 30 s so the runtime's first /api/config GET after a cold service start does not drop. Pre-v0.7.1 the runtime took ~10.5 s to serve its first /api/config (lazy hydration of activation store + telemetry baseline + Forsetti module catalog) and the shell's GET-then-merge-then-POST sequence in UpdateHostSettings dropped the leading GET; the operator saw the Configuration narrative panel stay stale even after clicking Apply, with no error visible. (2) Per-sub-agent live-utilization panel on the Overview AND Telemetry decks of the browser dashboard. Each sub-agent the runtime knows about renders as a card with a horizontal utilization bar (cyan-green when below 75 %, amber 75-95 %, red above 95 %), spawned-instance count, autoscale state, and the LAN clients currently leasing it (IP + clientType, e.g. '192.168.1.42 (claude-code)'). The Shared-fabric sub-agents table on the Runtime deck gains matching Utilization, Instances, and Active clients columns. (3) DashboardSnapshot now carries a SubAgentRuntimeStat array (with SubAgentLeaseHolder per active client) and AdminApiService computes it by joining inventory sub-agent endpoints with the worker supervisor's pools and the lease router's active leases -- driven by the convention 'pool poolId == sub-agent id'. EndpointLease + LeaseRequest gain clientIpAddress + clientType fields so the gateway can attribute leases to the originating LAN client. Honest-unavailable (utilizationPercent = -1.0) when no managed pool wraps the sub-agent.",
+      "entries": [
+        "fix(shell): WinHTTP receive timeout 10 s -> 30 s in ShellRuntime.cpp::initializeWinHttpRequest. Through v0.7.0 the shell's UpdateHostSettings called fetchConfigurationFromAdminApi (GET) before merging edits and POSTing back; on a cold service start the runtime's first /api/config response can take ~10.5 s while the activation store + telemetry baseline + Forsetti module catalog hydrate in series. The 10 s ceiling clipped the GET silently; the merge-then-POST never ran; the operator saw 'Apply' succeed visually but the Configuration narrative panel kept showing the stale bind address. The 30 s ceiling stays well clear of the cold path while preserving 'fail fast on dead, patient on slow-but-alive' for the connect/send 500 ms paths.",
+        "feat(dashboard-payload): SubAgentRuntimeStat + SubAgentLeaseHolder structs in MasterControlModels.h, NLOHMANN serializers, plus a subAgentRuntimeStats vector on DashboardSnapshot. Per-sub-agent fields: poolId, readyInstanceCount, totalInstanceCount, activeLeaseCount, leaseCapacity (= readyInstances * maxActiveLeasesPerInstance), maxInstancesAllowed, utilizationPercent, autoscaleEnabled, activeClients[]. utilizationPercent = -1.0 when no managed pool wraps the sub-agent (ADR-002 §9 honest-unavailable).",
+        "feat(runtime): AdminApiService gains AttachWorkerLayer(supervisor, leaseRouter) so the dashboard snapshot can compute per-sub-agent utilization without restructuring AdminApi's construction order. snapshot() walks every inventory SubAgent endpoint, finds the matching managed pool by id, sums readyInstances * maxLeasesPerInstance for capacity, pulls active leases from leaseRouter->activeLeases(poolId), and stamps each lease's clientIpAddress + clientType into the SubAgentLeaseHolder list.",
+        "feat(runtime): EndpointLease + LeaseRequest gain clientIpAddress + clientType fields. LeaseRouter::bindLeaseLocked copies them verbatim from the request so the dashboard can attribute leases to the originating LAN client without maintaining a side index. Both fields are best-effort: legacy callers get empty strings and the dashboard renders 'unknown' honestly.",
+        "feat(dashboard-ui): Overview deck adds a Sub-Agents panel rendering per-agent cards with a horizontal Tron-gradient utilization bar (good/warn/critical tone class), spawned-instance count, autoscale state, and a list of currently-leasing LAN clients with their IP + clientType. Cards are 380 px min-width, deliberately larger than existing 320-px panel-blocks because the operator asked for them to be readable at a glance. Hidden when zero sub-agents are registered.",
+        "feat(dashboard-ui): Telemetry deck reuses the same renderSubAgentUtilizationPanel below the Connected Clients table so operators looking at 'what's hot right now' don't have to bounce to Overview.",
+        "feat(dashboard-ui): Shared-fabric Runtime deck's sub-agents table gains Utilization / Instances / Active clients columns sourced from subAgentRuntimeStats. Sub-agents without a managed pool render the new columns as 'unavailable' rather than fabricating zeros.",
+        "feat(dashboard-css): new .subagent-card / .subagent-utilization-bar-track / .subagent-utilization-bar-fill / .subagent-client-list selectors. Linear-gradient fills (good = cyan→teal, warn = cyan→amber, critical = amber→red), 250 ms width transition for smooth scaling, semantic-tone color tokens (1cf2c1 / ffaf3a / ff3a5a) consistent with the existing palette.",
+        "docs(version): bump 0.7.0 -> 0.7.1 (shell timeout fix + sub-agent utilization visualization + per-lease client attribution)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "v0.7.2 follow-up: eliminate the 10 s cold-start delay on the runtime's first /api/config request (root cause is lazy hydration of the activation store + telemetry baseline + Forsetti module catalog at first request). Pre-warming these at boot will let the shell drop the receive timeout back below 10 s.",
+        "v0.7.2 follow-up: auto-promote local sub-agent registration to a managed pool so autoscale + utilization light up out of the box. Today operators who register a sub-agent via POST /api/runtime/subagents must also POST /api/pools with a matching id to enable autoscale. The auto-promote flow needs the sub-agent registration shape to optionally carry a process template (executable + args + healthProbe).",
+        "v0.7.2 follow-up: extract clientIpAddress + clientType from the gateway's incoming HTTP request and propagate to LeaseRequest.clientIpAddress / clientType so the dashboard's per-sub-agent active-client list always populates (currently empty until a caller explicitly sets the fields). Path: NativeHttpSysGatewayAdapter::handleMcpRequest reads HTTP.sys client address from HttpReceiveHttpRequest's HTTP_REQUEST::Address and headers like X-MCOS-Client-Id / User-Agent.",
+        "PHASE-13: Win2D / Direct2D rendering in the WinUI shell. Plan file shipped in v0.6.8."
+      ]
+    },
     {
       "version": "0.7.0",
       "tag": "v0.7.0",

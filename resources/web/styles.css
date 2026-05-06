@@ -1615,3 +1615,120 @@ dialog:focus-visible {
   .pool-card-policy { align-self: flex-start; }
   .instance-telemetry-table .instance-spark { min-width: auto; }
 }
+
+/* ----------------------------------------------------------------------
+ * v0.7.1: per-sub-agent live utilization cards. Used on the Overview deck
+ * and the Telemetry deck. Each card carries a horizontal utilization bar
+ * (Tron green / cyan / red gradient depending on saturation), instance
+ * count, autoscale state, and the LAN client(s) currently leasing the
+ * sub-agent. Cards are intentionally larger than the existing 320-px
+ * panel-blocks because the operator asked for them to be readable at a
+ * glance from across the room.
+ * --------------------------------------------------------------------- */
+.subagent-panel { padding-top: 12px; }
+.subagent-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+.subagent-card {
+  background: linear-gradient(155deg, rgba(0, 246, 255, 0.04) 0%, rgba(3, 16, 24, 0.85) 60%);
+  border: 1px solid rgba(0, 246, 255, 0.22);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.subagent-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.subagent-card-head h4 {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+}
+.subagent-spec {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+.subagent-utilization-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 80px;
+  align-items: center;
+  gap: 10px;
+}
+.subagent-utilization-label {
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-align: left;
+}
+.subagent-utilization-label.good     { color: #1cf2c1; }
+.subagent-utilization-label.warn     { color: #ffaf3a; }
+.subagent-utilization-label.critical { color: #ff3a5a; }
+.subagent-utilization-label.unknown  { color: rgba(140, 183, 196, 0.65); font-size: 0.95rem; }
+.subagent-utilization-bar-track {
+  height: 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(0, 246, 255, 0.18);
+  overflow: hidden;
+  position: relative;
+}
+.subagent-utilization-bar-fill {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 250ms ease-out, background 250ms ease-out;
+}
+.subagent-utilization-bar-fill.good     { background: linear-gradient(90deg, #1cf2c1, #00f6ff); }
+.subagent-utilization-bar-fill.warn     { background: linear-gradient(90deg, #00f6ff, #ffaf3a); }
+.subagent-utilization-bar-fill.critical { background: linear-gradient(90deg, #ffaf3a, #ff3a5a); }
+.subagent-utilization-bar-fill.unknown  { background: rgba(140, 183, 196, 0.18); }
+.subagent-utilization-counts {
+  text-align: right;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+.subagent-clients h5 {
+  margin: 8px 0 4px;
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.subagent-client-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.88rem;
+}
+.subagent-client-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(0, 246, 255, 0.05);
+  border: 1px solid rgba(0, 246, 255, 0.12);
+}
+.subagent-client-type {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+@media (max-width: 720px) {
+  .subagent-card-grid { grid-template-columns: 1fr; }
+  .subagent-utilization-row { grid-template-columns: 70px 1fr 60px; }
+}

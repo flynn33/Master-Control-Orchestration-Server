@@ -8347,6 +8347,13 @@ private:
                 stickySessions_[stickyKey(poolId, lease.sessionId)] = lease.leaseId;
             }
         }
+        // v0.7.1: copy LAN-client identity verbatim from the request so the
+        // dashboard's per-sub-agent client-attribution panel can show
+        // "Recon: 192.168.1.42 (claude-code)" without the dashboard having
+        // to maintain its own side index of who acquired what. Both fields
+        // may be empty for legacy callers.
+        lease.clientIpAddress = request.clientIpAddress;
+        lease.clientType      = request.clientType;
         lease.statusMessage = scaleOutTriggered
             ? "Lease bound to freshly-spawned instance after pool scale-out."
             : "Lease bound to least-loaded Ready instance.";
@@ -9027,6 +9034,17 @@ public:
         , mcpGateway_(std::move(mcpGateway))
         , discoveryService_(std::move(discoveryService)) {}
 
+    // v0.7.1: late-bind the worker supervisor + lease router so the
+    // dashboard snapshot can compute per-sub-agent utilization and
+    // per-pool active-client lists without restructuring AdminApiService's
+    // construction order. Called once from MasterControlApplication
+    // immediately after both the supervisor and lease router exist.
+    void AttachWorkerLayer(std::shared_ptr<IWorkerSupervisor> workerSupervisor,
+                           std::shared_ptr<ILeaseRouter> leaseRouter) {
+        workerSupervisor_ = std::move(workerSupervisor);
+        leaseRouter_ = std::move(leaseRouter);
+    }
+
     DashboardSnapshot snapshot() override {
         // Use synchronous refresh so the snapshot always reflects the latest
         // configuration state — callers expect a consistent view.
@@ -9111,6 +9129,87 @@ public:
                 false
             });
         }
+        // v0.7.1: per-sub-agent runtime stats. For each registered SubAgent
+        // endpoint, we look for a managed pool whose poolId matches the
+        // sub-agent's id (operators wire this with POST /api/pools using
+        // poolId == subAgentId). We then derive utilization% from active
+        // leases / capacity, and harvest the LAN client identity (IP +
+        // clientType + sessionId) from each active lease so the operator
+        // can see which client is using which sub-agent in real time.
+        // Sub-agents without a matching pool report utilizationPercent =
+        // -1.0 (ADR-002 §9 honest-unavailable sentinel) and the dashboard
+        // renders that as "no managed pool — register one to enable
+        // autoscale + utilization".
+        if (workerSupervisor_) {
+            const auto pools = workerSupervisor_->listPools();
+            std::map<std::string, ManagedEndpointPool> poolById;
+            for (const auto& pool : pools) {
+                poolById.emplace(pool.poolId, pool);
+            }
+            for (const auto& endpoint : snapshot.endpoints) {
+                if (endpoint.kind != EndpointKind::SubAgent) {
+                    continue;
+                }
+                SubAgentRuntimeStat stat;
+                stat.subAgentId     = endpoint.id;
+                stat.displayName    = endpoint.displayName;
+                stat.specialization = endpoint.specialization;
+
+                const auto poolIt = poolById.find(endpoint.id);
+                if (poolIt == poolById.end()) {
+                    // No managed pool yet. Honest-unavailable -- don't
+                    // fabricate utilization or capacity numbers.
+                    stat.utilizationPercent = -1.0;
+                    snapshot.subAgentRuntimeStats.push_back(std::move(stat));
+                    continue;
+                }
+                const auto& pool = poolIt->second;
+                stat.poolId               = pool.poolId;
+                stat.totalInstanceCount   = static_cast<int>(pool.instances.size());
+                stat.maxInstancesAllowed  = pool.scalePolicy.maxInstances;
+                stat.autoscaleEnabled     = pool.scalePolicy.maxInstances > pool.scalePolicy.minInstances;
+
+                int readyCount = 0;
+                for (const auto& instance : pool.instances) {
+                    if (instance.state == EndpointInstanceState::Ready) {
+                        ++readyCount;
+                    }
+                }
+                stat.readyInstanceCount = readyCount;
+
+                const int perInstanceCap = (pool.scalePolicy.maxActiveLeasesPerInstance > 0)
+                    ? pool.scalePolicy.maxActiveLeasesPerInstance
+                    : 1;
+                stat.leaseCapacity = readyCount * perInstanceCap;
+
+                if (leaseRouter_) {
+                    const auto leases = leaseRouter_->activeLeases(pool.poolId);
+                    stat.activeLeaseCount = static_cast<int>(leases.size());
+                    for (const auto& lease : leases) {
+                        SubAgentLeaseHolder holder;
+                        holder.ipAddress     = lease.clientIpAddress;
+                        holder.clientType    = lease.clientType;
+                        holder.sessionId     = lease.sessionId;
+                        holder.acquiredAtUtc = lease.acquiredAtUtc;
+                        stat.activeClients.push_back(std::move(holder));
+                    }
+                }
+
+                if (stat.leaseCapacity > 0) {
+                    stat.utilizationPercent = (static_cast<double>(stat.activeLeaseCount)
+                        / static_cast<double>(stat.leaseCapacity)) * 100.0;
+                    if (stat.utilizationPercent > 100.0) {
+                        stat.utilizationPercent = 100.0;
+                    }
+                } else {
+                    // Pool exists but no Ready instances yet -- treat as
+                    // 0% (cold) rather than -1.0 (unconfigured).
+                    stat.utilizationPercent = 0.0;
+                }
+                snapshot.subAgentRuntimeStats.push_back(std::move(stat));
+            }
+        }
+
         MasterControl::Diagnostics::appendTelemetry(
             L"runtime",
             "dashboard-snapshot",
@@ -9118,7 +9217,8 @@ public:
                 { "hostName", snapshot.telemetry.hostName },
                 { "primaryIpAddress", snapshot.telemetry.primaryIpAddress },
                 { "cpuPercent", snapshot.telemetry.cpuPercent },
-                { "endpoints", snapshot.endpoints.size() }
+                { "endpoints", snapshot.endpoints.size() },
+                { "subAgentStats", snapshot.subAgentRuntimeStats.size() }
             });
         return snapshot;
     }
@@ -9243,6 +9343,12 @@ private:
     std::shared_ptr<IForsettiSurfaceService> surfaceService_;
     std::shared_ptr<IMcpGateway> mcpGateway_;
     std::shared_ptr<IDiscoveryService> discoveryService_;
+    // v0.7.1: late-bound via AttachWorkerLayer once the worker supervisor
+    // and lease router are constructed. Used only by snapshot() to compute
+    // per-sub-agent utilization and client attribution. nullptr is fine --
+    // snapshot() degrades gracefully and reports utilizationPercent = -1.0.
+    std::shared_ptr<IWorkerSupervisor> workerSupervisor_;
+    std::shared_ptr<ILeaseRouter> leaseRouter_;
 };
 
 struct HttpRequest final {
@@ -10080,6 +10186,10 @@ bool MasterControlApplication::Impl::initialize() {
             std::dynamic_pointer_cast<NativeHttpSysGatewayAdapter>(mcpGateway_)) {
         nativeAdapter->AttachWorkerBridge(workerSupervisor_, leaseRouter_);
     }
+    // v0.7.1: hand the worker layer to the AdminApi so snapshot() can
+    // compute per-sub-agent utilization + active-client attribution for
+    // the new Overview / Telemetry deck panels. AdminApi was constructed
+    // earlier (before the supervisor existed), hence this late bind.
 
     // PHASE-08 (ADR-002 §9): construct the telemetry aggregator that
     // owns the activity event ring, the connected-client roster, and
@@ -10128,6 +10238,16 @@ bool MasterControlApplication::Impl::initialize() {
         surfaceService_,
         mcpGateway_,
         discoveryService_);
+
+    // v0.7.1: hand the worker layer to AdminApi so dashboard snapshot can
+    // compute per-sub-agent utilization + active-client attribution. The
+    // supervisor + lease router were both constructed earlier in this same
+    // scope (PHASE-06 / PHASE-07) so both shared_ptrs are non-null here.
+    // adminApiService_ is typed as the IAdminApiService interface; the
+    // method is on the concrete type, so we dynamic_pointer_cast to call.
+    if (auto concrete = std::dynamic_pointer_cast<AdminApiService>(adminApiService_)) {
+        concrete->AttachWorkerLayer(workerSupervisor_, leaseRouter_);
+    }
 
     runtime_->boot();
     if (entitlementProvider_) {

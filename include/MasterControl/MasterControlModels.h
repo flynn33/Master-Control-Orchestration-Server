@@ -880,6 +880,13 @@ struct LeaseRequest final {
     std::string sessionId;          // empty: stateless lease (any Ready)
     std::string clientHint;         // operator-provided routing hint
     bool stateful = false;
+    // v0.7.1: optional LAN-client identity carried so the lease can
+    // record who acquired it. Populated by the gateway adapter when the
+    // tools/call envelope carries client identity (e.g., via X-MCOS-
+    // Client-Id header or downstream session info). Empty for legacy
+    // call sites; both fields are best-effort and never block routing.
+    std::string clientIpAddress;
+    std::string clientType;         // e.g. "claude-code", "codex", "grok"
 };
 
 struct EndpointLease final {
@@ -891,6 +898,11 @@ struct EndpointLease final {
     std::string acquiredAtUtc;
     std::string releasedAtUtc;
     std::string statusMessage;
+    // v0.7.1: copied verbatim from the LeaseRequest at acquisition time
+    // so the dashboard's per-sub-agent client-attribution panel can
+    // surface the originating LAN client without keeping a side index.
+    std::string clientIpAddress;
+    std::string clientType;
 };
 
 struct PoolSaturation final {
@@ -1079,10 +1091,43 @@ struct DiscoveryDocument final {
     std::string instanceName;
 };
 
+// v0.7.1: per-sub-agent runtime statistics used by the Overview and
+// Telemetry decks of the browser dashboard. Each stat ties an inventory
+// SubAgent endpoint (id + displayName + specialization) to the worker
+// pool, instances, and active leases that back it. utilizationPercent is
+// the load-relative-to-capacity figure operators see in the new
+// utilization bars; -1.0 means "no managed pool registered for this
+// sub-agent" and the dashboard renders it honestly as `unavailable`
+// (ADR-002 §9 "no fake telemetry"). activeClients carries the LAN client
+// IP + clientType pair for each currently-leased session, so the operator
+// can see which AI client is using which sub-agent in real time.
+struct SubAgentLeaseHolder final {
+    std::string ipAddress;       // e.g. "192.168.1.42"
+    std::string clientType;      // e.g. "claude-code", "codex", "grok"
+    std::string sessionId;       // sticky-session token, may be empty
+    std::string acquiredAtUtc;   // when the lease was bound
+};
+
+struct SubAgentRuntimeStat final {
+    std::string subAgentId;
+    std::string displayName;
+    std::string specialization;
+    std::string poolId;             // empty if no managed pool wraps this sub-agent
+    int readyInstanceCount = 0;
+    int totalInstanceCount = 0;
+    int activeLeaseCount = 0;
+    int leaseCapacity = 0;          // sum of (instances * maxActiveLeasesPerInstance)
+    int maxInstancesAllowed = 0;    // scalePolicy.maxInstances
+    double utilizationPercent = -1.0;
+    bool autoscaleEnabled = false;
+    std::vector<SubAgentLeaseHolder> activeClients;
+};
+
 struct DashboardSnapshot final {
     HostTelemetrySnapshot telemetry;
     std::vector<RuntimeEndpoint> endpoints;
     std::vector<SubAgentGroupDefinition> subAgentGroups;
+    std::vector<SubAgentRuntimeStat> subAgentRuntimeStats;
     ResourceAllocationProfile resourceAllocation;
     SecuritySettings security;
     std::vector<InstallProvenance> installHistory;
@@ -1743,10 +1788,33 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     platformGateways)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    SubAgentLeaseHolder,
+    ipAddress,
+    clientType,
+    sessionId,
+    acquiredAtUtc)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    SubAgentRuntimeStat,
+    subAgentId,
+    displayName,
+    specialization,
+    poolId,
+    readyInstanceCount,
+    totalInstanceCount,
+    activeLeaseCount,
+    leaseCapacity,
+    maxInstancesAllowed,
+    utilizationPercent,
+    autoscaleEnabled,
+    activeClients)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     DashboardSnapshot,
     telemetry,
     endpoints,
     subAgentGroups,
+    subAgentRuntimeStats,
     resourceAllocation,
     security,
     installHistory,
@@ -1988,7 +2056,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     poolId,
     sessionId,
     clientHint,
-    stateful)
+    stateful,
+    clientIpAddress,
+    clientType)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     EndpointLease,
@@ -1999,7 +2069,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     state,
     acquiredAtUtc,
     releasedAtUtc,
-    statusMessage)
+    statusMessage,
+    clientIpAddress,
+    clientType)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     PoolSaturation,

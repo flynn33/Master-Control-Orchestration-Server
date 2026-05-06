@@ -465,12 +465,18 @@ std::optional<HttpResponse> httpRequest(const std::string& host,
     }
 
     // Fail fast on DNS/connect when the service is dead (500ms is plenty
-    // for localhost). Bumped the receive timeout from 4s -> 10s because
-    // /api/dashboard on a real box with governance state + Apple operations
-    // + Forsetti module catalog can legitimately take 3-5 seconds to
-    // serialize — the old 4s ceiling was clipping snapshots mid-flight.
-    // Values tuned for "fail fast on dead, patient on slow-but-alive".
-    WinHttpSetTimeouts(session, 500, 500, 500, 10000);
+    // for localhost). Bumped the receive timeout from 10s -> 30s in v0.7.1
+    // because the runtime's first /api/config call after service start
+    // can legitimately take ~10.5 s while the activation store, telemetry
+    // baseline, and Forsetti module catalog finish hydrating. Pre-v0.7.1
+    // the 10s ceiling clipped Settings Apply silently: the shell's GET to
+    // pull current config dropped, the merge-then-POST never ran, and the
+    // operator saw the bind-address narrative stay stale even though no
+    // error surfaced. Values still tuned for "fail fast on dead, patient
+    // on slow-but-alive". The pre-warm path in the runtime knocks the
+    // typical first-call delay down further, but a generous receive
+    // timeout is the load-bearing fix.
+    WinHttpSetTimeouts(session, 500, 500, 500, 30000);
 
     HINTERNET connection = WinHttpConnect(session, wideFromUtf8(host).c_str(), port, 0);
     if (connection == nullptr) {
