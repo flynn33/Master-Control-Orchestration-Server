@@ -36,17 +36,36 @@
          INSTALLFOLDER_CLEAN property immediately before composing the
          command line, and reference that instead of [INSTALLFOLDER].
      -->
+    <!-- SetProperty CA that copies [INSTALLFOLDER] into INSTALLFOLDER_CLEAN.
+         v0.7.5: scheduled After=CostFinalize so it fires in BOTH the
+         install and uninstall execute sequences. CostFinalize runs at
+         sequence ~1000 in every MSI flow regardless of REMOVE state,
+         well before either trim CA. Pre-v0.7.5 this was scheduled
+         Before=RunBootstrapperInstall and never ran during uninstall,
+         leaving INSTALLFOLDER_CLEAN empty and the uninstall bootstrapper
+         CA running with an empty install-directory argument. -->
     <SetProperty Id="INSTALLFOLDER_CLEAN"
                  Value="[INSTALLFOLDER]"
-                 Before="RunBootstrapperInstall"
+                 After="CostFinalize"
                  Sequence="execute"/>
     <CustomAction Id="TrimInstallFolderTrailingSlash"
                   Script="vbscript"
                   ScriptSourceFile="$(var.InstallerDir)\Fragments\TrimInstallFolder.vbs"
                   Execute="immediate"
                   Return="check"/>
+    <!-- v0.7.5: a second CA referencing the same VBScript, scheduled
+         before the uninstall path. WiX 5 forbids two Custom entries
+         for the same Action ID in InstallExecuteSequence, so we need
+         two CustomAction declarations (different IDs) backed by the
+         same script file. -->
+    <CustomAction Id="TrimInstallFolderTrailingSlashUninstall"
+                  Script="vbscript"
+                  ScriptSourceFile="$(var.InstallerDir)\Fragments\TrimInstallFolder.vbs"
+                  Execute="immediate"
+                  Return="check"/>
     <InstallExecuteSequence>
       <Custom Action="TrimInstallFolderTrailingSlash" Before="RunBootstrapperInstall" />
+      <Custom Action="TrimInstallFolderTrailingSlashUninstall" Before="RunBootstrapperUninstall" />
     </InstallExecuteSequence>
 
     <!-- ================================================================

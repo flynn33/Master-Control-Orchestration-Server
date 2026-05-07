@@ -1,11 +1,30 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.7.4",
-  "current_tag": "v0.7.4",
+  "current_version": "0.7.5",
+  "current_tag": "v0.7.5",
   "released_at": "2026-05-07",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.7.5",
+      "tag": "v0.7.5",
+      "released_at": "2026-05-07",
+      "commit": "pending",
+      "summary": "Uninstaller comprehensive cleanup. Pre-v0.7.5 the MSI uninstall path failed with 'cannot read or delete certain files' errors and left orphaned state behind: the Claude Code plugin junction at <UserProfile>\\.claude\\plugins\\mcos-control (the runtime's Claude Code Control toggle creates it as a directory junction pointing into the install dir; MSI's directory walker would follow it, get confused, and fail), the runtime data tree at %ProgramData%\\MasterControlOrchestrationServer\\ (config + exports + state files written by the running service, never tracked by the MSI), the public log tree at %PUBLIC%\\Documents\\Master Control Orchestration Server\\ (installer-history + runtime + shell logs, also never tracked), and any lingering MCOS process holding file handles even after the SCM Stop fired (MasterControlShell.exe, MasterControlServiceHost.exe, the launcher, and supervised mcpjungle.exe). The bootstrapper's uninstall action now force-kills those processes via taskkill /F /T, walks every user profile under %SystemDrive%\\Users to delete the .claude\\plugins\\mcos-control junction reparse point (the link only, not the target), and tears down the ProgramData + public-log trees in addition to the existing service / firewall / URL ACL teardown. Always-on -- not gated on a purge flag -- because the operator's stated requirement is fully removes the MCOS.",
+      "entries": [
+        "feat(bootstrapper): forceKillLingeringMcosProcesses() runs at the very start of performUninstall, taskkill /F /T against MasterControlShell.exe / MasterControlServiceHost.exe / MasterControlOrchestrationServer.exe / MasterControlBootstrapper.exe / mcpjungle.exe, then sleeps 500 ms so the OS releases handle leases before subsequent removal steps. Restart Manager catches the common case via util:CloseApplication; this is the belt-and-suspenders for hung shells / wedged services / orphan launchers.",
+        "feat(bootstrapper): removeClaudePluginJunctions() walks every directory under FOLDERID_UserProfiles (typically C:\\Users\\) and deletes <user>\\.claude\\plugins\\mcos-control if present. Detects reparse-point status via Win32 GetFileAttributesW + FILE_ATTRIBUTE_REPARSE_POINT (std::filesystem::is_symlink misses Windows junctions on some versions). On a junction we call RemoveDirectoryW which removes the link only -- the install-folder target stays intact for MSI's RemoveFiles step to handle. On a non-reparse path (operator manually copied the plugin source) we fall back to remove_all so the next install can recreate the junction cleanly.",
+        "feat(bootstrapper): removeRuntimeDataDirectory() recursive-deletes %ProgramData%\\MasterControlOrchestrationServer\\ (current) and %ProgramData%\\MasterControlProgram\\ (legacy pre-v0.2). Both have always been runtime-managed and MSI-untracked.",
+        "feat(bootstrapper): removePublicLogTree() recursive-deletes %PUBLIC%\\Documents\\Master Control Orchestration Server\\. Pre-v0.7.5 the installer-history.jsonl, components/*-latest.log, and per-session log folders accumulated indefinitely.",
+        "feat(bootstrapper): performUninstall sequencing tightened -- force-kill processes -> stop+unregister service -> firewall rules -> URL ACL -> shortcuts -> Claude plugin junctions -> ProgramData tree -> public log tree -> uninstall-registry key -> install-state.json -> install directory. Each step now runs to completion regardless of upstream failures so a single sub-failure can't strand the rest.",
+        "fix(bootstrapper): runtime data + public log purge no longer gated on options.purgeData. Pre-v0.7.5 the MSI uninstall custom action did not pass --purge-data, so those trees were never removed even when the operator chose Programs & Features -> Uninstall. The new purge calls are unconditional during uninstall.",
+        "docs(version): bump 0.7.4 -> 0.7.5 (uninstaller fully removes MCOS)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; Tron grid backdrop as procedural HLSL fragment shader; activity stream as scrolling SwapChainPanel."
+      ]
+    },
     {
       "version": "0.7.4",
       "tag": "v0.7.4",

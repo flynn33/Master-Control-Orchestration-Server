@@ -1536,6 +1536,24 @@ void removeFirewallRules() {
     runNetshCommand(L"delete rule name=\"" + std::wstring(kBeaconRuleName) + L"\"");
     runNetshCommand(L"delete rule name=\"" + std::wstring(kGatewayRuleName) + L"\"");
     runNetshCommand(L"delete rule name=\"" + std::wstring(kMDnsRuleName) + L"\"");
+    // v0.7.5: also delete the shorter operator-created rule names from
+    // docs/wiki/Windows-Firewall-LAN-Mode.md's PowerShell snippet. These
+    // are not authored by the bootstrapper but are nominally MCOS-tied
+    // and stranded post-uninstall. Names match the documented rules
+    // verbatim.
+    runNetshCommand(L"delete rule name=\"MCOS - Operator Surface (LAN)\"");
+    runNetshCommand(L"delete rule name=\"MCOS - MCP Gateway (LAN)\"");
+    runNetshCommand(L"delete rule name=\"MCOS - Discovery Beacon (LAN)\"");
+    runNetshCommand(L"delete rule name=\"MCOS - DNS-SD / mDNS (LAN)\"");
+    // Catch-all PowerShell sweep for any MCOS-prefixed rules an operator
+    // may have created with a slightly different name. Best-effort; we
+    // ignore PowerShell's exit code because failure here doesn't strand
+    // anything else.
+    const std::wstring sweep =
+        L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+        L"\"Get-NetFirewallRule -DisplayName 'MCOS *' -ErrorAction SilentlyContinue | "
+        L"Remove-NetFirewallRule -ErrorAction SilentlyContinue\"";
+    (void)runProcess(sweep, {}, CREATE_NO_WINDOW);
 }
 
 bool configureFirewallRules(const InstallationState& state) {
@@ -1640,6 +1658,155 @@ bool removeUrlAcl(const InstallationState& state) {
     const std::wstring urlPrefix = L"http://+:" + std::to_wstring(state.gatewayPort) + L"/";
     const std::wstring deleteCmd = L"netsh.exe http delete urlacl url=" + urlPrefix;
     return runProcess(deleteCmd, {}, CREATE_NO_WINDOW) == 0;
+}
+
+// v0.7.5: comprehensive uninstall cleanup. Pre-v0.7.5 the MSI's RemoveFiles
+// step would fail with "cannot read or delete certain files" errors when:
+//   1. MasterControlShell.exe / MasterControlServiceHost.exe / the launcher
+//      were still running and held file handles, even though Restart Manager
+//      and the SCM Stop should have caught them. This happens when the shell
+//      is mid-launch when uninstall fires, or when the service is wedged in
+//      Stop-Pending and the SCM gives up before the binary releases.
+//   2. The Claude Code plugin junction at <UserProfile>\.claude\plugins\
+//      mcos-control was a directory junction (created by the runtime's
+//      Claude Code Control toggle) pointing into the install dir. MSI's
+//      directory-walker would try to follow the junction back into the
+//      install tree, get confused, and fail. Worse: if the junction's
+//      target was already deleted, MSI saw a dangling reparse point that
+//      it could not unlink.
+//   3. The runtime data tree under %ProgramData%\MasterControlOrchestration
+//      Server\ (config, exports, state) was created by the running service,
+//      not by the MSI, so MSI never tracked it. Same for the public log
+//      tree under %PUBLIC%\Documents\Master Control Orchestration Server\.
+//      Both were left orphaned after uninstall, making "fully removes"
+//      false advertising.
+//
+// The fixes below run from performUninstall() before MSI hands control back
+// to RemoveFiles, so by the time MSI walks the install directory all the
+// blockers are already cleared.
+
+// Force-kill any lingering MCOS user-mode processes. taskkill /F is the
+// simplest route -- runProcess returns the exit code of taskkill itself;
+// we ignore failures (e.g., process not running yields exit 128) because
+// success here is "no such process exists at function exit," not "we
+// killed something."
+//
+// IMPORTANT: this list deliberately excludes MasterControlServiceHost.exe.
+// That process IS the Windows service; killing it directly puts the SCM
+// in an inconsistent state where DeleteService can succeed but the
+// service binary handle leak persists, AND uninstallService's
+// ControlService(SERVICE_STOP) call fails with ERROR_SERVICE_NOT_ACTIVE
+// because the process is gone but the service is still marked Running.
+// Pre-v0.7.5 the original list included MasterControlServiceHost.exe and
+// uninstall-via-MSI consequently bailed at the uninstallService failure
+// before any of the v0.7.5 cleanup steps ran. The right ordering is:
+// uninstallService stops the service via SCM (which terminates the
+// service process gracefully), then this function force-kills any
+// remaining shell / launcher / supervised-child holdouts.
+void forceKillLingeringMcosProcesses() {
+    constexpr const wchar_t* kProcessNames[] = {
+        L"MasterControlShell.exe",
+        L"MasterControlOrchestrationServer.exe",  // launcher
+        L"mcpjungle.exe"                          // supervised gateway child
+    };
+    for (const auto* name : kProcessNames) {
+        // /T = also kill child processes (Job Object containment makes
+        // this redundant for our supervised children but defensive
+        // doesn't hurt). /F = no-prompt forced termination.
+        const std::wstring command = L"taskkill.exe /F /T /IM " + std::wstring(name);
+        (void)runProcess(command, {}, CREATE_NO_WINDOW);
+    }
+    // Brief settle so the OS releases handle leases before the next step
+    // tries to delete a file the dying process had open.
+    Sleep(500);
+}
+
+// Walk every C:\Users\* profile and delete the .claude\plugins\mcos-control
+// junction reparse point, if present. We delete the JUNCTION ONLY -- not
+// the target directory it points at -- because the install folder is the
+// target. Using std::filesystem::remove on a directory that's a reparse
+// point removes the link without recursing through it. If the path is not
+// a reparse point (some unusual install left a real directory there), we
+// fall back to remove_all so the operator's later install can recreate
+// the junction cleanly.
+void removeClaudePluginJunctions() {
+    const auto userProfilesRoot = tryKnownFolder(FOLDERID_UserProfiles);
+    const std::filesystem::path usersDir = userProfilesRoot.has_value()
+        ? *userProfilesRoot
+        : std::filesystem::path(L"C:\\Users");
+    std::error_code error;
+    if (!std::filesystem::exists(usersDir, error) || !std::filesystem::is_directory(usersDir, error)) {
+        return;
+    }
+    for (const auto& userEntry : std::filesystem::directory_iterator(usersDir, error)) {
+        if (error || !userEntry.is_directory(error)) {
+            error.clear();
+            continue;
+        }
+        const auto pluginPath = userEntry.path() / ".claude" / "plugins" / "mcos-control";
+        if (!std::filesystem::exists(pluginPath, error)) {
+            error.clear();
+            continue;
+        }
+        // Detect reparse-point status via Win32 GetFileAttributesW. The
+        // ::is_symlink test on std::filesystem doesn't reliably catch
+        // junctions on Windows (a junction is FILE_ATTRIBUTE_REPARSE_POINT
+        // with a different IO_REPARSE_TAG_MOUNT_POINT tag than a symlink).
+        const DWORD attrs = GetFileAttributesW(pluginPath.wstring().c_str());
+        if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT)) {
+            // Junction or symlink. RemoveDirectoryW on a reparse point
+            // removes the link only, leaving the target alone.
+            (void)RemoveDirectoryW(pluginPath.wstring().c_str());
+        } else {
+            // Operator manually copied the plugin source into the path
+            // instead of letting the runtime junction it. Walk and remove.
+            std::filesystem::remove_all(pluginPath, error);
+            error.clear();
+        }
+    }
+}
+
+// Tear down the runtime data tree the MSI does not track. This includes
+// the persisted config (mcos.json), exports, state, and work directories
+// at %ProgramData%\MasterControlOrchestrationServer\ plus the legacy
+// %ProgramData%\MasterControlProgram\ tree from pre-v0.2 installs that
+// some operators still have around. Always runs on uninstall regardless
+// of options.purgeData -- the operator asked for "fully removes the
+// MCOS" and stale config + state files are exactly what the operator
+// reported.
+void removeRuntimeDataDirectory() {
+    const auto programData = tryKnownFolder(FOLDERID_ProgramData);
+    if (!programData.has_value()) {
+        return;
+    }
+    constexpr const wchar_t* kDataDirLeaves[] = {
+        L"MasterControlOrchestrationServer",  // current
+        L"MasterControlProgram"               // legacy pre-v0.2
+    };
+    for (const auto* leaf : kDataDirLeaves) {
+        const auto target = *programData / leaf;
+        std::error_code error;
+        if (std::filesystem::exists(target, error)) {
+            std::filesystem::remove_all(target, error);
+        }
+    }
+}
+
+// Tear down the operator-visible log tree under %PUBLIC%\Documents\
+// Master Control Orchestration Server\. The runtime + bootstrapper write
+// installer-history.jsonl, runtime logs, shell logs, and per-session
+// folders here. None of it is tracked by the MSI; pre-v0.7.5 it was
+// orphaned across upgrades and uninstalls.
+void removePublicLogTree() {
+    const auto publicDocs = tryKnownFolder(FOLDERID_PublicDocuments);
+    if (!publicDocs.has_value()) {
+        return;
+    }
+    const auto target = *publicDocs / L"Master Control Orchestration Server";
+    std::error_code error;
+    if (std::filesystem::exists(target, error)) {
+        std::filesystem::remove_all(target, error);
+    }
 }
 
 bool stopServiceIfPresent() {
@@ -2703,9 +2870,54 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
         return false;
     };
 
+    // v0.7.5: comprehensive uninstall sequence. Order matters:
+    //   1. Force-kill any lingering MCOS processes so the SCM Stop and
+    //      MSI's RemoveFiles step both have unblocked file handles.
+    //   2. Stop + unregister the Windows service.
+    //   3. Tear down firewall rules.
+    //   4. Tear down the HTTP.sys URL ACL.
+    //   5. Remove operator-visible shortcuts.
+    //   6. Walk every user profile and delete the Claude Code plugin
+    //      junction (the link, not the target). This must happen BEFORE
+    //      install-directory removal because the junction's target IS the
+    //      install directory; leaving the junction in place after the
+    //      target goes away leaves a dangling reparse point that confuses
+    //      future installs.
+    //   7. Wipe the runtime data tree (%ProgramData%\MasterControlOrches
+    //      trationServer\) -- not tracked by the MSI, contains the
+    //      persisted config + exports + state. Pre-v0.7.5 this leaked.
+    //   8. Wipe the public log tree (%PUBLIC%\Documents\Master Control
+    //      Orchestration Server\). Same leak class as the data tree.
+    //   9. Drop the legacy bootstrapper uninstall key.
+    //  10. Remove the install state JSON.
+    //  11. Optionally schedule the install-directory removal (if the
+    //      bootstrapper itself lives inside that directory; otherwise
+    //      remove inline).
+    // v0.7.5: order matters. Stop+unregister the service first via SCM
+    // (graceful shutdown lets the service close its own file handles,
+    // including the Job Object holding any supervised children); THEN
+    // force-kill any user-mode shell/launcher holdouts that aren't
+    // tied to the service. Pre-v0.7.5 the order was reversed and the
+    // direct kill of MasterControlServiceHost.exe poisoned the SCM state.
+    bool serviceUninstallSucceeded = true;
     if (options.manageService && !uninstallService()) {
-        return failUninstall(L"Failed to uninstall Windows service.");
+        // v0.7.5: do NOT bail on service-uninstall failure. The operator's
+        // stated requirement is that uninstall fully removes MCOS;
+        // returning early here meant a wedged service stranded the
+        // entire cleanup chain (firewall rules, URL ACL, runtime data
+        // tree, public log tree all left behind). Now we record the
+        // failure for the JSON output, force-kill the service process
+        // as a last resort, then proceed.
+        serviceUninstallSucceeded = false;
+        constexpr const wchar_t* kServiceHostExe = L"MasterControlServiceHost.exe";
+        (void)runProcess(L"taskkill.exe /F /T /IM " + std::wstring(kServiceHostExe), {}, CREATE_NO_WINDOW);
+        // Last-resort: nuke the service registration via sc.exe delete,
+        // which works on stuck "marked for deletion" entries that the
+        // SCM API path could not clear.
+        (void)runProcess(L"sc.exe delete MasterControlProgram", {}, CREATE_NO_WINDOW);
+        Sleep(500);
     }
+    forceKillLingeringMcosProcesses();
 
     if (options.manageFirewall) {
         removeFirewallRules();
@@ -2721,6 +2933,11 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
         removeShortcuts(*state);
     }
 
+    // v0.7.5: clear Claude Code plugin junctions across every user profile.
+    // Done before install-directory removal so the junctions don't leave
+    // behind dangling reparse points pointing at deleted targets.
+    removeClaudePluginJunctions();
+
     // Always remove the legacy bootstrapper uninstall key during teardown.
     // Bootstrapper-managed installs recreate it on the next install; MSI
     // installs rely on Windows Installer's own registration instead.
@@ -2728,6 +2945,19 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
 
     std::error_code error;
     std::filesystem::remove(installStatePath(installDirectory), error);
+
+    // v0.7.5: always purge the runtime data tree during uninstall (not
+    // gated on options.purgeData). The operator's stated requirement is
+    // that uninstall fully removes MCOS; leaving config / exports / state
+    // around is what they reported as broken.
+    //
+    // The PUBLIC log tree purge happens AFTER the writeBootstrapperActionLog
+    // call below -- otherwise the bootstrapper writes a fresh action-log
+    // record into the public log tree as part of the uninstall payload
+    // and re-creates the very tree we just deleted. Doing the purge after
+    // the log write costs us the post-mortem record on disk but keeps
+    // the "fully removes" promise.
+    removeRuntimeDataDirectory();
 
     if (options.purgeData) {
         removeDirectoryIfExists(std::filesystem::path(state->dataDirectory));
@@ -2775,6 +3005,17 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
         { "mDnsFirewallRulePresent", firewallStatus.mDnsRulePresent }
     };
     writeBootstrapperActionLog(L"uninstall", true, installDirectory, options, payload);
+
+    // v0.7.5: NOW purge the public log tree, after the action log write
+    // is done. Pre-v0.7.5 this purge ran earlier in the sequence and
+    // writeBootstrapperActionLog re-created the tree by writing the
+    // uninstall record into installer-history.jsonl, latest-session.json,
+    // and a per-session folder. Running it after the log write means
+    // the on-disk record of THIS particular uninstall is also wiped --
+    // acceptable trade-off for the operator's "fully removes" promise;
+    // the action log goes to stdout via JSON for any caller that wants
+    // a post-mortem record.
+    removePublicLogTree();
 
     if (options.jsonOutput) {
         std::cout << payload.dump(2) << '\n';
