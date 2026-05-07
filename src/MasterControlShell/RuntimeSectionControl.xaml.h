@@ -75,6 +75,11 @@ private:
     std::optional<::MasterControlShell::ShellAppleRemoteHost> BuildAppleHostFromEditor();
     winrt::Windows::Foundation::IAsyncAction SaveAppleHostAsync();
     winrt::Windows::Foundation::IAsyncAction RemoveAppleHostAsync();
+    // v0.7.6: rebuild the Sub-Agents card grid imperatively from the
+    // ShellSnapshot.subAgentRuntimeStats vector. Each card is a Border
+    // containing the agent name, utilization bar (ProgressBar), reachability
+    // dot, host:port endpoint, pool note, and active-client list.
+    void PopulateSubAgentCards(const ::MasterControlShell::ShellSnapshot& snapshot);
 
     ::MasterControlShell::ShellRuntime* runtime_ = nullptr;
     std::function<void()> refreshRequested_;

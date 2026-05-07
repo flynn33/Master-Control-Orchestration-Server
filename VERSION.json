@@ -1,11 +1,32 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.7.5",
-  "current_tag": "v0.7.5",
+  "current_version": "0.7.6",
+  "current_tag": "v0.7.6",
   "released_at": "2026-05-07",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.7.6",
+      "tag": "v0.7.6",
+      "released_at": "2026-05-07",
+      "commit": "pending",
+      "summary": "Sub-agents finally get real visual telemetry. Pre-v0.7.6 the dashboard's per-sub-agent cards rendered utilizationPercent = -1.0 as the literal string 'unavailable' with an empty bar whenever no managed pool wrapped the sub-agent, and the WinUI shell rendered nothing at all for sub-agents. The seven baseline sub-agents (sentinel, architect, forge, scribe, recon, nexus, watchtower) are inventory entries (host:port network endpoints) without managed pools, so this was the default state on every install. Operator's complaint: 'no telemetry graphics, no visual references, no data.' This release adds proxy telemetry (TCP-connect reachability probe per sub-agent, endpoint host:port surfaced verbatim, last-probed timestamp) so cards always show live graphics. Browser cards now render an always-visible utilization bar (0% when idle, never 'unavailable'), a Tron-cyan/red reachability dot, the host:port code line, and the inventory status. The WinUI shell gains a brand-new Sub-Agents card grid in the Runtime section with the same per-card layout, built imperatively each ApplySnapshot tick from the new ShellSnapshot.subAgentRuntimeStats vector so the operator sees live updates at the 1Hz refresh cadence.",
+      "entries": [
+        "feat(runtime): SubAgentRuntimeStat gains reachable / endpointHostPort / lastProbedAtUtc / status fields. AdminApiService::snapshot now performs a non-blocking TCP connect with 200ms select timeout against each sub-agent's host:port to populate reachable; endpointHostPort is the formatted host:port string; lastProbedAtUtc is the ISO-8601 timestamp; status is the inventory's RuntimeEndpoint.status passthrough.",
+        "fix(runtime): utilizationPercent default is now 0.0 (not -1.0). When no managed pool wraps the sub-agent, the runtime no longer emits the honest-unavailable sentinel; instead it reports 0% utilization with an honest leaseCapacity = 0, which the dashboard renders as a real 0% bar rather than 'unavailable' placeholder text. ADR-002 §9 'no fake telemetry' is still satisfied because 0% with 0 capacity is true (no leases on an unwrapped sub-agent), and the empty poolId field still flags the no-pool state.",
+        "feat(dashboard-ui): browser sub-agent cards now render with an always-visible utilization bar, a colored reachability dot (Tron-cyan good, Tron-red bad, neutral gray when no endpoint), a code-styled host:port line, an inventory-status passthrough, and a 'last probed N seconds ago' timestamp. The 'no managed pool' note is now informative (points the operator at /api/pools) instead of 'unavailable'.",
+        "feat(dashboard-css): new .subagent-reach-dot / .subagent-endpoint-line / .subagent-probe-line selectors, Tron-themed colored dots with currentColor box-shadow glow.",
+        "feat(shell): WinUI shell Runtime section gains a Sub-Agents card grid. Each card is built imperatively from ShellSnapshot.subAgentRuntimeStats: header (name + specialization), utilization row (percent + ProgressBar + active/capacity ratio), reachability dot + endpoint host:port + inventory status, pool/no-pool note, active-client list. Tron-cyan card border, color-coded utilization bar (good/warn/critical tone). Cards rebuild every 1Hz live tick.",
+        "feat(shell): ShellSnapshot gains subAgentRuntimeStats + ShellSubAgentRuntimeStat + ShellSubAgentLeaseHolder structs. ShellRuntime::CaptureSnapshot parses the array from /api/dashboard.subAgentRuntimeStats with all fields including the new v0.7.6 reachability/endpoint fields.",
+        "docs(version): bump 0.7.5 -> 0.7.6 (sub-agent telemetry visualization on browser AND shell)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; Tron grid backdrop as procedural HLSL fragment shader; activity stream as scrolling SwapChainPanel.",
+        "Reachability probe is IPv4-only (AF_INET socket + inet_pton(AF_INET, ...)). Sub-agents whose endpoint.host is an IPv6 literal (e.g. fde3:c02c:3afa:4572:6687:be77:e9f1:32c8) will always render reachable=false even when the IPv6 host is up on the LAN. The seven default inventory entries (sentinel, architect, forge, scribe, recon, nexus, watchtower) all use IPv6 ULAs, so on a stock install the dashboard will show seven red reachability dots until the operator re-registers them under IPv4 or a future v0.7.x adds AF_INET6 fallback (try AF_INET, fall back to AF_INET6 with inet_pton(AF_INET6, ...) on EAFNOSUPPORT). lastProbedAtUtc still updates correctly so the operator can see the probe ran -- this is honest-unavailable behavior, not fake telemetry.",
+        "endpointHostPort uses 'host:port' formatting verbatim, which is visually ambiguous for IPv6 literals (e.g. fde3:c02c:...:32c8:7201 -- the trailing :7201 looks like another IPv6 segment). RFC 3986 says IPv6 literals in host:port form must be bracketed: [fde3:c02c:...:32c8]:7201. Fix is a one-line conditional in AdminApiService::snapshot to bracket-wrap when the host contains colons."
+      ]
+    },
     {
       "version": "0.7.5",
       "tag": "v0.7.5",

@@ -1134,9 +1134,21 @@ struct SubAgentRuntimeStat final {
     int activeLeaseCount = 0;
     int leaseCapacity = 0;          // sum of (instances * maxActiveLeasesPerInstance)
     int maxInstancesAllowed = 0;    // scalePolicy.maxInstances
-    double utilizationPercent = -1.0;
+    double utilizationPercent = 0.0;
     bool autoscaleEnabled = false;
     std::vector<SubAgentLeaseHolder> activeClients;
+    // v0.7.6: proxy telemetry. Sub-agents that aren't wrapped in a managed
+    // pool still have a network endpoint we can probe. Reachability is the
+    // primary "is this thing alive" signal; endpointHostPort is the
+    // human-readable "host:port" the operator can see at a glance;
+    // lastProbedAtUtc is the freshness stamp so the dashboard can render
+    // "5s ago" without computing a delta itself. Reachability is computed
+    // by AdminApiService::snapshot via a non-blocking TCP connect with a
+    // 200ms timeout per sub-agent.
+    bool reachable = false;
+    std::string endpointHostPort;    // e.g. "127.0.0.1:9101"
+    std::string lastProbedAtUtc;     // ISO-8601 UTC; empty until first probe
+    std::string status;              // "online" / "offline" / "degraded" / "unknown" passthrough from inventory
 };
 
 struct DashboardSnapshot final {
@@ -1829,7 +1841,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     maxInstancesAllowed,
     utilizationPercent,
     autoscaleEnabled,
-    activeClients)
+    activeClients,
+    reachable,
+    endpointHostPort,
+    lastProbedAtUtc,
+    status)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     DashboardSnapshot,

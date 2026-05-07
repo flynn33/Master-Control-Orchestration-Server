@@ -584,26 +584,53 @@ function renderSubAgentUtilizationPanel(options) {
 }
 
 function renderSubAgentCard(stat) {
-  const utilization = (typeof stat.utilizationPercent === 'number') ? stat.utilizationPercent : -1;
+  // v0.7.6: utilization is always a real number now (0% when idle, never
+  // -1). Tone scales good/warn/critical for the bar fill; 0% still gets
+  // the good tone so the card doesn't pulse alarming.
+  const utilization = (typeof stat.utilizationPercent === 'number')
+    ? Math.max(0, stat.utilizationPercent)
+    : 0;
   const hasPool = !!(stat.poolId && stat.poolId.length);
-  const utilizationLabel = utilization < 0
-    ? 'unavailable'
-    : `${utilization.toFixed(0)}%`;
-  const utilizationTone = utilization < 0
-    ? 'unknown'
-    : (utilization >= 95 ? 'critical' : (utilization >= 75 ? 'warn' : 'good'));
-  const barWidth = utilization < 0 ? 0 : Math.max(0, Math.min(100, utilization));
+  const utilizationLabel = `${utilization.toFixed(0)}%`;
+  const utilizationTone = utilization >= 95 ? 'critical'
+                        : utilization >= 75 ? 'warn'
+                        : 'good';
+  const barWidth = Math.max(0, Math.min(100, utilization));
+
+  // Reachability dot: green if probe succeeded, red if not, gray if no
+  // endpoint to probe (sub-agent registration with no host:port).
+  const hasEndpoint = !!(stat.endpointHostPort && stat.endpointHostPort.length);
+  const reachableTone = !hasEndpoint ? 'unknown'
+                       : (stat.reachable ? 'good' : 'bad');
+  const reachableLabel = !hasEndpoint ? 'no endpoint'
+                        : (stat.reachable ? 'reachable' : 'unreachable');
+
+  // Inventory status passthrough (online / offline / degraded / unknown
+  // from the seeded RuntimeEndpoint.status, which may differ from live
+  // reachability if the inventory hasn't refreshed since startup).
+  const invStatus = (stat.status || 'unknown').toLowerCase();
+
   const clients = stat.activeClients || [];
   const clientRows = clients.length === 0
-    ? '<p class="muted">No active clients.</p>'
+    ? '<p class="muted">No active clients leasing this sub-agent.</p>'
     : `<ul class="subagent-client-list">${clients.map((c) => {
         const ip = escapeHtml(c.ipAddress || 'unknown');
         const ct = escapeHtml(c.clientType || 'unknown-client');
         return `<li><code>${ip}</code> <span class="subagent-client-type">${ct}</span></li>`;
       }).join('')}</ul>`;
-  const poolNote = hasPool
+
+  const endpointLine = hasEndpoint
+    ? `<p class="subagent-endpoint-line"><span class="subagent-reach-dot ${reachableTone}" title="${escapeHtml(reachableLabel)}"></span><code>${escapeHtml(stat.endpointHostPort)}</code> <span class="muted">${escapeHtml(invStatus)}</span></p>`
+    : `<p class="muted"><span class="subagent-reach-dot unknown"></span>No host:port registered</p>`;
+
+  const poolLine = hasPool
     ? `<p class="muted">Pool <code>${escapeHtml(stat.poolId)}</code> · ${stat.readyInstanceCount}/${stat.totalInstanceCount} Ready · max ${stat.maxInstancesAllowed} · autoscale ${stat.autoscaleEnabled ? 'on' : 'off'}</p>`
-    : '<p class="muted">No managed pool registered. Utilization unavailable until you POST a pool with matching id.</p>';
+    : '<p class="muted">No managed pool. POST <code>/api/pools</code> with matching id to enable autoscale + per-instance telemetry.</p>';
+
+  const probeLine = stat.lastProbedAtUtc
+    ? `<p class="muted subagent-probe-line">Last probed: ${escapeHtml(relativeAgo(stat.lastProbedAtUtc))}</p>`
+    : '';
+
   return `
     <div class="subagent-card" data-sub-agent-id="${escapeHtml(stat.subAgentId)}">
       <div class="subagent-card-head">
@@ -617,7 +644,9 @@ function renderSubAgentCard(stat) {
         </div>
         <span class="subagent-utilization-counts">${stat.activeLeaseCount} / ${stat.leaseCapacity}</span>
       </div>
-      ${poolNote}
+      ${endpointLine}
+      ${poolLine}
+      ${probeLine}
       <div class="subagent-clients">
         <h5>Active clients (${clients.length})</h5>
         ${clientRows}

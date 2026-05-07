@@ -1732,3 +1732,36 @@ dialog:focus-visible {
   .subagent-card-grid { grid-template-columns: 1fr; }
   .subagent-utilization-row { grid-template-columns: 70px 1fr 60px; }
 }
+/* v0.7.6: reachability dot + endpoint line + probe-time line. The dot is
+ * a small filled circle that color-codes the live TCP-probe result so
+ * operators can see at a glance whether the sub-agent's host:port is
+ * answering. Tron palette: cyan for reachable, red for unreachable, neutral
+ * gray when no endpoint is registered. */
+.subagent-reach-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: middle;
+  box-shadow: 0 0 4px currentColor;
+}
+.subagent-reach-dot.good     { background: #1cf2c1; color: #1cf2c1; }
+.subagent-reach-dot.bad      { background: #ff3a5a; color: #ff3a5a; }
+.subagent-reach-dot.unknown  { background: rgba(140, 183, 196, 0.5); color: rgba(140, 183, 196, 0.5); box-shadow: none; }
+.subagent-endpoint-line {
+  font-size: 0.85rem;
+  margin: 8px 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.subagent-endpoint-line code {
+  font-size: 0.85rem;
+  margin-right: 8px;
+}
+.subagent-probe-line {
+  font-size: 0.78rem;
+  opacity: 0.65;
+  margin-top: 2px;
+}

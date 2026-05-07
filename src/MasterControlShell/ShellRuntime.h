@@ -50,6 +50,36 @@ struct ShellSubAgentGroupDefinition final {
     std::wstring updatedAtUtc;
 };
 
+// v0.7.6: per-sub-agent live runtime statistics (mirrors the runtime's
+// SubAgentRuntimeStat). Populated by ShellRuntime::CaptureSnapshot from
+// /api/dashboard.subAgentRuntimeStats. Powers the Sub-Agents card grid
+// on the WinUI shell's Runtime section.
+struct ShellSubAgentLeaseHolder final {
+    std::wstring ipAddress;
+    std::wstring clientType;
+    std::wstring sessionId;
+    std::wstring acquiredAtUtc;
+};
+
+struct ShellSubAgentRuntimeStat final {
+    std::wstring subAgentId;
+    std::wstring displayName;
+    std::wstring specialization;
+    std::wstring poolId;            // empty if no managed pool wraps this sub-agent
+    int readyInstanceCount = 0;
+    int totalInstanceCount = 0;
+    int activeLeaseCount = 0;
+    int leaseCapacity = 0;
+    int maxInstancesAllowed = 0;
+    double utilizationPercent = 0.0;
+    bool autoscaleEnabled = false;
+    bool reachable = false;
+    std::wstring endpointHostPort;
+    std::wstring lastProbedAtUtc;
+    std::wstring status;
+    std::vector<ShellSubAgentLeaseHolder> activeClients;
+};
+
 
 
 // Live activity stream — every incoming admin API request, governance
@@ -352,6 +382,7 @@ struct ShellSnapshot final {
     ShellSecuritySettings securitySettings;
     std::vector<ShellRuntimeEndpoint> endpoints;
     std::vector<ShellSubAgentGroupDefinition> subAgentGroups;
+    std::vector<ShellSubAgentRuntimeStat> subAgentRuntimeStats;
     std::vector<ShellAppleRemoteHost> appleRemoteHosts;
     std::vector<ShellAppleOperationRecord> appleOperations;
     std::vector<ShellNavigationPointer> navigationPointers;

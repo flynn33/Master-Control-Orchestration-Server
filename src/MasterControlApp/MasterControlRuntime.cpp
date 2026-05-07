@@ -9154,12 +9154,59 @@ public:
                 stat.subAgentId     = endpoint.id;
                 stat.displayName    = endpoint.displayName;
                 stat.specialization = endpoint.specialization;
+                stat.status         = to_string(endpoint.status);
+
+                // v0.7.6: always populate the endpoint string + reachability
+                // probe so cards have meaningful data even when no managed
+                // pool wraps the sub-agent. Probes the host:port via a
+                // non-blocking TCP connect with a 200 ms timeout per
+                // sub-agent. Total snapshot budget for 7 baseline sub-agents:
+                // ~1.4 s in the worst case (all unreachable). Most probes
+                // return immediately for reachable endpoints.
+                if (!endpoint.host.empty() && endpoint.port != 0) {
+                    stat.endpointHostPort = endpoint.host + ":" + std::to_string(endpoint.port);
+#if defined(_WIN32)
+                    SOCKET s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                    if (s != INVALID_SOCKET) {
+                        u_long nonblocking = 1;
+                        ::ioctlsocket(s, FIONBIO, &nonblocking);
+                        sockaddr_in addr{};
+                        addr.sin_family = AF_INET;
+                        addr.sin_port   = htons(endpoint.port);
+                        ::inet_pton(AF_INET, endpoint.host.c_str(), &addr.sin_addr);
+                        const int connectResult = ::connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+                        if (connectResult == 0) {
+                            stat.reachable = true;
+                        } else if (WSAGetLastError() == WSAEWOULDBLOCK) {
+                            fd_set writeSet{};
+                            FD_ZERO(&writeSet);
+                            FD_SET(s, &writeSet);
+                            timeval tv{};
+                            tv.tv_sec  = 0;
+                            tv.tv_usec = 200 * 1000;  // 200 ms
+                            const int selectResult = ::select(0, nullptr, &writeSet, nullptr, &tv);
+                            if (selectResult > 0) {
+                                int sockErr = 0;
+                                int sockErrLen = sizeof(sockErr);
+                                ::getsockopt(s, SOL_SOCKET, SO_ERROR,
+                                             reinterpret_cast<char*>(&sockErr), &sockErrLen);
+                                stat.reachable = (sockErr == 0);
+                            }
+                        }
+                        ::closesocket(s);
+                    }
+#endif
+                    stat.lastProbedAtUtc = timestampNowUtc();
+                }
 
                 const auto poolIt = poolById.find(endpoint.id);
                 if (poolIt == poolById.end()) {
-                    // No managed pool yet. Honest-unavailable -- don't
-                    // fabricate utilization or capacity numbers.
-                    stat.utilizationPercent = -1.0;
+                    // v0.7.6: no managed pool yet, but we still have
+                    // reachability + endpoint info above. Render with 0%
+                    // utilization so the card shows a real graphic instead
+                    // of "unavailable". The leaseCapacity stays 0 so the
+                    // operator sees that no leases are routed yet.
+                    stat.utilizationPercent = 0.0;
                     snapshot.subAgentRuntimeStats.push_back(std::move(stat));
                     continue;
                 }

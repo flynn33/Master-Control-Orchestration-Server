@@ -107,6 +107,12 @@ void RuntimeSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnaps
     populateListView(PlatformGatewaysListView(), snapshot.platformGatewayRows);
     populateListView(AppleRemoteHostsListView(), snapshot.appleRemoteHostRows);
 
+    // v0.7.6: rebuild the Sub-Agents card grid imperatively from the
+    // live runtime stats. Each card carries: name + specialization,
+    // utilization bar (always-visible 0-100), reachability dot,
+    // endpoint host:port, pool/no-pool note, active-client list.
+    PopulateSubAgentCards(snapshot);
+
     customMcpServers_.clear();
     customSubAgents_.clear();
     appleRemoteHosts_ = snapshot.appleRemoteHosts;
@@ -993,6 +999,233 @@ winrt::Windows::Foundation::IAsyncAction RuntimeSectionControl::RemoveAppleHostA
         }
     }
     UpdateEditorState();
+}
+
+// v0.7.6: Sub-Agents card grid. Each card is a Border around a StackPanel
+// holding the title row (name + specialization), utilization row (live
+// utilization label + ProgressBar + ratio counter), reachability dot +
+// endpoint, pool/no-pool note, and the active-client list. Cards are
+// rebuilt on every ApplySnapshot tick; in-progress operator focus is not
+// at risk because these are read-only TextBlocks/Borders without input.
+void RuntimeSectionControl::PopulateSubAgentCards(const ::MasterControlShell::ShellSnapshot& snapshot) {
+    using namespace winrt::Microsoft::UI::Xaml;
+    using namespace winrt::Microsoft::UI::Xaml::Controls;
+    using namespace winrt::Microsoft::UI::Xaml::Media;
+    using winrt::Windows::Foundation::IInspectable;
+    using winrt::Windows::UI::Color;
+    using winrt::Windows::UI::ColorHelper;
+
+    auto stack = SubAgentsCardStack();
+    stack.Children().Clear();
+
+    if (snapshot.subAgentRuntimeStats.empty()) {
+        SubAgentsHeadlineText().Text(L"No sub-agents registered yet. Use the New Sub-Agent action above to publish one.");
+        return;
+    }
+
+    // Headline summarizes total + reachable count so the operator sees a
+    // health snapshot at a glance.
+    int reachableCount = 0;
+    for (const auto& s : snapshot.subAgentRuntimeStats) {
+        if (s.reachable) ++reachableCount;
+    }
+    std::wstring headline = std::to_wstring(snapshot.subAgentRuntimeStats.size()) + L" sub-agent"
+        + (snapshot.subAgentRuntimeStats.size() == 1 ? L"" : L"s") + L" registered ; "
+        + std::to_wstring(reachableCount) + L" reachable.";
+    SubAgentsHeadlineText().Text(winrt::hstring(headline));
+
+    // Tron-themed color helpers. We avoid pulling in App.xaml resources
+    // here so the cards work even before that ResourceDictionary is
+    // resolved. Hex literal -> Color via ColorHelper.
+    auto fromHex = [](uint8_t r, uint8_t g, uint8_t b) {
+        return ColorHelper::FromArgb(0xFF, r, g, b);
+    };
+    const auto goodColor    = fromHex(0x1c, 0xf2, 0xc1);
+    const auto warnColor    = fromHex(0xff, 0xaf, 0x3a);
+    const auto critColor    = fromHex(0xff, 0x3a, 0x5a);
+    const auto neutralColor = fromHex(0x8c, 0xb7, 0xc4);
+
+    for (const auto& stat : snapshot.subAgentRuntimeStats) {
+        // Border with Tron-cyan accent stroke.
+        Border card;
+        card.Background(SolidColorBrush(ColorHelper::FromArgb(0x18, 0x00, 0xf6, 0xff)));
+        card.BorderBrush(SolidColorBrush(ColorHelper::FromArgb(0x55, 0x00, 0xf6, 0xff)));
+        Thickness cardBorder;
+        cardBorder.Left = 1.0;
+        cardBorder.Top = 1.0;
+        cardBorder.Right = 1.0;
+        cardBorder.Bottom = 1.0;
+        card.BorderThickness(cardBorder);
+        winrt::Microsoft::UI::Xaml::CornerRadius cardCorners;
+        cardCorners.TopLeft = 8.0;
+        cardCorners.TopRight = 8.0;
+        cardCorners.BottomRight = 8.0;
+        cardCorners.BottomLeft = 8.0;
+        card.CornerRadius(cardCorners);
+        Thickness cardPadding;
+        cardPadding.Left = 14.0;
+        cardPadding.Top = 12.0;
+        cardPadding.Right = 14.0;
+        cardPadding.Bottom = 12.0;
+        card.Padding(cardPadding);
+
+        StackPanel inner;
+        inner.Spacing(6);
+
+        // Header: name + specialization.
+        StackPanel header;
+        header.Orientation(Orientation::Horizontal);
+        header.Spacing(10);
+        TextBlock nameText;
+        nameText.Text(winrt::hstring(stat.displayName.empty() ? stat.subAgentId : stat.displayName));
+        nameText.FontSize(16);
+        nameText.FontWeight(winrt::Windows::UI::Text::FontWeight{600});
+        TextBlock specText;
+        specText.Text(winrt::hstring(stat.specialization.empty() ? L"(no specialization)" : stat.specialization));
+        specText.Foreground(SolidColorBrush(neutralColor));
+        specText.FontSize(12);
+        header.Children().Append(nameText);
+        header.Children().Append(specText);
+        inner.Children().Append(header);
+
+        // Utilization row: percent label + ProgressBar + active/capacity ratio.
+        const double utilization = (stat.utilizationPercent < 0) ? 0.0 : stat.utilizationPercent;
+        const auto toneColor = (utilization >= 95) ? critColor
+                              : (utilization >= 75) ? warnColor
+                              : goodColor;
+        Grid utilRow;
+        ColumnDefinition col1; col1.Width(GridLengthHelper::FromPixels(64));
+        ColumnDefinition col2; col2.Width(GridLengthHelper::FromValueAndType(1.0, GridUnitType::Star));
+        ColumnDefinition col3; col3.Width(GridLengthHelper::FromPixels(80));
+        utilRow.ColumnDefinitions().Append(col1);
+        utilRow.ColumnDefinitions().Append(col2);
+        utilRow.ColumnDefinitions().Append(col3);
+        utilRow.ColumnSpacing(10);
+
+        TextBlock utilLabel;
+        wchar_t utilBuf[16];
+        swprintf_s(utilBuf, L"%d%%", static_cast<int>(utilization));
+        utilLabel.Text(utilBuf);
+        utilLabel.FontSize(20);
+        utilLabel.FontWeight(winrt::Windows::UI::Text::FontWeight{600});
+        utilLabel.Foreground(SolidColorBrush(toneColor));
+        Grid::SetColumn(utilLabel, 0);
+
+        ProgressBar utilBar;
+        utilBar.Minimum(0);
+        utilBar.Maximum(100);
+        utilBar.Value(utilization);
+        utilBar.Height(10);
+        utilBar.Foreground(SolidColorBrush(toneColor));
+        utilBar.VerticalAlignment(VerticalAlignment::Center);
+        Grid::SetColumn(utilBar, 1);
+
+        TextBlock countsText;
+        wchar_t countsBuf[32];
+        swprintf_s(countsBuf, L"%d / %d", stat.activeLeaseCount, stat.leaseCapacity);
+        countsText.Text(countsBuf);
+        countsText.FontSize(11);
+        countsText.Foreground(SolidColorBrush(neutralColor));
+        countsText.HorizontalAlignment(HorizontalAlignment::Right);
+        countsText.VerticalAlignment(VerticalAlignment::Center);
+        Grid::SetColumn(countsText, 2);
+
+        utilRow.Children().Append(utilLabel);
+        utilRow.Children().Append(utilBar);
+        utilRow.Children().Append(countsText);
+        inner.Children().Append(utilRow);
+
+        // Endpoint + reachability row.
+        if (!stat.endpointHostPort.empty()) {
+            StackPanel epRow;
+            epRow.Orientation(Orientation::Horizontal);
+            epRow.Spacing(8);
+            // Reachability dot: a 10x10 Border with a 5px CornerRadius
+            // (effectively a circle) filled with the reachability color.
+            // Avoids pulling in winrt/Microsoft.UI.Xaml.Shapes.h just for
+            // an Ellipse.
+            Border dot;
+            dot.Width(10);
+            dot.Height(10);
+            winrt::Microsoft::UI::Xaml::CornerRadius dotCorners;
+            dotCorners.TopLeft = 5.0;
+            dotCorners.TopRight = 5.0;
+            dotCorners.BottomRight = 5.0;
+            dotCorners.BottomLeft = 5.0;
+            dot.CornerRadius(dotCorners);
+            dot.VerticalAlignment(VerticalAlignment::Center);
+            dot.Background(SolidColorBrush(stat.reachable ? goodColor : critColor));
+            TextBlock epText;
+            epText.Text(winrt::hstring(stat.endpointHostPort));
+            epText.FontSize(12);
+            epText.FontFamily(winrt::Microsoft::UI::Xaml::Media::FontFamily(winrt::hstring{L"Consolas, Cascadia Mono, Courier New"}));
+            TextBlock statusText;
+            statusText.Text(winrt::hstring(stat.status.empty() ? L"unknown" : stat.status));
+            statusText.FontSize(11);
+            statusText.Foreground(SolidColorBrush(neutralColor));
+            epRow.Children().Append(dot);
+            epRow.Children().Append(epText);
+            epRow.Children().Append(statusText);
+            inner.Children().Append(epRow);
+        }
+
+        // Pool / no-pool note.
+        TextBlock poolNote;
+        if (!stat.poolId.empty()) {
+            wchar_t poolBuf[256];
+            swprintf_s(poolBuf, L"Pool %ls : %d/%d Ready : max %d : autoscale %ls",
+                       stat.poolId.c_str(),
+                       stat.readyInstanceCount,
+                       stat.totalInstanceCount,
+                       stat.maxInstancesAllowed,
+                       stat.autoscaleEnabled ? L"on" : L"off");
+            poolNote.Text(poolBuf);
+        } else {
+            poolNote.Text(L"No managed pool. POST /api/pools with matching id to enable autoscale.");
+        }
+        poolNote.FontSize(11);
+        poolNote.Foreground(SolidColorBrush(neutralColor));
+        poolNote.TextWrapping(TextWrapping::Wrap);
+        inner.Children().Append(poolNote);
+
+        // Active client list.
+        TextBlock clientsHeader;
+        wchar_t clientsBuf[64];
+        swprintf_s(clientsBuf, L"Active clients (%zu)", stat.activeClients.size());
+        clientsHeader.Text(clientsBuf);
+        clientsHeader.FontSize(11);
+        clientsHeader.Foreground(SolidColorBrush(neutralColor));
+        clientsHeader.Margin(Thickness{0, 4, 0, 2});
+        inner.Children().Append(clientsHeader);
+
+        if (stat.activeClients.empty()) {
+            TextBlock noClients;
+            noClients.Text(L"No active clients leasing this sub-agent.");
+            noClients.FontSize(11);
+            noClients.Foreground(SolidColorBrush(neutralColor));
+            inner.Children().Append(noClients);
+        } else {
+            for (const auto& holder : stat.activeClients) {
+                StackPanel row;
+                row.Orientation(Orientation::Horizontal);
+                row.Spacing(8);
+                TextBlock ipText;
+                ipText.Text(winrt::hstring(holder.ipAddress.empty() ? L"unknown" : holder.ipAddress));
+                ipText.FontFamily(winrt::Microsoft::UI::Xaml::Media::FontFamily(winrt::hstring{L"Consolas, Cascadia Mono, Courier New"}));
+                ipText.FontSize(12);
+                TextBlock typeText;
+                typeText.Text(winrt::hstring(holder.clientType.empty() ? L"unknown-client" : holder.clientType));
+                typeText.FontSize(11);
+                typeText.Foreground(SolidColorBrush(neutralColor));
+                row.Children().Append(ipText);
+                row.Children().Append(typeText);
+                inner.Children().Append(row);
+            }
+        }
+
+        card.Child(inner);
+        stack.Children().Append(card);
+    }
 }
 
 } // namespace winrt::MasterControlShell::implementation

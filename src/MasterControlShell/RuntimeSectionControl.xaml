@@ -47,6 +47,19 @@
                 </Border>
             </Grid>
 
+            <!-- v0.7.6: Sub-Agents card grid. Each sub-agent renders as a
+                 card with its utilization bar, reachability dot, endpoint
+                 host:port, and active-client list. The cards are built
+                 imperatively in RuntimeSectionControl::ApplySnapshot from
+                 snapshot.subAgentRuntimeStats. -->
+            <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="Sub-Agents" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock x:Name="SubAgentsHeadlineText" Style="{StaticResource ShellLabelTextStyle}" Text="Loading sub-agent telemetry..." />
+                    <StackPanel x:Name="SubAgentsCardStack" Spacing="10" />
+                </StackPanel>
+            </Border>
+
             <Grid ColumnSpacing="20">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
