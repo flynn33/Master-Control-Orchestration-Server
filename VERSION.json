@@ -1,11 +1,30 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.7.6",
-  "current_tag": "v0.7.6",
+  "current_version": "0.7.7",
+  "current_tag": "v0.7.7",
   "released_at": "2026-05-07",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.7.7",
+      "tag": "v0.7.7",
+      "released_at": "2026-05-07",
+      "commit": "pending",
+      "summary": "Bind-address reporting actually tells the operator something useful. Pre-v0.7.7 the WinUI shell's Overview tab Runtime Configuration card rendered 'Bind address: 0.0.0.0' verbatim, and the browser dashboard's Overview MCP Gateway card rendered the gateway URL as 'http://0.0.0.0:8080/mcp' verbatim -- both technically the configured listen value, both useless for an operator trying to read off what LAN clients should connect to. Operator's complaint: 'On the Overview tab, in the runtime card, the bind address is not properly reported.' v0.7.7 augments both surfaces. Shell narrative now reads 'Bind address: 0.0.0.0 (all interfaces; LAN clients reach this server at [fde3:...:32c8]:7300)' when bindAddress is a wildcard, with RFC 3986 bracketing for IPv6 literals. The 'Preferred bind (advertised)' line shows '(auto-detected: <ip>)' when the operator hasn't pinned a preferred bind, instead of the bare '(auto-detected)' placeholder. Browser MCP Gateway card now shows 'LAN clients: http://[fde3:...:32c8]:8080/mcp' as the primary line and surfaces the literal listen URL as a secondary 'Listen:' line only when the two differ. The substitution happens at the renderer (browser) and narrative-builder (shell) layer, not at the runtime API surface, so onboarding profiles + discovery doc consumers continue to receive the configured listen value verbatim and the operator-facing display becomes meaningful.",
+      "entries": [
+        "feat(shell): ShellRuntime configurationStream's 'Bind address' line is augmented when bindAddress is a wildcard ('0.0.0.0', '::', or empty). Format: 'Bind address: 0.0.0.0 (all interfaces; LAN clients reach this server at <bracketed-lan-ip>:<browserPort>)'. IPv6 literals are bracketed per RFC 3986. The configured wildcard value still appears verbatim so the operator can see what the runtime is actually configured to bind to.",
+        "feat(shell): ShellRuntime configurationStream's 'Preferred bind (advertised)' line shows the auto-detected primary IP when preferredBindAddress is empty ('(auto-detected: <ip>)'), or '(auto-detect pending)' when the LAN IP isn't yet resolved. Pre-v0.7.7 the line read just '(auto-detected)' which gave the operator no insight into what address would actually be advertised.",
+        "feat(dashboard-ui): renderOverview's MCP Gateway card now renders the LAN-reachable URL as the primary code line ('LAN clients: <url>'). Wildcard hosts ('0.0.0.0', '[::]', '[::1]') in the gateway URL are substituted with the primary LAN IP from telemetry.primaryIpAddress (fall back to discovery.serverIpAddress). When the substitution actually changes the URL, the literal listen URL is also surfaced as a secondary 'Listen:' code line so the operator sees both forms.",
+        "feat(dashboard-ui): new resolveDisplayUrl(url, lanIp) helper. Reusable substitution that replaces wildcard hosts in a URL with the LAN-reachable form, IPv6-bracketed when needed. Used by the MCP Gateway card; ready for reuse by any other browser surface that displays gateway URLs.",
+        "docs(version): bump 0.7.6 -> 0.7.7 (bind address reporting on Overview)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; Tron grid backdrop as procedural HLSL fragment shader; activity stream as scrolling SwapChainPanel.",
+        "Reachability probe is IPv4-only (AF_INET socket + inet_pton(AF_INET, ...)). Sub-agents whose endpoint.host is an IPv6 literal will always render reachable=false. Fix is an AF_INET6 fallback path using inet_pton(AF_INET6, ...) when AF_INET parsing fails.",
+        "Discovery doc still serves the literal listen URL (e.g. 'http://0.0.0.0:8080/mcp') in mcpGatewayHealth.healthUrl / mcpGatewayHealth.mcpUrl / mcpGatewayStatus.mcpUrl when the gateway is bound to a wildcard. v0.7.7 only fixes the operator-facing display; LAN clients consuming /api/discovery still need the runtime to substitute the LAN IP when serving these fields. Fix is a one-line conditional in the runtime's discovery doc builder."
+      ]
+    },
     {
       "version": "0.7.6",
       "tag": "v0.7.6",

@@ -478,6 +478,31 @@ function renderCurrent() {
 
 // ---- Overview ----
 
+// v0.7.7: helper that resolves wildcard hosts (0.0.0.0, ::, empty) in
+// URLs into the primary LAN IP so the operator sees a usable address
+// instead of the literal listen-on-all-interfaces sentinel. Returns the
+// original URL unchanged when the host is already an explicit IP/name or
+// when the LAN IP is not yet known. IPv6 literals get RFC 3986 brackets.
+function resolveDisplayUrl(url, lanIp) {
+  if (!url || typeof url !== 'string') return url;
+  if (!lanIp) return url;
+  // The wildcard hosts we substitute. Match the URL prefix so the rest of
+  // the URL (port + path) flows through unchanged.
+  const wildcardHosts = ['0.0.0.0', '[::]', '[::1]'];
+  for (const wc of wildcardHosts) {
+    const needle = '://' + wc;
+    const idx = url.indexOf(needle);
+    if (idx >= 0) {
+      // IPv6 literal needs brackets in the URL even though the snapshot
+      // stores it bare.
+      const isIPv6 = lanIp.indexOf(':') >= 0;
+      const rendered = isIPv6 ? '[' + lanIp + ']' : lanIp;
+      return url.slice(0, idx + 3) + rendered + url.slice(idx + needle.length);
+    }
+  }
+  return url;
+}
+
 function renderOverview() {
   const t = (state.dashboard && state.dashboard.telemetry) || {};
   const cluPosture = state.dashboard && state.dashboard.governance
@@ -486,9 +511,16 @@ function renderOverview() {
   const pendingApprovals = state.approvals.filter((a) => a.status === 'pending');
   const gwState = state.gatewayStatus && state.gatewayStatus.state ? state.gatewayStatus.state : 'unknown';
   const gwHealth = state.gatewayHealth && state.gatewayHealth.status ? state.gatewayHealth.status : 'unknown';
-  const gwMcpUrl = (state.gatewayStatus && state.gatewayStatus.mcpUrl)
+  const gwMcpUrlRaw = (state.gatewayStatus && state.gatewayStatus.mcpUrl)
     || (state.discovery && state.discovery.gateway && state.discovery.gateway.mcpUrl)
-    || '—';
+    || '';
+  const lanIp = t.primaryIpAddress || (state.discovery && state.discovery.serverIpAddress) || '';
+  // v0.7.7: substitute 0.0.0.0 / ::/ empty wildcard with the primary LAN IP
+  // for display only. Without this the operator-facing URL reads
+  // "http://0.0.0.0:8080/mcp" -- technically the configured listen value
+  // but useless for any client trying to actually connect.
+  const gwMcpUrl = resolveDisplayUrl(gwMcpUrlRaw, lanIp) || '—';
+  const gwMcpUrlListen = gwMcpUrlRaw && gwMcpUrl !== gwMcpUrlRaw ? gwMcpUrlRaw : '';
   const poolCount = state.pools.length;
   const readyInstances = state.pools.reduce((acc, p) => {
     const sat = state.poolSaturation[p.poolId];
@@ -504,7 +536,8 @@ function renderOverview() {
         <h3>MCP Gateway</h3>
         <p class="big-stat ${gwState === 'running' ? 'good' : (gwState === 'failed' ? 'bad' : 'warn')}">${escapeHtml(gwState)}</p>
         <p class="muted">Health: <strong>${escapeHtml(gwHealth)}</strong></p>
-        <p class="muted"><code>${escapeHtml(gwMcpUrl)}</code></p>
+        <p class="muted">LAN clients: <code>${escapeHtml(gwMcpUrl)}</code></p>
+        ${gwMcpUrlListen ? `<p class="muted">Listen: <code>${escapeHtml(gwMcpUrlListen)}</code></p>` : ''}
         <button type="button" data-action="goto-gateway" class="route-button">Open Gateway</button>
       </article>
       <article class="panel-block">

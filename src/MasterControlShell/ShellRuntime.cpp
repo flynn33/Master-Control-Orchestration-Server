@@ -1926,19 +1926,56 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                       << L"Primary IP: " << ipAddress << L'\n'
                       << L"Primary MAC: " << wideFromUtf8(macAddress);
 
+    // v0.7.7: render the bind address as both the configured value AND the
+    // LAN-reachable form. Pre-v0.7.7 the line read "Bind address: 0.0.0.0",
+    // which is technically the configured wildcard value but tells the
+    // operator nothing about what LAN clients actually connect to. When
+    // bindAddress is a wildcard (0.0.0.0, ::, or empty), append the
+    // resolved primary LAN IP + browser port so the operator can read off
+    // the real reachable address from this single line. When bindAddress
+    // is an explicit IP, the wildcard branch is skipped and the line shows
+    // the configured value verbatim. Same treatment for the
+    // "Preferred bind (advertised)" line: when the operator has not
+    // pinned a preferred bind, surface the auto-detected primary IP
+    // verbatim instead of the bare "(auto-detected)" placeholder.
+    auto isWildcardBind = [](const std::string& v) {
+        return v.empty() || v == "0.0.0.0" || v == "::" || v == "[::]";
+    };
+    auto formatLanReachable = [&](const std::wstring& ip, uint16_t port) -> std::wstring {
+        if (ip.empty()) {
+            return L"(LAN IP not yet resolved)";
+        }
+        // Bracket-wrap IPv6 literals (RFC 3986). An IPv6 literal contains
+        // colons; a hostname or IPv4 literal does not.
+        const bool isIPv6 = ip.find(L':') != std::wstring::npos;
+        std::wstring formatted = isIPv6 ? (L"[" + ip + L"]") : ip;
+        return formatted + L":" + std::to_wstring(port);
+    };
+
     std::wostringstream configurationStream;
     configurationStream << L"Instance name: " << wideFromUtf8(instanceName) << L'\n'
                         << L"Browser port: " << browserPort << L'\n'
                         << L"Beacon port: " << beaconPort << L'\n'
-                        << L"Bind address: " << wideFromUtf8(bindAddress) << L'\n'
+                        << L"Bind address: " << wideFromUtf8(bindAddress);
+    if (isWildcardBind(bindAddress)) {
+        configurationStream << L" (all interfaces; LAN clients reach this server at "
+                            << formatLanReachable(ipAddress, browserPort)
+                            << L")";
+    }
+    configurationStream << L'\n'
                         // v0.6.8: surface the operator-set preferred LAN
                         // IP. Discovery doc + DNS-SD records use this when
                         // it's non-empty (v0.6.4 advertise side, v0.6.6
                         // dashboard telemetry side); shell should display
                         // it so operators can confirm what LAN clients see.
+                        // v0.7.7: when no preferred bind is pinned, show
+                        // the auto-detected primary IP rather than the
+                        // bare "(auto-detected)" placeholder.
                         << L"Preferred bind (advertised): "
                             << (preferredBindAddress.empty()
-                                    ? std::wstring(L"(auto-detected)")
+                                    ? (ipAddress.empty()
+                                           ? std::wstring(L"(auto-detect pending)")
+                                           : (L"(auto-detected: " + ipAddress + L")"))
                                     : wideFromUtf8(preferredBindAddress))
                             << L'\n'
                         << L"Beacon enabled: " << boolLabel(beaconEnabled) << L'\n'
