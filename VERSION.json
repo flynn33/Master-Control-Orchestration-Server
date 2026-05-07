@@ -1,11 +1,30 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.7.3",
-  "current_tag": "v0.7.3",
-  "released_at": "2026-05-06",
+  "current_version": "0.7.4",
+  "current_tag": "v0.7.4",
+  "released_at": "2026-05-07",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.7.4",
+      "tag": "v0.7.4",
+      "released_at": "2026-05-07",
+      "commit": "pending",
+      "summary": "Real-time telemetry on every shell view, including Settings. Pre-v0.7.4 the WinUI shell suppressed its 3 s live-tick on the interactive form sections (Settings/Security/Imports) to protect in-progress text input -- but each section's own ApplySnapshot already protects edit state via a dirty/suspendDirtyTracking flag, so the outer suppression was over-cautious and froze the section's read-only narrative panels (Resource Envelope, Configuration narrative, Bind address read-out) whenever the operator opened those views. The activity-stream timer was suppressed the same way, so the activity feed froze on Settings too. v0.7.4 removes both gates, drops the live-tick interval from 3 s to 1 s (dashboard latency measured at 13-25 ms on this build, no overlap risk), and wires telemetry events on POST /api/config + POST /api/gateway/{start,stop} so the Recent Telemetry Events ring shows real activity instead of just the boot event.",
+      "entries": [
+        "fix(shell): refreshTimer_.Tick no longer suppresses on interactive destinations (Settings/Security/Imports). Each section's ApplySnapshot guards edit state internally via its dirty/suspendDirtyTracking flag, so the gate was double-protection that broke read-only narrative panels. After this fix, Settings.ResourceEnvelopeText / ConfigurationNarrativeText / Telemetry view's host-load tiles all refresh at the live cadence regardless of which view is on top.",
+        "fix(shell): activityStreamTimer_.Tick no longer suppresses on interactive destinations. The activity-stream surface is read-only (TextBlocks inside a ListView, no operator inputs), so polling it cannot disturb edit state. Pre-v0.7.4 the activity log froze whenever the operator opened Settings to apply a config change, which is exactly the moment they want to see the resulting event land in the feed.",
+        "fix(shell): MainWindow::ApplyCurrentSectionSnapshot no longer early-returns when the current section is interactive. Same root cause as the timer gates -- each section's own ApplySnapshot is the right place to enforce the dirty-flag rule.",
+        "fix(shell): refreshTimer_ interval bumped from 3 s -> 1 s. The 3 s cadence was sized for a hypothetical 2 s+ /api/dashboard latency that the current build does not exhibit (measured 13-25 ms across the host). 1 Hz polling at 25 ms latency leaves 975 ms of headroom per tick. The clockTimer_ separate from the refresh timer continues to run at 1 Hz for the title-bar LIVE indicator.",
+        "feat(runtime): POST /api/config now emits a telemetry event into the events ring on success ('Configuration updated via /api/config.'). Pre-v0.7.4 the events ring stayed empty after boot for typical operator traffic, so the dashboard's Recent Telemetry Events panel looked like nothing was happening even when the operator was actively making changes.",
+        "feat(runtime): POST /api/gateway/start and POST /api/gateway/stop now emit gateway-category telemetry events with the gateway state message, so the operator can see the LAN MCP surface come up in the events ring.",
+        "docs(version): bump 0.7.3 -> 0.7.4 (live-tick reaches every section; events ring carries real activity)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60 Hz via Win2D CanvasControl; Tron grid backdrop as procedural HLSL fragment shader; activity stream as scrolling SwapChainPanel."
+      ]
+    },
     {
       "version": "0.7.3",
       "tag": "v0.7.3",

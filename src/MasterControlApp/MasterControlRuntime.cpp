@@ -11239,10 +11239,29 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             return jsonResponse(mcpGateway_ ? mcpGateway_->ListTools() : std::vector<McpToolDescriptor>{});
         }
         if (request.method == "POST" && request.path == "/api/gateway/start") {
-            return jsonResponse(mcpGateway_ ? mcpGateway_->Start() : GatewayStatus{});
+            const auto status = mcpGateway_ ? mcpGateway_->Start() : GatewayStatus{};
+            // v0.7.4: surface gateway lifecycle in the Recent Telemetry
+            // Events ring so the operator can see when the LAN MCP surface
+            // came up.
+            if (telemetryAggregator_) {
+                TelemetryEvent evt;
+                evt.category = TelemetryCategory::Gateway;
+                evt.severity = TelemetrySeverity::Info;
+                evt.message  = "Gateway start requested. State: " + status.message;
+                telemetryAggregator_->recordEvent(std::move(evt));
+            }
+            return jsonResponse(status);
         }
         if (request.method == "POST" && request.path == "/api/gateway/stop") {
-            return jsonResponse(mcpGateway_ ? mcpGateway_->Stop() : GatewayStatus{});
+            const auto status = mcpGateway_ ? mcpGateway_->Stop() : GatewayStatus{};
+            if (telemetryAggregator_) {
+                TelemetryEvent evt;
+                evt.category = TelemetryCategory::Gateway;
+                evt.severity = TelemetrySeverity::Info;
+                evt.message  = "Gateway stop requested. State: " + status.message;
+                telemetryAggregator_->recordEvent(std::move(evt));
+            }
+            return jsonResponse(status);
         }
         if (request.method == "GET" && request.path == "/api/environment-hints") {
             // Reserved endpoint - returns an empty object after the provider
@@ -11800,6 +11819,18 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const bool confirmUnsafeChanges = request.headers.contains("X-Confirm-Unsafe") &&
                 request.headers.at("X-Confirm-Unsafe") == "1";
             const auto result = adminApiService_->applyConfigurationJson(request.body, confirmUnsafeChanges);
+            // v0.7.4: emit a telemetry event on every successful configuration
+            // write so the dashboard's Recent Telemetry Events panel reflects
+            // real activity. Pre-v0.7.4 the events ring stayed empty after
+            // boot for normal operator traffic (config writes, gateway
+            // start/stop, etc.), giving the impression telemetry was static.
+            if (result.succeeded && telemetryAggregator_) {
+                TelemetryEvent evt;
+                evt.category = TelemetryCategory::System;
+                evt.severity = TelemetrySeverity::Info;
+                evt.message  = "Configuration updated via /api/config.";
+                telemetryAggregator_->recordEvent(std::move(evt));
+            }
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         if (request.method == "POST" && request.path == "/api/platform-services/apple-hosts") {

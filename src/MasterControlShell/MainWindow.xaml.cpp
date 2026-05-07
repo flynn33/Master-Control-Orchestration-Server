@@ -68,7 +68,10 @@ static bool isInteractiveFormSection(const std::wstring& viewId) {
         || viewId == kImportsView;
 }
 
-static bool isInteractiveDestination(const std::wstring& destinationId) {
+// v0.7.4: kept for potential future use but no longer called -- live ticks
+// now fire on every destination, with edit-state protected by each section's
+// own dirty/suspendDirtyTracking flag inside its ApplySnapshot.
+[[maybe_unused]] static bool isInteractiveDestination(const std::wstring& destinationId) {
     return destinationId == kSecurityDestination
         || destinationId == kSettingsDestination
         || destinationId == kImportsDestination;
@@ -795,34 +798,34 @@ void MainWindow::ConfigureTimer() {
     }
 
     try {
-        // 1-second telemetry cadence. The tick calls RefreshLiveAsync,
-        // which only updates hero values + the current section's data —
-        // navigation, toolbar, section content host, and scroll position
-        // are deliberately left alone. A full ApplySnapshot (including
-        // nav / toolbar rebuilds) only runs when the user clicks Refresh
-        // or navigates between views.
+        // Live telemetry cadence. The tick calls RefreshLiveAsync, which
+        // updates hero values + the current section's data only. Navigation,
+        // toolbar, section content host, and scroll position are deliberately
+        // left alone -- a full ApplySnapshot (including nav/toolbar rebuilds)
+        // only runs on operator-driven Refresh or section navigation.
         refreshTimer_ = dispatcher.CreateTimer();
-        // 3-second cadence for the full snapshot pull. Before this was 1Hz,
-        // which on a busy machine (where /api/dashboard takes ~2s to
-        // serialize a full state snapshot) caused overlapping ticks to
-        // queue in the background thread and made the shell feel sluggish.
-        // Telemetry still feels live because clockTimer_ below bumps the
-        // title-bar LIVE #N indicator at 1Hz — that's what the operator
-        // sees for "heartbeat" without needing the expensive snapshot.
-        refreshTimer_.Interval(std::chrono::seconds(3));
+        // v0.7.4: dropped from 3s to 1s after measuring /api/dashboard at
+        // 13-25ms on this build (was previously 2s+ on busy machines).
+        // 1Hz updates feel real-time without overlapping requests.
+        refreshTimer_.Interval(std::chrono::seconds(1));
         const auto weakThis = get_weak();
         refreshTimer_.Tick([weakThis](auto&&, auto&&) {
             if (const auto self = weakThis.get()) {
-                // Skip the tick while the operator is editing a form so
-                // in-progress text input is never interrupted.
-                if (isInteractiveDestination(self->currentDestination_)) {
-                    return;
-                }
+                // v0.7.4: tick fires on every destination, including the
+                // interactive form sections (Settings/Security/Imports).
+                // Each section's ApplySnapshot already protects in-progress
+                // edit state via its own dirty/suspendDirtyTracking flag --
+                // narrative panels (Resource Envelope, Configuration,
+                // Bind address) refresh; textbox/toggle values stay
+                // untouched while the operator is editing. Pre-v0.7.4
+                // this gate suppressed BOTH narrative refresh AND textbox
+                // repopulation, so operators on the Settings view saw
+                // stale Resource Envelope / Bind address narratives.
                 self->RefreshLiveAsync();
             }
         });
         refreshTimer_.Start();
-        writeShellLog(L"Live telemetry timer started (3-second cadence; clock heartbeat stays at 1Hz).");
+        writeShellLog(L"Live telemetry timer started (1-second cadence; ticks every section, dirty-flag protects edit state).");
     } catch (const winrt::hresult_error& error) {
         writeShellLog(L"Dispatcher timer fallback activated: " + std::wstring(error.message().c_str()));
     }
@@ -848,9 +851,12 @@ void MainWindow::ConfigureTimer() {
         const auto weakThis = get_weak();
         activityStreamTimer_.Tick([weakThis](auto&&, auto&&) {
             if (const auto self = weakThis.get()) {
-                if (isInteractiveDestination(self->currentDestination_)) {
-                    return;
-                }
+                // v0.7.4: tick on every destination. The activity-stream
+                // surface is read-only (TextBlocks inside a ListView with
+                // no operator inputs), so polling it on Settings/Security/
+                // Imports cannot disturb edit state. Pre-v0.7.4 the gate
+                // froze the activity log whenever the operator opened
+                // Settings to change anything.
                 self->PollActivityStreamAsync();
             }
         });
@@ -1306,11 +1312,16 @@ void MainWindow::ApplyCurrentSectionSnapshot(const ::MasterControlShell::ShellSn
         return;
     }
     const auto& viewId = slotIter->second.front().viewId;
-    // Interactive forms are intentionally skipped on live ticks so the
-    // operator's edit state is never disturbed.
-    if (isInteractiveFormSection(viewId)) {
-        return;
-    }
+    // v0.7.4: forward the live snapshot to every section, including the
+    // interactive form sections (Settings/Security/Imports). Each section's
+    // own ApplySnapshot is already responsible for protecting in-progress
+    // edit state via its dirty/suspendDirtyTracking flag --
+    // SettingsSectionControl::ApplySnapshot only calls
+    // PopulateEditorFromSnapshot when !dirty_, SecuritySectionControl
+    // gates the same way. Pre-v0.7.4 the early-return here meant that the
+    // narrative panels (Resource Envelope, Configuration narrative, Bind
+    // address read-out) inside Settings stayed static while the operator
+    // was on the Settings view, even though the runtime had fresh data.
     const auto cached = cachedViews_.find(viewId);
     if (cached == cachedViews_.end() || cached->second == nullptr) {
         return;
