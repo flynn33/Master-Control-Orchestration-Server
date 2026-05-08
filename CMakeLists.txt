@@ -95,6 +95,10 @@ add_subdirectory(src/MasterControlApp)
 add_subdirectory(src/MasterControlServiceHost)
 add_subdirectory(src/MasterControlShell)
 add_subdirectory(src/MasterControlBootstrapper)
+# v0.9.1: baseline MCP tools worker. Ships in-tree so the gateway's
+# tools/list returns real tools (mcos.echo, mcos.now, mcos.host_info,
+# mcos.add) from a fresh install.
+add_subdirectory(src/MasterControlBaselineToolsWorker)
 
 if(BUILD_TESTING)
     add_subdirectory(tools/VsTestConsoleProxy)
@@ -117,6 +121,7 @@ if(WIN32 AND MASTERCONTROL_POWERSHELL)
         MasterControlBootstrapper
         MasterControlOrchestrationServerLauncher
         MasterControlOrchestrationServerSetup
+        MasterControlBaselineToolsWorker
     )
 
     add_custom_target(IDE_PACKAGE

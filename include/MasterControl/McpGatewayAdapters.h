@@ -2,21 +2,23 @@
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 //
-// PHASE-02 (ADR-002 §2): MCP Gateway adapters. The gateway abstraction
-// (`IMcpGateway`) lives in `MasterControl/MasterControlContracts.h`. This
-// header declares the production adapter and a test fake that implements
-// the same interface without spawning a child process or making network
-// calls.
+// PHASE-12 (ADR-002 §2 / ADR-003): MCP Gateway adapters. The gateway
+// abstraction (`IMcpGateway`) lives in
+// `MasterControl/MasterControlContracts.h`. This header declares the
+// production adapter and a test fake that implements the same interface
+// without binding HTTP.sys or making network calls.
 //
-// The `McpJungleGatewayAdapter` supervises an external MCPJungle binary
-// when one is configured and reachable. When `enabled=false`, the binary
-// path is empty, or the binary cannot be located, the adapter operates in
-// "configured-but-not-running" mode: state transitions still happen,
-// register/deregister calls still succeed against an in-memory registry,
-// but no child process is spawned and Probe() reports
-// `GatewayHealthStatus::Unknown`. This honors `.claude/rules/00-mcos-realignment.md`'s
-// "no live-looking seeded infrastructure" rule — the dashboard sees an
-// honest "configured, not running" state rather than a fake "healthy".
+// History:
+//   * v0.6.x shipped `McpJungleGatewayAdapter`, which supervised an
+//     external MCPJungle binary. PHASE-12 replaced that substrate with a
+//     native HTTP.sys implementation (NativeHttpSysGatewayAdapter).
+//   * v0.9.0 retired McpJungleGatewayAdapter as the default but kept its
+//     source in-tree as inert dead code for one release cycle.
+//   * v0.9.1 deletes McpJungleGatewayAdapter outright. Persisted configs
+//     that still carry mcpGateway.type='mcpjungle' transparently resolve
+//     to the native substrate at runtime construction (the GatewayType
+//     enum value is retained only so old JSON deserializes without
+//     rejection).
 
 #pragma once
 
@@ -46,73 +48,6 @@
 #endif
 
 namespace MasterControl {
-
-// Production adapter. Supervises MCPJungle when a binary path is provided.
-// Health probe uses WinHTTP against `<listenHost>:<listenPort><healthPath>`.
-class McpJungleGatewayAdapter final : public IMcpGateway {
-public:
-    explicit McpJungleGatewayAdapter(McpGatewayConfiguration configuration);
-    ~McpJungleGatewayAdapter() override;
-
-    McpJungleGatewayAdapter(const McpJungleGatewayAdapter&) = delete;
-    McpJungleGatewayAdapter& operator=(const McpJungleGatewayAdapter&) = delete;
-
-    GatewayStatus Start() override;
-    GatewayStatus Stop() override;
-    GatewayStatus CurrentStatus() const override;
-    GatewayHealth Probe() override;
-    RegistrationResult RegisterHttpServer(const McpServerRegistration& server) override;
-    RegistrationResult RegisterStdioServer(const McpServerRegistration& server) override;
-    DeregistrationResult DeregisterServer(const std::string& serverName) override;
-    std::vector<McpToolDescriptor> ListTools() const override;
-    std::string GatewayMcpUrl() const override;
-    std::string AdapterType() const override;
-
-    // Test/observability helpers — not part of IMcpGateway.
-    McpGatewayConfiguration configuration() const;
-    bool isSupervisingChildProcess() const;
-
-private:
-    RegistrationResult registerInternal(McpServerRegistration server);
-    GatewayHealth probeOverHttp() const;
-    void terminateChildProcessTreeIfRunning();
-
-    // PHASE-12 prelude (Option D from v0.6.7 plan): when no real gateway
-    // substrate is bound to mcpGateway.listenPort, run a small honest-503
-    // listener so LAN clients see a structured "gateway unavailable"
-    // response instead of TCP RST. This eliminates the connection-refused
-    // confusion the operator's remote Claude Code instance hit when
-    // pointing at http://<host>:8080/mcp.
-    //
-    // Lifecycle:
-    //   - Started when adapter enters Disabled, Configured (no binary), or
-    //     supervised-mock Running.
-    //   - Stopped before spawning a real MCPJungle binary (so the binary
-    //     can claim the port) and on Stop().
-    //
-    // The listener is intentionally tiny: a single accept loop on a
-    // blocking socket, returning a fixed JSON 503 to every request.
-    // Replaced wholesale by the PHASE-12 native gateway when that lands.
-    void startHonestUnavailableListenerLocked();
-    void stopHonestUnavailableListenerLocked();
-#if defined(_WIN32)
-    void honestUnavailableServeLoop();
-    SOCKET honestListenerSocket_ = INVALID_SOCKET;
-    std::thread honestListenerThread_;
-    std::atomic<bool> honestListenerRunning_{ false };
-#endif
-
-    mutable std::mutex mutex_;
-    McpGatewayConfiguration configuration_;
-    GatewayStatus status_;
-    std::map<std::string, McpServerRegistration> registry_;
-
-#if defined(_WIN32)
-    HANDLE jobObject_ = nullptr;
-    PROCESS_INFORMATION processInfo_{};
-#endif
-    std::atomic<bool> childProcessActive_{ false };
-};
 
 // PHASE-12 native gateway substrate. Implements `IMcpGateway` directly
 // using HTTP.sys (Win32 kernel-mode HTTP server) instead of supervising
@@ -220,11 +155,11 @@ private:
 #endif
 };
 
-// In-process fake. State transitions and registry behavior match
-// `McpJungleGatewayAdapter`'s contract, but Probe() returns whatever the
-// test scripts via `setNextProbe(...)`. Used by
-// `MasterControlOrchestrationServerTests` and any future adapter consumer
-// that needs to exercise IMcpGateway without a real binary.
+// In-process fake. State transitions and registry behavior match the
+// IMcpGateway contract; Probe() returns whatever the test scripts via
+// `setNextProbe(...)`. Used by `MasterControlOrchestrationServerTests`
+// and any future adapter consumer that needs to exercise IMcpGateway
+// without binding HTTP.sys.
 class FakeMcpGatewayAdapter final : public IMcpGateway {
 public:
     explicit FakeMcpGatewayAdapter(McpGatewayConfiguration configuration);

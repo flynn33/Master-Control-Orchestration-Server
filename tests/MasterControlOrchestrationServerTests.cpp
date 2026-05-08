@@ -455,58 +455,43 @@ bool testFakeGatewayMcpUrlComposition() {
 }
 
 bool testRealAdapterDisabledByDefault() {
+    // v0.9.1: McpJungleGatewayAdapter has been deleted. The native
+    // HTTP.sys substrate is now the sole production adapter. The contract
+    // under test here is that constructing a NativeHttpSysGatewayAdapter
+    // with enabled=false leaves it in Disabled state and refuses to bind
+    // HTTP.sys when Start() is invoked (so test runs do not need admin
+    // privileges to exercise the disabled-state branch).
     MasterControl::McpGatewayConfiguration configuration;
-    // v0.9.0: McpGatewayConfiguration.enabled defaults to true now
-    // (the runtime auto-starts the gateway at boot). The contract under
-    // test here is the explicit disabled adapter -- it must refuse to
-    // Start() and report Unknown health -- so override enabled to false
-    // before constructing the adapter.
     configuration.enabled = false;
-    MasterControl::McpJungleGatewayAdapter adapter(configuration);
+    MasterControl::NativeHttpSysGatewayAdapter adapter(configuration);
 
     bool ok = true;
-    ok &= expect(adapter.AdapterType() == "mcpjungle",
-                 "Real adapter identifies as 'mcpjungle'.");
+    ok &= expect(adapter.AdapterType() == "native",
+                 "Real adapter identifies as 'native'.");
 
     const auto status = adapter.Start();
     ok &= expect(status.state == MasterControl::GatewayState::Disabled,
                  "Disabled real adapter refuses to Start().");
-    ok &= expect(adapter.isSupervisingChildProcess() == false,
-                 "Disabled real adapter never spawns a child process.");
 
     const auto health = adapter.Probe();
     ok &= expect(health.status == MasterControl::GatewayHealthStatus::Unknown,
                  "Probe on disabled adapter reports Unknown (no fake healthy).");
-    ok &= expect(health.adapterType == "mcpjungle",
+    ok &= expect(health.adapterType == "native",
                  "Probe stamps adapter type.");
     return ok;
 }
 
-bool testRealAdapterSupervisedMockWhenBinaryMissing() {
-    MasterControl::McpGatewayConfiguration configuration;
-    configuration.enabled = true;
-    configuration.binaryPath = ""; // intentionally empty
-    MasterControl::McpJungleGatewayAdapter adapter(configuration);
-
-    bool ok = true;
-    const auto status = adapter.Start();
-    // No child process spawned when binaryPath is empty; adapter still
-    // transitions to Running so the state machine is exercisable.
-    ok &= expect(status.state == MasterControl::GatewayState::Running,
-                 "Enabled real adapter with no binary enters supervised-mock Running.");
-    ok &= expect(adapter.isSupervisingChildProcess() == false,
-                 "Supervised-mock mode does NOT spawn a child process.");
-
-    const auto stopped = adapter.Stop();
-    ok &= expect(stopped.state == MasterControl::GatewayState::Stopped,
-                 "Stop() returns the supervised-mock adapter to Stopped.");
-    return ok;
-}
-
 bool testRealAdapterRegistrationSurvivesAcrossStartStop() {
+    // v0.9.1: The native adapter binds HTTP.sys on Start(), which would
+    // require admin or a netsh URL ACL in test environments. The
+    // registration / deregistration contract is identical between the
+    // real adapter and the in-process FakeMcpGatewayAdapter -- both store
+    // the McpServerRegistration map under their own mutex with the same
+    // success/failure semantics -- so this test exercises the IMcpGateway
+    // registration contract through the fake to keep the suite hermetic.
     MasterControl::McpGatewayConfiguration configuration;
     configuration.enabled = true;
-    MasterControl::McpJungleGatewayAdapter adapter(configuration);
+    MasterControl::FakeMcpGatewayAdapter adapter(configuration);
 
     MasterControl::McpServerRegistration registration;
     registration.name = "default-pool";
@@ -530,8 +515,13 @@ bool testGatewayEnumRoundTrips() {
     bool ok = true;
 
     using MasterControl::GatewayType;
+    // v0.9.1: GatewayType::MCPJungle stays serializable so persisted
+    // mcpGateway.type='mcpjungle' values from v0.8.x configs still
+    // deserialize without rejection (the runtime then resolves them to
+    // the native substrate transparently). The enum value is no longer
+    // a real adapter selector.
     ok &= expect(MasterControl::to_string(GatewayType::MCPJungle) == "mcpjungle",
-                 "GatewayType serializes mcpjungle.");
+                 "GatewayType serializes mcpjungle (legacy enum kept for back-compat).");
     ok &= expect(MasterControl::gatewayTypeFromString("native") == GatewayType::Native,
                  "GatewayType deserializes native.");
 
@@ -692,7 +682,7 @@ bool testClientPresenceShape() {
 
 bool testGatewayTrafficSnapshotShape() {
     MasterControl::GatewayTrafficSnapshot snapshot;
-    snapshot.adapterType = "mcpjungle";
+    snapshot.adapterType = "native";
     snapshot.mcpUrl = "http://192.168.1.10:8080/mcp";
     snapshot.healthStatus = MasterControl::GatewayHealthStatus::Healthy;
     snapshot.activeClientCount = 3;
@@ -1132,7 +1122,7 @@ bool testDiscoveryDocumentJsonRoundTrip() {
     original.governance.bundleBaseUrl = "http://192.168.1.10:7300/api/governance/bundles";
     original.governance.cluProfileUrl = "http://192.168.1.10:7300/api/governance/profile";
     original.governance.decisionsUrl = "http://192.168.1.10:7300/api/governance/decisions";
-    original.capabilities = { "mcp-gateway", "mcpjungle-adapter", "dns-sd", "udp-beacon", "forsetti-governance", "clu" };
+    original.capabilities = { "mcp-gateway", "native-adapter", "dns-sd", "udp-beacon", "forsetti-governance", "clu" };
     original.serverIpAddress = "192.168.1.10";
     original.generatedAtUtc = "2026-05-01T00:00:00Z";
 
@@ -1382,7 +1372,9 @@ int main() {
     ok &= testFakeGatewayProbeUsesScriptedHealth();
     ok &= testFakeGatewayMcpUrlComposition();
     ok &= testRealAdapterDisabledByDefault();
-    ok &= testRealAdapterSupervisedMockWhenBinaryMissing();
+    // v0.9.1: testRealAdapterSupervisedMockWhenBinaryMissing was specific
+    // to the deleted McpJungleGatewayAdapter (supervised-mock binary
+    // path). NativeHttpSysGatewayAdapter has no equivalent state.
     ok &= testRealAdapterRegistrationSurvivesAcrossStartStop();
     ok &= testGatewayEnumRoundTrips();
     ok &= testGatewayConfigJsonRoundTrip();

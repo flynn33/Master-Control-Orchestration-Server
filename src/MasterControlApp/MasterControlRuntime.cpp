@@ -10365,6 +10365,58 @@ bool MasterControlApplication::Impl::initialize() {
         }
     }
 
+    // v0.9.1: register the always-on baseline tools pool. Pre-v0.9.1 the
+    // 23-server catalog was advertised by name only -- no worker process
+    // was bound to any pool, so gateway tools/list returned [] on every
+    // fresh install. v0.9.1 ships an in-tree native worker
+    // (mcos-baseline-tools-worker.exe) that exposes mcos.echo / mcos.now /
+    // mcos.host_info / mcos.add. We force-upsert the pool here every boot
+    // (rather than seeding it through buildDefaultConfiguration) because
+    // the pool's executable path is install-location-dependent and must
+    // be resolved against the live executable directory: an MSI
+    // MajorUpgrade that relocates the install would leave a stale path
+    // baked into a buildDefaultConfiguration-issued seed.
+    {
+        const auto baselineWorkerPath =
+            (paths_.executableDirectory / "mcos-baseline-tools-worker.exe").string();
+
+        ManagedEndpointPool baselinePool;
+        baselinePool.poolId         = "baseline-tools";
+        baselinePool.kind           = EndpointPoolKind::McpServer;
+        baselinePool.displayName    = "MCOS Baseline Tools";
+        baselinePool.logicalMcpUrl  = ""; // logical -- routed through gateway
+        baselinePool.template_.executable        = baselineWorkerPath;
+        baselinePool.template_.args              = {};
+        baselinePool.template_.workingDirectory  = paths_.executableDirectory.string();
+        baselinePool.template_.transport         = "stdio_jsonrpc";
+        baselinePool.template_.healthProbe.transport = "stdio_handshake";
+        baselinePool.scalePolicy.minInstances              = 1;
+        baselinePool.scalePolicy.maxInstances              = 1;
+        baselinePool.scalePolicy.maxActiveLeasesPerInstance = 4;
+        baselinePool.scalePolicy.scaleOutQueueWaitMs        = 1500;
+        baselinePool.scalePolicy.scaleInIdleSeconds         = 300;
+
+        workerSupervisor_->upsertPool(baselinePool);
+    }
+
+    // v0.9.1: auto-spawn instances for any pool whose minInstances >= 1.
+    // The persisted-pool hydration above only registers definitions; it
+    // does NOT spawn children. Without this loop the gateway's tools/list
+    // would still return [] on a fresh install because no instance is
+    // Ready to be queried via the stdio bridge. ensureMinInstances is
+    // idempotent so this is safe to run after every boot. Failures
+    // (missing binary, CreateProcessW error) leave the pool in a
+    // supervised-mock or Failed state -- exactly the honest reporting
+    // contract from ADR-002 §9; the dashboard surfaces the real state.
+    {
+        const auto livePools = workerSupervisor_->listPools();
+        for (const auto& pool : livePools) {
+            if (pool.scalePolicy.minInstances >= 1) {
+                workerSupervisor_->ensureMinInstances(pool.poolId);
+            }
+        }
+    }
+
     // PHASE-07 (ADR-002 §8): construct the lease router that resolves
     // LeaseRequest -> EndpointLease using sticky-session + least-loaded
     // routing, with same-type scale-out when all Ready instances are at
@@ -10421,8 +10473,11 @@ bool MasterControlApplication::Impl::initialize() {
     // PHASE-02: register one stable logical MCP endpoint with the gateway
     // adapter so subsequent phases (PHASE-06 worker pools, PHASE-07 lease
     // routing) have a known registration shape to extend. This is an
-    // in-memory registration only; the adapter reconciles with the real
-    // backend on Start() once a binary is configured.
+    // in-memory registration only; the gateway substrate (the native
+    // HTTP.sys adapter as of v0.9.0) routes incoming MCP traffic through
+    // the WorkerSupervisor + LeaseRouter stack rather than this entry --
+    // the entry is a marker so /api/gateway/status reports a non-zero
+    // registration count for honest legibility.
     {
         McpServerRegistration logicalPool;
         logicalPool.name = "mcos-default-pool";
@@ -10430,7 +10485,7 @@ bool MasterControlApplication::Impl::initialize() {
         logicalPool.transport = McpServerTransport::StreamableHttp;
         logicalPool.url = "http://127.0.0.1:" + std::to_string(configurationService_->current().browserPort) + "/mcp/pools/default/mcp";
         logicalPool.sessionMode = "stateful";
-        logicalPool.headers["X-MCOS-Gateway-Source"] = "mcpjungle";
+        logicalPool.headers["X-MCOS-Gateway-Source"] = "native";
         (void)mcpGateway_->RegisterHttpServer(logicalPool);
     }
 

@@ -1,11 +1,32 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.9.0",
-  "current_tag": "v0.9.0",
+  "current_version": "0.9.1",
+  "current_tag": "v0.9.1",
   "released_at": "2026-05-08",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.9.1",
+      "tag": "v0.9.1",
+      "released_at": "2026-05-08",
+      "commit": "pending",
+      "summary": "Closes the three deferred items from v0.9.0's known-issues list. (1) Empty tools catalog: MCOS now ships an in-tree native MCP worker (mcos-baseline-tools-worker.exe) registered as a managed pool 'baseline-tools' that auto-spawns at runtime boot via WorkerSupervisor::ensureMinInstances. The worker speaks line-delimited JSON-RPC 2.0 over stdin/stdout (matching WorkerSupervisor::sendStdioJsonRpc's framing) and exposes four tools: mcos.echo, mcos.now, mcos.host_info, mcos.add. The gateway's tools/list now returns these four tools (qualified as baseline-tools__mcos.echo, etc.) on a fresh install with zero operator action. tools/call dispatches end-to-end through gateway -> stdio bridge -> worker -> response. The 23-server operator-facing catalog inventory remains untouched; operators bind real implementations to those pools as they deploy them. (2) Ping method: NativeHttpSysGatewayAdapter::handleMcpRequest now handles JSON-RPC method 'ping' (between 'initialize' and 'tools/list') and returns the spec-compliant empty-result envelope. Pre-v0.9.1 the gateway returned -32601 which made every MCP-client liveness probe count as a failed call in the activity log. (3) MCPJungle removal: McpJungleGatewayAdapter (the original v0.6.x supervised-binary adapter) is fully deleted from include/MasterControl/McpGatewayAdapters.h, src/MasterControlApp/McpGatewayAdapters.cpp, and tests/MasterControlOrchestrationServerTests.cpp. The honest-503 placeholder listener that lived inside it is gone too -- the native substrate has been the only adapter constructed by the runtime since v0.9.0, so the placeholder was unreachable. The GatewayType::MCPJungle enum value is retained for back-compat config deserialization (operator JSON still carrying type='mcpjungle' continues to round-trip without rejection; the runtime ignores the value and constructs the native substrate). winhttp.lib / winhttp.h dropped from McpGatewayAdapters.cpp because the only WinHTTP code path lived inside the deleted McpJungle adapter's HTTP probe.",
+      "entries": [
+        "feat(worker): new in-tree native MCP worker mcos-baseline-tools-worker.exe (src/MasterControlBaselineToolsWorker/main.cpp). Speaks line-delimited JSON-RPC 2.0 over stdin/stdout. Implements MCP methods initialize, ping, tools/list, tools/call. Exposes four tools: mcos.echo (echo back text -- proves end-to-end gateway routing), mcos.now (return UTC ISO-8601 timestamp -- proves real Win32 access), mcos.host_info (return hostname/OS/architecture/CPU count -- proves the worker is observing live state), mcos.add (sum two integers -- proves typed argument round-trip). Linked against nlohmann_json. Built under MSVC /W4 /WX /permissive- /EHsc /utf-8. Installed alongside the main MCOS executables to %INSTALLFOLDER%/mcos-baseline-tools-worker.exe.",
+        "feat(runtime): MasterControlRuntime now force-upserts the 'baseline-tools' pool every boot. Pool template_.executable resolves against paths_.executableDirectory so MSI MajorUpgrade relocations don't leave a stale path. minInstances=1, maxInstances=1, maxActiveLeasesPerInstance=4. After all pools are hydrated, the runtime calls ensureMinInstances(poolId) for every pool with minInstances>=1 so the supervised child actually spawns at boot rather than waiting for an operator-issued POST /api/pools/{id}/scale. Failure modes (binary missing, CreateProcessW error) leave the pool in supervised-mock or Failed state per ADR-002 §9 -- no fabricated success.",
+        "feat(gateway): NativeHttpSysGatewayAdapter::handleMcpRequest now handles JSON-RPC method 'ping' returning the spec-compliant empty-result envelope. Pre-v0.9.1 the gateway returned -32601 'Method not implemented: ping' which made every MCP-client liveness probe count as a failed call in /api/activity even though the gateway was demonstrably alive.",
+        "refactor(gateway): McpJungleGatewayAdapter deleted -- class declaration removed from include/MasterControl/McpGatewayAdapters.h, full implementation (~510 lines including the WinHTTP probe and the honest-503 placeholder listener loop) removed from src/MasterControlApp/McpGatewayAdapters.cpp. The header now declares only NativeHttpSysGatewayAdapter and FakeMcpGatewayAdapter. Tombstone comment in the .cpp documents the removal so a `git log -- McpGatewayAdapters.cpp` still tells the operator why the adapter is gone.",
+        "refactor(gateway): McpGatewayAdapters.cpp drops <winhttp.h> and the winhttp.lib pragma. The only WinHTTP code path was inside the deleted McpJungleGatewayAdapter::probeOverHttp; the native adapter does an in-process state check for Probe() and uses HTTP.sys (httpapi.lib) for listening. Drops <filesystem> include for the same reason. Saves a transitive dep at link time.",
+        "test: testRealAdapterDisabledByDefault rewritten to construct a NativeHttpSysGatewayAdapter (the surviving production substrate) instead of the deleted McpJungleGatewayAdapter, asserting type='native' and that Start() with enabled=false returns Disabled state without binding HTTP.sys. testRealAdapterRegistrationSurvivesAcrossStartStop switched to FakeMcpGatewayAdapter so the IMcpGateway registration contract is exercised without requiring HTTP.sys URL ACL or admin rights in the test environment. testRealAdapterSupervisedMockWhenBinaryMissing removed -- it tested the deleted McpJungleGatewayAdapter's supervised-mock binary path, which no longer exists. testGatewayConfigJsonRoundTrip and testDiscoveryDocumentJsonRoundTrip kept asserting type='mcpjungle' string round-trips so the back-compat schema acceptance is covered.",
+        "fix(runtime): IMcpGateway logical-pool registration's X-MCOS-Gateway-Source header value updated from 'mcpjungle' to 'native' (the substrate has been native-only since v0.9.0; the header was stale).",
+        "docs(version): bump 0.9.0 -> 0.9.1 (closes all three v0.9.0 known-issue items; no architecture change, patch bump per scheme)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; activity stream as scrolling SwapChainPanel.",
+        "23-server operator-facing catalog (filesystem, memory, sequential-thinking, ...) is still advertised by name only -- baseline-tools is a single in-tree pool exposing four meta-tools. Operator-bound external workers for the 23 named pools land in v0.9.x+."
+      ]
+    },
     {
       "version": "0.9.0",
       "tag": "v0.9.0",
