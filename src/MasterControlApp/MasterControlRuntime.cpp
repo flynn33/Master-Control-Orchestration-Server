@@ -9164,36 +9164,62 @@ public:
                 // ~1.4 s in the worst case (all unreachable). Most probes
                 // return immediately for reachable endpoints.
                 if (!endpoint.host.empty() && endpoint.port != 0) {
-                    stat.endpointHostPort = endpoint.host + ":" + std::to_string(endpoint.port);
+                    // v0.8.1 / v0.8.2: bracket-wrap IPv6 literals per RFC 3986
+                    // for the operator-facing display string, and probe via
+                    // getaddrinfo so both IPv4 and IPv6 hosts (and DNS names)
+                    // resolve. Pre-v0.8.2 the probe was AF_INET-only via
+                    // inet_pton -- IPv6 ULAs (the seven default sub-agent
+                    // hosts on a stock install) silently failed parse and
+                    // the dot stayed red. Now we try every address family
+                    // returned by getaddrinfo until one connects or all
+                    // exhaust the 200 ms timeout.
+                    const bool isIPv6Literal = endpoint.host.find(':') != std::string::npos;
+                    if (isIPv6Literal) {
+                        stat.endpointHostPort = "[" + endpoint.host + "]:" + std::to_string(endpoint.port);
+                    } else {
+                        stat.endpointHostPort = endpoint.host + ":" + std::to_string(endpoint.port);
+                    }
 #if defined(_WIN32)
-                    SOCKET s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-                    if (s != INVALID_SOCKET) {
-                        u_long nonblocking = 1;
-                        ::ioctlsocket(s, FIONBIO, &nonblocking);
-                        sockaddr_in addr{};
-                        addr.sin_family = AF_INET;
-                        addr.sin_port   = htons(endpoint.port);
-                        ::inet_pton(AF_INET, endpoint.host.c_str(), &addr.sin_addr);
-                        const int connectResult = ::connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-                        if (connectResult == 0) {
-                            stat.reachable = true;
-                        } else if (WSAGetLastError() == WSAEWOULDBLOCK) {
-                            fd_set writeSet{};
-                            FD_ZERO(&writeSet);
-                            FD_SET(s, &writeSet);
-                            timeval tv{};
-                            tv.tv_sec  = 0;
-                            tv.tv_usec = 200 * 1000;  // 200 ms
-                            const int selectResult = ::select(0, nullptr, &writeSet, nullptr, &tv);
-                            if (selectResult > 0) {
-                                int sockErr = 0;
-                                int sockErrLen = sizeof(sockErr);
-                                ::getsockopt(s, SOL_SOCKET, SO_ERROR,
-                                             reinterpret_cast<char*>(&sockErr), &sockErrLen);
-                                stat.reachable = (sockErr == 0);
+                    addrinfo hints{};
+                    hints.ai_family   = AF_UNSPEC;       // accept v4 + v6
+                    hints.ai_socktype = SOCK_STREAM;
+                    hints.ai_protocol = IPPROTO_TCP;
+                    addrinfo* resolved = nullptr;
+                    const std::string portStr = std::to_string(endpoint.port);
+                    const int gaiResult = ::getaddrinfo(endpoint.host.c_str(),
+                                                         portStr.c_str(),
+                                                         &hints, &resolved);
+                    if (gaiResult == 0 && resolved != nullptr) {
+                        for (addrinfo* it = resolved; it != nullptr && !stat.reachable; it = it->ai_next) {
+                            SOCKET s = ::socket(it->ai_family, it->ai_socktype, it->ai_protocol);
+                            if (s == INVALID_SOCKET) continue;
+                            u_long nonblocking = 1;
+                            ::ioctlsocket(s, FIONBIO, &nonblocking);
+                            const int connectResult = ::connect(s, it->ai_addr, (int)it->ai_addrlen);
+                            if (connectResult == 0) {
+                                stat.reachable = true;
+                            } else if (WSAGetLastError() == WSAEWOULDBLOCK) {
+                                fd_set writeSet{};
+                                FD_ZERO(&writeSet);
+                                FD_SET(s, &writeSet);
+                                fd_set errorSet{};
+                                FD_ZERO(&errorSet);
+                                FD_SET(s, &errorSet);
+                                timeval tv{};
+                                tv.tv_sec  = 0;
+                                tv.tv_usec = 200 * 1000;  // 200 ms per address
+                                const int selectResult = ::select(0, nullptr, &writeSet, &errorSet, &tv);
+                                if (selectResult > 0 && FD_ISSET(s, &writeSet)) {
+                                    int sockErr = 0;
+                                    int sockErrLen = sizeof(sockErr);
+                                    ::getsockopt(s, SOL_SOCKET, SO_ERROR,
+                                                 reinterpret_cast<char*>(&sockErr), &sockErrLen);
+                                    stat.reachable = (sockErr == 0);
+                                }
                             }
+                            ::closesocket(s);
                         }
-                        ::closesocket(s);
+                        ::freeaddrinfo(resolved);
                     }
 #endif
                     stat.lastProbedAtUtc = timestampNowUtc();

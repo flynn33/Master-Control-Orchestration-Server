@@ -1,11 +1,27 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.8.1",
-  "current_tag": "v0.8.1",
+  "current_version": "0.8.2",
+  "current_tag": "v0.8.2",
   "released_at": "2026-05-08",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.8.2",
+      "tag": "v0.8.2",
+      "released_at": "2026-05-08",
+      "commit": "pending",
+      "summary": "Sub-agent reachability probe is no longer IPv4-only. Pre-v0.8.2 AdminApiService::snapshot's per-sub-agent reachability probe used a bare AF_INET socket + inet_pton(AF_INET, ...) -- the seven default inventory entries (sentinel, architect, forge, scribe, recon, nexus, watchtower) advertise IPv6 ULA hosts (fde3:c02c:3afa:4572:6687:be77:e9f1:32c8) so inet_pton silently failed parse and every dot painted red on a stock install. v0.8.2 rewrites the probe around getaddrinfo with AF_UNSPEC hints: every address family the resolver returns is tried until one connects or all exhaust the 200 ms-per-address timeout. IPv4, IPv6, and DNS-name hosts all probe correctly. endpointHostPort now bracket-wraps IPv6 literals per RFC 3986 (closing the v0.7.6 known issue) so the dashboard reads e.g. '[fde3:...:32c8]:7201' instead of the visually-ambiguous 'fde3:...:32c8:7201'.",
+      "entries": [
+        "fix(runtime): AdminApiService::snapshot reachability probe rewritten on getaddrinfo. AF_UNSPEC hints accept both AF_INET and AF_INET6; the loop tries every resolved address with non-blocking connect + 200 ms select, succeeding on the first reachable family. Both fd_set writeSet and errorSet are passed to select so a connection refusal lands in error rather than write -- avoids spurious reachable=true on hosts that explicitly refused.",
+        "fix(runtime): endpointHostPort string now wraps IPv6 literals in brackets ('[fde3:...:32c8]:7201') per RFC 3986. v0.7.6 known issue (recorded in VERSION.json) is closed.",
+        "docs(version): bump 0.8.1 -> 0.8.2 (IPv6-aware sub-agent reachability probe + RFC 3986 IPv6 bracket-wrap)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; activity stream as scrolling SwapChainPanel.",
+        "Discovery doc still serves the literal listen URL when the gateway is bound to a wildcard. v0.7.7 fixed only the operator display surfaces."
+      ]
+    },
     {
       "version": "0.8.1",
       "tag": "v0.8.1",
