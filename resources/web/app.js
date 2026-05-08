@@ -1275,18 +1275,60 @@ function renderRuntime() {
   const subs = endpoints.filter((e) => e.kind === 'sub_agent');
   return `
     <div class="runtime-grid">
+      ${renderMcpServerUtilizationPanel({ deck: 'runtime' })}
       <article class="panel-block wide">
-        <h3>MCP Servers (${mcp.length})</h3>
+        <h3>MCP Servers (${mcp.length}) — inventory table</h3>
         <p class="muted">Universal-use catalog. Any authenticated LAN client may invoke these.</p>
         ${endpointTable(mcp)}
       </article>
+      ${renderSubAgentUtilizationPanel({ deck: 'runtime' })}
       <article class="panel-block wide">
-        <h3>Sub-Agents (${subs.length})</h3>
+        <h3>Sub-Agents (${subs.length}) — inventory table</h3>
         <p class="muted">Specialized lanes. Each sub-agent is also surfaced in the per-agent utilization panel on the Overview / Telemetry decks.</p>
         ${subAgentTable(subs)}
       </article>
     </div>
   `;
+}
+
+// v0.8.3: per-MCP-server live utilization panel. Mirrors the
+// sub-agent panel (v0.7.1+) so both endpoint kinds share the same
+// card surface: utilization bar, reachability dot, host:port,
+// active-client list. state.dashboard.mcpServerRuntimeStats carries
+// the runtime-side telemetry; runtime fills the same shape as for
+// sub-agents.
+function renderMcpServerUtilizationPanel(options) {
+  options = options || {};
+  const stats = (state.dashboard && state.dashboard.mcpServerRuntimeStats) || [];
+  if (stats.length === 0) {
+    return `
+      <article class="panel-block wide">
+        <h3>MCP Servers</h3>
+        <p class="muted">No MCP servers registered. Use <code>POST /api/runtime/mcp-servers</code> (or seed via the inventory) to register one. Adding a managed pool with the same id via <code>POST /api/pools</code> enables autoscale + utilization tracking.</p>
+      </article>
+    `;
+  }
+  const cards = stats.map(renderMcpServerCard).join('');
+  return `
+    <article class="panel-block wide subagent-panel">
+      <h3>MCP Servers (${stats.length})</h3>
+      <p class="muted">Live utilization. Probes reachability per server (TCP connect, 200 ms timeout). Active leases show which LAN clients are using each server right now. Same telemetry shape as sub-agent cards.</p>
+      <div class="subagent-card-grid">
+        ${cards}
+      </div>
+    </article>
+  `;
+}
+
+function renderMcpServerCard(stat) {
+  // v0.8.3: reuses renderSubAgentCard's exact visual structure -- the
+  // shape of the data is identical, only the field name for the id
+  // differs (mcpServerId vs subAgentId), so we synthesize a
+  // sub-agent-shaped object and delegate.
+  const synthetic = Object.assign({}, stat, {
+    subAgentId: stat.mcpServerId || stat.subAgentId,
+  });
+  return renderSubAgentCard(synthetic);
 }
 
 // v0.7.1: extended sub-agents table with live utilization + active-client

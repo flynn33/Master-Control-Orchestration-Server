@@ -1727,6 +1727,44 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                     }
                     snapshot.subAgentRuntimeStats.push_back(std::move(stat));
                 }
+
+                // v0.8.3: parallel parse for MCP servers. Identical to
+                // the sub-agent block above except for the array name
+                // and the id field name (mcpServerId).
+                snapshot.mcpServerRuntimeStats.clear();
+                for (const auto& value : dashboardJson->GetNamedArray(L"mcpServerRuntimeStats", JsonArray())) {
+                    if (value.ValueType() != JsonValueType::Object) continue;
+                    const auto obj = value.GetObject();
+                    ShellMcpServerRuntimeStat stat;
+                    stat.mcpServerId         = wideFromUtf8(jsonStringOr(obj, L"mcpServerId", ""));
+                    stat.displayName         = wideFromUtf8(jsonStringOr(obj, L"displayName", ""));
+                    stat.specialization      = wideFromUtf8(jsonStringOr(obj, L"specialization", ""));
+                    stat.poolId              = wideFromUtf8(jsonStringOr(obj, L"poolId", ""));
+                    stat.readyInstanceCount  = static_cast<int>(jsonNumberOr(obj, L"readyInstanceCount"));
+                    stat.totalInstanceCount  = static_cast<int>(jsonNumberOr(obj, L"totalInstanceCount"));
+                    stat.activeLeaseCount    = static_cast<int>(jsonNumberOr(obj, L"activeLeaseCount"));
+                    stat.leaseCapacity       = static_cast<int>(jsonNumberOr(obj, L"leaseCapacity"));
+                    stat.maxInstancesAllowed = static_cast<int>(jsonNumberOr(obj, L"maxInstancesAllowed"));
+                    stat.utilizationPercent  = jsonNumberOr(obj, L"utilizationPercent");
+                    stat.autoscaleEnabled    = jsonBoolOr(obj, L"autoscaleEnabled", false);
+                    stat.reachable           = jsonBoolOr(obj, L"reachable", false);
+                    stat.endpointHostPort    = wideFromUtf8(jsonStringOr(obj, L"endpointHostPort", ""));
+                    stat.lastProbedAtUtc     = wideFromUtf8(jsonStringOr(obj, L"lastProbedAtUtc", ""));
+                    stat.status              = wideFromUtf8(jsonStringOr(obj, L"status", ""));
+                    if (obj.HasKey(L"activeClients")) {
+                        for (const auto& cval : obj.GetNamedArray(L"activeClients", JsonArray())) {
+                            if (cval.ValueType() != JsonValueType::Object) continue;
+                            const auto cobj = cval.GetObject();
+                            ShellMcpServerLeaseHolder holder;
+                            holder.ipAddress     = wideFromUtf8(jsonStringOr(cobj, L"ipAddress", ""));
+                            holder.clientType    = wideFromUtf8(jsonStringOr(cobj, L"clientType", ""));
+                            holder.sessionId     = wideFromUtf8(jsonStringOr(cobj, L"sessionId", ""));
+                            holder.acquiredAtUtc = wideFromUtf8(jsonStringOr(cobj, L"acquiredAtUtc", ""));
+                            stat.activeClients.push_back(std::move(holder));
+                        }
+                    }
+                    snapshot.mcpServerRuntimeStats.push_back(std::move(stat));
+                }
                 appendJsonArrayRows(
                     dashboardJson->GetNamedArray(L"installHistory", JsonArray()),
                     installRow,

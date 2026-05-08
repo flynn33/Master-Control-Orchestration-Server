@@ -1151,11 +1151,41 @@ struct SubAgentRuntimeStat final {
     std::string status;              // "online" / "offline" / "degraded" / "unknown" passthrough from inventory
 };
 
+// v0.8.3: per-MCP-server runtime stats. Mirrors SubAgentRuntimeStat
+// exactly (utilization bar, reachability dot, host:port, active-client
+// list) so the dashboard and the WinUI shell can render MCP server
+// cards with the same telemetry surface that v0.7.6 added for
+// sub-agents. Single shared lease-holder type because LAN-client
+// attribution is identical regardless of endpoint kind.
+using McpServerLeaseHolder = SubAgentLeaseHolder;
+
+struct McpServerRuntimeStat final {
+    std::string mcpServerId;
+    std::string displayName;
+    std::string specialization;
+    std::string poolId;             // empty if no managed pool wraps this server
+    int readyInstanceCount = 0;
+    int totalInstanceCount = 0;
+    int activeLeaseCount = 0;
+    int leaseCapacity = 0;
+    int maxInstancesAllowed = 0;
+    double utilizationPercent = 0.0;
+    bool autoscaleEnabled = false;
+    std::vector<McpServerLeaseHolder> activeClients;
+    bool reachable = false;
+    std::string endpointHostPort;
+    std::string lastProbedAtUtc;
+    std::string status;
+};
+
 struct DashboardSnapshot final {
     HostTelemetrySnapshot telemetry;
     std::vector<RuntimeEndpoint> endpoints;
     std::vector<SubAgentGroupDefinition> subAgentGroups;
     std::vector<SubAgentRuntimeStat> subAgentRuntimeStats;
+    // v0.8.3: parallel array for MCP servers, populated by the same
+    // probe + pool-lookup pipeline that produces subAgentRuntimeStats.
+    std::vector<McpServerRuntimeStat> mcpServerRuntimeStats;
     ResourceAllocationProfile resourceAllocation;
     SecuritySettings security;
     std::vector<InstallProvenance> installHistory;
@@ -1848,11 +1878,31 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     status)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    McpServerRuntimeStat,
+    mcpServerId,
+    displayName,
+    specialization,
+    poolId,
+    readyInstanceCount,
+    totalInstanceCount,
+    activeLeaseCount,
+    leaseCapacity,
+    maxInstancesAllowed,
+    utilizationPercent,
+    autoscaleEnabled,
+    activeClients,
+    reachable,
+    endpointHostPort,
+    lastProbedAtUtc,
+    status)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     DashboardSnapshot,
     telemetry,
     endpoints,
     subAgentGroups,
     subAgentRuntimeStats,
+    mcpServerRuntimeStats,
     resourceAllocation,
     security,
     installHistory,

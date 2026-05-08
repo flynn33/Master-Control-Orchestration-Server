@@ -80,6 +80,8 @@ private:
     // containing the agent name, utilization bar (ProgressBar), reachability
     // dot, host:port endpoint, pool note, and active-client list.
     void PopulateSubAgentCards(const ::MasterControlShell::ShellSnapshot& snapshot);
+    // v0.8.3: same shape, sourced from ShellSnapshot.mcpServerRuntimeStats.
+    void PopulateMcpServerCards(const ::MasterControlShell::ShellSnapshot& snapshot);
 
     ::MasterControlShell::ShellRuntime* runtime_ = nullptr;
     std::function<void()> refreshRequested_;

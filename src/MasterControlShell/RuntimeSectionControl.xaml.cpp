@@ -112,6 +112,8 @@ void RuntimeSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnaps
     // utilization bar (always-visible 0-100), reachability dot,
     // endpoint host:port, pool/no-pool note, active-client list.
     PopulateSubAgentCards(snapshot);
+    // v0.8.3: same render path, sourced from mcpServerRuntimeStats.
+    PopulateMcpServerCards(snapshot);
 
     customMcpServers_.clear();
     customSubAgents_.clear();
@@ -1007,7 +1009,31 @@ winrt::Windows::Foundation::IAsyncAction RuntimeSectionControl::RemoveAppleHostA
 // endpoint, pool/no-pool note, and the active-client list. Cards are
 // rebuilt on every ApplySnapshot tick; in-progress operator focus is not
 // at risk because these are read-only TextBlocks/Borders without input.
-void RuntimeSectionControl::PopulateSubAgentCards(const ::MasterControlShell::ShellSnapshot& snapshot) {
+// v0.8.3: stat-kind-overloaded helpers so the templated card builder
+// below can resolve the per-kind ID field (subAgentId vs mcpServerId)
+// uniformly. Used as the fallback display label when the stat's
+// displayName is empty.
+inline const std::wstring& endpointStatId(const ::MasterControlShell::ShellSubAgentRuntimeStat& s) {
+    return s.subAgentId;
+}
+inline const std::wstring& endpointStatId(const ::MasterControlShell::ShellMcpServerRuntimeStat& s) {
+    return s.mcpServerId;
+}
+
+// v0.8.3: templated card-grid renderer shared between
+// PopulateSubAgentCards and PopulateMcpServerCards. Both stat structs
+// carry the same field set apart from the ID, which we resolve via the
+// overloaded endpointStatId() helper above. kindNoun is the singular
+// label used in the headline ("sub-agent" / "MCP server"). poolHint is
+// the muted note rendered when no managed pool wraps the entry.
+template <class StatT>
+void renderEndpointStatCardGrid(
+    winrt::Microsoft::UI::Xaml::Controls::StackPanel stack,
+    winrt::Microsoft::UI::Xaml::Controls::TextBlock headlineText,
+    const std::vector<StatT>& stats,
+    const wchar_t* kindNoun,
+    const wchar_t* emptyMessage,
+    const wchar_t* poolHintNoPool) {
     using namespace winrt::Microsoft::UI::Xaml;
     using namespace winrt::Microsoft::UI::Xaml::Controls;
     using namespace winrt::Microsoft::UI::Xaml::Media;
@@ -1015,24 +1041,22 @@ void RuntimeSectionControl::PopulateSubAgentCards(const ::MasterControlShell::Sh
     using winrt::Windows::UI::Color;
     using winrt::Windows::UI::ColorHelper;
 
-    auto stack = SubAgentsCardStack();
     stack.Children().Clear();
 
-    if (snapshot.subAgentRuntimeStats.empty()) {
-        SubAgentsHeadlineText().Text(L"No sub-agents registered yet. Use the New Sub-Agent action above to publish one.");
+    if (stats.empty()) {
+        headlineText.Text(winrt::hstring(emptyMessage));
         return;
     }
 
-    // Headline summarizes total + reachable count so the operator sees a
-    // health snapshot at a glance.
     int reachableCount = 0;
-    for (const auto& s : snapshot.subAgentRuntimeStats) {
+    for (const auto& s : stats) {
         if (s.reachable) ++reachableCount;
     }
-    std::wstring headline = std::to_wstring(snapshot.subAgentRuntimeStats.size()) + L" sub-agent"
-        + (snapshot.subAgentRuntimeStats.size() == 1 ? L"" : L"s") + L" registered ; "
-        + std::to_wstring(reachableCount) + L" reachable.";
-    SubAgentsHeadlineText().Text(winrt::hstring(headline));
+    std::wstring kindPlural = std::wstring(kindNoun);
+    if (stats.size() != 1) kindPlural += L"s";
+    std::wstring headline = std::to_wstring(stats.size()) + L" " + kindPlural
+        + L" registered ; " + std::to_wstring(reachableCount) + L" reachable.";
+    headlineText.Text(winrt::hstring(headline));
 
     // Tron-themed color helpers. We avoid pulling in App.xaml resources
     // here so the cards work even before that ResourceDictionary is
@@ -1045,7 +1069,7 @@ void RuntimeSectionControl::PopulateSubAgentCards(const ::MasterControlShell::Sh
     const auto critColor    = fromHex(0xff, 0x3a, 0x5a);
     const auto neutralColor = fromHex(0x8c, 0xb7, 0xc4);
 
-    for (const auto& stat : snapshot.subAgentRuntimeStats) {
+    for (const auto& stat : stats) {
         // v0.8.1: Tron CLU red-orange accent stroke (was cyan
         // 0x00,0xf6,0xff in v0.7.x).
         Border card;
@@ -1078,7 +1102,7 @@ void RuntimeSectionControl::PopulateSubAgentCards(const ::MasterControlShell::Sh
         header.Orientation(Orientation::Horizontal);
         header.Spacing(10);
         TextBlock nameText;
-        nameText.Text(winrt::hstring(stat.displayName.empty() ? stat.subAgentId : stat.displayName));
+        nameText.Text(winrt::hstring(stat.displayName.empty() ? endpointStatId(stat) : stat.displayName));
         nameText.FontSize(16);
         nameText.FontWeight(winrt::Windows::UI::Text::FontWeight{600});
         TextBlock specText;
@@ -1182,7 +1206,7 @@ void RuntimeSectionControl::PopulateSubAgentCards(const ::MasterControlShell::Sh
                        stat.autoscaleEnabled ? L"on" : L"off");
             poolNote.Text(poolBuf);
         } else {
-            poolNote.Text(L"No managed pool. POST /api/pools with matching id to enable autoscale.");
+            poolNote.Text(winrt::hstring(poolHintNoPool));
         }
         poolNote.FontSize(11);
         poolNote.Foreground(SolidColorBrush(neutralColor));
@@ -1201,7 +1225,8 @@ void RuntimeSectionControl::PopulateSubAgentCards(const ::MasterControlShell::Sh
 
         if (stat.activeClients.empty()) {
             TextBlock noClients;
-            noClients.Text(L"No active clients leasing this sub-agent.");
+            const std::wstring noClientsLine = std::wstring(L"No active clients leasing this ") + kindNoun + L".";
+            noClients.Text(winrt::hstring(noClientsLine));
             noClients.FontSize(11);
             noClients.Foreground(SolidColorBrush(neutralColor));
             inner.Children().Append(noClients);
@@ -1227,6 +1252,28 @@ void RuntimeSectionControl::PopulateSubAgentCards(const ::MasterControlShell::Sh
         card.Child(inner);
         stack.Children().Append(card);
     }
+}
+
+// v0.7.6 / v0.8.3: thin adapters that route the per-kind XAML element
+// names + headlines through the templated renderer above.
+void RuntimeSectionControl::PopulateSubAgentCards(const ::MasterControlShell::ShellSnapshot& snapshot) {
+    renderEndpointStatCardGrid(
+        SubAgentsCardStack(),
+        SubAgentsHeadlineText(),
+        snapshot.subAgentRuntimeStats,
+        L"sub-agent",
+        L"No sub-agents registered yet. Use the New Sub-Agent action above to publish one.",
+        L"No managed pool. POST /api/pools with matching id to enable autoscale.");
+}
+
+void RuntimeSectionControl::PopulateMcpServerCards(const ::MasterControlShell::ShellSnapshot& snapshot) {
+    renderEndpointStatCardGrid(
+        McpServersCardStack(),
+        McpServersHeadlineText(),
+        snapshot.mcpServerRuntimeStats,
+        L"MCP server",
+        L"No MCP servers registered yet. Use POST /api/runtime/mcp-servers to publish one.",
+        L"No managed pool. POST /api/pools with matching id to enable autoscale.");
 }
 
 } // namespace winrt::MasterControlShell::implementation

@@ -80,6 +80,35 @@ struct ShellSubAgentRuntimeStat final {
     std::vector<ShellSubAgentLeaseHolder> activeClients;
 };
 
+// v0.8.3: parallel struct for MCP servers. Identical fields to
+// ShellSubAgentRuntimeStat -- the only difference is the id field's
+// name (mcpServerId vs subAgentId). ShellRuntime::CaptureSnapshot
+// parses this from /api/dashboard.mcpServerRuntimeStats; the WinUI
+// shell's Runtime section renders an MCP Servers card grid mirror of
+// the Sub-Agents card grid built in v0.7.6. Reusing the lease-holder
+// type because LAN-client attribution is identical regardless of
+// endpoint kind.
+using ShellMcpServerLeaseHolder = ShellSubAgentLeaseHolder;
+
+struct ShellMcpServerRuntimeStat final {
+    std::wstring mcpServerId;
+    std::wstring displayName;
+    std::wstring specialization;
+    std::wstring poolId;
+    int readyInstanceCount = 0;
+    int totalInstanceCount = 0;
+    int activeLeaseCount = 0;
+    int leaseCapacity = 0;
+    int maxInstancesAllowed = 0;
+    double utilizationPercent = 0.0;
+    bool autoscaleEnabled = false;
+    bool reachable = false;
+    std::wstring endpointHostPort;
+    std::wstring lastProbedAtUtc;
+    std::wstring status;
+    std::vector<ShellMcpServerLeaseHolder> activeClients;
+};
+
 
 
 // Live activity stream — every incoming admin API request, governance
@@ -383,6 +412,9 @@ struct ShellSnapshot final {
     std::vector<ShellRuntimeEndpoint> endpoints;
     std::vector<ShellSubAgentGroupDefinition> subAgentGroups;
     std::vector<ShellSubAgentRuntimeStat> subAgentRuntimeStats;
+    // v0.8.3: parallel array for MCP servers. Same parser, same render
+    // pipeline as sub-agents above.
+    std::vector<ShellMcpServerRuntimeStat> mcpServerRuntimeStats;
     std::vector<ShellAppleRemoteHost> appleRemoteHosts;
     std::vector<ShellAppleOperationRecord> appleOperations;
     std::vector<ShellNavigationPointer> navigationPointers;

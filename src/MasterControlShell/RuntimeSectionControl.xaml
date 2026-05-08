@@ -47,6 +47,22 @@
                 </Border>
             </Grid>
 
+            <!-- v0.8.3 MCP Servers card grid. Mirror of the Sub-Agents
+                 card grid below; same per-card layout (name, reachability
+                 dot, utilization bar with active/capacity ratio,
+                 host:port, active-client roster) but driven from
+                 snapshot.mcpServerRuntimeStats. Built imperatively in
+                 RuntimeSectionControl::PopulateMcpServerCards. Operator
+                 pointed out that the inventory has 17+ MCP servers and
+                 they had no card surface; v0.8.3 closes that gap. -->
+            <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="14">
+                    <TextBlock Text="MCP Servers" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock x:Name="McpServersHeadlineText" Style="{StaticResource ShellLabelTextStyle}" Text="Loading MCP server telemetry..." />
+                    <StackPanel x:Name="McpServersCardStack" Spacing="10" />
+                </StackPanel>
+            </Border>
+
             <!-- v0.7.6: Sub-Agents card grid. Each sub-agent renders as a
                  card with its utilization bar, reachability dot, endpoint
                  host:port, and active-client list. The cards are built

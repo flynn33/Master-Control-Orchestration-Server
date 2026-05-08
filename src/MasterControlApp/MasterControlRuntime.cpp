@@ -9281,6 +9281,127 @@ public:
                 }
                 snapshot.subAgentRuntimeStats.push_back(std::move(stat));
             }
+
+            // v0.8.3: parallel loop for MCP servers. Same probe + pool
+            // lookup pipeline as sub-agents above. Operator pointed out
+            // that 17+ MCP servers in the inventory had no card surface
+            // -- only sub-agents had cards with utilization / status /
+            // active-clients. v0.8.3 closes that gap by emitting the
+            // same telemetry shape (mcpServerRuntimeStats) so the
+            // browser dashboard and the WinUI shell can render an MCP
+            // Servers card grid mirror of the Sub-Agents card grid.
+            for (const auto& endpoint : snapshot.endpoints) {
+                if (endpoint.kind != EndpointKind::MCPServer) {
+                    continue;
+                }
+                McpServerRuntimeStat stat;
+                stat.mcpServerId    = endpoint.id;
+                stat.displayName    = endpoint.displayName;
+                stat.specialization = endpoint.specialization;
+                stat.status         = to_string(endpoint.status);
+
+                if (!endpoint.host.empty() && endpoint.port != 0) {
+                    const bool isIPv6Literal = endpoint.host.find(':') != std::string::npos;
+                    if (isIPv6Literal) {
+                        stat.endpointHostPort = "[" + endpoint.host + "]:" + std::to_string(endpoint.port);
+                    } else {
+                        stat.endpointHostPort = endpoint.host + ":" + std::to_string(endpoint.port);
+                    }
+#if defined(_WIN32)
+                    addrinfo hints{};
+                    hints.ai_family   = AF_UNSPEC;
+                    hints.ai_socktype = SOCK_STREAM;
+                    hints.ai_protocol = IPPROTO_TCP;
+                    addrinfo* resolved = nullptr;
+                    const std::string portStr = std::to_string(endpoint.port);
+                    const int gaiResult = ::getaddrinfo(endpoint.host.c_str(),
+                                                         portStr.c_str(),
+                                                         &hints, &resolved);
+                    if (gaiResult == 0 && resolved != nullptr) {
+                        for (addrinfo* it = resolved; it != nullptr && !stat.reachable; it = it->ai_next) {
+                            SOCKET s = ::socket(it->ai_family, it->ai_socktype, it->ai_protocol);
+                            if (s == INVALID_SOCKET) continue;
+                            u_long nonblocking = 1;
+                            ::ioctlsocket(s, FIONBIO, &nonblocking);
+                            const int connectResult = ::connect(s, it->ai_addr, (int)it->ai_addrlen);
+                            if (connectResult == 0) {
+                                stat.reachable = true;
+                            } else if (WSAGetLastError() == WSAEWOULDBLOCK) {
+                                fd_set writeSet{};
+                                FD_ZERO(&writeSet);
+                                FD_SET(s, &writeSet);
+                                fd_set errorSet{};
+                                FD_ZERO(&errorSet);
+                                FD_SET(s, &errorSet);
+                                timeval tv{};
+                                tv.tv_sec  = 0;
+                                tv.tv_usec = 200 * 1000;
+                                const int selectResult = ::select(0, nullptr, &writeSet, &errorSet, &tv);
+                                if (selectResult > 0 && FD_ISSET(s, &writeSet)) {
+                                    int sockErr = 0;
+                                    int sockErrLen = sizeof(sockErr);
+                                    ::getsockopt(s, SOL_SOCKET, SO_ERROR,
+                                                 reinterpret_cast<char*>(&sockErr), &sockErrLen);
+                                    stat.reachable = (sockErr == 0);
+                                }
+                            }
+                            ::closesocket(s);
+                        }
+                        ::freeaddrinfo(resolved);
+                    }
+#endif
+                    stat.lastProbedAtUtc = timestampNowUtc();
+                }
+
+                const auto poolIt = poolById.find(endpoint.id);
+                if (poolIt == poolById.end()) {
+                    stat.utilizationPercent = 0.0;
+                    snapshot.mcpServerRuntimeStats.push_back(std::move(stat));
+                    continue;
+                }
+                const auto& pool = poolIt->second;
+                stat.poolId              = pool.poolId;
+                stat.totalInstanceCount  = static_cast<int>(pool.instances.size());
+                stat.maxInstancesAllowed = pool.scalePolicy.maxInstances;
+                stat.autoscaleEnabled    = pool.scalePolicy.maxInstances > pool.scalePolicy.minInstances;
+
+                int readyCount = 0;
+                for (const auto& instance : pool.instances) {
+                    if (instance.state == EndpointInstanceState::Ready) {
+                        ++readyCount;
+                    }
+                }
+                stat.readyInstanceCount = readyCount;
+
+                const int perInstanceCap = (pool.scalePolicy.maxActiveLeasesPerInstance > 0)
+                    ? pool.scalePolicy.maxActiveLeasesPerInstance
+                    : 1;
+                stat.leaseCapacity = readyCount * perInstanceCap;
+
+                if (leaseRouter_) {
+                    const auto leases = leaseRouter_->activeLeases(pool.poolId);
+                    stat.activeLeaseCount = static_cast<int>(leases.size());
+                    for (const auto& lease : leases) {
+                        McpServerLeaseHolder holder;
+                        holder.ipAddress     = lease.clientIpAddress;
+                        holder.clientType    = lease.clientType;
+                        holder.sessionId     = lease.sessionId;
+                        holder.acquiredAtUtc = lease.acquiredAtUtc;
+                        stat.activeClients.push_back(std::move(holder));
+                    }
+                }
+
+                if (stat.leaseCapacity > 0) {
+                    stat.utilizationPercent = (static_cast<double>(stat.activeLeaseCount)
+                        / static_cast<double>(stat.leaseCapacity)) * 100.0;
+                    if (stat.utilizationPercent > 100.0) {
+                        stat.utilizationPercent = 100.0;
+                    }
+                } else {
+                    stat.utilizationPercent = 0.0;
+                }
+                snapshot.mcpServerRuntimeStats.push_back(std::move(stat));
+            }
         }
 
         MasterControl::Diagnostics::appendTelemetry(
@@ -9291,7 +9412,8 @@ public:
                 { "primaryIpAddress", snapshot.telemetry.primaryIpAddress },
                 { "cpuPercent", snapshot.telemetry.cpuPercent },
                 { "endpoints", snapshot.endpoints.size() },
-                { "subAgentStats", snapshot.subAgentRuntimeStats.size() }
+                { "subAgentStats", snapshot.subAgentRuntimeStats.size() },
+                { "mcpServerStats", snapshot.mcpServerRuntimeStats.size() }
             });
         return snapshot;
     }

@@ -1,11 +1,31 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.8.2",
-  "current_tag": "v0.8.2",
+  "current_version": "0.8.3",
+  "current_tag": "v0.8.3",
   "released_at": "2026-05-08",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.8.3",
+      "tag": "v0.8.3",
+      "released_at": "2026-05-08",
+      "commit": "pending",
+      "summary": "MCP servers now have card surfaces matching sub-agents. Pre-v0.8.3 only sub-agents got cards with utilization bars / reachability dots / active-client lists (v0.7.6 + v0.7.8) -- the 17+ MCP servers in the inventory were rendered as flat tables only. Operator pointed out that every MCP server deserves the same telemetry surface. v0.8.3 mirrors the entire pipeline: a parallel McpServerRuntimeStat struct on the runtime side, populated by the same probe + pool-lookup loop that produces SubAgentRuntimeStat; a parallel mcpServerRuntimeStats array on DashboardSnapshot; a parallel renderMcpServerUtilizationPanel + renderMcpServerCard on the browser side (which delegates to the existing renderSubAgentCard since the visual is identical); a parallel ShellMcpServerRuntimeStat parser in ShellRuntime; a new MCP Servers card grid section in the WinUI shell's Runtime tab driven by RuntimeSectionControl::PopulateMcpServerCards, which calls a templated renderEndpointStatCardGrid helper that PopulateSubAgentCards now also routes through. Single shared 220-line card builder, two callers.",
+      "entries": [
+        "feat(runtime): McpServerRuntimeStat struct in MasterControlModels.h with the exact same field set as SubAgentRuntimeStat (utilization, reachability, host:port, active-client list). DashboardSnapshot gains mcpServerRuntimeStats. NLOHMANN serializer added.",
+        "feat(runtime): AdminApiService::snapshot adds a parallel loop for endpoints where kind == EndpointKind::McpServer. Same getaddrinfo-driven probe (v0.8.2), same pool lookup, same active-lease harvest. Diagnostics telemetry now emits both subAgentStats + mcpServerStats counts.",
+        "feat(dashboard-ui): renderMcpServerUtilizationPanel mirrors renderSubAgentUtilizationPanel; renderMcpServerCard delegates to renderSubAgentCard with a synthetic subAgentId field so the card visual is byte-identical. Runtime tab now shows both card grids stacked above their respective inventory tables.",
+        "feat(shell): ShellMcpServerRuntimeStat + ShellMcpServerLeaseHolder structs added. ShellRuntime::CaptureSnapshot's dashboard parser block now parses mcpServerRuntimeStats with the same field-by-field copy as subAgentRuntimeStats.",
+        "feat(shell): RuntimeSectionControl.xaml gains a new MCP Servers card grid section above the existing Sub-Agents grid. McpServersCardStack + McpServersHeadlineText x:Names declared.",
+        "refactor(shell): RuntimeSectionControl.xaml.cpp: PopulateSubAgentCards's 220-line body extracted into a templated renderEndpointStatCardGrid<StatT>(stack, headline, stats, kindNoun, emptyMessage, poolHintNoPool) helper. PopulateSubAgentCards and PopulateMcpServerCards are now thin adapters that pass per-kind X:Name'd elements + per-kind labels into the shared template. Stat-kind id resolution is via overloaded endpointStatId(stat) helpers (subAgentId vs mcpServerId).",
+        "docs(version): bump 0.8.2 -> 0.8.3 (MCP server card surfaces parity with sub-agents)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; activity stream as scrolling SwapChainPanel.",
+        "Discovery doc still serves the literal listen URL when the gateway is bound to a wildcard. v0.7.7 fixed only the operator display surfaces."
+      ]
+    },
     {
       "version": "0.8.2",
       "tag": "v0.8.2",
