@@ -1,11 +1,31 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.8.7",
-  "current_tag": "v0.8.7",
+  "current_version": "0.9.0",
+  "current_tag": "v0.9.0",
   "released_at": "2026-05-08",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.9.0",
+      "tag": "v0.9.0",
+      "released_at": "2026-05-08",
+      "commit": "pending",
+      "summary": "MCP Gateway Module: native HTTP.sys substrate replaces MCPJungle. Operator directive: 'MCPJungle support is to be dropped in place of a custom solution that you will need to build. Build a Gateway Module in place of using MCPJungle.' v0.9.0 makes NativeHttpSysGatewayAdapter (already present since PHASE-12 / v0.6.10 as a Win32 HTTP.sys-based IMcpGateway) the only gateway substrate. The runtime no longer constructs the MCPJungle adapter under any condition; persisted configs that still carry mcpGateway.type='mcpjungle' transparently resolve to the native substrate (the GatewayType enum value is retained only so old JSON deserializes without rejection). McpGatewayConfiguration's defaults flip: type=Native, enabled=true. The runtime auto-starts the gateway at boot when enabled=true so a fresh install is self-hosting its MCP gateway out of the box -- no operator click required. /api/discovery and /api/onboarding/<client> URLs are rebuilt against the resolved LAN IP rather than the literal listenHost (which is '0.0.0.0' by default), so the v0.7.7 known issue ('Discovery doc still serves the literal listen URL when the gateway is bound to a wildcard') is closed. IPv6 literals get RFC 3986 brackets in the rebuilt URL. binaryPath / databasePath fields stay in McpGatewayConfiguration only so back-compat reads of v0.8.x configs don't fail; the runtime ignores them.",
+      "entries": [
+        "feat(gateway): MCP Gateway Module is now the native HTTP.sys IMcpGateway implementation. McpJungleGatewayAdapter is no longer constructed by the runtime; the dispatch in MasterControlRuntime.cpp went from 'if type==Native -> Native, else -> MCPJungle' to unconditionally constructing NativeHttpSysGatewayAdapter. McpJungleGatewayAdapter source files stay in the tree for one release as inert dead code so any consumer outside the runtime (none in-tree) breaks loudly rather than silently; full removal is queued for v0.9.1.",
+        "feat(gateway): McpGatewayConfiguration defaults changed: type=Native (was MCPJungle), enabled=true (was false). binaryPath + databasePath fields kept as no-ops for back-compat config deserialization.",
+        "feat(gateway): MasterControlRuntime auto-starts the gateway at boot when configuration.mcpGateway.enabled is true. Pre-v0.9.0 the gateway only started on an explicit POST /api/gateway/start; a freshly installed system reported state='disabled' until the operator clicked. v0.9.0 records a Telemetry::Gateway 'Gateway auto-started at boot' event into the events ring on first boot.",
+        "fix(gateway): /api/discovery's gateway.mcpUrl + gateway.healthUrl are now composed from the resolved LAN IP (substituting whenever listenHost is '0.0.0.0' / '::' / '[::]' / empty) rather than from the adapter's literal composeMcpUrl() output. IPv6 literals get RFC 3986 brackets. /api/onboarding/<client>.gatewayMcpUrl inherits the same fix because the OnboardingProfileService composes against document.gateway.mcpUrl. configSnippets in claude-code/codex/grok/chatgpt/generic snippets all read profile.gatewayMcpUrl, so the JSON a real LAN client copies into its mcp.json now points at a URL that actually resolves.",
+        "docs(version): bump 0.8.7 -> 0.9.0 (gateway substrate change is meaningful; minor bump per scheme)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; activity stream as scrolling SwapChainPanel.",
+        "Catalog ports 7101-7125 are advertised but no worker processes are bound yet. v0.9.x+ will land worker registration scripts (CreateProcessW + Job Object supervision per ADR-002 §7) for the 23 baseline MCP servers.",
+        "McpJungleGatewayAdapter source files retained as dead code for one release; removal in v0.9.1.",
+        "Native gateway accepts MCP JSON-RPC requests but the tools/list catalog is empty until backend MCP server processes are bound. Initialize handshake + ping work; tools/call returns a clean -32603 'no backend' error today."
+      ]
+    },
     {
       "version": "0.8.7",
       "tag": "v0.8.7",

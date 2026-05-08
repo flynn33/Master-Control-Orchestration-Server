@@ -7195,13 +7195,20 @@ public:
 
         const auto& gatewayConfig = configuration.mcpGateway;
         std::string gatewayHost = gatewayConfig.listenHost;
-        if (gatewayHost.empty() || gatewayHost == "0.0.0.0") {
+        if (gatewayHost.empty() || gatewayHost == "0.0.0.0" || gatewayHost == "::" || gatewayHost == "[::]") {
             gatewayHost = lanIp;
         }
         document.gateway.type = mcpGateway_ ? mcpGateway_->AdapterType() : to_string(gatewayConfig.type);
-        document.gateway.mcpUrl = mcpGateway_ ? mcpGateway_->GatewayMcpUrl()
-                                              : ("http://" + gatewayHost + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.mcpPath);
-        document.gateway.healthUrl = "http://" + gatewayHost + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.healthPath;
+        // v0.9.0: always compose mcpUrl + healthUrl from the resolved
+        // gatewayHost (LAN IP) rather than the adapter's literal
+        // composeMcpUrl(listenHost) which would carry through the
+        // wildcard '0.0.0.0'. This closes the v0.7.7 known issue --
+        // a LAN client consuming /api/discovery now gets a URL it can
+        // actually connect to. IPv6 literals get RFC 3986 brackets.
+        const bool isIPv6 = gatewayHost.find(':') != std::string::npos;
+        const std::string hostInUrl = isIPv6 ? ("[" + gatewayHost + "]") : gatewayHost;
+        document.gateway.mcpUrl    = "http://" + hostInUrl + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.mcpPath;
+        document.gateway.healthUrl = "http://" + hostInUrl + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.healthPath;
         document.gateway.state = mcpGateway_ ? to_string(mcpGateway_->CurrentStatus().state) : "disabled";
 
         document.onboarding.generic = adminBase + "/api/onboarding/generic";
@@ -10299,23 +10306,17 @@ bool MasterControlApplication::Impl::initialize() {
     registerConfigurationDefaults();
     createForsettiRuntime();
 
-    // PHASE-02 (ADR-002 §2) / PHASE-12: construct the MCP Gateway adapter
-    // from current configuration. mcpGateway.type selects the substrate:
-    //   - "mcpjungle" (default for backward compat) -> McpJungleGatewayAdapter
-    //     supervises an external MCPJungle binary (or runs in supervised-mock
-    //     mode with a 503 listener if no binary is configured)
-    //   - "native" -> NativeHttpSysGatewayAdapter binds HTTP.sys directly,
-    //     no external binary required (PHASE-12)
-    //
-    // Either substrate satisfies IMcpGateway exactly; PHASE-03 through
-    // PHASE-11 are substrate-agnostic by construction.
+    // v0.9.0: MCP Gateway is exclusively the native HTTP.sys adapter.
+    // MCPJungle support was dropped per the operator directive
+    // ("MCP Jungle support is to be dropped in place of a custom
+    // solution"). Persisted configs that still carry
+    // mcpGateway.type='mcpjungle' from v0.8.x and earlier transparently
+    // resolve to the native substrate -- the enum value is kept in
+    // GatewayType only so old JSON deserializes without rejection.
+    // gatewayConfig.type is otherwise ignored.
     {
         const auto gatewayConfig = configurationService_->current().mcpGateway;
-        if (gatewayConfig.type == GatewayType::Native) {
-            mcpGateway_ = std::make_shared<NativeHttpSysGatewayAdapter>(gatewayConfig);
-        } else {
-            mcpGateway_ = std::make_shared<McpJungleGatewayAdapter>(gatewayConfig);
-        }
+        mcpGateway_ = std::make_shared<NativeHttpSysGatewayAdapter>(gatewayConfig);
     }
 
     // PHASE-03 (ADR-002 §4): construct the LAN Discovery Service that owns
@@ -10373,13 +10374,30 @@ bool MasterControlApplication::Impl::initialize() {
 
     // PHASE-12 follow-up (v0.6.10): wire the native HTTP.sys gateway to
     // the supervisor + lease router so tools/call can forward to a
-    // supervised pool instance via the stdio bridge. The MCPJungle adapter
-    // does not need this -- MCPJungle handles its own forwarding. The
-    // dynamic_pointer_cast is null when mcpGateway.type != "native"; the
-    // attach is silently skipped in that case.
+    // supervised pool instance via the stdio bridge. v0.9.0: every
+    // adapter is the native one now (MCPJungle dropped); the cast is
+    // unconditional but kept defensive in case future substrates land.
     if (auto nativeAdapter =
             std::dynamic_pointer_cast<NativeHttpSysGatewayAdapter>(mcpGateway_)) {
         nativeAdapter->AttachWorkerBridge(workerSupervisor_, leaseRouter_);
+    }
+
+    // v0.9.0: auto-start the gateway at boot when configuration says
+    // enabled=true (the new default). Pre-v0.9.0 the gateway only started
+    // on an explicit POST /api/gateway/start, so a fresh install left
+    // /api/discovery advertising state='disabled' and the mcpUrl
+    // unreachable -- exactly what the operator hit testing as a LAN
+    // client. Auto-start makes the freshly-installed system self-host
+    // its MCP gateway out of the box.
+    if (mcpGateway_ && configurationService_->current().mcpGateway.enabled) {
+        const auto bootStatus = mcpGateway_->Start();
+        if (telemetryAggregator_) {
+            TelemetryEvent evt;
+            evt.category = TelemetryCategory::Gateway;
+            evt.severity = TelemetrySeverity::Info;
+            evt.message  = "Gateway auto-started at boot. State: " + bootStatus.message;
+            telemetryAggregator_->recordEvent(std::move(evt));
+        }
     }
     // v0.7.1: hand the worker layer to the AdminApi so snapshot() can
     // compute per-sub-agent utilization + active-client attribution for

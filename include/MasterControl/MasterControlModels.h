@@ -718,17 +718,22 @@ struct BeaconAdvertisement final {
     std::vector<PlatformGatewayDescriptor> platformGateways;
 };
 
-// PHASE-02: MCP Gateway configuration consumed by IMcpGateway adapters.
-// Conforms to docs/implementation/schemas/gateway-service.schema.json.
+// PHASE-02 / v0.9.0: MCP Gateway configuration consumed by IMcpGateway
+// adapters. v0.9.0 drops MCPJungle support entirely -- the runtime no
+// longer supervises an external gateway binary. The native HTTP.sys
+// implementation (NativeHttpSysGatewayAdapter) is the only substrate
+// and starts enabled by default. binaryPath / databasePath stay in
+// the schema as no-op fields so persisted configs from v0.8.x and
+// older deserialize cleanly.
 struct McpGatewayConfiguration final {
-    GatewayType type = GatewayType::MCPJungle;
-    bool enabled = false;            // PHASE-02 ships disabled-by-default
-    std::string binaryPath;          // path to mcpjungle.exe (or empty)
+    GatewayType type = GatewayType::Native;
+    bool enabled = true;             // v0.9.0 ships enabled-by-default
+    std::string binaryPath;          // unused since v0.9.0 -- kept for back-compat
     std::string listenHost = "0.0.0.0";
     uint16_t listenPort = 8080;      // distinct from admin browserPort=7300
     std::string mcpPath = "/mcp";
     std::string healthPath = "/health";
-    std::string databasePath;        // optional sqlite path for MCPJungle
+    std::string databasePath;        // unused since v0.9.0 -- kept for back-compat
     std::string mode = "lan-trusted"; // development | enterprise | lan-trusted
 };
 

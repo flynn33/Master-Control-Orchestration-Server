@@ -273,12 +273,15 @@ bool testLanClientConfigBundleShape() {
 // deterministically.
 
 bool testGatewayConfigurationDefaults() {
+    // v0.9.0: defaults flipped. type=Native (was MCPJungle), enabled=true
+    // (was false). MCPJungle support is dropped per the operator
+    // directive; the runtime auto-starts the native gateway at boot.
     const auto configuration = MasterControl::buildDefaultConfiguration();
     bool ok = true;
-    ok &= expect(configuration.mcpGateway.type == MasterControl::GatewayType::MCPJungle,
-                 "Default gateway type is MCPJungle.");
-    ok &= expect(configuration.mcpGateway.enabled == false,
-                 "Default gateway is disabled (operator opt-in required).");
+    ok &= expect(configuration.mcpGateway.type == MasterControl::GatewayType::Native,
+                 "Default gateway type is Native (v0.9.0; MCPJungle dropped).");
+    ok &= expect(configuration.mcpGateway.enabled == true,
+                 "Default gateway is enabled (v0.9.0; auto-starts at boot).");
     ok &= expect(configuration.mcpGateway.listenPort == 8080,
                  "Default gateway port is 8080 (distinct from admin 7300).");
     ok &= expect(configuration.mcpGateway.mcpPath == "/mcp",
@@ -453,7 +456,12 @@ bool testFakeGatewayMcpUrlComposition() {
 
 bool testRealAdapterDisabledByDefault() {
     MasterControl::McpGatewayConfiguration configuration;
-    // enabled defaults to false
+    // v0.9.0: McpGatewayConfiguration.enabled defaults to true now
+    // (the runtime auto-starts the gateway at boot). The contract under
+    // test here is the explicit disabled adapter -- it must refuse to
+    // Start() and report Unknown health -- so override enabled to false
+    // before constructing the adapter.
+    configuration.enabled = false;
     MasterControl::McpJungleGatewayAdapter adapter(configuration);
 
     bool ok = true;

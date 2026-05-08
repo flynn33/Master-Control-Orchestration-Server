@@ -480,8 +480,13 @@ AppConfiguration buildDefaultConfiguration() {
     // Operators flip `enabled` to true once an MCPJungle binary is installed
     // and the gateway port (default 8080) is reachable from LAN clients.
     // The gateway URL is logically distinct from the admin port (7300).
-    configuration.mcpGateway.type = GatewayType::MCPJungle;
-    configuration.mcpGateway.enabled = false;
+    // v0.9.0: MCPJungle support dropped, native HTTP.sys substrate is the
+    // only option. type=Native and enabled=true so a fresh install
+    // self-hosts its MCP gateway out of the box. binaryPath /
+    // databasePath stay set to empty for back-compat schema rather than
+    // being silently dropped.
+    configuration.mcpGateway.type = GatewayType::Native;
+    configuration.mcpGateway.enabled = true;
     configuration.mcpGateway.binaryPath = "";
     configuration.mcpGateway.listenHost = "0.0.0.0";
     configuration.mcpGateway.listenPort = 8080;
