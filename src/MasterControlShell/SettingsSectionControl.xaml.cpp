@@ -323,4 +323,41 @@ void SettingsSectionControl::CopyFirewallBeaconRuleButton_Click(
                         L"Copied: Discovery beacon firewall rule. Run from an elevated PowerShell.");
 }
 
+// v0.8.5: shared "extract Button.Tag string" helper used by the two
+// settings-tab dispatch handlers below.
+namespace {
+std::wstring buttonTagAsString(winrt::Windows::Foundation::IInspectable const& sender) {
+    auto button = sender.try_as<winrt::Microsoft::UI::Xaml::Controls::Button>();
+    if (!button) return {};
+    auto tag = button.Tag();
+    if (!tag) return {};
+    if (auto box = tag.try_as<winrt::Windows::Foundation::IPropertyValue>()) {
+        if (box.Type() == winrt::Windows::Foundation::PropertyType::String) {
+            return std::wstring(box.GetString().c_str());
+        }
+    }
+    return {};
+}
+} // namespace
+
+void SettingsSectionControl::HostControlButton_Click(
+    Windows::Foundation::IInspectable const& sender,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    const std::wstring token = buttonTagAsString(sender);
+    if (token.empty()) return;
+    if (actionRequested_) {
+        actionRequested_(token);
+    }
+}
+
+void SettingsSectionControl::GuidedWizardButton_Click(
+    Windows::Foundation::IInspectable const& sender,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    const std::wstring token = buttonTagAsString(sender);
+    if (token.empty()) return;
+    if (actionRequested_) {
+        actionRequested_(token);
+    }
+}
+
 } // namespace winrt::MasterControlShell::implementation

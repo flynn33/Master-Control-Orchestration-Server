@@ -1004,25 +1004,12 @@ void MainWindow::SetCurrentDestination(const std::wstring& destinationId) {
     const bool destinationChanged = (normalized != currentDestination_);
     currentDestination_ = normalized;
 
-    // v0.7.9: HOST CONTROLS and GUIDED SETUP WIZARDS panels in the hero
-    // header are hidden when the operator is on the Telemetry tab. The
-    // Telemetry tab is purely for live telemetry; setup/control affordances
-    // belong in Overview / Runtime / Settings / Imports / Security where
-    // they are contextually useful. The panels are restored on every
-    // non-Telemetry destination so navigating away from Telemetry brings
-    // them straight back.
-    {
-        using winrt::Microsoft::UI::Xaml::Visibility;
-        const Visibility heroSetupVisibility = (normalized == kTelemetryDestination)
-            ? Visibility::Collapsed
-            : Visibility::Visible;
-        try {
-            HostControlsPanel().Visibility(heroSetupVisibility);
-        } catch (const winrt::hresult_error&) {}
-        try {
-            GuidedSetupWizardsPanel().Visibility(heroSetupVisibility);
-        } catch (const winrt::hresult_error&) {}
-    }
+    // v0.8.5: HOST CONTROLS + GUIDED SETUP WIZARDS panels were removed
+    // from MainWindow.xaml entirely (operator wanted them only on the
+    // Settings tab). The visibility toggle that used to hide them on
+    // Telemetry is therefore obsolete -- the buttons live in
+    // SettingsSectionControl now, route through actionRequested_ to
+    // MainWindow.
 
     // Only swap SectionContentHost.Content and scroll into view when the
     // destination actually changed. The timed refresh path used to call
@@ -1302,9 +1289,34 @@ FrameworkElement MainWindow::CreateViewForViewId(const std::wstring& viewId, con
                     self->RefreshAsync();
                 }
             },
-            [weakThis](const std::wstring& workflowId) {
+            [weakThis](const std::wstring& token) {
+                // v0.8.5: action-token dispatch is now polymorphic between
+                // host-control:* tokens (operate the local service /
+                // dashboard / config / data tree) and bare workflow ids
+                // (drive the guided wizard surface). Both routes used to
+                // be hosted by buttons in MainWindow's hero column; v0.8.5
+                // moves them to SettingsSectionControl, so this single
+                // lambda is now the gateway between section-emitted tokens
+                // and MainWindow's existing handler methods.
                 if (const auto self = weakThis.get()) {
-                    self->StartGuidedWorkflow(workflowId);
+                    if (token == L"host-control:refresh") {
+                        self->RefreshAsync();
+                    } else if (token == L"host-control:start-service") {
+                        self->RunServiceActionAsync(true);
+                    } else if (token == L"host-control:stop-service") {
+                        self->RunServiceActionAsync(false);
+                    } else if (token == L"host-control:open-dashboard") {
+                        self->HandleOpenDashboardAsync();
+                    } else if (token == L"host-control:open-config") {
+                        self->OpenConfigButton_Click(nullptr,
+                            winrt::Microsoft::UI::Xaml::RoutedEventArgs{});
+                    } else if (token == L"host-control:open-data") {
+                        self->OpenDataButton_Click(nullptr,
+                            winrt::Microsoft::UI::Xaml::RoutedEventArgs{});
+                    } else {
+                        // Bare token -> guided workflow id.
+                        self->StartGuidedWorkflow(token);
+                    }
                 }
             });
     }
@@ -1520,8 +1532,10 @@ void MainWindow::ApplyHeroSnapshot(const ::MasterControlShell::ShellSnapshot& sn
            << L"  |  Findings " << snapshot.governanceFindingCount;
     HeroRuntimeLedgerText().Text(winrt::hstring(ledger.str()));
 
-    StartServiceButton().IsEnabled(snapshot.canStartService);
-    StopServiceButton().IsEnabled(snapshot.canStopService);
+    // v0.8.5: StartServiceButton + StopServiceButton moved into
+    // SettingsSectionControl. The Settings panel re-evaluates its own
+    // button enable-states from the snapshot inside ApplySnapshot, so
+    // there is no longer a MainWindow IsEnabled binding to drive here.
 
     const auto serviceLabel = uppercase(serviceStateLabel(snapshot.serviceState));
     switch (snapshot.serviceState) {
@@ -1828,7 +1842,10 @@ IAsyncAction MainWindow::RefreshAsync() {
         co_return;
     }
 
-    RefreshButton().IsEnabled(false);
+    // v0.8.5: RefreshButton was moved into SettingsSectionControl. The
+    // refreshInFlight_ atomic still serializes overlapping refreshes and
+    // protects against re-entry; the button-disable feedback is the
+    // operator's job to surface inside Settings if they need it.
     winrt::apartment_context uiThread;
     co_await winrt::resume_background();
 
@@ -1845,7 +1862,6 @@ IAsyncAction MainWindow::RefreshAsync() {
     currentSnapshot_ = std::move(snapshot);
     ApplySnapshot(currentSnapshot_);
     refreshInFlight_ = false;
-    RefreshButton().IsEnabled(true);
 }
 
 // Timer-initiated refresh that only updates the "live" fields — telemetry

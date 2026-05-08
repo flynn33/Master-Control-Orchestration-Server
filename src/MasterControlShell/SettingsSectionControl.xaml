@@ -8,6 +8,70 @@
     mc:Ignorable="d">
     <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="20">
+            <!-- v0.8.5 Host Controls. Operator-driven service + dashboard
+                 + filesystem actions. Moved here from the persistent shell
+                 hero header so they live only on the Settings tab. Each
+                 click handler emits an action token to MainWindow via the
+                 actionRequested_ callback wired in AttachRuntime. -->
+            <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Host Controls" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock Text="Operate the local Master Control service and inspect its on-disk state. These actions affect this host only."
+                               Style="{StaticResource ShellBodyTextStyle}"
+                               TextWrapping="WrapWholeWords" />
+                    <Grid ColumnSpacing="12" RowSpacing="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="HostRefreshButton" Click="HostControlButton_Click" Tag="host-control:refresh" Style="{StaticResource ShellCommandButtonStyle}" Content="Refresh" />
+                        <Button x:Name="HostStartServiceButton" Grid.Column="1" Click="HostControlButton_Click" Tag="host-control:start-service" Style="{StaticResource ShellCommandButtonStyle}" Content="Start Service" />
+                        <Button x:Name="HostStopServiceButton" Grid.Row="1" Click="HostControlButton_Click" Tag="host-control:stop-service" Style="{StaticResource ShellCommandButtonStyle}" Content="Stop Service" />
+                        <Button x:Name="HostOpenDashboardButton" Grid.Row="1" Grid.Column="1" Click="HostControlButton_Click" Tag="host-control:open-dashboard" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Dashboard" />
+                        <Button x:Name="HostOpenConfigButton" Grid.Row="2" Click="HostControlButton_Click" Tag="host-control:open-config" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Config" />
+                        <Button x:Name="HostOpenDataButton" Grid.Row="2" Grid.Column="1" Click="HostControlButton_Click" Tag="host-control:open-data" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Data" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- v0.8.5 Guided Setup Wizards. Buttons emit workflow tokens
+                 to MainWindow's StartGuidedWorkflow via actionRequested_. -->
+            <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Guided Setup Wizards" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock Text="Use guided setup to deploy and maintain runtime lanes, harden security, shape host settings, and manage Forsetti modules without digging through raw admin forms."
+                               Style="{StaticResource ShellBodyTextStyle}"
+                               TextWrapping="WrapWholeWords" />
+                    <Grid ColumnSpacing="12" RowSpacing="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="WizardNewMcpButton" Click="GuidedWizardButton_Click" Tag="new-mcp" Style="{StaticResource ShellCommandButtonStyle}" Content="New MCP Server" />
+                        <Button x:Name="WizardManageRuntimeButton" Grid.Column="1" Click="GuidedWizardButton_Click" Tag="guided-runtime-maintenance" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Runtime Lanes" />
+                        <Button x:Name="WizardNewSubAgentButton" Grid.Row="1" Click="GuidedWizardButton_Click" Tag="new-subagent" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent" />
+                        <Button x:Name="WizardNewSubAgentGroupButton" Grid.Row="1" Grid.Column="1" Click="GuidedWizardButton_Click" Tag="new-subagent-group" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent Group" />
+                        <Button x:Name="WizardNewAppleHostButton" Grid.Row="2" Click="GuidedWizardButton_Click" Tag="new-apple-host" Style="{StaticResource ShellCommandButtonStyle}" Content="New Apple Host" />
+                        <Button x:Name="WizardForsettiModulesButton" Grid.Row="2" Grid.Column="1" Click="GuidedWizardButton_Click" Tag="manage-forsetti-modules" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Forsetti Modules" />
+                        <Button x:Name="WizardImportButton" Grid.Row="3" Click="GuidedWizardButton_Click" Tag="guided-import" Style="{StaticResource ShellCommandButtonStyle}" Content="Guided Import" />
+                        <Button x:Name="WizardSecurityButton" Grid.Row="3" Grid.Column="1" Click="GuidedWizardButton_Click" Tag="guided-security" Style="{StaticResource ShellCommandButtonStyle}" Content="Security Hardening" />
+                        <Button x:Name="WizardSettingsButton" Grid.Row="4" Grid.ColumnSpan="2" Click="GuidedWizardButton_Click" Tag="guided-settings" Style="{StaticResource ShellCommandButtonStyle}" Content="Host Settings" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
             <Border Style="{StaticResource ShellCardStyle}">
                 <StackPanel Spacing="14">
                     <TextBlock Text="Guided Host Settings" Style="{StaticResource ShellSectionTitleTextStyle}" />

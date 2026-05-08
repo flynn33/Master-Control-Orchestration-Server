@@ -1,11 +1,31 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.8.4",
-  "current_tag": "v0.8.4",
+  "current_version": "0.8.5",
+  "current_tag": "v0.8.5",
   "released_at": "2026-05-08",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.8.5",
+      "tag": "v0.8.5",
+      "released_at": "2026-05-08",
+      "commit": "pending",
+      "summary": "Host Controls and Guided Setup Wizards moved exclusively to the Settings tab. Pre-v0.8.5 both panels lived in MainWindow.xaml's persistent hero column -- they appeared on every section view (Overview, Runtime, Imports, Exports, Security, Settings, CLU). v0.7.9 hid them on Telemetry only. Operator wanted them gone from everywhere except Settings. v0.8.5 removes both panels from MainWindow.xaml entirely and adds them to the top of SettingsSectionControl.xaml. The buttons emit action tokens via the existing actionRequested_ callback (already wired into Settings via AttachRuntime since v0.6.4); MainWindow's section-creation lambda now dispatches both 'host-control:*' tokens (refresh / start-service / stop-service / open-dashboard / open-config / open-data) and bare workflow ids (new-mcp, guided-runtime-maintenance, etc.) to the right handler methods.",
+      "entries": [
+        "feat(shell): MainWindow.xaml: HostControlsPanel + GuidedSetupWizardsPanel removed from the hero column. The Refresh / Start Service / Stop Service / Open Dashboard / Open Config / Open Data buttons no longer render anywhere except the Settings tab. Same for New MCP Server / Manage Runtime Lanes / New Sub-Agent / New Sub-Agent Group / New Apple Host / Manage Forsetti Modules / Guided Import / Security Hardening / Host Settings.",
+        "fix(shell): MainWindow.xaml.cpp::SetCurrentDestination drops the v0.7.9 visibility-toggle that hid the panels on Telemetry -- the panels no longer exist in MainWindow's tree at all, so the conditional Collapse is obsolete. GuidedWorkflowStatusText x:Name preserved as a Visibility=Collapsed TextBlock so existing status-update writes compile and execute without requiring a visible host.",
+        "feat(shell): SettingsSectionControl.xaml gains two new top cards: 'Host Controls' (operator description + 6-button grid) and 'Guided Setup Wizards' (operator description + 9-button grid). Each Button stamps its action token onto its Tag attribute (e.g. 'host-control:refresh' or 'new-mcp') and routes through HostControlButton_Click / GuidedWizardButton_Click.",
+        "feat(shell): SettingsSectionControl.xaml.cpp HostControlButton_Click + GuidedWizardButton_Click read Button.Tag via a new buttonTagAsString helper and forward to MainWindow via the existing actionRequested_ callback. Settings already takes that callback through AttachRuntime, so no header changes were needed beyond declaring the two click handlers.",
+        "feat(shell): MainWindow.xaml.cpp's section-creation actionRequested lambda is now polymorphic. Bare tokens still route to StartGuidedWorkflow as before; tokens prefixed with 'host-control:' route to RefreshAsync / RunServiceActionAsync / HandleOpenDashboardAsync / OpenConfigButton_Click / OpenDataButton_Click. Single gateway between section-emitted tokens and MainWindow's existing handler methods.",
+        "docs(version): bump 0.8.4 -> 0.8.5 (Host Controls + Guided Setup Wizards moved to Settings tab only)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; activity stream as scrolling SwapChainPanel.",
+        "Discovery doc still serves the literal listen URL when the gateway is bound to a wildcard.",
+        "Catalog ports 7101-7125 are advertised but no worker processes are bound yet. v0.8.6+ will land worker registration scripts."
+      ]
+    },
     {
       "version": "0.8.4",
       "tag": "v0.8.4",

@@ -182,63 +182,15 @@
                                             </ScrollViewer>
                                         </StackPanel>
 
-                                        <StackPanel x:Name="HostControlsPanel" Spacing="10">
-                                            <TextBlock Text="HOST CONTROLS" Style="{StaticResource ShellEyebrowTextStyle}" />
-                                            <Grid ColumnSpacing="12" RowSpacing="12">
-                                                <Grid.RowDefinitions>
-                                                    <RowDefinition Height="Auto" />
-                                                    <RowDefinition Height="Auto" />
-                                                    <RowDefinition Height="Auto" />
-                                                </Grid.RowDefinitions>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="*" />
-                                                </Grid.ColumnDefinitions>
-
-                                                <Button x:Name="RefreshButton" Click="RefreshButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Refresh" />
-                                                <Button x:Name="StartServiceButton" Grid.Column="1" Click="StartServiceButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Start Service" />
-                                                <Button x:Name="StopServiceButton" Grid.Row="1" Click="StopServiceButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Stop Service" />
-                                                <Button x:Name="OpenDashboardButton" Grid.Row="1" Grid.Column="1" Click="OpenDashboardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Dashboard" />
-                                                <Button x:Name="OpenConfigButton" Grid.Row="2" Click="OpenConfigButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Config" />
-                                                <Button x:Name="OpenDataButton" Grid.Row="2" Grid.Column="1" Click="OpenDataButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Open Data" />
-                                            </Grid>
-                                        </StackPanel>
-
-                                        <StackPanel x:Name="GuidedSetupWizardsPanel" Spacing="10">
-                                            <TextBlock Text="GUIDED SETUP WIZARDS" Style="{StaticResource ShellEyebrowTextStyle}" />
-                                            <Grid ColumnSpacing="12" RowSpacing="12">
-                                                <Grid.RowDefinitions>
-                                                    <RowDefinition Height="Auto" />
-                                                    <RowDefinition Height="Auto" />
-                                                    <RowDefinition Height="Auto" />
-                                                    <RowDefinition Height="Auto" />
-                                                    <RowDefinition Height="Auto" />
-                                                    <RowDefinition Height="Auto" />
-                                                </Grid.RowDefinitions>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="*" />
-                                                </Grid.ColumnDefinitions>
-
-                                                <Button x:Name="GuidedMcpWizardButton" Click="GuidedMcpWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New MCP Server" />
-                                                <Button x:Name="GuidedRuntimeMaintenanceWizardButton" Grid.Column="1" Click="GuidedRuntimeMaintenanceWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Runtime Lanes" />
-                                                <Button x:Name="GuidedSubAgentWizardButton" Grid.Row="1" Click="GuidedSubAgentWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent" />
-                                                <Button x:Name="GuidedSubAgentGroupWizardButton" Grid.Row="1" Grid.Column="1" Click="GuidedSubAgentGroupWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Sub-Agent Group" />
-                                                <Button x:Name="GuidedAppleHostWizardButton" Grid.Row="2" Click="GuidedAppleHostWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Apple Host" />
-                                                <Button x:Name="GuidedForsettiModuleWizardButton" Grid.Row="2" Grid.Column="1" Click="GuidedForsettiModuleWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Forsetti Modules" />
-                                                <Button x:Name="GuidedImportWizardButton" Grid.Row="3" Click="GuidedImportWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Guided Import" />
-                                                <Button x:Name="GuidedSecurityWizardButton" Grid.Row="3" Grid.Column="1" Click="GuidedSecurityWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Security Hardening" />
-                                                <Button x:Name="GuidedSettingsWizardButton" Grid.Row="4" Grid.ColumnSpan="2" Click="GuidedSettingsWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Host Settings" />
-
-                                                <Border Grid.Row="5" Grid.ColumnSpan="2" Padding="10,8" Background="#10FF3D2E" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0">
-                                                    <TextBlock
-                                                        x:Name="GuidedWorkflowStatusText"
-                                                        Style="{StaticResource ShellLabelTextStyle}"
-                                                        Text="Use guided setup to deploy and maintain runtime lanes, harden security, shape host settings, and manage Forsetti modules without digging through raw admin forms."
-                                                        TextWrapping="WrapWholeWords" />
-                                                </Border>
-                                            </Grid>
-                                        </StackPanel>
+                                        <!-- v0.8.5 HOST CONTROLS panel and GUIDED SETUP WIZARDS
+                                             panel moved to SettingsSectionControl. Operator wanted
+                                             these affordances to exist only on the Settings tab and
+                                             not clutter every other view's hero column. The
+                                             GuidedWorkflowStatusText x:Name is preserved as a
+                                             collapsed TextBlock so MainWindow's existing status
+                                             writes (UpdateGuidedWorkflowStatus etc.) compile and
+                                             execute without requiring the panel to be visible. -->
+                                        <TextBlock x:Name="GuidedWorkflowStatusText" Visibility="Collapsed" />
                                     </StackPanel>
 
                                     <Border Grid.Column="2" Style="{StaticResource ShellCardStyle}">

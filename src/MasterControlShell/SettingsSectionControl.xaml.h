@@ -32,6 +32,14 @@ struct SettingsSectionControl : SettingsSectionControlT<SettingsSectionControl> 
                                           Microsoft::UI::Xaml::RoutedEventArgs const&);
     void CopyFirewallBeaconRuleButton_Click(Windows::Foundation::IInspectable const&,
                                             Microsoft::UI::Xaml::RoutedEventArgs const&);
+    // v0.8.5: Host Controls + Guided Setup Wizards moved here from
+    // MainWindow.xaml. Both handlers read the clicked Button's Tag
+    // (e.g. "host-control:refresh" or "new-mcp") and forward to
+    // MainWindow via the actionRequested_ callback.
+    void HostControlButton_Click(Windows::Foundation::IInspectable const& sender,
+                                 Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void GuidedWizardButton_Click(Windows::Foundation::IInspectable const& sender,
+                                  Microsoft::UI::Xaml::RoutedEventArgs const&);
 
 private:
     void PopulateEditorFromSnapshot();
