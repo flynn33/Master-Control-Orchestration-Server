@@ -928,6 +928,26 @@ void MainWindow::SetCurrentDestination(const std::wstring& destinationId) {
     const bool destinationChanged = (normalized != currentDestination_);
     currentDestination_ = normalized;
 
+    // v0.7.9: HOST CONTROLS and GUIDED SETUP WIZARDS panels in the hero
+    // header are hidden when the operator is on the Telemetry tab. The
+    // Telemetry tab is purely for live telemetry; setup/control affordances
+    // belong in Overview / Runtime / Settings / Imports / Security where
+    // they are contextually useful. The panels are restored on every
+    // non-Telemetry destination so navigating away from Telemetry brings
+    // them straight back.
+    {
+        using winrt::Microsoft::UI::Xaml::Visibility;
+        const Visibility heroSetupVisibility = (normalized == kTelemetryDestination)
+            ? Visibility::Collapsed
+            : Visibility::Visible;
+        try {
+            HostControlsPanel().Visibility(heroSetupVisibility);
+        } catch (const winrt::hresult_error&) {}
+        try {
+            GuidedSetupWizardsPanel().Visibility(heroSetupVisibility);
+        } catch (const winrt::hresult_error&) {}
+    }
+
     // Only swap SectionContentHost.Content and scroll into view when the
     // destination actually changed. The timed refresh path used to call
     // this on every tick — which visibly flashed the section content and

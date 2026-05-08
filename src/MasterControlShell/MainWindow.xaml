@@ -180,7 +180,7 @@
                                             </ScrollViewer>
                                         </StackPanel>
 
-                                        <StackPanel Spacing="10">
+                                        <StackPanel x:Name="HostControlsPanel" Spacing="10">
                                             <TextBlock Text="HOST CONTROLS" Style="{StaticResource ShellEyebrowTextStyle}" />
                                             <Grid ColumnSpacing="12" RowSpacing="12">
                                                 <Grid.RowDefinitions>
@@ -202,7 +202,7 @@
                                             </Grid>
                                         </StackPanel>
 
-                                        <StackPanel Spacing="10">
+                                        <StackPanel x:Name="GuidedSetupWizardsPanel" Spacing="10">
                                             <TextBlock Text="GUIDED SETUP WIZARDS" Style="{StaticResource ShellEyebrowTextStyle}" />
                                             <Grid ColumnSpacing="12" RowSpacing="12">
                                                 <Grid.RowDefinitions>

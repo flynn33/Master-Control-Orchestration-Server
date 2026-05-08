@@ -1,11 +1,29 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.7.8",
-  "current_tag": "v0.7.8",
+  "current_version": "0.7.9",
+  "current_tag": "v0.7.9",
   "released_at": "2026-05-08",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.7.9",
+      "tag": "v0.7.9",
+      "released_at": "2026-05-08",
+      "commit": "pending",
+      "summary": "Telemetry tab is now purely telemetry, and every gauge has a readiness dot. Pre-v0.7.9 the WinUI shell hero header rendered HOST CONTROLS (Refresh / Start Service / Stop Service / Open Dashboard / Open Config / Open Data) and GUIDED SETUP WIZARDS (New MCP Server / Manage Runtime Lanes / New Sub-Agent / etc.) as a persistent right-column inside MainWindow.xaml that showed on every section view -- including Telemetry, where the operator wanted purely telemetry and live data with no setup chrome competing for attention. Same release also adds a per-tile status dot to all 15 Telemetry-tab gauges so the operator can read posture at a glance without parsing percent labels. Color logic is honesty-grade: pressure dots go green/amber/red on threshold, throughput dots go green when bytes are flowing and neutral when idle, allocation dots go red at zero (governance-blocked) / amber on constrained budget / green when normal, population counters go green when the surface published >=1 entry, governance findings go green at zero / amber when any are present (operator attention but not a hard fault). All dots fall back to neutral gray when the local admin API is unreachable -- the runtime cannot tell what the values mean if the source is offline, so the dot must not assert health.",
+      "entries": [
+        "feat(shell): MainWindow.xaml HOST CONTROLS panel and GUIDED SETUP WIZARDS panel each gain x:Name (HostControlsPanel, GuidedSetupWizardsPanel). MainWindow::SetCurrentDestination toggles their Visibility -- Collapsed when destinationId == 'telemetry', Visible on every other destination. The QUICK ACTIONS panel above them remains visible across all decks because that's where the Forsetti toolbar surface anchors its actions; only the host-controls and guided-setup affordances move out of the operator's way on the Telemetry view.",
+        "feat(shell): TelemetrySectionControl.xaml gains 15 readiness dots, one per gauge tile -- 6 in Live Host Pressure (CPU LOAD / MEMORY PRESSURE / DISK OCCUPANCY / TX THROUGHPUT / RX THROUGHPUT / LIVE TRAFFIC), 4 in Resource Allocation (CPU BUDGET / RAM BUDGET / BANDWIDTH BUDGET / STORAGE BUDGET), and 5 in Operational Activity (RUNTIME LANES / GOVERNANCE FINDINGS / APPLE OPERATIONS / PLATFORM GATEWAYS / GOVERNANCE SERVERS). Each dot is a 10x10 Border with CornerRadius='5,5,5,5' inside a horizontal StackPanel beside the gauge label. Initial Background is neutral gray (#FF8CB7C4) so a snapshot-less first paint reads as 'pending', matching the Telemetry hero's 'Capture timestamp pending' state.",
+        "feat(shell): TelemetrySectionControl::ApplySnapshot paints the dots through new helpers paintDot + StatusTone (Good / Warn / Crit / Neutral). pressureTone covers CPU/Memory/Disk percentage thresholds (>=90% red, 75-89% amber, <75% green). throughputTone covers TX/RX/LIVE TRAFFIC (any bytes flowing -> green, idle -> neutral). budgetTone covers governance allocation tiles (0% red = blocked, 1-29% amber = constrained, >=30% green = healthy). populationTone covers count tiles (>=1 -> green, 0 -> neutral). findingsTone is governance-specific (0 findings -> green, any -> amber for operator attention). When apiHealthy is false all dots fall back to neutral so the operator never reads a stale 'good' signal on an offline admin API.",
+        "docs(version): bump 0.7.8 -> 0.7.9 (Telemetry tab cleanup + per-gauge readiness dots)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; Tron grid backdrop as procedural HLSL fragment shader; activity stream as scrolling SwapChainPanel.",
+        "Reachability probe is IPv4-only. Sub-agent reachability dots in the Runtime tab card grid (v0.7.6) and the Overview tab footer grid (v0.7.8) always render red for IPv6-host sub-agents. Fix is an AF_INET6 fallback path in AdminApiService::snapshot.",
+        "Discovery doc still serves the literal listen URL (e.g. 'http://0.0.0.0:8080/mcp') in mcpGatewayHealth.* / mcpGatewayStatus.* when the gateway is bound to a wildcard. v0.7.7 fixed only the operator display surfaces; LAN clients consuming /api/discovery still need the runtime to substitute the LAN IP in the served fields."
+      ]
+    },
     {
       "version": "0.7.8",
       "tag": "v0.7.8",

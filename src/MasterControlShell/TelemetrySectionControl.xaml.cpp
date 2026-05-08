@@ -55,6 +55,78 @@ std::wstring formatCountValue(const size_t value) {
     return stream.str();
 }
 
+// v0.7.9: Tron-themed status colors used to paint the per-tile readiness
+// dots that flank every Telemetry-tab gauge label. The four states map
+// onto the snapshot value semantics, not raw thresholds, so the dot is
+// always honest about what the operator should read into it:
+//   good    = data is flowing and within healthy bounds
+//   warn    = saturating or approaching limit / non-zero attention items
+//   crit    = saturated / blocked / hard fault state
+//   neutral = no data yet (admin API offline or counter idle)
+constexpr uint8_t kStatusGoodA = 0xFF, kStatusGoodR = 0x1c, kStatusGoodG = 0xf2, kStatusGoodB = 0xc1;
+constexpr uint8_t kStatusWarnA = 0xFF, kStatusWarnR = 0xff, kStatusWarnG = 0xc8, kStatusWarnB = 0x57;
+constexpr uint8_t kStatusCritA = 0xFF, kStatusCritR = 0xff, kStatusCritG = 0x6a, kStatusCritB = 0x80;
+constexpr uint8_t kStatusNeutA = 0xFF, kStatusNeutR = 0x8c, kStatusNeutG = 0xb7, kStatusNeutB = 0xc4;
+
+enum class StatusTone { Good, Warn, Crit, Neutral };
+
+void paintDot(winrt::Microsoft::UI::Xaml::Controls::Border const& dot, StatusTone tone) {
+    using winrt::Windows::UI::Color;
+    using winrt::Windows::UI::ColorHelper;
+    using winrt::Microsoft::UI::Xaml::Media::SolidColorBrush;
+    Color color;
+    switch (tone) {
+        case StatusTone::Good:    color = ColorHelper::FromArgb(kStatusGoodA, kStatusGoodR, kStatusGoodG, kStatusGoodB); break;
+        case StatusTone::Warn:    color = ColorHelper::FromArgb(kStatusWarnA, kStatusWarnR, kStatusWarnG, kStatusWarnB); break;
+        case StatusTone::Crit:    color = ColorHelper::FromArgb(kStatusCritA, kStatusCritR, kStatusCritG, kStatusCritB); break;
+        case StatusTone::Neutral:
+        default:                  color = ColorHelper::FromArgb(kStatusNeutA, kStatusNeutR, kStatusNeutG, kStatusNeutB); break;
+    }
+    dot.Background(SolidColorBrush(color));
+}
+
+// Pressure tiles (CPU / Memory / Disk): green <75%, amber 75-89%, red >=90%.
+// When the admin API is offline the dot stays neutral because the underlying
+// telemetry source is not producing data.
+StatusTone pressureTone(double percent, bool apiHealthy) {
+    if (!apiHealthy) return StatusTone::Neutral;
+    if (percent < 0)  return StatusTone::Neutral;
+    if (percent >= 90) return StatusTone::Crit;
+    if (percent >= 75) return StatusTone::Warn;
+    return StatusTone::Good;
+}
+
+// Throughput tiles (TX / RX / Live Traffic): green when bytes/sec > 0
+// (link is moving data), neutral when idle. No upper threshold -- a busy
+// link is not unhealthy.
+StatusTone throughputTone(uint64_t bps, bool apiHealthy) {
+    if (!apiHealthy) return StatusTone::Neutral;
+    return bps > 0 ? StatusTone::Good : StatusTone::Neutral;
+}
+
+// Allocation budgets (CPU / RAM / Bandwidth / Storage): red at 0%
+// (governed launches blocked), amber 1-29% (constrained), green >=30%.
+StatusTone budgetTone(int percent, bool apiHealthy) {
+    if (!apiHealthy) return StatusTone::Neutral;
+    if (percent <= 0)  return StatusTone::Crit;
+    if (percent < 30)  return StatusTone::Warn;
+    return StatusTone::Good;
+}
+
+// Population counters (lanes / gateways / servers / Apple ops): green when
+// the surface has produced at least one item, neutral when empty.
+StatusTone populationTone(size_t count, bool apiHealthy) {
+    if (!apiHealthy) return StatusTone::Neutral;
+    return count > 0 ? StatusTone::Good : StatusTone::Neutral;
+}
+
+// Governance findings: zero findings is the healthy state; any finding is
+// operator attention, not a hard fault.
+StatusTone findingsTone(size_t count, bool apiHealthy) {
+    if (!apiHealthy) return StatusTone::Neutral;
+    return count == 0 ? StatusTone::Good : StatusTone::Warn;
+}
+
 } // namespace
 
 TelemetrySectionControl::TelemetrySectionControl() {
@@ -160,6 +232,29 @@ void TelemetrySectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
 
     TelemetryNarrativeText().Text(winrt::hstring(snapshot.telemetryText.empty() ? L"Telemetry narrative will populate here." : snapshot.telemetryText));
     EnvironmentNarrativeText().Text(winrt::hstring(snapshot.environmentText));
+
+    // v0.7.9: status dots flanking each gauge label. Each dot reflects the
+    // honesty of the underlying value, not just whether the tile is
+    // populated -- e.g. CPU dot is red at saturation, allocation dots are
+    // red when the budget is zeroed (governed lanes blocked), traffic dots
+    // are neutral when the link is idle. apiHealthy gates everything: if
+    // the local admin API is unreachable we cannot tell what the underlying
+    // values actually mean, so all dots fall back to neutral.
+    paintDot(CpuStatusDot(),                pressureTone(snapshot.cpuPercent,    snapshot.apiHealthy));
+    paintDot(MemoryStatusDot(),             pressureTone(snapshot.memoryPercent, snapshot.apiHealthy));
+    paintDot(DiskStatusDot(),               pressureTone(snapshot.diskPercent,   snapshot.apiHealthy));
+    paintDot(TxStatusDot(),                 throughputTone(snapshot.bytesSentPerSecond,     snapshot.apiHealthy));
+    paintDot(RxStatusDot(),                 throughputTone(snapshot.bytesReceivedPerSecond, snapshot.apiHealthy));
+    paintDot(TrafficStatusDot(),            throughputTone(snapshot.bytesSentPerSecond + snapshot.bytesReceivedPerSecond, snapshot.apiHealthy));
+    paintDot(CpuAllocationStatusDot(),       budgetTone(snapshot.cpuAllocationPercent,       snapshot.apiHealthy));
+    paintDot(MemoryAllocationStatusDot(),    budgetTone(snapshot.memoryAllocationPercent,    snapshot.apiHealthy));
+    paintDot(BandwidthAllocationStatusDot(), budgetTone(snapshot.bandwidthAllocationPercent, snapshot.apiHealthy));
+    paintDot(StorageAllocationStatusDot(),   budgetTone(snapshot.storageAllocationPercent,   snapshot.apiHealthy));
+    paintDot(EndpointCountStatusDot(),       populationTone(snapshot.endpointCount,          snapshot.apiHealthy));
+    paintDot(GovernanceFindingStatusDot(),   findingsTone(snapshot.governanceFindingCount,   snapshot.apiHealthy));
+    paintDot(AppleOperationStatusDot(),      populationTone(snapshot.appleOperationCount,    snapshot.apiHealthy));
+    paintDot(PlatformGatewayStatusDot(),     populationTone(snapshot.platformGatewayCount,   snapshot.apiHealthy));
+    paintDot(GovernanceServerStatusDot(),    populationTone(snapshot.governanceServerCount,  snapshot.apiHealthy));
 }
 
 } // namespace winrt::MasterControlShell::implementation

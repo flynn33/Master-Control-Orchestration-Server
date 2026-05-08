@@ -64,7 +64,10 @@
 
                                 <Border Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
-                                        <TextBlock Text="CPU LOAD" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="CPU LOAD" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="CpuStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="CpuValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <ProgressRing x:Name="CpuProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
                                         <TextBlock x:Name="CpuDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Live host utilization." />
@@ -73,7 +76,10 @@
 
                                 <Border Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
-                                        <TextBlock Text="MEMORY PRESSURE" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="MEMORY PRESSURE" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="MemoryStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="MemoryValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <ProgressRing x:Name="MemoryProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
                                         <TextBlock x:Name="MemoryDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Resident memory pressure." />
@@ -82,7 +88,10 @@
 
                                 <Border Grid.Column="2" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
-                                        <TextBlock Text="DISK OCCUPANCY" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="DISK OCCUPANCY" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="DiskStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="DiskValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <ProgressRing x:Name="DiskProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
                                         <TextBlock x:Name="DiskDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Payload and runtime storage pressure." />
@@ -91,7 +100,10 @@
 
                                 <Border Grid.Row="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
-                                        <TextBlock Text="TX THROUGHPUT" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="TX THROUGHPUT" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="TxStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="TxValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="TxDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Outbound network traffic." />
                                     </StackPanel>
@@ -99,7 +111,10 @@
 
                                 <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
-                                        <TextBlock Text="RX THROUGHPUT" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="RX THROUGHPUT" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="RxStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="RxValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="RxDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Inbound network traffic." />
                                     </StackPanel>
@@ -107,7 +122,10 @@
 
                                 <Border Grid.Row="1" Grid.Column="2" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
-                                        <TextBlock Text="LIVE TRAFFIC" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="LIVE TRAFFIC" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="TrafficStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="TrafficValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="TrafficDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Combined transfer envelope." />
                                     </StackPanel>
@@ -131,7 +149,10 @@
 
                                 <Border Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
-                                        <TextBlock Text="CPU BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="CPU BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="CpuAllocationStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="CpuAllocationValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <ProgressRing x:Name="CpuAllocationProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
                                         <TextBlock x:Name="CpuAllocationDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Governed launch budget." />
@@ -140,7 +161,10 @@
 
                                 <Border Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
-                                        <TextBlock Text="RAM BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="RAM BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="MemoryAllocationStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="MemoryAllocationValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <ProgressRing x:Name="MemoryAllocationProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
                                         <TextBlock x:Name="MemoryAllocationDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Governed memory budget." />
@@ -149,7 +173,10 @@
 
                                 <Border Grid.Row="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
-                                        <TextBlock Text="BANDWIDTH BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="BANDWIDTH BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="BandwidthAllocationStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="BandwidthAllocationValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <ProgressRing x:Name="BandwidthAllocationProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
                                         <TextBlock x:Name="BandwidthAllocationDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Governed transfer budget." />
@@ -158,7 +185,10 @@
 
                                 <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
-                                        <TextBlock Text="STORAGE BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="STORAGE BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="StorageAllocationStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="StorageAllocationValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <ProgressRing x:Name="StorageAllocationProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
                                         <TextBlock x:Name="StorageAllocationDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Governed storage budget." />
@@ -184,7 +214,10 @@
 
                                 <Border Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="6">
-                                        <TextBlock Text="RUNTIME LANES" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="RUNTIME LANES" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="EndpointCountStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="EndpointCountText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="EndpointCountDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Published service lanes." />
                                     </StackPanel>
@@ -192,7 +225,10 @@
 
                                 <Border Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="6">
-                                        <TextBlock Text="GOVERNANCE FINDINGS" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="GOVERNANCE FINDINGS" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="GovernanceFindingStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="GovernanceFindingCountText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="GovernanceFindingDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Live CLU posture findings." />
                                     </StackPanel>
@@ -200,7 +236,10 @@
 
                                 <Border Grid.Column="2" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="6">
-                                        <TextBlock Text="APPLE OPERATIONS" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="APPLE OPERATIONS" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="AppleOperationStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="AppleOperationCountText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="AppleOperationDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Remote Apple jobs tracked." />
                                     </StackPanel>
@@ -208,7 +247,10 @@
 
                                 <Border Grid.Row="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="6">
-                                        <TextBlock Text="PLATFORM GATEWAYS" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="PLATFORM GATEWAYS" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="PlatformGatewayStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="PlatformGatewayCountText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="PlatformGatewayDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Published platform lanes." />
                                     </StackPanel>
@@ -216,7 +258,10 @@
 
                                 <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="6">
-                                        <TextBlock Text="GOVERNANCE SERVERS" Style="{StaticResource ShellLabelTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="GOVERNANCE SERVERS" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <Border x:Name="GovernanceServerStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                        </StackPanel>
                                         <TextBlock x:Name="GovernanceServerCountText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="GovernanceServerDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Execution endpoints available." />
                                     </StackPanel>
