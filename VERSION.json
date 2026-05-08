@@ -1,11 +1,27 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.8.3",
-  "current_tag": "v0.8.3",
+  "current_version": "0.8.4",
+  "current_tag": "v0.8.4",
   "released_at": "2026-05-08",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.8.4",
+      "tag": "v0.8.4",
+      "released_at": "2026-05-08",
+      "commit": "pending",
+      "summary": "MCP server catalog replaced with the operator-specified 23-server minimum baseline. Pre-v0.8.4 the seed inventory carried 18 generic placeholder names (repo-search / docs-search / fs-cache / build-cache / symbol-index / session-context / response-cache / git-intel / file-digest / vector-search / dep-graph / lint-cache / snippet-store / task-queue / memory / agent-comm / coordination / event-bus) plus 2 reserved entries (client-tracker, metrics). Operator listed the 23 MCP servers they actually need: Filesystem, Memory, Sequential Thinking, Computer Use, Desktop Control, Playwright, Chrome DevTools, Terminal/Shell, Local Git, SQLite, Local Database, Docker Control, File Search, Code Execution/REPL, Local Test Runner, Screen Capture/Vision, Keyboard & Mouse Control, Persistent Context, Local Build Tool, Local Indexer, File Watcher, Knowledge Graph, Local Linter. v0.8.4 replaces the placeholder catalog wholesale in MasterControlDefaults.cpp's seed-endpoint loop. Each entry has a stable kebab-case id, an operator-readable displayName, a category-style specialization (filesystem / memory / reasoning / automation / browser / shell / vcs / database / container / execution / testing / vision / build / indexer / quality), and a short description that fills the muted card body line. Ports 7101-7125 (skipping 7120-7121 already used by client-tracker / metrics).",
+      "entries": [
+        "feat(seed): MasterControlDefaults.cpp baselineMcpCatalog -- 23 named MCP server seed entries replacing the v0.7.x placeholder list. Each entry carries id (e.g. 'filesystem' / 'sequential-thinking' / 'docker-control'), displayName ('Filesystem MCP' / etc.), specialization category, and description. The MCP Servers card grid (v0.8.3) now headlines '23 MCP servers registered' with operator-meaningful names that match the operator's expected baseline. Reachability dots stay red until a real worker process binds to the listed port -- the catalog is advertisement, not pretense, and the v0.8.2 honest-probe model is unchanged.",
+        "docs(version): bump 0.8.3 -> 0.8.4 (operator-specified 23-server MCP baseline catalog)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; activity stream as scrolling SwapChainPanel.",
+        "Discovery doc still serves the literal listen URL when the gateway is bound to a wildcard. v0.7.7 fixed only the operator display surfaces.",
+        "Catalog ports 7101-7125 are advertised but no worker processes are bound yet. v0.8.5+ will land worker registration scripts (CreateProcessW + Job Object supervision per ADR-002 §7) for the 23 baseline MCP servers."
+      ]
+    },
     {
       "version": "0.8.3",
       "tag": "v0.8.3",
