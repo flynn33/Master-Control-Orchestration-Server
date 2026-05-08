@@ -12,6 +12,17 @@
 
 #include "ShellFormatting.h"
 
+// v0.8.0: layout persistence + detach windows
+#include <winrt/Microsoft.UI.Xaml.h>
+#include <winrt/Microsoft.UI.Xaml.Controls.h>
+#include <winrt/Microsoft.UI.Xaml.Media.h>
+#include <winrt/Windows.ApplicationModel.DataTransfer.h>
+#include <winrt/Windows.Storage.Streams.h>
+#include <KnownFolders.h>
+#include <ShlObj.h>
+#include <fstream>
+#include <sstream>
+
 namespace winrt::MasterControlShell::implementation {
 
 using namespace ::MasterControlShell::Presentation;
@@ -131,6 +142,15 @@ StatusTone findingsTone(size_t count, bool apiHealthy) {
 
 TelemetrySectionControl::TelemetrySectionControl() {
     InitializeComponent();
+    // v0.8.0: deferred layout load -- the XAML element accessors aren't
+    // safe to dereference until the visual tree is fully realized. Hook
+    // Loaded once.
+    this->Loaded([weak = get_weak()](auto&&, auto&&) {
+        if (auto self = weak.get()) {
+            self->LoadAndApplyLayout();
+            self->RebuildCustomizeFlyoutCheckboxes();
+        }
+    });
 }
 
 void TelemetrySectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot) {
@@ -255,6 +275,690 @@ void TelemetrySectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
     paintDot(AppleOperationStatusDot(),      populationTone(snapshot.appleOperationCount,    snapshot.apiHealthy));
     paintDot(PlatformGatewayStatusDot(),     populationTone(snapshot.platformGatewayCount,   snapshot.apiHealthy));
     paintDot(GovernanceServerStatusDot(),    populationTone(snapshot.governanceServerCount,  snapshot.apiHealthy));
+}
+
+// =====================================================================
+// v0.8.0: Telemetry layout customization (select / drag-reorder / detach)
+// =====================================================================
+
+namespace {
+
+// Stable list of every tile name and its default home section + grid
+// position. Single source of truth for "where does this tile live by
+// default" -- consulted by BuildDefaultLayout, ResolveSectionGridForTile,
+// and the Customize flyout label.
+struct TileMetadata {
+    const wchar_t* name;       // x:Name on the tile Border
+    const wchar_t* displayName;// label shown in the Customize flyout
+    const wchar_t* sectionId;  // "host-pressure" | "resource-allocation" | "operational-activity"
+    int defaultRow;
+    int defaultColumn;
+};
+
+const std::vector<TileMetadata>& tileCatalog() {
+    static const std::vector<TileMetadata> catalog = {
+        // Live Host Pressure (3 columns x 2 rows)
+        { L"CpuTile",                L"CPU Load",            L"host-pressure", 0, 0 },
+        { L"MemoryTile",             L"Memory Pressure",     L"host-pressure", 0, 1 },
+        { L"DiskTile",               L"Disk Occupancy",      L"host-pressure", 0, 2 },
+        { L"TxTile",                 L"TX Throughput",       L"host-pressure", 1, 0 },
+        { L"RxTile",                 L"RX Throughput",       L"host-pressure", 1, 1 },
+        { L"TrafficTile",            L"Live Traffic",        L"host-pressure", 1, 2 },
+        // Resource Allocation (2 columns x 2 rows)
+        { L"CpuBudgetTile",          L"CPU Budget",          L"resource-allocation", 0, 0 },
+        { L"RamBudgetTile",          L"RAM Budget",          L"resource-allocation", 0, 1 },
+        { L"BandwidthBudgetTile",    L"Bandwidth Budget",    L"resource-allocation", 1, 0 },
+        { L"StorageBudgetTile",      L"Storage Budget",      L"resource-allocation", 1, 1 },
+        // Operational Activity (3 columns x 2 rows; 5 tiles, 1 cell empty by default)
+        { L"RuntimeLanesTile",       L"Runtime Lanes",       L"operational-activity", 0, 0 },
+        { L"GovernanceFindingsTile", L"Governance Findings", L"operational-activity", 0, 1 },
+        { L"AppleOperationsTile",    L"Apple Operations",    L"operational-activity", 0, 2 },
+        { L"PlatformGatewaysTile",   L"Platform Gateways",   L"operational-activity", 1, 0 },
+        { L"GovernanceServersTile",  L"Governance Servers",  L"operational-activity", 1, 1 },
+    };
+    return catalog;
+}
+
+const TileMetadata* findTileMetadata(const std::wstring& tileName) {
+    for (const auto& meta : tileCatalog()) {
+        if (tileName == meta.name) return &meta;
+    }
+    return nullptr;
+}
+
+// Tag-to-string helper. WinUI 3 Tag is IInspectable; the XAML carries
+// string Tag values for our tile/button identification.
+std::wstring tagAsString(winrt::Windows::Foundation::IInspectable const& tag) {
+    if (!tag) return L"";
+    if (auto box = tag.try_as<winrt::Windows::Foundation::IPropertyValue>()) {
+        if (box.Type() == winrt::Windows::Foundation::PropertyType::String) {
+            return std::wstring(box.GetString().c_str());
+        }
+    }
+    return L"";
+}
+
+// Locate %ProgramData%\MasterControlOrchestrationServer\config\.
+std::wstring programDataConfigDir() {
+    PWSTR pPath = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_ProgramData, 0, nullptr, &pPath))) {
+        std::wstring root(pPath);
+        CoTaskMemFree(pPath);
+        std::wstring dir = root + L"\\MasterControlOrchestrationServer\\config";
+        CreateDirectoryW(dir.c_str(), nullptr);
+        return dir;
+    }
+    return L"";
+}
+
+// JSON serialization is intentionally minimal -- we control both the
+// reader and the writer, so we don't need a full parser. Layout is small
+// (15 tile entries) so even O(n^2) scans are fine.
+
+std::wstring escapeJsonString(const std::wstring& raw) {
+    std::wstring out;
+    out.reserve(raw.size() + 4);
+    for (wchar_t c : raw) {
+        switch (c) {
+            case L'\\': out += L"\\\\"; break;
+            case L'"':  out += L"\\\""; break;
+            case L'\n': out += L"\\n"; break;
+            case L'\r': out += L"\\r"; break;
+            case L'\t': out += L"\\t"; break;
+            default:    out += c; break;
+        }
+    }
+    return out;
+}
+
+// Wide-to-UTF8 for fstream output.
+std::string wideToUtf8(const std::wstring& w) {
+    if (w.empty()) return {};
+    int needed = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+    std::string out(needed, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), out.data(), needed, nullptr, nullptr);
+    return out;
+}
+
+std::wstring utf8ToWide(const std::string& u) {
+    if (u.empty()) return {};
+    int needed = MultiByteToWideChar(CP_UTF8, 0, u.c_str(), (int)u.size(), nullptr, 0);
+    std::wstring out(needed, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, u.c_str(), (int)u.size(), out.data(), needed);
+    return out;
+}
+
+// Tiny single-purpose JSON parser for the layout document. Takes the
+// utf-8 file text, returns a map keyed by tile name. Tolerates missing
+// fields by falling back to defaults.
+std::map<std::wstring, TelemetryTileLayoutState> parseLayoutJson(const std::string& utf8Text) {
+    std::map<std::wstring, TelemetryTileLayoutState> result;
+    if (utf8Text.empty()) return result;
+
+    auto find = [&](size_t from, const std::string& needle) -> size_t {
+        return utf8Text.find(needle, from);
+    };
+    auto extractString = [&](size_t openQuote) -> std::pair<std::string, size_t> {
+        std::string s;
+        size_t i = openQuote + 1;
+        while (i < utf8Text.size()) {
+            char c = utf8Text[i];
+            if (c == '\\' && i + 1 < utf8Text.size()) {
+                char n = utf8Text[i + 1];
+                if (n == 'n') s += '\n';
+                else if (n == 'r') s += '\r';
+                else if (n == 't') s += '\t';
+                else s += n;
+                i += 2;
+            } else if (c == '"') {
+                return {s, i};
+            } else {
+                s += c;
+                ++i;
+            }
+        }
+        return {s, i};
+    };
+    auto extractInt = [&](size_t startPos, int fallback) -> std::pair<int, size_t> {
+        size_t i = startPos;
+        while (i < utf8Text.size() && (utf8Text[i] == ' ' || utf8Text[i] == ':')) ++i;
+        bool neg = false;
+        if (i < utf8Text.size() && utf8Text[i] == '-') { neg = true; ++i; }
+        int v = 0;
+        bool any = false;
+        while (i < utf8Text.size() && utf8Text[i] >= '0' && utf8Text[i] <= '9') {
+            v = v * 10 + (utf8Text[i] - '0');
+            ++i;
+            any = true;
+        }
+        return {any ? (neg ? -v : v) : fallback, i};
+    };
+    auto extractBool = [&](size_t startPos, bool fallback) -> std::pair<bool, size_t> {
+        size_t i = startPos;
+        while (i < utf8Text.size() && (utf8Text[i] == ' ' || utf8Text[i] == ':')) ++i;
+        if (i + 4 <= utf8Text.size() && utf8Text.substr(i, 4) == "true") return {true, i + 4};
+        if (i + 5 <= utf8Text.size() && utf8Text.substr(i, 5) == "false") return {false, i + 5};
+        return {fallback, i};
+    };
+
+    // Find each "TileName": { ... } object inside the top-level "tiles": { ... }.
+    size_t tilesPos = find(0, "\"tiles\"");
+    if (tilesPos == std::string::npos) return result;
+    size_t cursor = utf8Text.find('{', tilesPos);
+    if (cursor == std::string::npos) return result;
+    ++cursor;
+    int depth = 1;
+    while (cursor < utf8Text.size() && depth > 0) {
+        // Skip whitespace + commas.
+        while (cursor < utf8Text.size() &&
+               (utf8Text[cursor] == ' ' || utf8Text[cursor] == ',' ||
+                utf8Text[cursor] == '\n' || utf8Text[cursor] == '\r' || utf8Text[cursor] == '\t')) {
+            ++cursor;
+        }
+        if (cursor >= utf8Text.size()) break;
+        if (utf8Text[cursor] == '}') { --depth; ++cursor; break; }
+        if (utf8Text[cursor] != '"') { ++cursor; continue; }
+        auto [tileNameUtf8, afterName] = extractString(cursor);
+        cursor = afterName + 1;
+        // Skip ':' and any whitespace.
+        while (cursor < utf8Text.size() && (utf8Text[cursor] == ':' || utf8Text[cursor] == ' ')) ++cursor;
+        if (cursor >= utf8Text.size() || utf8Text[cursor] != '{') continue;
+        ++cursor;
+        TelemetryTileLayoutState state{};
+        // Walk fields until matching close brace.
+        int innerDepth = 1;
+        while (cursor < utf8Text.size() && innerDepth > 0) {
+            while (cursor < utf8Text.size() &&
+                   (utf8Text[cursor] == ' ' || utf8Text[cursor] == ',' ||
+                    utf8Text[cursor] == '\n' || utf8Text[cursor] == '\r' || utf8Text[cursor] == '\t')) {
+                ++cursor;
+            }
+            if (cursor >= utf8Text.size()) break;
+            if (utf8Text[cursor] == '}') { --innerDepth; ++cursor; break; }
+            if (utf8Text[cursor] != '"') { ++cursor; continue; }
+            auto [fieldUtf8, afterField] = extractString(cursor);
+            cursor = afterField + 1;
+            while (cursor < utf8Text.size() && (utf8Text[cursor] == ':' || utf8Text[cursor] == ' ')) ++cursor;
+            if (cursor >= utf8Text.size()) break;
+            if (fieldUtf8 == "visible") {
+                auto [b, after] = extractBool(cursor, true);
+                state.visible = b;
+                cursor = after;
+            } else if (fieldUtf8 == "detached") {
+                auto [b, after] = extractBool(cursor, false);
+                state.detached = b;
+                cursor = after;
+            } else if (fieldUtf8 == "row") {
+                auto [v, after] = extractInt(cursor, 0);
+                state.row = v;
+                cursor = after;
+            } else if (fieldUtf8 == "column") {
+                auto [v, after] = extractInt(cursor, 0);
+                state.column = v;
+                cursor = after;
+            } else if (fieldUtf8 == "detachedX") {
+                auto [v, after] = extractInt(cursor, 80);
+                state.detachedX = v;
+                cursor = after;
+            } else if (fieldUtf8 == "detachedY") {
+                auto [v, after] = extractInt(cursor, 80);
+                state.detachedY = v;
+                cursor = after;
+            } else if (fieldUtf8 == "detachedWidth") {
+                auto [v, after] = extractInt(cursor, 360);
+                state.detachedWidth = v;
+                cursor = after;
+            } else if (fieldUtf8 == "detachedHeight") {
+                auto [v, after] = extractInt(cursor, 320);
+                state.detachedHeight = v;
+                cursor = after;
+            } else if (fieldUtf8 == "sectionId") {
+                if (cursor < utf8Text.size() && utf8Text[cursor] == '"') {
+                    auto [s, after] = extractString(cursor);
+                    state.sectionId = utf8ToWide(s);
+                    cursor = after + 1;
+                }
+            } else {
+                // Unknown field -- skip until next comma or '}'.
+                while (cursor < utf8Text.size() && utf8Text[cursor] != ',' && utf8Text[cursor] != '}') ++cursor;
+            }
+        }
+        result[utf8ToWide(tileNameUtf8)] = state;
+    }
+    return result;
+}
+
+std::string serializeLayoutJson(const std::map<std::wstring, TelemetryTileLayoutState>& layout) {
+    std::wostringstream out;
+    out << L"{\n  \"tiles\": {\n";
+    bool first = true;
+    for (const auto& [name, state] : layout) {
+        if (!first) out << L",\n";
+        first = false;
+        out << L"    \"" << escapeJsonString(name) << L"\": {"
+            << L"\"visible\":" << (state.visible ? L"true" : L"false")
+            << L",\"detached\":" << (state.detached ? L"true" : L"false")
+            << L",\"row\":" << state.row
+            << L",\"column\":" << state.column
+            << L",\"sectionId\":\"" << escapeJsonString(state.sectionId) << L"\""
+            << L",\"detachedX\":" << state.detachedX
+            << L",\"detachedY\":" << state.detachedY
+            << L",\"detachedWidth\":" << state.detachedWidth
+            << L",\"detachedHeight\":" << state.detachedHeight
+            << L"}";
+    }
+    out << L"\n  }\n}\n";
+    return wideToUtf8(out.str());
+}
+
+} // namespace
+
+std::map<std::wstring, TelemetryTileLayoutState> TelemetrySectionControl::BuildDefaultLayout() {
+    std::map<std::wstring, TelemetryTileLayoutState> result;
+    for (const auto& meta : tileCatalog()) {
+        TelemetryTileLayoutState state{};
+        state.visible = true;
+        state.detached = false;
+        state.row = meta.defaultRow;
+        state.column = meta.defaultColumn;
+        state.sectionId = meta.sectionId;
+        state.detachedX = 80;
+        state.detachedY = 80;
+        state.detachedWidth = 360;
+        state.detachedHeight = 320;
+        result[meta.name] = state;
+    }
+    return result;
+}
+
+std::wstring TelemetrySectionControl::LayoutFilePath() {
+    std::wstring dir = programDataConfigDir();
+    if (dir.empty()) return L"";
+    return dir + L"\\telemetry-layout.json";
+}
+
+void TelemetrySectionControl::PersistLayout() {
+    if (!layoutLoaded_) return;
+    // Snapshot current Grid.Row/Grid.Column for every still-attached tile
+    // so a drag-reorder shows up in the file even if we never set the
+    // value directly in tileLayout_.
+    using namespace winrt::Microsoft::UI::Xaml;
+    using namespace winrt::Microsoft::UI::Xaml::Controls;
+    for (const auto& meta : tileCatalog()) {
+        auto& state = tileLayout_[meta.name];
+        state.sectionId = meta.sectionId;
+        if (state.detached) continue;
+        auto tile = ResolveTileByName(meta.name);
+        if (!tile) continue;
+        try {
+            state.row    = (int)Grid::GetRow(tile);
+            state.column = (int)Grid::GetColumn(tile);
+        } catch (const winrt::hresult_error&) {}
+        state.visible = (tile.Visibility() == Visibility::Visible);
+    }
+    auto path = LayoutFilePath();
+    if (path.empty()) return;
+    std::string body = serializeLayoutJson(tileLayout_);
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f.write(body.data(), (std::streamsize)body.size());
+}
+
+void TelemetrySectionControl::LoadAndApplyLayout() {
+    using namespace winrt::Microsoft::UI::Xaml;
+    using namespace winrt::Microsoft::UI::Xaml::Controls;
+
+    auto path = LayoutFilePath();
+    std::map<std::wstring, TelemetryTileLayoutState> loaded;
+    if (!path.empty()) {
+        std::ifstream f(path, std::ios::binary);
+        if (f.good()) {
+            std::ostringstream buf;
+            buf << f.rdbuf();
+            loaded = parseLayoutJson(buf.str());
+        }
+    }
+    if (loaded.empty()) {
+        loaded = BuildDefaultLayout();
+    }
+    // Fill in missing entries with defaults (handles older layout files
+    // saved before a tile was added to the catalog).
+    auto defaults = BuildDefaultLayout();
+    for (const auto& [name, state] : defaults) {
+        if (!loaded.count(name)) loaded[name] = state;
+    }
+    tileLayout_ = std::move(loaded);
+    layoutLoaded_ = true;
+
+    // Apply Grid.SetRow/SetColumn first, then visibility, then detach
+    // pending tiles. Detach last so the still-attached tiles already have
+    // their grid positions correct.
+    for (const auto& meta : tileCatalog()) {
+        auto& state = tileLayout_[meta.name];
+        auto tile = ResolveTileByName(meta.name);
+        if (!tile) continue;
+        try {
+            Grid::SetRow(tile, state.row);
+            Grid::SetColumn(tile, state.column);
+            tile.Visibility(state.visible ? Visibility::Visible : Visibility::Collapsed);
+        } catch (const winrt::hresult_error&) {}
+    }
+    for (const auto& meta : tileCatalog()) {
+        auto& state = tileLayout_[meta.name];
+        if (state.detached && !detachedWindows_.count(meta.name)) {
+            DetachTileToDesktop(meta.name);
+        }
+    }
+}
+
+void TelemetrySectionControl::ResetLayoutToDefaults() {
+    // Reattach any detached windows first so the tile Borders return to
+    // their grid section parents before we apply default positions.
+    std::vector<std::wstring> detachedNames;
+    for (const auto& [name, _] : detachedWindows_) detachedNames.push_back(name);
+    for (const auto& name : detachedNames) ReattachTile(name);
+    tileLayout_ = BuildDefaultLayout();
+    LoadAndApplyLayout();
+    PersistLayout();
+    RebuildCustomizeFlyoutCheckboxes();
+}
+
+void TelemetrySectionControl::ResetLayoutButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    ResetLayoutToDefaults();
+}
+
+winrt::Microsoft::UI::Xaml::Controls::Border
+TelemetrySectionControl::ResolveTileByName(const std::wstring& tileName) {
+    using namespace winrt::Microsoft::UI::Xaml::Controls;
+    if (tileName == L"CpuTile")                return CpuTile();
+    if (tileName == L"MemoryTile")             return MemoryTile();
+    if (tileName == L"DiskTile")               return DiskTile();
+    if (tileName == L"TxTile")                 return TxTile();
+    if (tileName == L"RxTile")                 return RxTile();
+    if (tileName == L"TrafficTile")            return TrafficTile();
+    if (tileName == L"CpuBudgetTile")          return CpuBudgetTile();
+    if (tileName == L"RamBudgetTile")          return RamBudgetTile();
+    if (tileName == L"BandwidthBudgetTile")    return BandwidthBudgetTile();
+    if (tileName == L"StorageBudgetTile")      return StorageBudgetTile();
+    if (tileName == L"RuntimeLanesTile")       return RuntimeLanesTile();
+    if (tileName == L"GovernanceFindingsTile") return GovernanceFindingsTile();
+    if (tileName == L"AppleOperationsTile")    return AppleOperationsTile();
+    if (tileName == L"PlatformGatewaysTile")   return PlatformGatewaysTile();
+    if (tileName == L"GovernanceServersTile")  return GovernanceServersTile();
+    return nullptr;
+}
+
+winrt::Microsoft::UI::Xaml::Controls::Grid
+TelemetrySectionControl::ResolveSectionGridForTile(const std::wstring& tileName) {
+    auto* meta = findTileMetadata(tileName);
+    if (!meta) return nullptr;
+    if (std::wstring(meta->sectionId) == L"host-pressure")        return HostPressureGrid();
+    if (std::wstring(meta->sectionId) == L"resource-allocation")  return ResourceAllocationGrid();
+    if (std::wstring(meta->sectionId) == L"operational-activity") return OperationalActivityGrid();
+    return nullptr;
+}
+
+std::wstring TelemetrySectionControl::ResolveSectionIdForTile(const std::wstring& tileName) {
+    auto* meta = findTileMetadata(tileName);
+    return meta ? std::wstring(meta->sectionId) : L"";
+}
+
+// =====================================================================
+// Drag and drop reorder
+// =====================================================================
+
+void TelemetrySectionControl::Tile_DragStarting(
+    winrt::Windows::Foundation::IInspectable const& sender,
+    winrt::Microsoft::UI::Xaml::DragStartingEventArgs const& e) {
+    using namespace winrt::Windows::ApplicationModel::DataTransfer;
+    auto border = sender.try_as<winrt::Microsoft::UI::Xaml::Controls::Border>();
+    if (!border) return;
+    std::wstring tileName = tagAsString(border.Tag());
+    if (tileName.empty()) return;
+    e.Data().SetText(winrt::hstring(tileName));
+    e.Data().RequestedOperation(DataPackageOperation::Move);
+}
+
+void TelemetrySectionControl::Tile_DragOver(
+    winrt::Windows::Foundation::IInspectable const&,
+    winrt::Microsoft::UI::Xaml::DragEventArgs const& e) {
+    using namespace winrt::Windows::ApplicationModel::DataTransfer;
+    e.AcceptedOperation(DataPackageOperation::Move);
+}
+
+void TelemetrySectionControl::Tile_Drop(
+    winrt::Windows::Foundation::IInspectable const& sender,
+    winrt::Microsoft::UI::Xaml::DragEventArgs const& e) {
+    using namespace winrt::Microsoft::UI::Xaml;
+    using namespace winrt::Microsoft::UI::Xaml::Controls;
+
+    auto target = sender.try_as<Border>();
+    if (!target) return;
+    std::wstring targetName = tagAsString(target.Tag());
+
+    // The DataPackage carries the source tile's name as text.
+    auto async = e.DataView().GetTextAsync();
+    auto sourceName = std::wstring(async.get().c_str());
+    if (sourceName.empty() || sourceName == targetName) return;
+
+    // Cross-section drag is rejected. The reattach path handles cross-section
+    // moves through the customize flyout instead.
+    if (ResolveSectionIdForTile(sourceName) != ResolveSectionIdForTile(targetName)) {
+        return;
+    }
+    auto source = ResolveTileByName(sourceName);
+    if (!source) return;
+
+    // Swap the attached Grid.Row / Grid.Column properties.
+    int sourceRow = (int)Grid::GetRow(source);
+    int sourceCol = (int)Grid::GetColumn(source);
+    int targetRow = (int)Grid::GetRow(target);
+    int targetCol = (int)Grid::GetColumn(target);
+    Grid::SetRow(source,    targetRow);
+    Grid::SetColumn(source, targetCol);
+    Grid::SetRow(target,    sourceRow);
+    Grid::SetColumn(target, sourceCol);
+
+    PersistLayout();
+}
+
+// =====================================================================
+// Hide / Detach / Customize
+// =====================================================================
+
+void TelemetrySectionControl::HideButton_Click(
+    winrt::Windows::Foundation::IInspectable const& sender,
+    winrt::Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    auto button = sender.try_as<winrt::Microsoft::UI::Xaml::Controls::Button>();
+    if (!button) return;
+    std::wstring tileName = tagAsString(button.Tag());
+    if (tileName.empty()) return;
+    ApplyTileVisibility(tileName, /*visible=*/false);
+    if (auto& state = tileLayout_[tileName]; true) {
+        state.visible = false;
+    }
+    PersistLayout();
+    RebuildCustomizeFlyoutCheckboxes();
+}
+
+void TelemetrySectionControl::ApplyTileVisibility(const std::wstring& tileName, bool visible) {
+    using namespace winrt::Microsoft::UI::Xaml;
+    auto tile = ResolveTileByName(tileName);
+    if (tile) {
+        tile.Visibility(visible ? Visibility::Visible : Visibility::Collapsed);
+    }
+}
+
+void TelemetrySectionControl::DetachButton_Click(
+    winrt::Windows::Foundation::IInspectable const& sender,
+    winrt::Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    auto button = sender.try_as<winrt::Microsoft::UI::Xaml::Controls::Button>();
+    if (!button) return;
+    std::wstring tileName = tagAsString(button.Tag());
+    if (tileName.empty()) return;
+    DetachTileToDesktop(tileName);
+}
+
+void TelemetrySectionControl::DetachTileToDesktop(const std::wstring& tileName) {
+    using namespace winrt::Microsoft::UI::Xaml;
+    using namespace winrt::Microsoft::UI::Xaml::Controls;
+
+    if (detachedWindows_.count(tileName)) return; // already detached
+    auto tile = ResolveTileByName(tileName);
+    if (!tile) return;
+    auto sectionGrid = ResolveSectionGridForTile(tileName);
+    if (!sectionGrid) return;
+
+    // Capture the tile's current position so re-attach can restore it.
+    auto& state = tileLayout_[tileName];
+    state.row    = (int)Grid::GetRow(tile);
+    state.column = (int)Grid::GetColumn(tile);
+    state.detached = true;
+
+    // Remove from current parent grid.
+    auto children = sectionGrid.Children();
+    uint32_t childIdx = 0;
+    if (children.IndexOf(tile, childIdx)) {
+        children.RemoveAt(childIdx);
+    }
+
+    // Build a new top-level Window. Layout: a small header with a
+    // Re-attach button, then the tile itself filling the rest. The
+    // window's content runs on the same UI dispatcher as the main shell,
+    // so existing x:Name accessors keep working from ApplySnapshot.
+    Window detachedWindow;
+    auto title = std::wstring(L"MCOS Telemetry - ");
+    if (auto* meta = findTileMetadata(tileName)) {
+        title += meta->displayName;
+    } else {
+        title += tileName;
+    }
+    detachedWindow.Title(winrt::hstring(title));
+
+    Grid root;
+    root.RowDefinitions().Append(RowDefinition{});
+    root.RowDefinitions().Append(RowDefinition{});
+    root.RowDefinitions().GetAt(0).Height(GridLengthHelper::Auto());
+    root.RowDefinitions().GetAt(1).Height(GridLengthHelper::FromValueAndType(1.0, GridUnitType::Star));
+    root.Padding(Thickness{12, 12, 12, 12});
+
+    StackPanel header;
+    header.Orientation(Orientation::Horizontal);
+    header.Spacing(10);
+    header.Margin(Thickness{0, 0, 0, 8});
+    TextBlock label;
+    label.Text(winrt::hstring(L"Detached telemetry tile"));
+    label.VerticalAlignment(VerticalAlignment::Center);
+    Button reattachButton;
+    reattachButton.Content(winrt::box_value(winrt::hstring(L"Re-attach to main")));
+    auto weak = get_weak();
+    std::wstring captured = tileName;
+    reattachButton.Click([weak, captured](auto&&, auto&&) {
+        if (auto self = weak.get()) self->ReattachTile(captured);
+    });
+    header.Children().Append(label);
+    header.Children().Append(reattachButton);
+
+    Grid::SetRow(header, 0);
+    root.Children().Append(header);
+    Grid::SetRow(tile, 1);
+    tile.Margin(Thickness{0});
+    root.Children().Append(tile);
+
+    detachedWindow.Content(root);
+    // When the operator closes the detached window, treat it as reattach
+    // so the tile returns to its section.
+    detachedWindow.Closed([weak, captured](auto&&, auto&&) {
+        if (auto self = weak.get()) self->ReattachTile(captured);
+    });
+    detachedWindow.Activate();
+    detachedWindows_[tileName] = detachedWindow;
+
+    PersistLayout();
+}
+
+void TelemetrySectionControl::ReattachTile(const std::wstring& tileName) {
+    using namespace winrt::Microsoft::UI::Xaml;
+    using namespace winrt::Microsoft::UI::Xaml::Controls;
+
+    auto it = detachedWindows_.find(tileName);
+    if (it == detachedWindows_.end()) return;
+    auto window = it->second;
+    detachedWindows_.erase(it);
+
+    auto tile = ResolveTileByName(tileName);
+    auto sectionGrid = ResolveSectionGridForTile(tileName);
+    if (tile && sectionGrid) {
+        // Detach from the window content first.
+        auto windowContent = window.Content().try_as<Grid>();
+        if (windowContent) {
+            uint32_t idx = 0;
+            if (windowContent.Children().IndexOf(tile, idx)) {
+                windowContent.Children().RemoveAt(idx);
+            }
+        }
+        // Restore prior grid position from layout state.
+        auto& state = tileLayout_[tileName];
+        state.detached = false;
+        try {
+            Grid::SetRow(tile, state.row);
+            Grid::SetColumn(tile, state.column);
+        } catch (const winrt::hresult_error&) {}
+        sectionGrid.Children().Append(tile);
+    }
+
+    // Closing the window may already be in progress (if Closed fired this
+    // path). Try to close once more -- harmless if already closed.
+    try { window.Close(); } catch (const winrt::hresult_error&) {}
+
+    PersistLayout();
+    RebuildCustomizeFlyoutCheckboxes();
+}
+
+// =====================================================================
+// Customize flyout
+// =====================================================================
+
+void TelemetrySectionControl::RebuildCustomizeFlyoutCheckboxes() {
+    using namespace winrt::Microsoft::UI::Xaml;
+    using namespace winrt::Microsoft::UI::Xaml::Controls;
+
+    auto stack = CustomizeTileCheckboxStack();
+    if (!stack) return;
+    suspendCheckboxHandler_ = true;
+    stack.Children().Clear();
+    for (const auto& meta : tileCatalog()) {
+        const auto& state = tileLayout_[meta.name];
+        CheckBox cb;
+        cb.IsChecked(winrt::Windows::Foundation::IReference<bool>(state.visible));
+        std::wstring label = std::wstring(meta.displayName);
+        if (state.detached) label += L"  (detached)";
+        cb.Content(winrt::box_value(winrt::hstring(label)));
+        std::wstring captured = meta.name;
+        auto weak = get_weak();
+        cb.Checked([weak, captured](auto&&, auto&&) {
+            if (auto self = weak.get()) self->OnTileVisibleCheckboxChanged(captured, true);
+        });
+        cb.Unchecked([weak, captured](auto&&, auto&&) {
+            if (auto self = weak.get()) self->OnTileVisibleCheckboxChanged(captured, false);
+        });
+        stack.Children().Append(cb);
+    }
+    suspendCheckboxHandler_ = false;
+}
+
+void TelemetrySectionControl::OnTileVisibleCheckboxChanged(
+    const std::wstring& tileName, bool visible) {
+    if (suspendCheckboxHandler_) return;
+    auto& state = tileLayout_[tileName];
+    state.visible = visible;
+    // If a hidden tile is being shown again while detached, leave the
+    // detached window alone -- it's still showing the live tile.
+    if (!state.detached) {
+        ApplyTileVisibility(tileName, visible);
+    }
+    PersistLayout();
 }
 
 } // namespace winrt::MasterControlShell::implementation

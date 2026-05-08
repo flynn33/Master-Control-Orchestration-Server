@@ -41,6 +41,39 @@
                 </Grid>
             </Border>
 
+            <!-- v0.8.0: Customize Layout bar. The user controls which
+                 telemetry tiles render (Customize flyout), can drag-drop
+                 tiles to swap positions inside each section, and can pop
+                 any tile to its own desktop window via the small detach
+                 button on each tile. Layout persists to the runtime data
+                 directory's telemetry-layout.json. -->
+            <Border Style="{StaticResource ShellCardStyle}">
+                <Grid ColumnSpacing="14">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="TELEMETRY LAYOUT" Style="{StaticResource ShellEyebrowTextStyle}" />
+                        <TextBlock Text="Drag tiles to reorder. Use the buttons on each tile to detach or hide it." Style="{StaticResource ShellLabelTextStyle}" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" x:Name="LayoutStatusText" Style="{StaticResource ShellLabelTextStyle}" Text="" VerticalAlignment="Center" />
+                    <Button Grid.Column="2" x:Name="CustomizeLayoutButton" Style="{StaticResource ShellCommandButtonStyle}" Content="Customize Layout">
+                        <Button.Flyout>
+                            <Flyout x:Name="CustomizeLayoutFlyout">
+                                <StackPanel Spacing="10" MinWidth="280">
+                                    <TextBlock Text="VISIBLE TELEMETRY TILES" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                    <StackPanel x:Name="CustomizeTileCheckboxStack" Spacing="6" />
+                                    <TextBlock Text="Drag tiles in the grid to swap positions. Detach pops a tile to its own desktop window." Style="{StaticResource ShellLabelTextStyle}" TextWrapping="WrapWholeWords" />
+                                    <Button x:Name="ResetLayoutButton" Click="ResetLayoutButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Reset to defaults" />
+                                </StackPanel>
+                            </Flyout>
+                        </Button.Flyout>
+                    </Button>
+                </Grid>
+            </Border>
+
             <Grid ColumnSpacing="20">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="1.45*" />
@@ -51,7 +84,7 @@
                     <Border Style="{StaticResource ShellCardStyle}">
                         <StackPanel Spacing="16">
                             <TextBlock Text="Live Host Pressure" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                            <Grid ColumnSpacing="14" RowSpacing="14">
+                            <Grid x:Name="HostPressureGrid" ColumnSpacing="14" RowSpacing="14">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
@@ -62,11 +95,13 @@
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
 
-                                <Border Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="CpuTile" Tag="CpuTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="CPU LOAD" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="CPU LOAD" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="CpuStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="CpuTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="CpuTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="CpuValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <ProgressRing x:Name="CpuProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
@@ -74,11 +109,13 @@
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="MemoryTile" Tag="MemoryTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="MEMORY PRESSURE" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="MEMORY PRESSURE" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="MemoryStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="MemoryTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="MemoryTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="MemoryValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <ProgressRing x:Name="MemoryProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
@@ -86,11 +123,13 @@
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Column="2" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="DiskTile" Tag="DiskTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Grid.Column="2" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="DISK OCCUPANCY" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="DISK OCCUPANCY" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="DiskStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="DiskTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="DiskTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="DiskValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <ProgressRing x:Name="DiskProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
@@ -98,33 +137,39 @@
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Row="1" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="TxTile" Tag="TxTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Grid.Row="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="TX THROUGHPUT" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="TX THROUGHPUT" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="TxStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="TxTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="TxTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="TxValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="TxDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Outbound network traffic." />
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="RxTile" Tag="RxTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="RX THROUGHPUT" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="RX THROUGHPUT" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="RxStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="RxTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="RxTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="RxValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="RxDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Inbound network traffic." />
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Row="1" Grid.Column="2" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="TrafficTile" Tag="TrafficTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Grid.Row="1" Grid.Column="2" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="LIVE TRAFFIC" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="LIVE TRAFFIC" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="TrafficStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="TrafficTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="TrafficTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="TrafficValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="TrafficDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Combined transfer envelope." />
@@ -137,7 +182,7 @@
                     <Border Style="{StaticResource ShellCardStyle}">
                         <StackPanel Spacing="16">
                             <TextBlock Text="Resource Allocation" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                            <Grid ColumnSpacing="14" RowSpacing="14">
+                            <Grid x:Name="ResourceAllocationGrid" ColumnSpacing="14" RowSpacing="14">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
@@ -147,11 +192,13 @@
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
 
-                                <Border Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="CpuBudgetTile" Tag="CpuBudgetTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="CPU BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="CPU BUDGET" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="CpuAllocationStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="CpuBudgetTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="CpuBudgetTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="CpuAllocationValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <ProgressRing x:Name="CpuAllocationProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
@@ -159,11 +206,13 @@
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="RamBudgetTile" Tag="RamBudgetTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="RAM BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="RAM BUDGET" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="MemoryAllocationStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="RamBudgetTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="RamBudgetTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="MemoryAllocationValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <ProgressRing x:Name="MemoryAllocationProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
@@ -171,11 +220,13 @@
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Row="1" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="BandwidthBudgetTile" Tag="BandwidthBudgetTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Grid.Row="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="BANDWIDTH BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="BANDWIDTH BUDGET" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="BandwidthAllocationStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="BandwidthBudgetTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="BandwidthBudgetTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="BandwidthAllocationValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <ProgressRing x:Name="BandwidthAllocationProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
@@ -183,11 +234,13 @@
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="StorageBudgetTile" Tag="StorageBudgetTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="8">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="STORAGE BUDGET" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="STORAGE BUDGET" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="StorageAllocationStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="StorageBudgetTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="StorageBudgetTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="StorageAllocationValueText" Style="{StaticResource ShellValueTextStyle}" />
                                         <ProgressRing x:Name="StorageAllocationProgressBar" IsActive="True" IsIndeterminate="False" Maximum="100" Width="72" Height="72" HorizontalAlignment="Left" Foreground="{StaticResource ShellAccentBrush}" />
@@ -201,7 +254,7 @@
                     <Border Style="{StaticResource ShellCardStyle}">
                         <StackPanel Spacing="16">
                             <TextBlock Text="Operational Activity" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                            <Grid ColumnSpacing="14" RowSpacing="14">
+                            <Grid x:Name="OperationalActivityGrid" ColumnSpacing="14" RowSpacing="14">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
@@ -212,55 +265,65 @@
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
 
-                                <Border Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="RuntimeLanesTile" Tag="RuntimeLanesTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="6">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="RUNTIME LANES" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="RUNTIME LANES" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="EndpointCountStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="RuntimeLanesTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="RuntimeLanesTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="EndpointCountText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="EndpointCountDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Published service lanes." />
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="GovernanceFindingsTile" Tag="GovernanceFindingsTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="6">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="GOVERNANCE FINDINGS" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="GOVERNANCE FINDINGS" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="GovernanceFindingStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="GovernanceFindingsTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="GovernanceFindingsTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="GovernanceFindingCountText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="GovernanceFindingDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Live CLU posture findings." />
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Column="2" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="AppleOperationsTile" Tag="AppleOperationsTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Grid.Column="2" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="6">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="APPLE OPERATIONS" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="APPLE OPERATIONS" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="AppleOperationStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="AppleOperationsTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="AppleOperationsTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="AppleOperationCountText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="AppleOperationDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Remote Apple jobs tracked." />
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Row="1" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="PlatformGatewaysTile" Tag="PlatformGatewaysTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Grid.Row="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="6">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="PLATFORM GATEWAYS" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="PLATFORM GATEWAYS" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="PlatformGatewayStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="PlatformGatewaysTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="PlatformGatewaysTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="PlatformGatewayCountText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="PlatformGatewayDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Published platform lanes." />
                                     </StackPanel>
                                 </Border>
 
-                                <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
+                                <Border x:Name="GovernanceServersTile" Tag="GovernanceServersTile" CanDrag="True" AllowDrop="True" DragStarting="Tile_DragStarting" Drop="Tile_Drop" DragOver="Tile_DragOver" Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellMetricTileStyle}">
                                     <StackPanel Spacing="6">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <TextBlock Text="GOVERNANCE SERVERS" Style="{StaticResource ShellLabelTextStyle}" />
+                                            <TextBlock Text="GOVERNANCE SERVERS" Style="{StaticResource ShellLabelTextStyle}" VerticalAlignment="Center" />
                                             <Border x:Name="GovernanceServerStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                            <Button Tag="GovernanceServersTile" Click="DetachButton_Click" Content="&#x2922;" ToolTipService.ToolTip="Detach to desktop" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
+                                            <Button Tag="GovernanceServersTile" Click="HideButton_Click" Content="&#x2715;" ToolTipService.ToolTip="Hide tile" Padding="4,2" FontSize="10" MinWidth="0" MinHeight="0" />
                                         </StackPanel>
                                         <TextBlock x:Name="GovernanceServerCountText" Style="{StaticResource ShellValueTextStyle}" />
                                         <TextBlock x:Name="GovernanceServerDetailText" Style="{StaticResource ShellLabelTextStyle}" Text="Execution endpoints available." />

@@ -1,11 +1,35 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.7.9",
-  "current_tag": "v0.7.9",
+  "current_version": "0.8.0",
+  "current_tag": "v0.8.0",
   "released_at": "2026-05-08",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.8.0",
+      "tag": "v0.8.0",
+      "released_at": "2026-05-08",
+      "commit": "pending",
+      "summary": "Telemetry tab is now operator-customizable. Pre-v0.8.0 the Telemetry view was a fixed three-section grid: Live Host Pressure (6 tiles), Resource Allocation (4 tiles), Operational Activity (5 tiles), with positions baked into XAML. v0.8.0 makes every tile (1) togglable via a Customize Layout flyout that lists every tile with a checkbox, (2) drag-reorderable inside its section by clicking and dragging the tile to another tile's position (positions swap), and (3) detachable to its own desktop window via a small detach button on each tile's title row. Detached tiles continue updating at the same 1Hz cadence as the main grid because the live-snapshot tick now broadcasts to the cached Telemetry section regardless of which tab the operator is currently viewing. Layout state -- visibility, grid position, detach state, and detached window geometry -- persists to %ProgramData%\\MasterControlOrchestrationServer\\config\\telemetry-layout.json so customization survives a shell restart. Reset to defaults restores the original section layout and re-attaches everything.",
+      "entries": [
+        "feat(shell): TelemetrySectionControl.xaml -- each of the 15 tile Borders gains x:Name + Tag + CanDrag + AllowDrop + DragStarting/DragOver/Drop handlers + a small detach (⤢) and hide (✕) button beside the existing label and status dot. Tag carries the tile's stable identifier (CpuTile, MemoryTile, ..., GovernanceServersTile) so handlers identify the source/target by string lookup.",
+        "feat(shell): TelemetrySectionControl.xaml -- new Customize Layout card above the host-pressure section. Card hosts a Button with a Flyout that lists every tile with a CheckBox bound to its visible flag. A Reset to defaults button restores the original layout. The flyout repopulates after every visibility/detach change so the (detached) suffix on detached tiles stays current.",
+        "feat(shell): TelemetrySectionControl.xaml.h -- TelemetryTileLayoutState struct + tileLayout_ map + detachedWindows_ map. Layout map keyed by tile name, captures visible / detached / row / column / sectionId / detachedX / detachedY / detachedWidth / detachedHeight per tile. detachedWindows_ owns the Microsoft::UI::Xaml::Window for every currently-popped tile so the window stays alive until explicit close or reattach.",
+        "feat(shell): TelemetrySectionControl.xaml.cpp -- drag/drop reorder via Tile_DragStarting (stamps source tile name onto the DataPackage), Tile_DragOver (authorizes Move operation visually), Tile_Drop (swaps Grid.Row / Grid.Column attached props between source and target tiles within the same section grid). Cross-section drags are rejected -- moving a tile between sections is done via Customize flyout + reattach so the operator never accidentally orphans a tile.",
+        "feat(shell): TelemetrySectionControl.xaml.cpp -- DetachTileToDesktop(tileName) removes the tile Border from its parent section grid, builds a new Microsoft::UI::Xaml::Window with title 'MCOS Telemetry - <Tile Name>', body of [Re-attach button, tile content], and Activate()s the window. ReattachTile(tileName) reverses the operation: pulls the tile out of the detached window, restores Grid.Row/SetColumn from saved layout state, and re-appends to the section grid's Children. Window Closed event also calls Reattach so the operator-closes-window path returns the tile.",
+        "feat(shell): TelemetrySectionControl.xaml.cpp -- HideButton_Click sets the tile's Visibility to Collapsed and persists state.visible=false. ApplyTileVisibility centralizes the visibility flip. Customize flyout's CheckBox.Checked/Unchecked handlers route through OnTileVisibleCheckboxChanged which respects detached state (a detached + checked tile keeps showing in its window without re-spawning in the main grid).",
+        "feat(shell): TelemetrySectionControl.xaml.cpp -- LoadAndApplyLayout reads %ProgramData%\\MasterControlOrchestrationServer\\config\\telemetry-layout.json on Loaded. Falls back to the v0.8.0 BuildDefaultLayout matrix (matches pre-v0.8.0 hardcoded positions) when the file is missing or older entries are absent. Applies Grid.SetRow/SetColumn + Visibility for every tile, then re-detaches any tile flagged detached=true. PersistLayout snapshots current Grid.Row/Column/Visibility per tile and writes a small custom-JSON document.",
+        "feat(shell): MainWindow.xaml.cpp -- ApplyCurrentSectionSnapshot now also feeds the cached Telemetry section a snapshot when the active destination is NOT telemetry. This keeps detached telemetry tiles updating at 1Hz from the operator's other tabs (Overview/Runtime/Settings/etc.). The cached view's ApplySnapshot updates the same x:Name'd inner controls (CpuValueText, CpuStatusDot, CpuProgressBar, ...) whether they're parented to the main shell grid or to a detached window's content tree.",
+        "docs(version): bump 0.7.9 -> 0.8.0 (Telemetry customization: select / drag / detach + persistence)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; Tron grid backdrop as procedural HLSL fragment shader; activity stream as scrolling SwapChainPanel.",
+        "Cross-section drag is rejected in v0.8.0 -- a tile dragged from Live Host Pressure cannot land in Resource Allocation. Operator can still move tiles across sections via the Customize flyout (hide in source, reset to defaults, ...) but a true cross-section drag requires a unified flat layout (likely a future GridView refactor that drops the section-grid grouping entirely).",
+        "Reachability probe is IPv4-only (AF_INET). IPv6-host sub-agents always render reachable=false. Fix is an AF_INET6 fallback path in AdminApiService::snapshot.",
+        "Discovery doc still serves the literal listen URL when the gateway is bound to a wildcard. v0.7.7 fixed only the operator display surfaces."
+      ]
+    },
     {
       "version": "0.7.9",
       "tag": "v0.7.9",

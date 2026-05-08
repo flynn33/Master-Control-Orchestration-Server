@@ -1333,6 +1333,20 @@ void MainWindow::ApplyLiveHeartbeat(std::chrono::system_clock::time_point /*now*
 // safe during the live tick because section controls update their
 // TextBlocks / ProgressBars in place.
 void MainWindow::ApplyCurrentSectionSnapshot(const ::MasterControlShell::ShellSnapshot& snapshot) {
+    // v0.8.0: when one or more telemetry tiles are detached to desktop
+    // windows, we want them to keep updating regardless of which section
+    // the operator is currently viewing. Always feed the cached telemetry
+    // view its snapshot in addition to the active section. The cached
+    // view's ApplySnapshot updates the same x:Name'd inner controls
+    // whether they are parented to the main shell grid or to a detached
+    // window's content tree.
+    {
+        auto telemetryCached = cachedViews_.find(L"telemetry");
+        if (telemetryCached != cachedViews_.end() && telemetryCached->second != nullptr
+            && currentDestination_ != L"telemetry") {
+            applySnapshotToView(telemetryCached->second, L"telemetry", snapshot);
+        }
+    }
     const auto slotIter = snapshot.viewInjectionsBySlot.find(currentDestination_);
     if (slotIter == snapshot.viewInjectionsBySlot.end() || slotIter->second.empty()) {
         return;
