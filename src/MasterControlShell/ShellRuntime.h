@@ -128,6 +128,22 @@ struct ShellActivityEvent final {
     std::wstring detail;
 };
 
+// v0.8.7: error event surfaced to the Overview tab's Error Reporting
+// card. Sourced from /api/activity events with statusCode >= 400 OR
+// kind/severity that conveys an error. ShellRuntime::CaptureSnapshot
+// fills snapshot.errorEvents (capped at 50 most recent) so the
+// Overview can render and the Export-to-JSON button can serialize.
+struct ShellErrorEvent final {
+    std::wstring id;
+    std::wstring timestampUtc;
+    std::wstring kind;       // activity kind (admin_api_request / governance_decision / ...)
+    std::wstring severity;   // "warn" / "error" / "critical" -- inferred from statusCode if absent
+    std::wstring source;     // actor + method + target where applicable
+    int statusCode = 0;
+    std::wstring message;
+    std::wstring detail;
+};
+
 struct ShellActivityStreamResult final {
     std::wstring highWaterMarkId;
     std::vector<ShellActivityEvent> events;
@@ -415,6 +431,10 @@ struct ShellSnapshot final {
     // v0.8.3: parallel array for MCP servers. Same parser, same render
     // pipeline as sub-agents above.
     std::vector<ShellMcpServerRuntimeStat> mcpServerRuntimeStats;
+    // v0.8.7: recent error events for the Overview tab Error Reporting
+    // card. Capped at 50 entries; harvested from /api/activity by
+    // ShellRuntime::CaptureSnapshot.
+    std::vector<ShellErrorEvent> errorEvents;
     std::vector<ShellAppleRemoteHost> appleRemoteHosts;
     std::vector<ShellAppleOperationRecord> appleOperations;
     std::vector<ShellNavigationPointer> navigationPointers;

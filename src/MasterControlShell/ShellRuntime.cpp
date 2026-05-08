@@ -2099,6 +2099,58 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.platformGatewayRows = std::move(platformGatewayRows);
     snapshot.governanceServerRows = std::move(governanceServerRows);
     snapshot.governanceExecutionRows = std::move(governanceExecutionRows);
+
+    // v0.8.7: harvest recent error events for the Overview tab Error
+    // Reporting card. Sourced from /api/activity, filtered to events
+    // that look like errors (statusCode >= 400, or kind contains
+    // "error"/"failure", or message starts with "ERROR"/"FATAL").
+    // Capped at 50 most recent so the card stays readable; the JSON
+    // export covers the same set.
+    {
+        const auto activityResult = FetchActivityEvents(L"");
+        if (activityResult.succeeded) {
+            std::vector<ShellErrorEvent> errors;
+            errors.reserve(50);
+            for (const auto& evt : activityResult.events) {
+                bool isError = (evt.statusCode >= 400);
+                if (!isError) {
+                    auto contains = [](const std::wstring& haystack, const std::wstring& needle) {
+                        return haystack.find(needle) != std::wstring::npos;
+                    };
+                    if (contains(evt.kind, L"error") || contains(evt.kind, L"failure")
+                        || contains(evt.message, L"ERROR") || contains(evt.message, L"FATAL")
+                        || contains(evt.message, L"failed") || contains(evt.message, L"Unable")) {
+                        isError = true;
+                    }
+                }
+                if (!isError) continue;
+                ShellErrorEvent err;
+                err.id           = evt.id;
+                err.timestampUtc = evt.timestampUtc;
+                err.kind         = evt.kind;
+                err.statusCode   = evt.statusCode;
+                err.message      = evt.message;
+                err.detail       = evt.detail;
+                if (evt.statusCode >= 500) err.severity = L"critical";
+                else if (evt.statusCode >= 400) err.severity = L"error";
+                else err.severity = L"warn";
+                std::wstring source = evt.actor;
+                if (!evt.method.empty()) {
+                    if (!source.empty()) source += L" ";
+                    source += evt.method;
+                }
+                if (!evt.target.empty()) {
+                    if (!source.empty()) source += L" ";
+                    source += evt.target;
+                }
+                err.source = std::move(source);
+                errors.push_back(std::move(err));
+                if (errors.size() >= 50) break;
+            }
+            snapshot.errorEvents = std::move(errors);
+        }
+    }
+
     return snapshot;
 }
 

@@ -1,11 +1,33 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.8.6",
-  "current_tag": "v0.8.6",
+  "current_version": "0.8.7",
+  "current_tag": "v0.8.7",
   "released_at": "2026-05-08",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.8.7",
+      "tag": "v0.8.7",
+      "released_at": "2026-05-08",
+      "commit": "pending",
+      "summary": "Overview tab gets a status grid + dedicated Error Reporting frame. Operator wanted: status of APIs and services, security stance, MCP server availability, sub-agent availability -- and a dedicated error reporting frame with JSON export of the errors associated with the displayed entries. v0.8.7 replaces the AUTHORED SURFACES legend footer with a 2x2 grid of cards: APIs and Services (service / admin API / browser surface / beacon / bind), Security Stance (security protocols / AI autonomy / open LAN access / governance posture / live findings), MCP Servers (count + reachable + first-4 preview), Sub-Agents (count + reachable + active leases + first-4 preview). Each card has a status dot in the title row colored good (green) / warn (amber) / crit (red) / neutral (gray) by the same rules used on the Telemetry-tab dots. Below the grid sits the Error Reporting frame: a scrolling list of recent error-flagged events with a per-row severity dot, kind/timestamp, message, and source. An Export to JSON button serializes the visible set to %PUBLIC%\\Documents\\Master Control Orchestration Server\\error-export-<timestamp>.json -- mcos.error-export.v1 schema: { exportedAtUtc, count, events:[{id,timestampUtc,kind,severity,source,statusCode,message,detail}] }. Errors are harvested by ShellRuntime::CaptureSnapshot from /api/activity, filtered to events with statusCode>=400 OR kind/message containing error/failure/Unable. Capped at 50 most recent.",
+      "entries": [
+        "feat(shell): ShellErrorEvent struct + ShellSnapshot.errorEvents in ShellRuntime.h. Each event carries id, timestampUtc, kind, severity (warn/error/critical inferred from statusCode), source (actor + method + target), statusCode, message, detail.",
+        "feat(shell): ShellRuntime::CaptureSnapshot now harvests recent errors at the tail of the snapshot pass. Calls FetchActivityEvents(L\"\"), filters to statusCode>=400 OR kind/message containing 'error'/'failure'/'failed'/'Unable' or starting with 'ERROR'/'FATAL'. Caps the result at 50 entries.",
+        "feat(shell): OverviewSectionControl.xaml replaces the AUTHORED SURFACES legend footer with a 2x2 status grid (APIs & Services / Security Stance / MCP Servers / Sub-Agents) and a dedicated Error Reporting frame. Status dot per card. Headline + body text for each.",
+        "feat(shell): OverviewSectionControl::ApplyApisAndServicesCard / ApplySecurityStanceCard / ApplyMcpServersCard / ApplySubAgentsCard / ApplyErrorReportingCard all called from ApplySnapshot every tick. Tone helpers: pressureTone / populationTone / findingsTone equivalents inlined as good/warn/crit/neutral selection per card semantics.",
+        "feat(shell): Error Reporting list rebuilt imperatively from snapshot.errorEvents -- per-row severity dot, kind/timestamp eyebrow, message body (HTTP status prefix included when available), source (actor + method + target) muted footer.",
+        "feat(shell): ExportErrorsButton_Click serializes the cached lastErrorEvents_ to %PUBLIC%\\Documents\\Master Control Orchestration Server\\error-export-<YYYYmmddTHHMMSS>.json. Schema 'mcos.error-export.v1' with exportedAtUtc + count + events[]. UTF-8 written via CreateFileW + WriteFile. ErrorExportStatusText shows the resulting file path or a failure message.",
+        "docs(version): bump 0.8.6 -> 0.8.7 (Overview status grid + Error Reporting frame with JSON export)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; activity stream as scrolling SwapChainPanel.",
+        "Discovery doc still serves the literal listen URL when the gateway is bound to a wildcard.",
+        "Catalog ports 7101-7125 are advertised but no worker processes are bound yet.",
+        "Error harvest source is limited to /api/activity. Telemetry events ring (PHASE-08) is a richer source -- adding it as a second harvester in CaptureSnapshot is queued for v0.8.8."
+      ]
+    },
     {
       "version": "0.8.6",
       "tag": "v0.8.6",
