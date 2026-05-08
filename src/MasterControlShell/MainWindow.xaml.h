@@ -34,6 +34,11 @@ struct MainWindow : MainWindowT<MainWindow> {
     void GuidedSettingsWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void GuidedRuntimeMaintenanceWizardButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
     void SurfaceToolbarButton_Click(Windows::Foundation::IInspectable const&, Microsoft::UI::Xaml::RoutedEventArgs const&);
+    // v0.8.1: SizeChanged handler must be public so the auto-generated
+    // XAML Connect() can wire it. Keep BuildShellGridBackdrop private
+    // since it's only called internally.
+    void ShellGridCanvas_SizeChanged(Windows::Foundation::IInspectable const&,
+                                     Microsoft::UI::Xaml::SizeChangedEventArgs const&);
 
 private:
     void ConfigureWindow();
@@ -53,6 +58,10 @@ private:
     // so each badge shows real per-sub-agent telemetry (utilization bar +
     // active-client IPs) instead of the pre-v0.7.8 hardcoded stub names.
     void ApplySubAgentFooter(const ::MasterControlShell::ShellSnapshot& snapshot);
+    // v0.8.1: build the Tron grid backdrop for the shell window. Called
+    // on Loaded and on every SizeChanged so the grid always covers the
+    // current window size.
+    void BuildShellGridBackdrop();
     void ApplyCurrentSectionSnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
     void ApplyLiveHeartbeat(std::chrono::system_clock::time_point now, bool captured);
     void StartGuidedWorkflow(std::wstring const& workflowId);

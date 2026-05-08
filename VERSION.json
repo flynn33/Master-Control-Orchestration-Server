@@ -1,11 +1,32 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.8.0",
-  "current_tag": "v0.8.0",
+  "current_version": "0.8.1",
+  "current_tag": "v0.8.1",
   "released_at": "2026-05-08",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.8.1",
+      "tag": "v0.8.1",
+      "released_at": "2026-05-08",
+      "commit": "pending",
+      "summary": "Three operator-driven changes landed in one release. (1) Application palette switched from Sam-Flynn cyan to Tron CLU red-orange. ShellAccentBrush moves from #00FFFF to #FF3D2E and every cyan-derived hex literal across App.xaml, MainWindow.xaml, every section's XAML, and the imperative ColorHelper.FromArgb calls in MainWindow.xaml.cpp / RuntimeSectionControl.xaml.cpp shifts to the matching red-orange tone. Status semantic colors (success green-mint, warning amber, danger pink-red) are intentionally preserved so a critical-state dot remains visually distinct from chrome on a red-themed UI. (2) Background curves replaced with a proper Tron grid. Pre-v0.8.1 the shell painted two large soft-stroke Ellipses behind the foreground content -- the operator called this out as 'not Tron styling due to the curves.' v0.8.1 removes both Ellipses and populates the same Canvas imperatively with a perpendicular line grid (vertical lines every 80 px, horizontal every 60 px, every fifth line emphasized in the soft accent brush) that resizes with the window via SizeChanged. (3) Cross-section drag on the Telemetry tab now works. v0.8.0 rejected drops where source and target lived in different section grids; v0.8.1 lifts that restriction by physically reparenting both tiles between section grids and swapping their attached Grid.Row / Grid.Column so the visual swap looks the same as a same-section drag. Persistence now records the sectionId per tile so a cross-section move survives shell restart -- on Loaded LoadAndApplyLayout reparents any tile whose persisted sectionId differs from its catalog default. Also creates docs/agent-decision-log.md as a session-durable, git-versioned memory anchor for the agent driving these releases.",
+      "entries": [
+        "feat(shell): App.xaml palette swap. ShellAccentBrush #00FFFF -> #FF3D2E, ShellTileEdgeBrush #6600FFFF -> #66FF3D2E, ShellAccentSoftBrush / ShellGlowBrush / ShellHotGlowBrush / ShellGridlineBrush / ShellCardEdgeBrush / ShellAccentBrightBrush all rebased on the new red. ShellBackgroundBrush gradient and ShellHeroBrush retinted from cyan-blacks to red-blacks (#1A0405 / #3A0808 / #220A0A / #2A0D0D). Text brushes pivoted from cool (#9ECCDA / #7BA4B0 / #F0FFFF) to warm (#E8B89E / #B68870 / #FFEEDC) so foreground text sits properly on a red-toned background.",
+        "feat(shell): Bulk-replaced 30+ cyan hex literals across App.xaml's WinUI Fluent overrides (Button / ToggleButton / ComboBox / TextBox / ToggleSwitch / ListView / NavigationView / Flyout / MenuFlyout / ContentDialog / ScrollBar / ProgressBar) and all the inline #00DFFF / #1000DFFF / #1400DFFF / #2200DFFF washes in MainWindow.xaml. ColorHelper.FromArgb(0x..., 0x00, 0xf6, 0xff) calls in MainWindow.xaml.cpp::ApplySubAgentFooter and RuntimeSectionControl.xaml.cpp's sub-agent card builder swapped to (0x..., 0xff, 0x3d, 0x2e). No remaining cyan literals anywhere under src/MasterControlShell.",
+        "feat(shell): Tron grid backdrop. MainWindow.xaml's decorative Canvas had two large Ellipses (the curves operator flagged) plus two single-line gridlines. Replaced with x:Name='ShellGridCanvas' populated by MainWindow::BuildShellGridBackdrop on Loaded and SizeChanged. Grid: vertical lines every 80 px, horizontal every 60 px, every 5th line painted in ShellAccentSoftBrush at 1.4 px stroke for emphasis. The grid covers the full Canvas size (clamped to a sensible default until the window is realized) and hit-test-invisible so it never intercepts pointer events.",
+        "fix(shell): Telemetry tab cross-section drag is no longer rejected. Tile_Drop now physically reparents source and target between section grids when their parent Grids differ -- source moves into target's section grid taking target's row/col, target moves into source's old grid taking source's old row/col. Same-section drops still execute the in-place attached-property swap. tileLayout_ entries swap their sectionId fields so PersistLayout records the cross-section move.",
+        "fix(shell): TelemetrySectionControl::LoadAndApplyLayout now physically reparents tiles on startup when the persisted sectionId differs from the grid that currently owns the tile (i.e. cross-section moves survive shell restart). ResolveSectionGridForTile and ResolveSectionIdForTile prefer the live tileLayout_ state's sectionId over the static catalog metadata so all subsequent operations (drag, detach, reattach, hide) route to the new section.",
+        "feat(repo): docs/agent-decision-log.md added as session-durable memory anchor. Captures operator directives, palette decisions, deferral notes, and TODOs for the agent so context-window compaction can rehydrate from the file plus VERSION.json plus the git log. No off-the-shelf MCP memory connector found in the registry; file-system + git is the durable store.",
+        "docs(version): bump 0.8.0 -> 0.8.1 (Tron CLU red palette + grid backdrop + cross-section drag)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; activity stream as scrolling SwapChainPanel.",
+        "Reachability probe is IPv4-only. IPv6-host sub-agents always render reachable=false. AF_INET6 fallback path still pending.",
+        "Discovery doc still serves the literal listen URL when the gateway is bound to a wildcard. v0.7.7 fixed only the operator display surfaces."
+      ]
+    },
     {
       "version": "0.8.0",
       "tag": "v0.8.0",

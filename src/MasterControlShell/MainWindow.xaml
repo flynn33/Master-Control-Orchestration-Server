@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Window
     x:Class="MasterControlShell.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -12,12 +12,14 @@
         <Grid>
             <Rectangle Fill="{StaticResource ShellBackgroundBrush}" />
 
-            <Canvas IsHitTestVisible="False" Opacity="0.55">
-                <Ellipse Width="920" Height="920" Canvas.Left="-260" Canvas.Top="-320" Stroke="{StaticResource ShellAccentSoftBrush}" StrokeThickness="2" />
-                <Ellipse Width="560" Height="560" Canvas.Left="1010" Canvas.Top="-120" Stroke="{StaticResource ShellGlowBrush}" StrokeThickness="2" />
-                <Rectangle Width="820" Height="1" Canvas.Left="92" Canvas.Top="188" Fill="{StaticResource ShellGridlineBrush}" />
-                <Rectangle Width="1" Height="980" Canvas.Left="134" Canvas.Top="120" Fill="{StaticResource ShellGridlineBrush}" />
-            </Canvas>
+            <!-- v0.8.1: Tron grid backdrop. Replaced two soft-stroke
+                 ellipses (the curves operator called out as not-Tron) with
+                 a properly tiled perpendicular grid. Lines are populated
+                 imperatively in MainWindow.xaml.cpp's BuildShellGridBackdrop
+                 on Loaded + on every SizeChanged so the grid extends fully
+                 across the window at any size. Canvas is hit-test-invisible
+                 so it never intercepts pointer events from the foreground. -->
+            <Canvas x:Name="ShellGridCanvas" IsHitTestVisible="False" Opacity="0.55" SizeChanged="ShellGridCanvas_SizeChanged" />
 
             <Grid Margin="24">
                 <Grid.RowDefinitions>
@@ -26,7 +28,7 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <Border x:Name="TitleBarHost" Padding="16,12" Background="#1400DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
+                <Border x:Name="TitleBarHost" Padding="16,12" Background="#14FF3D2E" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
                     <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition x:Name="TitleBarLeftInsetColumn" Width="0" />
@@ -36,7 +38,7 @@
                         </Grid.ColumnDefinitions>
 
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16">
-                            <Border Width="44" Height="44" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
+                            <Border Width="44" Height="44" Background="#12FF3D2E" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
                                 <FontIcon HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="28" Foreground="{StaticResource ShellAccentBrush}" Glyph="&#xE7F4;" />
                             </Border>
 
@@ -47,24 +49,24 @@
                         </StackPanel>
 
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                            <Border x:Name="LiveTelemetryBadgeBorder" Padding="10,4" Background="#2200DFFF" BorderBrush="{StaticResource ShellAccentBrush}" BorderThickness="1" CornerRadius="0">
+                            <Border x:Name="LiveTelemetryBadgeBorder" Padding="10,4" Background="#22FF3D2E" BorderBrush="{StaticResource ShellAccentBrush}" BorderThickness="1" CornerRadius="0">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <TextBlock x:Name="LiveTelemetryLabelText" Text="LIVE" Style="{StaticResource ShellEyebrowTextStyle}" />
                                     <TextBlock x:Name="LiveTelemetrySampleText" Text="#0" Style="{StaticResource ShellEyebrowTextStyle}" />
                                     <TextBlock x:Name="LiveClockText" Text="--:--:--" Style="{StaticResource ShellLiveClockTextStyle}" />
                                 </StackPanel>
                             </Border>
-                            <Border x:Name="ApiBadgeBorder" Padding="10,4" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
+                            <Border x:Name="ApiBadgeBorder" Padding="10,4" Background="#12FF3D2E" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
                                 <TextBlock x:Name="ApiBadgeText" Text="API UNKNOWN" Style="{StaticResource ShellEyebrowTextStyle}" />
                             </Border>
-                            <Border x:Name="ServiceBadgeBorder" Padding="10,4" Background="#1200DFFF" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
+                            <Border x:Name="ServiceBadgeBorder" Padding="10,4" Background="#12FF3D2E" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
                                 <TextBlock x:Name="ServiceBadgeText" Text="SERVICE UNKNOWN" Style="{StaticResource ShellEyebrowTextStyle}" />
                             </Border>
                         </StackPanel>
                     </Grid>
                 </Border>
 
-                <Border x:Name="StatusBannerBorder" Grid.Row="1" Margin="0,12,0,0" Padding="14,10" Background="#120B1620" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0">
+                <Border x:Name="StatusBannerBorder" Grid.Row="1" Margin="0,12,0,0" Padding="14,10" Background="#12200B0B" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0">
                     <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -76,7 +78,7 @@
                     </Grid>
                 </Border>
 
-                <Border Grid.Row="2" Margin="0,14,0,0" Background="#AA04090E" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
+                <Border Grid.Row="2" Margin="0,14,0,0" Background="#AA0E0904" BorderBrush="{StaticResource ShellCardEdgeBrush}" BorderThickness="1" CornerRadius="0">
                     <!-- NavigationView kept as a chromeless content host so existing
                          .cpp references (ShellNavigation, ShellNavigation_SelectionChanged,
                          MenuItems, SelectedItem) still compile. The entire pane is
@@ -121,7 +123,7 @@
                                         <TextBlock x:Name="CurrentViewTitleText" Text="Command Deck" Style="{StaticResource ShellHeroTitleTextStyle}" />
                                         <TextBlock x:Name="CurrentViewDescriptionText" MaxWidth="560" Style="{StaticResource ShellBodyTextStyle}" Text="Navigate operational surfaces for telemetry, runtime orchestration, and secure configuration." />
 
-                                        <Border Background="#1000DFFF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0" Padding="10,8">
+                                        <Border Background="#10FF3D2E" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0" Padding="10,8">
                                             <StackPanel Spacing="12">
                                                 <TextBlock Text="ALWAYS-ON COMMAND TELEMETRY" Style="{StaticResource ShellEyebrowTextStyle}" />
                                                 <Grid ColumnSpacing="12" RowSpacing="12">
@@ -228,7 +230,7 @@
                                                 <Button x:Name="GuidedSecurityWizardButton" Grid.Row="3" Grid.Column="1" Click="GuidedSecurityWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Security Hardening" />
                                                 <Button x:Name="GuidedSettingsWizardButton" Grid.Row="4" Grid.ColumnSpan="2" Click="GuidedSettingsWizardButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Host Settings" />
 
-                                                <Border Grid.Row="5" Grid.ColumnSpan="2" Padding="10,8" Background="#1000DFFF" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0">
+                                                <Border Grid.Row="5" Grid.ColumnSpan="2" Padding="10,8" Background="#10FF3D2E" BorderBrush="{StaticResource ShellTileEdgeBrush}" BorderThickness="1" CornerRadius="0">
                                                     <TextBlock
                                                         x:Name="GuidedWorkflowStatusText"
                                                         Style="{StaticResource ShellLabelTextStyle}"

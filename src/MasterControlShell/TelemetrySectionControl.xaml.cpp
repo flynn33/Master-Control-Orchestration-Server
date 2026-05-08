@@ -629,14 +629,38 @@ void TelemetrySectionControl::LoadAndApplyLayout() {
     tileLayout_ = std::move(loaded);
     layoutLoaded_ = true;
 
-    // Apply Grid.SetRow/SetColumn first, then visibility, then detach
-    // pending tiles. Detach last so the still-attached tiles already have
-    // their grid positions correct.
+    // v0.8.1: cross-section moves persisted in v0.8.1+ files carry a
+    // sectionId that may not match the catalog default. On Loaded we
+    // physically reparent any tile whose persisted sectionId differs
+    // from the grid that currently owns it, then apply Grid.Row/Column
+    // and Visibility. Detach pass runs last so still-attached tiles have
+    // their grid positions correct before we pop them.
+    auto resolveSectionGridById = [this](const std::wstring& sectionId) -> Grid {
+        if (sectionId == L"host-pressure")        return HostPressureGrid();
+        if (sectionId == L"resource-allocation")  return ResourceAllocationGrid();
+        if (sectionId == L"operational-activity") return OperationalActivityGrid();
+        return nullptr;
+    };
     for (const auto& meta : tileCatalog()) {
         auto& state = tileLayout_[meta.name];
         auto tile = ResolveTileByName(meta.name);
         if (!tile) continue;
         try {
+            // Reparent if needed.
+            std::wstring intendedSection = state.sectionId.empty()
+                ? std::wstring(meta.sectionId) : state.sectionId;
+            auto intendedGrid = resolveSectionGridById(intendedSection);
+            if (intendedGrid) {
+                auto currentParent = tile.Parent().try_as<Grid>();
+                if (currentParent && currentParent != intendedGrid) {
+                    auto currentChildren = currentParent.Children();
+                    uint32_t idx = 0;
+                    if (currentChildren.IndexOf(tile, idx)) {
+                        currentChildren.RemoveAt(idx);
+                    }
+                    intendedGrid.Children().Append(tile);
+                }
+            }
             Grid::SetRow(tile, state.row);
             Grid::SetColumn(tile, state.column);
             tile.Visibility(state.visible ? Visibility::Visible : Visibility::Collapsed);
@@ -691,15 +715,28 @@ TelemetrySectionControl::ResolveTileByName(const std::wstring& tileName) {
 
 winrt::Microsoft::UI::Xaml::Controls::Grid
 TelemetrySectionControl::ResolveSectionGridForTile(const std::wstring& tileName) {
-    auto* meta = findTileMetadata(tileName);
-    if (!meta) return nullptr;
-    if (std::wstring(meta->sectionId) == L"host-pressure")        return HostPressureGrid();
-    if (std::wstring(meta->sectionId) == L"resource-allocation")  return ResourceAllocationGrid();
-    if (std::wstring(meta->sectionId) == L"operational-activity") return OperationalActivityGrid();
+    // v0.8.1: prefer the live layout state's sectionId so cross-section
+    // moves resolve to the new grid. Falls back to the static catalog
+    // metadata when no layout entry exists yet (very first load before
+    // PersistLayout has run).
+    std::wstring sectionId;
+    if (auto it = tileLayout_.find(tileName); it != tileLayout_.end() && !it->second.sectionId.empty()) {
+        sectionId = it->second.sectionId;
+    } else if (auto* meta = findTileMetadata(tileName); meta) {
+        sectionId = meta->sectionId;
+    }
+    if (sectionId == L"host-pressure")        return HostPressureGrid();
+    if (sectionId == L"resource-allocation")  return ResourceAllocationGrid();
+    if (sectionId == L"operational-activity") return OperationalActivityGrid();
     return nullptr;
 }
 
 std::wstring TelemetrySectionControl::ResolveSectionIdForTile(const std::wstring& tileName) {
+    // v0.8.1: same precedence as ResolveSectionGridForTile -- live layout
+    // state first, catalog default second.
+    if (auto it = tileLayout_.find(tileName); it != tileLayout_.end() && !it->second.sectionId.empty()) {
+        return it->second.sectionId;
+    }
     auto* meta = findTileMetadata(tileName);
     return meta ? std::wstring(meta->sectionId) : L"";
 }
@@ -742,23 +779,57 @@ void TelemetrySectionControl::Tile_Drop(
     auto sourceName = std::wstring(async.get().c_str());
     if (sourceName.empty() || sourceName == targetName) return;
 
-    // Cross-section drag is rejected. The reattach path handles cross-section
-    // moves through the customize flyout instead.
-    if (ResolveSectionIdForTile(sourceName) != ResolveSectionIdForTile(targetName)) {
-        return;
-    }
     auto source = ResolveTileByName(sourceName);
     if (!source) return;
 
-    // Swap the attached Grid.Row / Grid.Column properties.
+    // v0.8.1: cross-section drag is now supported. When source and target
+    // live in different section grids, reparent both: source goes to the
+    // target's grid (taking the target's row/column), and target goes to
+    // the source's old grid (taking the source's old row/column). Within
+    // the same grid the reparent reduces to a no-op and the swap collapses
+    // to an in-place attached-property exchange.
+    auto sourceGrid = ResolveSectionGridForTile(sourceName);
+    auto targetGrid = ResolveSectionGridForTile(targetName);
+    if (!sourceGrid || !targetGrid) return;
+
     int sourceRow = (int)Grid::GetRow(source);
     int sourceCol = (int)Grid::GetColumn(source);
     int targetRow = (int)Grid::GetRow(target);
     int targetCol = (int)Grid::GetColumn(target);
-    Grid::SetRow(source,    targetRow);
-    Grid::SetColumn(source, targetCol);
-    Grid::SetRow(target,    sourceRow);
-    Grid::SetColumn(target, sourceCol);
+
+    if (sourceGrid != targetGrid) {
+        // Cross-section: physically reparent both tiles.
+        auto sourceChildren = sourceGrid.Children();
+        auto targetChildren = targetGrid.Children();
+        uint32_t sourceIdx = 0;
+        if (sourceChildren.IndexOf(source, sourceIdx)) {
+            sourceChildren.RemoveAt(sourceIdx);
+        }
+        uint32_t targetIdx = 0;
+        if (targetChildren.IndexOf(target, targetIdx)) {
+            targetChildren.RemoveAt(targetIdx);
+        }
+        // Source -> target's section, takes target's row/col.
+        Grid::SetRow(source,    targetRow);
+        Grid::SetColumn(source, targetCol);
+        targetChildren.Append(source);
+        // Target -> source's section, takes source's old row/col.
+        Grid::SetRow(target,    sourceRow);
+        Grid::SetColumn(target, sourceCol);
+        sourceChildren.Append(target);
+
+        // Update the persisted sectionId for both tiles so the next
+        // Loaded() applies the cross-section move correctly.
+        auto& sourceState = tileLayout_[sourceName];
+        auto& targetState = tileLayout_[targetName];
+        std::swap(sourceState.sectionId, targetState.sectionId);
+    } else {
+        // Same-section: swap attached props in place.
+        Grid::SetRow(source,    targetRow);
+        Grid::SetColumn(source, targetCol);
+        Grid::SetRow(target,    sourceRow);
+        Grid::SetColumn(target, sourceCol);
+    }
 
     PersistLayout();
 }

@@ -517,9 +517,85 @@ void MainWindow::RootGrid_Loaded(IInspectable const&, RoutedEventArgs const&) {
         writeShellLog(L"RootGrid_Loaded: RefreshAsync starting.");
         RefreshAsync();
         writeShellLog(L"RootGrid_Loaded: RefreshAsync dispatched.");
+
+        // v0.8.1: paint the Tron grid backdrop now that RootGrid is realized.
+        // SizeChanged on the Canvas keeps it sized to the window.
+        BuildShellGridBackdrop();
     } catch (const winrt::hresult_error& error) {
         writeShellLog(L"RootGrid_Loaded caught HRESULT failure: " + std::wstring(error.message().c_str()));
     }
+}
+
+// v0.8.1: Tron grid backdrop. Replaces the pre-v0.8.1 cyan-stroked
+// Ellipses (which the operator called out as "not Tron styling due to
+// the curves") with a proper perpendicular grid drawn into the
+// ShellGridCanvas. Vertical lines every 80 px, horizontal every 60 px,
+// plus an emphasized accent line every 5th tick. Lines are drawn in
+// the new Tron CLU red-orange palette via the resource brushes so any
+// future palette swap flows through without re-coding here.
+void MainWindow::BuildShellGridBackdrop() {
+    using namespace winrt::Microsoft::UI::Xaml;
+    using namespace winrt::Microsoft::UI::Xaml::Controls;
+    using namespace winrt::Microsoft::UI::Xaml::Shapes;
+    using namespace winrt::Microsoft::UI::Xaml::Media;
+
+    Canvas canvas = nullptr;
+    try { canvas = ShellGridCanvas(); }
+    catch (const winrt::hresult_error&) { return; }
+    if (!canvas) return;
+
+    const double width  = canvas.ActualWidth() > 0 ? canvas.ActualWidth() : 2400;
+    const double height = canvas.ActualHeight() > 0 ? canvas.ActualHeight() : 1600;
+
+    canvas.Children().Clear();
+
+    auto resources = Application::Current().Resources();
+    Brush gridlineBrush = nullptr;
+    Brush accentBrush = nullptr;
+    try {
+        gridlineBrush = resources.Lookup(box_value(L"ShellGridlineBrush")).try_as<Brush>();
+        accentBrush   = resources.Lookup(box_value(L"ShellAccentSoftBrush")).try_as<Brush>();
+    } catch (const winrt::hresult_error&) {}
+
+    const double minorStepX = 80.0;
+    const double minorStepY = 60.0;
+    const int    accentEvery = 5;
+
+    // Vertical lines.
+    int idx = 0;
+    for (double x = 0; x <= width + minorStepX; x += minorStepX, ++idx) {
+        Line line;
+        line.X1(x); line.X2(x);
+        line.Y1(0); line.Y2(height);
+        line.StrokeThickness(1);
+        if (gridlineBrush) line.Stroke(gridlineBrush);
+        if (accentBrush && (idx % accentEvery) == 0) {
+            line.Stroke(accentBrush);
+            line.StrokeThickness(1.4);
+        }
+        canvas.Children().Append(line);
+    }
+
+    // Horizontal lines.
+    idx = 0;
+    for (double y = 0; y <= height + minorStepY; y += minorStepY, ++idx) {
+        Line line;
+        line.X1(0); line.X2(width);
+        line.Y1(y); line.Y2(y);
+        line.StrokeThickness(1);
+        if (gridlineBrush) line.Stroke(gridlineBrush);
+        if (accentBrush && (idx % accentEvery) == 0) {
+            line.Stroke(accentBrush);
+            line.StrokeThickness(1.4);
+        }
+        canvas.Children().Append(line);
+    }
+}
+
+void MainWindow::ShellGridCanvas_SizeChanged(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::SizeChangedEventArgs const&) {
+    BuildShellGridBackdrop();
 }
 
 void MainWindow::ShellNavigation_SelectionChanged(
@@ -1559,8 +1635,11 @@ void MainWindow::ApplySubAgentFooter(const ::MasterControlShell::ShellSnapshot& 
     const auto warnColor    = fromHex(0xff, 0xc8, 0x57);
     const auto critColor    = fromHex(0xff, 0x6a, 0x80);
     const auto neutralColor = fromHex(0x8c, 0xb7, 0xc4);
-    const auto cardEdgeBrush       = SolidColorBrush(ColorHelper::FromArgb(0x55, 0x00, 0xf6, 0xff));
-    const auto cardBackgroundBrush = SolidColorBrush(ColorHelper::FromArgb(0x18, 0x00, 0xf6, 0xff));
+    // v0.8.1: chrome shifted from cyan (0x00,0xf6,0xff) to Tron CLU
+    // red-orange (0xff,0x3d,0x2e). Status semantic colors below stay
+    // unchanged.
+    const auto cardEdgeBrush       = SolidColorBrush(ColorHelper::FromArgb(0x55, 0xff, 0x3d, 0x2e));
+    const auto cardBackgroundBrush = SolidColorBrush(ColorHelper::FromArgb(0x18, 0xff, 0x3d, 0x2e));
     const auto barTrackBrush       = SolidColorBrush(ColorHelper::FromArgb(0x40, 0x8c, 0xb7, 0xc4));
 
     Thickness cardBorder;

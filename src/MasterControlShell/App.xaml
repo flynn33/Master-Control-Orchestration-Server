@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Application
     x:Class="MasterControlShell.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -11,43 +11,47 @@
                 <controls:XamlControlsResources />
             </ResourceDictionary.MergedDictionaries>
 
-            <!-- Tron amplification v2: brighter cyan, higher-contrast panels,
-                 thicker border alphas, more saturated danger/success accents.
-                 Every panel is now a proper Tron glass pane — edges glow, text
-                 on text sits in full-opacity cyan, background stays pitch. -->
-            <SolidColorBrush x:Key="ShellTextPrimaryBrush" Color="#F0FFFF" />
-            <SolidColorBrush x:Key="ShellTextMutedBrush" Color="#9ECCDA" />
-            <SolidColorBrush x:Key="ShellTextFaintBrush" Color="#7BA4B0" />
-            <SolidColorBrush x:Key="ShellAccentBrush" Color="#00FFFF" />
-            <SolidColorBrush x:Key="ShellAccentBrightBrush" Color="#7DFFFF" />
-            <SolidColorBrush x:Key="ShellAccentSoftBrush" Color="#7000FFFF" />
-            <SolidColorBrush x:Key="ShellGlowBrush" Color="#3300FFFF" />
-            <SolidColorBrush x:Key="ShellHotGlowBrush" Color="#5500FFFF" />
+            <!-- v0.8.1 Tron CLU palette: switched from Sam-Flynn cyan to
+                 CLU red-orange. Palette anchors:
+                   primary  #FF3D2E  (CLU circuit red)
+                   highlight #FF7A4F (warm orange flare)
+                   soft      #FF6B47 (mid-glow tint)
+                 Status semantic colors (success/warning/danger) are kept
+                 distinct from the chrome accent so a critical-state dot
+                 still reads as critical against a red-themed UI. -->
+            <SolidColorBrush x:Key="ShellTextPrimaryBrush" Color="#FFEEDC" />
+            <SolidColorBrush x:Key="ShellTextMutedBrush" Color="#E8B89E" />
+            <SolidColorBrush x:Key="ShellTextFaintBrush" Color="#B68870" />
+            <SolidColorBrush x:Key="ShellAccentBrush" Color="#FF3D2E" />
+            <SolidColorBrush x:Key="ShellAccentBrightBrush" Color="#FFB28A" />
+            <SolidColorBrush x:Key="ShellAccentSoftBrush" Color="#70FF3D2E" />
+            <SolidColorBrush x:Key="ShellGlowBrush" Color="#33FF3D2E" />
+            <SolidColorBrush x:Key="ShellHotGlowBrush" Color="#55FF3D2E" />
             <SolidColorBrush x:Key="ShellSuccessBrush" Color="#3BFFCF" />
             <SolidColorBrush x:Key="ShellWarningBrush" Color="#FFD56B" />
             <SolidColorBrush x:Key="ShellDangerBrush" Color="#FF5577" />
-            <SolidColorBrush x:Key="ShellPanelFillBrush" Color="#F0020810" />
-            <SolidColorBrush x:Key="ShellPanelDeepBrush" Color="#F8020609" />
-            <SolidColorBrush x:Key="ShellCardFillBrush" Color="#F00A1622" />
-            <SolidColorBrush x:Key="ShellCardEdgeBrush" Color="#8800FFFF" />
-            <SolidColorBrush x:Key="ShellTileFillBrush" Color="#F0040B14" />
-            <SolidColorBrush x:Key="ShellTileEdgeBrush" Color="#6600FFFF" />
-            <SolidColorBrush x:Key="ShellGridlineBrush" Color="#4400FFFF" />
+            <SolidColorBrush x:Key="ShellPanelFillBrush" Color="#F00B0408" />
+            <SolidColorBrush x:Key="ShellPanelDeepBrush" Color="#F8090305" />
+            <SolidColorBrush x:Key="ShellCardFillBrush" Color="#F0220A0A" />
+            <SolidColorBrush x:Key="ShellCardEdgeBrush" Color="#88FF3D2E" />
+            <SolidColorBrush x:Key="ShellTileFillBrush" Color="#F01A0508" />
+            <SolidColorBrush x:Key="ShellTileEdgeBrush" Color="#66FF3D2E" />
+            <SolidColorBrush x:Key="ShellGridlineBrush" Color="#44FF3D2E" />
 
-            <!-- Deeper, more saturated Tron background gradient — pure near-black
-                 with a cyan wash in the upper-left quadrant. Cards visibly glow
+            <!-- v0.8.1 background gradient: pure near-black with a faint
+                 red-orange wash in the upper-left quadrant. Cards punch
                  against it. -->
             <LinearGradientBrush x:Key="ShellBackgroundBrush" StartPoint="0,0" EndPoint="1,1">
                 <GradientStop Color="#000000" Offset="0.0" />
-                <GradientStop Color="#001420" Offset="0.22" />
-                <GradientStop Color="#00283D" Offset="0.56" />
-                <GradientStop Color="#000507" Offset="1.0" />
+                <GradientStop Color="#1A0405" Offset="0.22" />
+                <GradientStop Color="#3A0808" Offset="0.56" />
+                <GradientStop Color="#070202" Offset="1.0" />
             </LinearGradientBrush>
 
             <LinearGradientBrush x:Key="ShellHeroBrush" StartPoint="0,0" EndPoint="1,1">
-                <GradientStop Color="#F00A2230" Offset="0.0" />
-                <GradientStop Color="#F0061018" Offset="0.52" />
-                <GradientStop Color="#F00A2536" Offset="1.0" />
+                <GradientStop Color="#F0220A0A" Offset="0.0" />
+                <GradientStop Color="#F0180606" Offset="0.52" />
+                <GradientStop Color="#F02A0D0D" Offset="1.0" />
             </LinearGradientBrush>
 
             <!-- Thicker borders and a more aggressive 0-corner-radius edge so
@@ -188,7 +192,7 @@
             <Style x:Key="ShellCommandButtonStyle" TargetType="Button">
                 <Setter Property="Foreground" Value="{StaticResource ShellTextPrimaryBrush}" />
                 <Setter Property="Background" Value="#F0071018" />
-                <Setter Property="BorderBrush" Value="#9900E8FF" />
+                <Setter Property="BorderBrush" Value="#99FF3D2E" />
                 <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="CornerRadius" Value="0" />
                 <Setter Property="Padding" Value="12,10" />
@@ -207,12 +211,12 @@
             <Style x:Key="ShellSecondaryButtonStyle" TargetType="Button" BasedOn="{StaticResource ShellCommandButtonStyle}">
                 <Setter Property="Foreground" Value="{StaticResource ShellAccentBrush}" />
                 <Setter Property="Background" Value="#55050B12" />
-                <Setter Property="BorderBrush" Value="#4400F6FF" />
+                <Setter Property="BorderBrush" Value="#44FF3D2E" />
                 <Setter Property="FontWeight" Value="Normal" />
             </Style>
 
-            <SolidColorBrush x:Key="ShellFocusBrush" Color="#CC00F6FF" />
-            <SolidColorBrush x:Key="ShellPressFillBrush" Color="#2200F6FF" />
+            <SolidColorBrush x:Key="ShellFocusBrush" Color="#CCFF3D2E" />
+            <SolidColorBrush x:Key="ShellPressFillBrush" Color="#22FF3D2E" />
             <SolidColorBrush x:Key="ShellSkeletonBrush" Color="#22FFFFFF" />
             <SolidColorBrush x:Key="ShellSuccessSoftBrush" Color="#331CF2C1" />
             <SolidColorBrush x:Key="ShellWarningSoftBrush" Color="#33FFC857" />
@@ -294,21 +298,21 @@
                  NavigationView items / Button / CheckBox / ComboBoxItem /
                  ToggleSwitch all render with the Fluent default (light text
                  on white, near-invisible dark text on dark). The operator
-                 reported "labeling text is so dark it cannot be seen" —
+                 reported "labeling text is so dark it cannot be seen" â€”
                  that was the root cause.
                  ================================================================ -->
-            <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="TextFillColorPrimaryBrush" Color="#FFEEDC" />
             <SolidColorBrush x:Key="TextFillColorSecondaryBrush" Color="#C8E8F0" />
-            <SolidColorBrush x:Key="TextFillColorTertiaryBrush" Color="#9ECCDA" />
-            <SolidColorBrush x:Key="TextFillColorDisabledBrush" Color="#5A8590" />
+            <SolidColorBrush x:Key="TextFillColorTertiaryBrush" Color="#E8B89E" />
+            <SolidColorBrush x:Key="TextFillColorDisabledBrush" Color="#7A5A4D" />
             <SolidColorBrush x:Key="ControlFillColorDefaultBrush" Color="#F0020A14" />
             <SolidColorBrush x:Key="ControlFillColorSecondaryBrush" Color="#F0040E18" />
             <SolidColorBrush x:Key="ControlFillColorTertiaryBrush" Color="#F0051220" />
-            <SolidColorBrush x:Key="ControlStrokeColorDefaultBrush" Color="#7700FFFF" />
-            <SolidColorBrush x:Key="ControlStrokeColorSecondaryBrush" Color="#5500FFFF" />
-            <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#00FFFF" />
-            <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#00E8E8" />
-            <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#00FFFF" />
+            <SolidColorBrush x:Key="ControlStrokeColorDefaultBrush" Color="#77FF3D2E" />
+            <SolidColorBrush x:Key="ControlStrokeColorSecondaryBrush" Color="#55FF3D2E" />
+            <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF3D2E" />
+            <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#FF3D2E" />
+            <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#FF3D2E" />
 
             <!-- ================================================================
                  WinUI 3 ButtonForeground / Background / Border theme resource
@@ -316,107 +320,107 @@
                  ControlTemplate's PointerOver and Pressed states reapply
                  Fluent defaults (dark text on light background).
                  ================================================================ -->
-            <SolidColorBrush x:Key="ButtonForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ButtonForeground" Color="#FFEEDC" />
             <SolidColorBrush x:Key="ButtonForegroundPointerOver" Color="#FFFFFF" />
-            <SolidColorBrush x:Key="ButtonForegroundPressed" Color="#C0E8F0" />
-            <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="#5A8590" />
+            <SolidColorBrush x:Key="ButtonForegroundPressed" Color="#FFD0B5" />
+            <SolidColorBrush x:Key="ButtonForegroundDisabled" Color="#7A5A4D" />
             <SolidColorBrush x:Key="ButtonBackground" Color="#F0040E18" />
             <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#F0081828" />
             <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#F0061420" />
             <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="#F0020810" />
-            <SolidColorBrush x:Key="ButtonBorderBrush" Color="#9900E8FF" />
-            <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="#CC00F6FF" />
-            <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="#7700DFEF" />
-            <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="#3300AACC" />
+            <SolidColorBrush x:Key="ButtonBorderBrush" Color="#99FF3D2E" />
+            <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="#CCFF3D2E" />
+            <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="#77FF3D2E" />
+            <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="#33FF3D2E" />
 
             <!-- ToggleButton visual state overrides -->
-            <SolidColorBrush x:Key="ToggleButtonForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ToggleButtonForeground" Color="#FFEEDC" />
             <SolidColorBrush x:Key="ToggleButtonForegroundPointerOver" Color="#FFFFFF" />
-            <SolidColorBrush x:Key="ToggleButtonForegroundPressed" Color="#C0E8F0" />
-            <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="#00FFFF" />
-            <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="#7DFFFF" />
-            <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#00CCCC" />
+            <SolidColorBrush x:Key="ToggleButtonForegroundPressed" Color="#FFD0B5" />
+            <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="#FF3D2E" />
+            <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="#FFB28A" />
+            <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#CC2D26" />
             <SolidColorBrush x:Key="ToggleButtonBackground" Color="#F0040E18" />
             <SolidColorBrush x:Key="ToggleButtonBackgroundPointerOver" Color="#F0081828" />
             <SolidColorBrush x:Key="ToggleButtonBackgroundPressed" Color="#F0061420" />
-            <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#2200FFFF" />
+            <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#22FF3D2E" />
 
-            <!-- ComboBox overrides — the dropdown popup and items render
+            <!-- ComboBox overrides â€” the dropdown popup and items render
                  with Fluent defaults unless these are set. -->
-            <SolidColorBrush x:Key="ComboBoxForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ComboBoxForeground" Color="#FFEEDC" />
             <SolidColorBrush x:Key="ComboBoxForegroundPointerOver" Color="#FFFFFF" />
-            <SolidColorBrush x:Key="ComboBoxForegroundPressed" Color="#C0E8F0" />
-            <SolidColorBrush x:Key="ComboBoxForegroundDisabled" Color="#5A8590" />
+            <SolidColorBrush x:Key="ComboBoxForegroundPressed" Color="#FFD0B5" />
+            <SolidColorBrush x:Key="ComboBoxForegroundDisabled" Color="#7A5A4D" />
             <SolidColorBrush x:Key="ComboBoxBackground" Color="#F0020A14" />
             <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#F0081828" />
             <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="#F0061420" />
-            <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="#6600FFFF" />
-            <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="#9900F6FF" />
+            <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="#66FF3D2E" />
+            <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="#99FF3D2E" />
             <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#F0040E18" />
-            <SolidColorBrush x:Key="ComboBoxDropDownForeground" Color="#F0FFFF" />
-            <SolidColorBrush x:Key="ComboBoxItemForeground" Color="#F0FFFF" />
-            <SolidColorBrush x:Key="ComboBoxItemForegroundSelected" Color="#00FFFF" />
-            <SolidColorBrush x:Key="ComboBoxItemForegroundSelectedPointerOver" Color="#7DFFFF" />
+            <SolidColorBrush x:Key="ComboBoxDropDownForeground" Color="#FFEEDC" />
+            <SolidColorBrush x:Key="ComboBoxItemForeground" Color="#FFEEDC" />
+            <SolidColorBrush x:Key="ComboBoxItemForegroundSelected" Color="#FF3D2E" />
+            <SolidColorBrush x:Key="ComboBoxItemForegroundSelectedPointerOver" Color="#FFB28A" />
             <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerOver" Color="#F0061420" />
 
             <!-- TextBox overrides for focused/hover states -->
-            <SolidColorBrush x:Key="TextBoxForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="TextBoxForeground" Color="#FFEEDC" />
             <SolidColorBrush x:Key="TextBoxForegroundPointerOver" Color="#FFFFFF" />
             <SolidColorBrush x:Key="TextBoxForegroundFocused" Color="#FFFFFF" />
             <SolidColorBrush x:Key="TextBoxBackground" Color="#F0020A14" />
             <SolidColorBrush x:Key="TextBoxBackgroundPointerOver" Color="#F0061420" />
             <SolidColorBrush x:Key="TextBoxBackgroundFocused" Color="#F0061420" />
-            <SolidColorBrush x:Key="TextBoxBorderBrush" Color="#6600FFFF" />
-            <SolidColorBrush x:Key="TextBoxBorderBrushPointerOver" Color="#9900F6FF" />
-            <SolidColorBrush x:Key="TextBoxBorderBrushFocused" Color="#CC00F6FF" />
-            <SolidColorBrush x:Key="TextBoxPlaceholderForeground" Color="#7BA4B0" />
+            <SolidColorBrush x:Key="TextBoxBorderBrush" Color="#66FF3D2E" />
+            <SolidColorBrush x:Key="TextBoxBorderBrushPointerOver" Color="#99FF3D2E" />
+            <SolidColorBrush x:Key="TextBoxBorderBrushFocused" Color="#CCFF3D2E" />
+            <SolidColorBrush x:Key="TextBoxPlaceholderForeground" Color="#B68870" />
 
             <!-- ToggleSwitch overrides -->
-            <SolidColorBrush x:Key="ToggleSwitchContentForeground" Color="#F0FFFF" />
-            <SolidColorBrush x:Key="ToggleSwitchHeaderForeground" Color="#F0FFFF" />
-            <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="#00CCDD" />
-            <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="#00FFFF" />
+            <SolidColorBrush x:Key="ToggleSwitchContentForeground" Color="#FFEEDC" />
+            <SolidColorBrush x:Key="ToggleSwitchHeaderForeground" Color="#FFEEDC" />
+            <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="#CC2D26" />
+            <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="#FF3D2E" />
             <SolidColorBrush x:Key="ToggleSwitchFillOff" Color="#F0040E18" />
-            <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="#00FFFF" />
-            <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="#6600FFFF" />
-            <SolidColorBrush x:Key="ToggleSwitchKnobFillOn" Color="#000A12" />
-            <SolidColorBrush x:Key="ToggleSwitchKnobFillOff" Color="#9ECCDA" />
+            <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="#FF3D2E" />
+            <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="#66FF3D2E" />
+            <SolidColorBrush x:Key="ToggleSwitchKnobFillOn" Color="#0F0303" />
+            <SolidColorBrush x:Key="ToggleSwitchKnobFillOff" Color="#E8B89E" />
 
             <!-- ListView / NavigationView item overrides -->
-            <SolidColorBrush x:Key="ListViewItemForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ListViewItemForeground" Color="#FFEEDC" />
             <SolidColorBrush x:Key="ListViewItemForegroundPointerOver" Color="#FFFFFF" />
-            <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="#00FFFF" />
-            <SolidColorBrush x:Key="NavigationViewItemForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="#FF3D2E" />
+            <SolidColorBrush x:Key="NavigationViewItemForeground" Color="#FFEEDC" />
             <SolidColorBrush x:Key="NavigationViewItemForegroundPointerOver" Color="#FFFFFF" />
-            <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="#00FFFF" />
+            <SolidColorBrush x:Key="NavigationViewItemForegroundSelected" Color="#FF3D2E" />
             <SolidColorBrush x:Key="NavigationViewContentBackground" Color="Transparent" />
 
             <!-- Flyout / MenuFlyout / popup overrides -->
             <SolidColorBrush x:Key="FlyoutPresenterBackground" Color="#F0040E18" />
-            <SolidColorBrush x:Key="FlyoutBorderThemeBrush" Color="#6600FFFF" />
+            <SolidColorBrush x:Key="FlyoutBorderThemeBrush" Color="#66FF3D2E" />
             <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#F0040E18" />
-            <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#6600FFFF" />
-            <SolidColorBrush x:Key="MenuFlyoutItemForeground" Color="#F0FFFF" />
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#66FF3D2E" />
+            <SolidColorBrush x:Key="MenuFlyoutItemForeground" Color="#FFEEDC" />
             <SolidColorBrush x:Key="MenuFlyoutItemForegroundPointerOver" Color="#FFFFFF" />
             <SolidColorBrush x:Key="MenuFlyoutItemBackground" Color="Transparent" />
             <SolidColorBrush x:Key="MenuFlyoutItemBackgroundPointerOver" Color="#F0081828" />
 
             <!-- ContentDialog overrides (for settings, warnings) -->
             <SolidColorBrush x:Key="ContentDialogBackground" Color="#F0040E18" />
-            <SolidColorBrush x:Key="ContentDialogForeground" Color="#F0FFFF" />
-            <SolidColorBrush x:Key="ContentDialogBorderBrush" Color="#8800FFFF" />
+            <SolidColorBrush x:Key="ContentDialogForeground" Color="#FFEEDC" />
+            <SolidColorBrush x:Key="ContentDialogBorderBrush" Color="#88FF3D2E" />
             <SolidColorBrush x:Key="ContentDialogTopOverlay" Color="Transparent" />
 
             <!-- ScrollBar/ScrollViewer overrides -->
-            <SolidColorBrush x:Key="ScrollBarThumbFill" Color="#4400FFFF" />
-            <SolidColorBrush x:Key="ScrollBarThumbFillPointerOver" Color="#6600FFFF" />
+            <SolidColorBrush x:Key="ScrollBarThumbFill" Color="#44FF3D2E" />
+            <SolidColorBrush x:Key="ScrollBarThumbFillPointerOver" Color="#66FF3D2E" />
             <SolidColorBrush x:Key="ScrollBarTrackFill" Color="Transparent" />
 
             <!-- ProgressBar overrides -->
-            <SolidColorBrush x:Key="ProgressBarForeground" Color="#00FFFF" />
+            <SolidColorBrush x:Key="ProgressBarForeground" Color="#FF3D2E" />
             <SolidColorBrush x:Key="ProgressBarBackground" Color="#22FFFFFF" />
 
-            <!-- Implicit default for ALL TextBlocks — without this, any
+            <!-- Implicit default for ALL TextBlocks â€” without this, any
                  TextBlock that doesn't pass an explicit Style renders with
                  the Fluent default foreground which is invisible on our
                  near-black background. -->
@@ -426,7 +430,7 @@
                 <Setter Property="TextWrapping" Value="Wrap" />
             </Style>
 
-            <!-- Implicit default for ALL Buttons — matches the named
+            <!-- Implicit default for ALL Buttons â€” matches the named
                  ShellCommandButtonStyle so plain <Button> and styled
                  buttons render at identical heights/paddings. Any
                  ad-hoc button in the tree picks up this style unless

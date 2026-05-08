@@ -1046,10 +1046,11 @@ void RuntimeSectionControl::PopulateSubAgentCards(const ::MasterControlShell::Sh
     const auto neutralColor = fromHex(0x8c, 0xb7, 0xc4);
 
     for (const auto& stat : snapshot.subAgentRuntimeStats) {
-        // Border with Tron-cyan accent stroke.
+        // v0.8.1: Tron CLU red-orange accent stroke (was cyan
+        // 0x00,0xf6,0xff in v0.7.x).
         Border card;
-        card.Background(SolidColorBrush(ColorHelper::FromArgb(0x18, 0x00, 0xf6, 0xff)));
-        card.BorderBrush(SolidColorBrush(ColorHelper::FromArgb(0x55, 0x00, 0xf6, 0xff)));
+        card.Background(SolidColorBrush(ColorHelper::FromArgb(0x18, 0xff, 0x3d, 0x2e)));
+        card.BorderBrush(SolidColorBrush(ColorHelper::FromArgb(0x55, 0xff, 0x3d, 0x2e)));
         Thickness cardBorder;
         cardBorder.Left = 1.0;
         cardBorder.Top = 1.0;
