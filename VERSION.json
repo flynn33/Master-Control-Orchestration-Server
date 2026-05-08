@@ -1,11 +1,30 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.7.7",
-  "current_tag": "v0.7.7",
-  "released_at": "2026-05-07",
+  "current_version": "0.7.8",
+  "current_tag": "v0.7.8",
+  "released_at": "2026-05-08",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.7.8",
+      "tag": "v0.7.8",
+      "released_at": "2026-05-08",
+      "commit": "pending",
+      "summary": "SUB-AGENT GRID footer on the WinUI shell finally has individual telemetry per badge. Pre-v0.7.8 the row at the bottom of every shell tab (Overview, Telemetry, Runtime, Settings, etc.) was hardcoded XAML in MainWindow.xaml -- seven static <Border> elements with literal stub names (SENTINEL/perimeter watch, ARCHITECT/plan + design, FORGE/build + compile, SCRIBE/docs + records, RECON/discovery probe, NEXUS/orchestration, WATCHDOG/soak + uptime). v0.7.6 added a Sub-Agents card grid in the RuntimeSectionControl, but that's the Runtime tab; the Overview tab (and every other tab) kept showing the static stub badges. Operator's complaint -- repeated multiple times -- was specifically about the Sub-Agent frames on the Overview tab having no individual telemetry, no utilization indicator, and no IP addresses of clients using the sub-agent. v0.7.8 replaces the static XAML with an x:Name'd container Grid (SubAgentFooterGrid) that MainWindow::ApplySubAgentFooter populates imperatively on every snapshot tick. Each badge now shows a name + reachability dot title row (color-coded green/red/neutral), specialization line, utilization bar (ProgressBar with active/capacity ratio + percent label), and the IP addresses of up to 2 active clients (truncated with '+N more' when oversized) or 'no clients' when idle. The headline above the grid summarizes total registered / reachable / active-lease counts. Both ApplySnapshot (full refresh) and ApplyLiveSnapshotFragment (1Hz live tick) call ApplySubAgentFooter, so the badges update at the same cadence as the rest of the live telemetry surface.",
+      "entries": [
+        "feat(shell): MainWindow.xaml SUB-AGENT GRID row replaced. Was: 7 hardcoded <Border> badges with literal stub names (SENTINEL/perimeter watch, ARCHITECT/plan + design, FORGE/build + compile, SCRIBE/docs + records, RECON/discovery probe, NEXUS/orchestration, WATCHDOG/soak + uptime). Now: <Grid x:Name='SubAgentFooterGrid' /> populated imperatively from snapshot.subAgentRuntimeStats. <TextBlock x:Name='SubAgentFooterHeadline' /> for the eyebrow text so the cpp can rewrite it with live counts.",
+        "feat(shell): MainWindow::ApplySubAgentFooter built. Per-badge layout: name (uppercase) + reachability dot color-coded by reachable/unreachable/no-endpoint, specialization sub-text, utilization row (percent label color-coded by tone + ProgressBar tinted by tone + active/capacity ratio), and the IP/client-type list of up to 2 active clients with '+N more' overflow (or 'no clients' muted text when idle). Tron-cyan card border + currentColor accents per the existing shell palette.",
+        "feat(shell): SubAgentFooterHeadline summarizes total / reachable / active-lease counts above the grid so the operator can read off the cluster state without scanning every badge ('SUB-AGENT GRID  -  7 registered, 4 reachable, 2 active leases').",
+        "feat(shell): ApplySubAgentFooter is wired into both ApplySnapshot (full refresh path) and ApplyLiveSnapshotFragment (1Hz live tick path) so the badges always stay in sync with the live data; persists across all tabs because the footer lives outside SectionContentHost.",
+        "docs(version): bump 0.7.7 -> 0.7.8 (SUB-AGENT GRID footer telemetry on the shell)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; Tron grid backdrop as procedural HLSL fragment shader; activity stream as scrolling SwapChainPanel.",
+        "Reachability probe is IPv4-only (AF_INET socket + inet_pton(AF_INET, ...)). Sub-agents whose endpoint.host is an IPv6 literal will always render reachable=false in both the Runtime tab Sub-Agents card grid (v0.7.6) and the Overview tab SUB-AGENT GRID footer (v0.7.8). The seven default inventory entries use IPv6 ULAs so they all show red reachability dots on a stock install. Fix is an AF_INET6 fallback path.",
+        "Discovery doc still serves the literal listen URL (e.g. 'http://0.0.0.0:8080/mcp') in mcpGatewayHealth.* / mcpGatewayStatus.* when the gateway is bound to a wildcard. v0.7.7 only fixes the operator-facing display layer; LAN clients consuming /api/discovery still need the runtime to substitute the LAN IP."
+      ]
+    },
     {
       "version": "0.7.7",
       "tag": "v0.7.7",

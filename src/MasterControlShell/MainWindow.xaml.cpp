@@ -1267,6 +1267,7 @@ void MainWindow::ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapsh
     SetCurrentDestination(currentDestination_);
 
     ApplyHeroSnapshot(snapshot);
+    ApplySubAgentFooter(snapshot);
 }
 
 // Live fragment: ONLY what should update on the 2-second tick. No nav,
@@ -1274,6 +1275,11 @@ void MainWindow::ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapsh
 // cached section views. Just the hero + current section's values.
 void MainWindow::ApplyLiveSnapshotFragment(const ::MasterControlShell::ShellSnapshot& snapshot) {
     ApplyHeroSnapshot(snapshot);
+    // v0.7.8: the SUB-AGENT GRID footer row lives in MainWindow.xaml outside
+    // SectionContentHost, so it persists across all section navigations.
+    // Refresh it on every live tick so utilization bars + client IPs stay
+    // current at the 1Hz cadence.
+    ApplySubAgentFooter(snapshot);
     ApplyCurrentSectionSnapshot(snapshot);
 }
 
@@ -1464,6 +1470,207 @@ void MainWindow::ApplyHeroSnapshot(const ::MasterControlShell::ShellSnapshot& sn
                 ? InfoBarSeverity::Warning
                 : InfoBarSeverity::Informational);
         UpdateStatusBar(winrt::hstring(snapshot.statusMessage), severity);
+    }
+}
+
+// v0.7.8: rebuild the SUB-AGENT GRID footer row from
+// ShellSnapshot.subAgentRuntimeStats. Each badge previously was a static
+// XAML <Border> with a literal name + tag-line; the operator's repeated
+// complaint was that the badges had no individual telemetry, no
+// utilization indicator, and no IP addresses of clients using the
+// sub-agent. v0.7.8 builds each badge imperatively from the live runtime
+// stats so every refresh tick (1 Hz) updates the visible bar fill, the
+// reachability dot, the active-client IP list (truncated to 2 lines per
+// badge for footer compactness), and the active/capacity ratio.
+void MainWindow::ApplySubAgentFooter(const ::MasterControlShell::ShellSnapshot& snapshot) {
+    using namespace winrt::Microsoft::UI::Xaml;
+    using namespace winrt::Microsoft::UI::Xaml::Controls;
+    using namespace winrt::Microsoft::UI::Xaml::Media;
+    using winrt::Windows::UI::Color;
+    using winrt::Windows::UI::ColorHelper;
+
+    auto grid = SubAgentFooterGrid();
+    grid.Children().Clear();
+    grid.ColumnDefinitions().Clear();
+
+    if (snapshot.subAgentRuntimeStats.empty()) {
+        try {
+            SubAgentFooterHeadline().Text(winrt::hstring(L"SUB-AGENT GRID  -  no sub-agents registered"));
+        } catch (const winrt::hresult_error&) {}
+        return;
+    }
+
+    int reachableCount = 0;
+    int totalActiveLeases = 0;
+    for (const auto& s : snapshot.subAgentRuntimeStats) {
+        if (s.reachable) ++reachableCount;
+        totalActiveLeases += s.activeLeaseCount;
+    }
+    try {
+        std::wstring headline = L"SUB-AGENT GRID  -  "
+            + std::to_wstring(snapshot.subAgentRuntimeStats.size())
+            + L" registered, "
+            + std::to_wstring(reachableCount)
+            + L" reachable, "
+            + std::to_wstring(totalActiveLeases)
+            + L" active lease"
+            + (totalActiveLeases == 1 ? L"" : L"s");
+        SubAgentFooterHeadline().Text(winrt::hstring(headline));
+    } catch (const winrt::hresult_error&) {}
+
+    auto fromHex = [](uint8_t r, uint8_t g, uint8_t b, uint8_t a = 0xFF) {
+        return ColorHelper::FromArgb(a, r, g, b);
+    };
+    const auto goodColor    = fromHex(0x1c, 0xf2, 0xc1);
+    const auto warnColor    = fromHex(0xff, 0xc8, 0x57);
+    const auto critColor    = fromHex(0xff, 0x6a, 0x80);
+    const auto neutralColor = fromHex(0x8c, 0xb7, 0xc4);
+    const auto cardEdgeBrush       = SolidColorBrush(ColorHelper::FromArgb(0x55, 0x00, 0xf6, 0xff));
+    const auto cardBackgroundBrush = SolidColorBrush(ColorHelper::FromArgb(0x18, 0x00, 0xf6, 0xff));
+    const auto barTrackBrush       = SolidColorBrush(ColorHelper::FromArgb(0x40, 0x8c, 0xb7, 0xc4));
+
+    Thickness cardBorder;
+    cardBorder.Left = 1.0; cardBorder.Top = 1.0; cardBorder.Right = 1.0; cardBorder.Bottom = 1.0;
+    Thickness cardPadding;
+    cardPadding.Left = 8.0; cardPadding.Top = 6.0; cardPadding.Right = 8.0; cardPadding.Bottom = 6.0;
+    winrt::Microsoft::UI::Xaml::CornerRadius cardCorners;
+    cardCorners.TopLeft = 6.0; cardCorners.TopRight = 6.0; cardCorners.BottomRight = 6.0; cardCorners.BottomLeft = 6.0;
+
+    int columnIndex = 0;
+    for (const auto& stat : snapshot.subAgentRuntimeStats) {
+        ColumnDefinition col;
+        col.Width(GridLengthHelper::FromValueAndType(1.0, GridUnitType::Star));
+        grid.ColumnDefinitions().Append(col);
+
+        Border card;
+        card.Background(cardBackgroundBrush);
+        card.BorderBrush(cardEdgeBrush);
+        card.BorderThickness(cardBorder);
+        card.CornerRadius(cardCorners);
+        card.Padding(cardPadding);
+        Grid::SetColumn(card, columnIndex);
+
+        StackPanel inner;
+        inner.Spacing(4);
+
+        // Title row: name (uppercase) + reachability dot.
+        StackPanel titleRow;
+        titleRow.Orientation(Orientation::Horizontal);
+        titleRow.Spacing(6);
+
+        TextBlock nameText;
+        std::wstring upperName = stat.displayName.empty() ? stat.subAgentId : stat.displayName;
+        std::transform(upperName.begin(), upperName.end(), upperName.begin(), ::towupper);
+        nameText.Text(winrt::hstring(upperName));
+        nameText.FontSize(11);
+        nameText.FontWeight(winrt::Microsoft::UI::Text::FontWeights::SemiBold());
+        nameText.Foreground(SolidColorBrush(ColorHelper::FromArgb(0xFF, 0xb8, 0xff, 0xf0)));
+
+        Border dot;
+        dot.Width(8); dot.Height(8);
+        winrt::Microsoft::UI::Xaml::CornerRadius dotCorners;
+        dotCorners.TopLeft = 4.0; dotCorners.TopRight = 4.0;
+        dotCorners.BottomRight = 4.0; dotCorners.BottomLeft = 4.0;
+        dot.CornerRadius(dotCorners);
+        dot.VerticalAlignment(VerticalAlignment::Center);
+        const bool hasEndpoint = !stat.endpointHostPort.empty();
+        const auto dotColor = hasEndpoint
+            ? (stat.reachable ? goodColor : critColor)
+            : neutralColor;
+        dot.Background(SolidColorBrush(dotColor));
+
+        titleRow.Children().Append(nameText);
+        titleRow.Children().Append(dot);
+        inner.Children().Append(titleRow);
+
+        // Specialization sub-text (kept for visual continuity with the
+        // pre-v0.7.8 stub badges).
+        if (!stat.specialization.empty()) {
+            TextBlock specText;
+            specText.Text(winrt::hstring(stat.specialization));
+            specText.FontSize(10);
+            specText.Foreground(SolidColorBrush(neutralColor));
+            inner.Children().Append(specText);
+        }
+
+        // Utilization bar + percent + active/capacity ratio.
+        const double util = stat.utilizationPercent;
+        const auto barTone = (util >= 95.0) ? critColor
+                            : (util >= 75.0) ? warnColor
+                            : goodColor;
+
+        StackPanel utilRow;
+        utilRow.Orientation(Orientation::Horizontal);
+        utilRow.Spacing(4);
+
+        TextBlock utilLabel;
+        wchar_t pctBuf[16]{};
+        swprintf_s(pctBuf, L"%.0f%%", util);
+        utilLabel.Text(pctBuf);
+        utilLabel.FontSize(10);
+        utilLabel.Foreground(SolidColorBrush(barTone));
+        utilLabel.MinWidth(28);
+        utilRow.Children().Append(utilLabel);
+
+        ProgressBar bar;
+        bar.Minimum(0);
+        bar.Maximum(100);
+        bar.Value(util < 0 ? 0.0 : (util > 100.0 ? 100.0 : util));
+        bar.Foreground(SolidColorBrush(barTone));
+        bar.Background(barTrackBrush);
+        bar.Height(4);
+        bar.HorizontalAlignment(HorizontalAlignment::Stretch);
+        bar.MinWidth(60);
+        utilRow.Children().Append(bar);
+
+        TextBlock ratioText;
+        wchar_t ratioBuf[32]{};
+        swprintf_s(ratioBuf, L"%d/%d",
+                   stat.activeLeaseCount,
+                   stat.leaseCapacity);
+        ratioText.Text(ratioBuf);
+        ratioText.FontSize(10);
+        ratioText.Foreground(SolidColorBrush(neutralColor));
+        utilRow.Children().Append(ratioText);
+
+        inner.Children().Append(utilRow);
+
+        // Active client IPs. Footer is compact, so cap at 2 lines and
+        // append "+N more" when oversized. Empty list shows "no clients"
+        // in muted color so the operator can tell at a glance which
+        // sub-agents are idle vs in use.
+        TextBlock clientsText;
+        clientsText.FontSize(10);
+        clientsText.TextWrapping(TextWrapping::Wrap);
+        clientsText.Foreground(SolidColorBrush(neutralColor));
+        if (stat.activeClients.empty()) {
+            clientsText.Text(L"no clients");
+        } else {
+            std::wstring acc;
+            const size_t shown = std::min<size_t>(2, stat.activeClients.size());
+            for (size_t i = 0; i < shown; ++i) {
+                if (i > 0) acc += L'\n';
+                const auto& holder = stat.activeClients[i];
+                acc += holder.ipAddress.empty() ? std::wstring(L"unknown") : holder.ipAddress;
+                if (!holder.clientType.empty()) {
+                    acc += L" (";
+                    acc += holder.clientType;
+                    acc += L")";
+                }
+            }
+            if (stat.activeClients.size() > shown) {
+                acc += L"\n+";
+                acc += std::to_wstring(stat.activeClients.size() - shown);
+                acc += L" more";
+            }
+            clientsText.Text(winrt::hstring(acc));
+            clientsText.Foreground(SolidColorBrush(ColorHelper::FromArgb(0xFF, 0xb8, 0xff, 0xf0)));
+        }
+        inner.Children().Append(clientsText);
+
+        card.Child(inner);
+        grid.Children().Append(card);
+        ++columnIndex;
     }
 }
 

@@ -325,66 +325,20 @@
                                     </Grid.RowDefinitions>
                                     <ContentPresenter Grid.Row="0" x:Name="SectionContentHost" />
 
-                                    <!-- Sub-agents footer pill row: Tron command-center motif. -->
+                                    <!-- Sub-agents footer pill row: Tron command-center motif.
+                                         v0.7.8: badges are now built imperatively from
+                                         ShellSnapshot.subAgentRuntimeStats so each shows
+                                         real telemetry (utilization bar + active-client IPs)
+                                         instead of static stub names. SubAgentFooterGrid is
+                                         a single-row Grid populated by
+                                         MainWindow::ApplySubAgentFooter on every snapshot. -->
                                     <Grid Grid.Row="1">
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
-                                        <TextBlock Grid.Row="0" Text="SUB-AGENT GRID" Style="{StaticResource ShellEyebrowTextStyle}" Margin="0,0,0,8" />
-                                        <Grid Grid.Row="1" ColumnSpacing="10">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="*" />
-                                            </Grid.ColumnDefinitions>
-                                            <Border Grid.Column="0" Style="{StaticResource ShellSubAgentBadgeStyle}">
-                                                <StackPanel Spacing="3">
-                                                    <TextBlock Text="SENTINEL" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
-                                                    <TextBlock Text="perimeter watch" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
-                                                </StackPanel>
-                                            </Border>
-                                            <Border Grid.Column="1" Style="{StaticResource ShellSubAgentBadgeStyle}">
-                                                <StackPanel Spacing="3">
-                                                    <TextBlock Text="ARCHITECT" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
-                                                    <TextBlock Text="plan + design" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
-                                                </StackPanel>
-                                            </Border>
-                                            <Border Grid.Column="2" Style="{StaticResource ShellSubAgentBadgeStyle}">
-                                                <StackPanel Spacing="3">
-                                                    <TextBlock Text="FORGE" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
-                                                    <TextBlock Text="build + compile" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
-                                                </StackPanel>
-                                            </Border>
-                                            <Border Grid.Column="3" Style="{StaticResource ShellSubAgentBadgeStyle}">
-                                                <StackPanel Spacing="3">
-                                                    <TextBlock Text="SCRIBE" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
-                                                    <TextBlock Text="docs + records" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
-                                                </StackPanel>
-                                            </Border>
-                                            <Border Grid.Column="4" Style="{StaticResource ShellSubAgentBadgeStyle}">
-                                                <StackPanel Spacing="3">
-                                                    <TextBlock Text="RECON" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
-                                                    <TextBlock Text="discovery probe" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
-                                                </StackPanel>
-                                            </Border>
-                                            <Border Grid.Column="5" Style="{StaticResource ShellSubAgentBadgeStyle}">
-                                                <StackPanel Spacing="3">
-                                                    <TextBlock Text="NEXUS" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
-                                                    <TextBlock Text="orchestration" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
-                                                </StackPanel>
-                                            </Border>
-                                            <Border Grid.Column="6" Style="{StaticResource ShellSubAgentBadgeStyle}">
-                                                <StackPanel Spacing="3">
-                                                    <TextBlock Text="WATCHDOG" Style="{StaticResource ShellSubAgentBadgeTitleStyle}" />
-                                                    <TextBlock Text="soak + uptime" Style="{StaticResource ShellSubAgentBadgeSubtitleStyle}" />
-                                                </StackPanel>
-                                            </Border>
-                                        </Grid>
+                                        <TextBlock Grid.Row="0" x:Name="SubAgentFooterHeadline" Text="SUB-AGENT GRID" Style="{StaticResource ShellEyebrowTextStyle}" Margin="0,0,0,8" />
+                                        <Grid Grid.Row="1" x:Name="SubAgentFooterGrid" ColumnSpacing="10" />
                                     </Grid>
                                 </Grid>
                             </Border>

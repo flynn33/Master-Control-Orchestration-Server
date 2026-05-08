@@ -48,6 +48,11 @@ private:
     void ApplySectionMetadata(const ::MasterControlShell::ShellSnapshot& snapshot);
     void ApplyCachedSectionSnapshots(const ::MasterControlShell::ShellSnapshot& snapshot);
     void ApplyHeroSnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
+    // v0.7.8: rebuild the SUB-AGENT GRID footer (cross-tab persistent footer
+    // row in MainWindow.xaml) imperatively from ShellSnapshot.subAgentRuntimeStats
+    // so each badge shows real per-sub-agent telemetry (utilization bar +
+    // active-client IPs) instead of the pre-v0.7.8 hardcoded stub names.
+    void ApplySubAgentFooter(const ::MasterControlShell::ShellSnapshot& snapshot);
     void ApplyCurrentSectionSnapshot(const ::MasterControlShell::ShellSnapshot& snapshot);
     void ApplyLiveHeartbeat(std::chrono::system_clock::time_point now, bool captured);
     void StartGuidedWorkflow(std::wstring const& workflowId);
