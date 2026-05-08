@@ -14,6 +14,20 @@
 
 #include <optional>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
+#include <winrt/Microsoft.UI.Xaml.Controls.h>
+
+// v0.9.3: detected-IP enumeration uses GetAdaptersAddresses so the shell
+// surfaces the same address inventory the runtime uses for primaryIp
+// detection. winsock2.h must come before windows.h.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <iphlpapi.h>
+#pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "ws2_32.lib")
 
 namespace winrt::MasterControlShell::implementation {
 
@@ -50,6 +64,113 @@ std::optional<int> parseInteger(const std::wstring& value, const int minimum, co
     } catch (...) {
         return std::nullopt;
     }
+}
+
+// v0.9.3: enumerate routable host IPs via GetAdaptersAddresses so the
+// LAN Address dropdown shows real options instead of asking the operator
+// to remember their NIC's address. Order: 0.0.0.0 first (the "bind every
+// interface" default), then routable IPv4 (most LAN AI clients), then
+// routable IPv6, then link-locals as last resort. Each tuple holds
+// (display, raw): the display value adds a friendly suffix like
+// "192.168.1.7 (IPv4 LAN)" while raw is the actual address string we
+// drop into the textbox.
+struct DetectedIpEntry {
+    std::wstring display;
+    std::wstring raw;
+};
+
+bool isLinkLocalIpv4Wide(const std::wstring& s) {
+    return s.rfind(L"169.254.", 0) == 0;
+}
+
+bool isLinkLocalIpv6Wide(const std::wstring& s) {
+    if (s.size() < 4) return false;
+    // Local lower-case helper -- avoids std::towlower (not always
+    // declared inside std:: on MSVC depending on which header is
+    // included first). Hex digits are pure ASCII so a simple offset
+    // is sufficient.
+    auto lower = [](wchar_t c) -> wchar_t {
+        return (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + (L'a' - L'A')) : c;
+    };
+    return lower(s[0]) == L'f' && lower(s[1]) == L'e'
+        && (lower(s[2]) == L'8' || lower(s[2]) == L'9' || lower(s[2]) == L'a' || lower(s[2]) == L'b')
+        && lower(s[3]) == L'0';
+}
+
+std::vector<DetectedIpEntry> enumerateDetectedIps() {
+    std::vector<DetectedIpEntry> result;
+    result.push_back({ L"0.0.0.0 (bind all)", L"0.0.0.0" });
+
+    ULONG bufferLen = 16 * 1024;
+    std::vector<unsigned char> buffer(bufferLen);
+    IP_ADAPTER_ADDRESSES* addresses = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+    DWORD status = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, nullptr, addresses, &bufferLen);
+    if (status == ERROR_BUFFER_OVERFLOW) {
+        buffer.resize(bufferLen);
+        addresses = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
+        status = GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, nullptr, addresses, &bufferLen);
+    }
+    if (status != NO_ERROR) {
+        return result;
+    }
+
+    auto formatHost = [](const SOCKET_ADDRESS& addr) -> std::wstring {
+        wchar_t host[NI_MAXHOST]{};
+        if (GetNameInfoW(addr.lpSockaddr,
+                         static_cast<socklen_t>(addr.iSockaddrLength),
+                         host, NI_MAXHOST,
+                         nullptr, 0,
+                         NI_NUMERICHOST) == 0) {
+            return std::wstring(host);
+        }
+        return std::wstring{};
+    };
+
+    std::vector<DetectedIpEntry> ipv4;
+    std::vector<DetectedIpEntry> ipv6;
+    std::vector<DetectedIpEntry> linkLocal;
+
+    for (auto* adapter = addresses; adapter != nullptr; adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+            continue;
+        }
+        std::wstring adapterFriendly = adapter->FriendlyName ? adapter->FriendlyName : L"";
+        for (auto* unicast = adapter->FirstUnicastAddress; unicast != nullptr; unicast = unicast->Next) {
+            if (unicast->Address.lpSockaddr == nullptr) continue;
+            const auto family = unicast->Address.lpSockaddr->sa_family;
+            std::wstring formatted = formatHost(unicast->Address);
+            if (formatted.empty()) continue;
+            // Strip IPv6 zone identifier (the trailing %iface) -- it
+            // is not legal inside an HTTP URL host.
+            const auto pct = formatted.find(L'%');
+            if (pct != std::wstring::npos) formatted.erase(pct);
+
+            DetectedIpEntry entry;
+            entry.raw = formatted;
+            if (family == AF_INET) {
+                if (isLinkLocalIpv4Wide(formatted)) {
+                    entry.display = formatted + L" (IPv4 link-local " + adapterFriendly + L")";
+                    linkLocal.push_back(std::move(entry));
+                } else {
+                    entry.display = formatted + L" (IPv4 " + adapterFriendly + L")";
+                    ipv4.push_back(std::move(entry));
+                }
+            } else if (family == AF_INET6) {
+                if (isLinkLocalIpv6Wide(formatted)) {
+                    entry.display = formatted + L" (IPv6 link-local " + adapterFriendly + L")";
+                    linkLocal.push_back(std::move(entry));
+                } else {
+                    entry.display = formatted + L" (IPv6 " + adapterFriendly + L")";
+                    ipv6.push_back(std::move(entry));
+                }
+            }
+        }
+    }
+
+    for (auto& e : ipv4) result.push_back(std::move(e));
+    for (auto& e : ipv6) result.push_back(std::move(e));
+    for (auto& e : linkLocal) result.push_back(std::move(e));
+    return result;
 }
 
 } // namespace
@@ -138,6 +259,27 @@ void SettingsSectionControl::AllocationSlider_ValueChanged(
     UpdateEditorState();
 }
 
+// v0.9.3: detected-IP dropdown. When the operator picks an entry, copy
+// its raw address (stashed on the ComboBoxItem.Tag at hydration time)
+// into the BindAddress textbox. The textbox's TextChanged path then
+// flips dirty_ via the existing handler so Apply enables.
+void SettingsSectionControl::DetectedAddressComboBox_SelectionChanged(
+    Windows::Foundation::IInspectable const& sender,
+    Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&) {
+    if (suspendDirtyTracking_) {
+        return;
+    }
+    auto combo = sender.try_as<Microsoft::UI::Xaml::Controls::ComboBox>();
+    if (combo == nullptr) return;
+    auto selected = combo.SelectedItem().try_as<Microsoft::UI::Xaml::Controls::ComboBoxItem>();
+    if (selected == nullptr) return;
+    auto tag = selected.Tag();
+    if (tag == nullptr) return;
+    auto raw = winrt::unbox_value_or<winrt::hstring>(tag, L"");
+    if (raw.empty()) return;
+    BindAddressTextBox().Text(raw);
+}
+
 // v0.9.2: paired TextBox edit. Parses the integer (clamped 0..100) and
 // pushes it onto the matching Slider so the visual stays in lockstep. If
 // the entry is blank or non-numeric we leave the slider alone -- the
@@ -210,6 +352,25 @@ void SettingsSectionControl::PopulateEditorFromSnapshot() {
     suspendDirtyTracking_ = true;
     InstanceNameTextBox().Text(winrt::hstring(snapshot_.instanceName.empty() ? L"Master Control Orchestration Server" : snapshot_.instanceName));
     BindAddressTextBox().Text(winrt::hstring(snapshot_.bindAddress.empty() ? L"0.0.0.0" : snapshot_.bindAddress));
+    // v0.9.3: rebuild the detected-IP dropdown on every snapshot pass.
+    // The list is small (single-digit count) so re-enumeration cost is
+    // negligible; doing it per-tick keeps the choices fresh if the
+    // operator brings up a new VPN / interface while the dashboard is
+    // open. Selecting "0.0.0.0 (bind all)" is the default for new
+    // installs.
+    {
+        auto combo = DetectedAddressComboBox();
+        combo.Items().Clear();
+        const auto entries = enumerateDetectedIps();
+        for (const auto& entry : entries) {
+            Microsoft::UI::Xaml::Controls::ComboBoxItem item;
+            item.Content(winrt::box_value(winrt::hstring(entry.display)));
+            // Stash the raw address on the Tag so SelectionChanged can
+            // pull it back without re-parsing the display label.
+            item.Tag(winrt::box_value(winrt::hstring(entry.raw)));
+            combo.Items().Append(item);
+        }
+    }
     BrowserPortTextBox().Text(winrt::hstring(std::to_wstring(snapshot_.browserPort)));
     BeaconPortTextBox().Text(winrt::hstring(std::to_wstring(snapshot_.beaconPort)));
     BeaconEnabledToggle().IsOn(snapshot_.beaconEnabled);

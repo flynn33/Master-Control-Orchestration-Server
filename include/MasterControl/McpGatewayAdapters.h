@@ -123,7 +123,10 @@ private:
     // ask it tools/list via the stdio bridge, and rebuild the cached
     // catalog. Returns the full catalog (serverName-attributed). Caller
     // holds mutex_.
-    std::vector<McpToolDescriptor> refreshToolCatalogLocked();
+    // v0.9.3: const so it can be called from ListTools() (const).
+    // Mutates only `toolCatalogCache_` and `bridgeRequestIdCounter_`,
+    // both already declared `mutable`.
+    std::vector<McpToolDescriptor> refreshToolCatalogLocked() const;
 
     mutable std::mutex mutex_;
     McpGatewayConfiguration configuration_;

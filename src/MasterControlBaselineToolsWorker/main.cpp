@@ -192,7 +192,7 @@ nlohmann::json hostInfo() {
     out["operatingSystem"] = "non-windows";
 #endif
     out["worker"] = "mcos-baseline-tools-worker";
-    out["workerVersion"] = "0.9.1";
+    out["workerVersion"] = "0.9.3";
     return out;
 }
 
@@ -307,7 +307,7 @@ nlohmann::json handleEnvelope(const nlohmann::json& request) {
             { "protocolVersion", "2024-11-05" },
             { "serverInfo", {
                 { "name", "MCOS Baseline Tools Worker" },
-                { "version", "0.9.1" }
+                { "version", "0.9.3" }
             } },
             { "capabilities", {
                 { "tools", { { "listChanged", false } } }

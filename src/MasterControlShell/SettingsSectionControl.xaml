@@ -80,8 +80,17 @@
                     <TextBlock Text="Instance Name" Style="{StaticResource ShellLabelTextStyle}" />
                     <TextBox x:Name="InstanceNameTextBox" TextChanged="SettingsEditor_TextChanged" PlaceholderText="Master Control Orchestration Server" />
 
-                    <TextBlock Text="Bind Address" Style="{StaticResource ShellLabelTextStyle}" />
-                    <TextBox x:Name="BindAddressTextBox" TextChanged="SettingsEditor_TextChanged" PlaceholderText="0.0.0.0" />
+                    <TextBlock Text="LAN Address" Style="{StaticResource ShellLabelTextStyle}" />
+                    <TextBlock Style="{StaticResource ShellBodyTextStyle}" TextWrapping="WrapWholeWords"
+                               Text="The IP this host binds to and advertises to LAN AI clients. Pick a detected address from the dropdown, or type 0.0.0.0 to bind every interface and let the runtime pick a routable IP for the discovery doc. v0.9.3 unified what was previously two separate fields (bindAddress + activeProfile.preferredBindAddress); the value entered here drives both." />
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox Grid.Column="0" x:Name="BindAddressTextBox" TextChanged="SettingsEditor_TextChanged" PlaceholderText="0.0.0.0" />
+                        <ComboBox Grid.Column="1" x:Name="DetectedAddressComboBox" PlaceholderText="Detected" MinWidth="220" SelectionChanged="DetectedAddressComboBox_SelectionChanged" />
+                    </Grid>
 
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>

@@ -31,6 +31,11 @@ struct SettingsSectionControl : SettingsSectionControlT<SettingsSectionControl> 
                                        Microsoft::UI::Xaml::Controls::Primitives::RangeBaseValueChangedEventArgs const&);
     void AllocationTextBox_TextChanged(Windows::Foundation::IInspectable const& sender,
                                        Microsoft::UI::Xaml::Controls::TextChangedEventArgs const&);
+    // v0.9.3: detected-IP dropdown next to the LAN Address field. When
+    // the operator picks an entry, copy its address into the text box
+    // and let the existing TextChanged path mark the editor dirty.
+    void DetectedAddressComboBox_SelectionChanged(Windows::Foundation::IInspectable const& sender,
+                                                  Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const&);
     void ApplySettingsButton_Click(Windows::Foundation::IInspectable const&,
                                    Microsoft::UI::Xaml::RoutedEventArgs const&);
     void CopyFirewallGatewayRuleButton_Click(Windows::Foundation::IInspectable const&,

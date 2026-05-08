@@ -74,13 +74,58 @@ BOOL WINAPI consoleControlHandler(const DWORD controlType) {
     return FALSE;
 }
 
+// v0.9.3: process-singleton guard. Pre-v0.9.3 a second MasterControlServiceHost
+// invocation -- typically via `--console` while the Windows service was
+// already running -- silently failed to bind 7300/8080 but its
+// WorkerSupervisor still spawned the baseline-tools worker, doubling
+// the child-process count per host and confusing the dashboard.
+// CreateMutexW with a Global\ name held for the lifetime of the process
+// makes the second instance refuse to start. Service-mode and console-
+// mode share the same mutex name so either path keeps the other out.
+HANDLE g_singletonMutex = nullptr;
+
+bool acquireSingletonOrFail(const wchar_t* mode) {
+    g_singletonMutex = CreateMutexW(
+        nullptr, TRUE, L"Global\\MasterControlOrchestrationServerSingleton");
+    if (g_singletonMutex == nullptr) {
+        writeServiceLog(std::wstring(L"CreateMutexW failed in ") + mode + L" mode.");
+        return false;
+    }
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        std::wstring msg = L"Master Control Orchestration Server is already running. ";
+        msg += L"Refusing to start a duplicate instance from ";
+        msg += mode;
+        msg += L" mode. Stop the existing service before launching another.";
+        writeServiceLog(msg);
+        std::cerr << "Master Control Orchestration Server is already running. "
+                     "Refusing to start a duplicate instance.\n";
+        CloseHandle(g_singletonMutex);
+        g_singletonMutex = nullptr;
+        return false;
+    }
+    return true;
+}
+
+void releaseSingleton() {
+    if (g_singletonMutex != nullptr) {
+        ReleaseMutex(g_singletonMutex);
+        CloseHandle(g_singletonMutex);
+        g_singletonMutex = nullptr;
+    }
+}
+
 int runConsoleMode() {
     writeServiceLog(L"Starting service host in console mode.");
     SetConsoleCtrlHandler(consoleControlHandler, TRUE);
 
+    if (!acquireSingletonOrFail(L"console")) {
+        return 2; // distinct exit code for "duplicate instance refused"
+    }
+
     g_application = std::make_unique<MasterControl::MasterControlApplication>();
     if (!g_application->initialize()) {
         writeServiceLog(L"Console mode initialization failed.");
+        releaseSingleton();
         throw std::runtime_error("Failed to initialize Master Control Orchestration Server.");
     }
 
@@ -89,6 +134,7 @@ int runConsoleMode() {
     const int exitCode = g_application->runInteractive();
     writeServiceLog(L"Console mode run loop exited with code " + std::to_wstring(exitCode) + L".");
     g_application->shutdown();
+    releaseSingleton();
     writeServiceLog(L"Console mode shutdown completed.");
     return exitCode;
 }
@@ -103,9 +149,15 @@ void runServiceMain() {
 
     updateServiceStatus(SERVICE_START_PENDING);
 
+    if (!acquireSingletonOrFail(L"service")) {
+        updateServiceStatus(SERVICE_STOPPED, ERROR_SERVICE_ALREADY_RUNNING);
+        return;
+    }
+
     g_application = std::make_unique<MasterControl::MasterControlApplication>();
     if (!g_application->initialize()) {
         writeServiceLog(L"Service mode initialization failed.");
+        releaseSingleton();
         updateServiceStatus(SERVICE_STOPPED, ERROR_SERVICE_SPECIFIC_ERROR);
         return;
     }
@@ -115,6 +167,7 @@ void runServiceMain() {
     g_application->runInteractive();
     writeServiceLog(L"Service mode run loop exited.");
     g_application->shutdown();
+    releaseSingleton();
     writeServiceLog(L"Service mode shutdown completed.");
     updateServiceStatus(SERVICE_STOPPED);
 }

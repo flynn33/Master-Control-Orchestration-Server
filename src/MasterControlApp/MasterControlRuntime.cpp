@@ -151,6 +151,30 @@ bool startsWith(const std::string& value, const std::string& prefix) {
     return value.rfind(prefix, 0) == 0;
 }
 
+// v0.9.3: bracket-wrap an IPv6 host literal for use in an HTTP URL per
+// RFC 3986. IPv4 strings, DNS names, and already-bracketed IPv6 strings
+// are returned unchanged. Pre-v0.9.3 multiple URL-composition sites
+// (adminBase, OnboardingProfileService::profileFor, the dashboard's
+// browserUrl, gateway URL builder) each had local copies of this logic
+// or omitted it entirely, with the result that /api/discovery served
+// raw "http://fde3:c02c:...:32c8:7300/..." which every RFC 3986 parser
+// rejects as "Invalid port specified" (the unbracketed IPv6 colons
+// clash with the port separator). Centralizing in one helper means
+// every published URL goes out parseable.
+std::string bracketIpv6Host(const std::string& host) {
+    if (host.empty()) {
+        return host;
+    }
+    if (host.front() == '[' && host.back() == ']') {
+        return host;
+    }
+    // IPv6 literals are uniquely identifiable: they contain a ':'.
+    // IPv4 addresses cannot. DNS hostnames cannot. So a single
+    // string::find on ':' is sufficient -- no need to invoke
+    // InetPtonW per call.
+    return (host.find(':') != std::string::npos) ? ("[" + host + "]") : host;
+}
+
 bool endsWith(const std::string& value, const std::string& suffix) {
     if (suffix.size() > value.size()) { return false; }
     return std::equal(suffix.rbegin(), suffix.rend(), value.rbegin());
@@ -1940,25 +1964,114 @@ void WindowsHostTelemetryService::readPrimaryNetworkIdentity(std::string& ipAddr
         return;
     }
 
+    // v0.9.3: IPv4-first preference. Pre-v0.9.3 we walked the unicast
+    // address list and broke on the first hit -- on dual-stack hosts
+    // Windows often surfaces the IPv6 ULA before the IPv4 LAN address,
+    // so MCOS ended up advertising e.g. "fde3:c02c:...:32c8" in the
+    // discovery doc even though "192.168.1.7" was also live and is what
+    // every IPv4-only LAN AI client expects. The two-pass walk takes
+    // an IPv4 address from any non-loopback adapter on pass 1 and only
+    // falls through to IPv6 on pass 2 if no IPv4 was found. Link-local
+    // IPv6 (fe80::) and link-local IPv4 (169.254.x.x) are deprioritized
+    // in pass 2 since they can't be reached from outside the local
+    // segment.
+    auto extractAddressFamily = [](const SOCKET_ADDRESS& addr) -> int {
+        return addr.lpSockaddr ? addr.lpSockaddr->sa_family : 0;
+    };
+    auto formatHost = [](const SOCKET_ADDRESS& addr, std::string& out) -> bool {
+        char host[NI_MAXHOST]{};
+        if (getnameinfo(addr.lpSockaddr,
+                        static_cast<socklen_t>(addr.iSockaddrLength),
+                        host, NI_MAXHOST,
+                        nullptr, 0,
+                        NI_NUMERICHOST) == 0) {
+            out = host;
+            return true;
+        }
+        return false;
+    };
+    auto isLinkLocalIpv4 = [](const std::string& s) {
+        return s.rfind("169.254.", 0) == 0;
+    };
+    auto isLinkLocalIpv6 = [](const std::string& s) {
+        // Lower-case lexicographic test against the link-local prefix
+        // fe80::/10. getnameinfo + AF_INET6 always produces lower-case
+        // hex, but we still defensively normalize.
+        if (s.size() < 4) return false;
+        const char a = static_cast<char>(std::tolower(static_cast<unsigned char>(s[0])));
+        const char b = static_cast<char>(std::tolower(static_cast<unsigned char>(s[1])));
+        const char c = static_cast<char>(std::tolower(static_cast<unsigned char>(s[2])));
+        const char d = static_cast<char>(std::tolower(static_cast<unsigned char>(s[3])));
+        return a == 'f' && b == 'e' && (c == '8' || c == '9' || c == 'a' || c == 'b') && d == '0';
+    };
+
+    // Pass 1: routable IPv4
+    for (auto* adapter = addresses; adapter != nullptr && ipAddress.empty(); adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+            continue;
+        }
+        for (auto* unicast = adapter->FirstUnicastAddress; unicast != nullptr; unicast = unicast->Next) {
+            if (extractAddressFamily(unicast->Address) != AF_INET) continue;
+            std::string candidate;
+            if (!formatHost(unicast->Address, candidate)) continue;
+            if (isLinkLocalIpv4(candidate)) continue;
+            ipAddress = candidate;
+            break;
+        }
+    }
+
+    // Pass 2: routable IPv6 if no IPv4 was found
+    if (ipAddress.empty()) {
+        for (auto* adapter = addresses; adapter != nullptr && ipAddress.empty(); adapter = adapter->Next) {
+            if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+                continue;
+            }
+            for (auto* unicast = adapter->FirstUnicastAddress; unicast != nullptr; unicast = unicast->Next) {
+                if (extractAddressFamily(unicast->Address) != AF_INET6) continue;
+                std::string candidate;
+                if (!formatHost(unicast->Address, candidate)) continue;
+                if (isLinkLocalIpv6(candidate)) continue;
+                ipAddress = candidate;
+                break;
+            }
+        }
+    }
+
+    // Pass 3: any address (link-local IPv4/IPv6) so we don't return empty
+    // when the host has nothing better.
+    if (ipAddress.empty()) {
+        for (auto* adapter = addresses; adapter != nullptr && ipAddress.empty(); adapter = adapter->Next) {
+            if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+                continue;
+            }
+            for (auto* unicast = adapter->FirstUnicastAddress; unicast != nullptr; unicast = unicast->Next) {
+                std::string candidate;
+                if (formatHost(unicast->Address, candidate)) {
+                    ipAddress = candidate;
+                    break;
+                }
+            }
+        }
+    }
+
+    // MAC address + traffic counters from the same adapter the IP came
+    // from. We do a separate pass to find that adapter; if ipAddress is
+    // still empty (no UP non-loopback adapter at all) we skip telemetry
+    // gracefully.
     for (auto* adapter = addresses; adapter != nullptr; adapter = adapter->Next) {
         if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
             continue;
         }
-
-        for (auto* unicast = adapter->FirstUnicastAddress; unicast != nullptr; unicast = unicast->Next) {
-            char host[NI_MAXHOST]{};
-            if (getnameinfo(
-                    unicast->Address.lpSockaddr,
-                    static_cast<socklen_t>(unicast->Address.iSockaddrLength),
-                    host,
-                    NI_MAXHOST,
-                    nullptr,
-                    0,
-                    NI_NUMERICHOST) == 0) {
-                ipAddress = host;
-                break;
+        // Match adapter to the IP we already chose. If there's no chosen
+        // IP, fall through to the first eligible adapter for telemetry.
+        bool match = ipAddress.empty();
+        for (auto* unicast = adapter->FirstUnicastAddress; unicast != nullptr && !match; unicast = unicast->Next) {
+            std::string candidate;
+            if (formatHost(unicast->Address, candidate) && candidate == ipAddress) {
+                match = true;
             }
         }
+        if (!match) continue;
 
         if (adapter->PhysicalAddressLength > 0U) {
             std::ostringstream macStream;
@@ -2599,7 +2712,9 @@ void appendLanClientActivity(const std::string& kind,
 nlohmann::json composeLanClientConfigBundle(const LanClient& client,
                                             const AppConfiguration& configuration) {
     const auto host = resolveMcosServerHost(configuration);
-    const auto mcosServer = "http://" + host + ":" + std::to_string(configuration.browserPort);
+    // v0.9.3: bracket IPv6 host literals so the LAN client config bundle
+    // ends up with an RFC 3986-parseable mcosServer URL.
+    const auto mcosServer = "http://" + bracketIpv6Host(host) + ":" + std::to_string(configuration.browserPort);
 
     nlohmann::json bundle;
     bundle["schemaVersion"] = "1.0";
@@ -3452,12 +3567,15 @@ public:
             : configuration.activeProfile.preferredBindAddress;
         const auto gatewayHost = iterator != endpoints.end() && iterator->host != "0.0.0.0" ? iterator->host : preferredHost;
         const auto gatewayPort = iterator != endpoints.end() ? iterator->port : static_cast<uint16_t>(7200);
-        const auto gatewayUrl = "http://" + gatewayHost + ":" + std::to_string(gatewayPort) + "/mcp/gateway";
+        // v0.9.3: bracket IPv6 host literals in this exported handoff
+        // bundle so a LAN client copying it into their MCP config gets a
+        // URL their HTTP library can actually parse.
+        const auto gatewayUrl = "http://" + bracketIpv6Host(gatewayHost) + ":" + std::to_string(gatewayPort) + "/mcp/gateway";
         const auto browserHost = browserIterator != endpoints.end() && browserIterator->host != "0.0.0.0"
             ? browserIterator->host
             : preferredHost;
         const auto browserPort = browserIterator != endpoints.end() ? browserIterator->port : configuration.browserPort;
-        const auto browserUrl = "http://" + browserHost + ":" + std::to_string(browserPort) + "/";
+        const auto browserUrl = "http://" + bracketIpv6Host(browserHost) + ":" + std::to_string(browserPort) + "/";
 
         nlohmann::json claudeJson = {
             { "mcpServers", {
@@ -4667,7 +4785,8 @@ private:
         }
 
         const uint16_t port = host.port == 0 ? 80 : host.port;
-        return "http://" + host.address + ":" + std::to_string(port) + path;
+        // v0.9.3: bracket IPv6 host literals.
+        return "http://" + bracketIpv6Host(host.address) + ":" + std::to_string(port) + path;
     }
 
     static std::string buildCompanionExecuteUrl(const AppleRemoteHost& host) {
@@ -4686,7 +4805,8 @@ private:
         }
 
         const uint16_t port = host.port == 0 ? 80 : host.port;
-        return "http://" + host.address + ":" + std::to_string(port) + path;
+        // v0.9.3: bracket IPv6 host literals.
+        return "http://" + bracketIpv6Host(host.address) + ":" + std::to_string(port) + path;
     }
 
     static AppleRemoteCommandRequest normalizeCommandRequest(
@@ -7158,16 +7278,34 @@ public:
         const auto configuration = configurationService_->current();
         const auto snapshot = telemetryService_->captureSnapshot();
 
-        // Operator override takes precedence over auto-detected
-        // primaryIpAddress so the discovery doc advertises the LAN IP
-        // the operator chose, not whatever interface the
-        // GetAdaptersAddresses enumeration happened to surface first
-        // (which on dual-stack hosts is often the IPv6 ULA, not the
-        // IPv4 LAN address clients expect).
+        // v0.9.3: precedence chain for the LAN IP advertised in the
+        // discovery doc. The order matters because the listen socket
+        // and the advertised URL must agree -- a discovery doc that
+        // advertises 10.0.0.5 while the listen socket is bound only to
+        // 192.168.1.7 sends clients somewhere they can't reach.
+        //
+        //   1. bindAddress (when not wildcard) -- where MCOS is
+        //      DEFINITELY listening. If the operator pinned the listen
+        //      socket to a specific address, that's the address LAN
+        //      clients must use; nothing else can be right.
+        //   2. preferredBindAddress (operator-overridden advertise IP).
+        //      Used when bindAddress is wildcard (0.0.0.0 / ::).
+        //   3. primaryIpAddress (auto-detected, IPv4-first as of
+        //      v0.9.3 Fix #2).
+        //   4. configuration.bindAddress as last-resort literal.
+        //   5. 127.0.0.1.
         std::string lanIp;
+        const std::string& bindAddress = configuration.bindAddress;
         const std::string& preferred =
             configuration.activeProfile.preferredBindAddress;
-        if (!preferred.empty() && preferred != "0.0.0.0") {
+        if (!bindAddress.empty()
+            && bindAddress != "0.0.0.0"
+            && bindAddress != "::"
+            && bindAddress != "[::]") {
+            lanIp = bindAddress;
+        }
+        if ((lanIp.empty() || lanIp == "0.0.0.0")
+            && !preferred.empty() && preferred != "0.0.0.0") {
             lanIp = preferred;
         }
         if (lanIp.empty() || lanIp == "0.0.0.0") {
@@ -7180,7 +7318,11 @@ public:
             lanIp = "127.0.0.1";
         }
 
-        const std::string adminBase = "http://" + lanIp + ":" + std::to_string(configuration.browserPort);
+        // v0.9.3: every host->URL composition uses the bracketIpv6Host
+        // helper hoisted at the top of this TU so adminBase + the gateway
+        // URL builder + downstream onboarding profiles all stay in
+        // lockstep on RFC 3986 IPv6 bracketing.
+        const std::string adminBase = "http://" + bracketIpv6Host(lanIp) + ":" + std::to_string(configuration.browserPort);
 
         DiscoveryDocument document;
         document.product = "MCOS";
@@ -7202,11 +7344,9 @@ public:
         // v0.9.0: always compose mcpUrl + healthUrl from the resolved
         // gatewayHost (LAN IP) rather than the adapter's literal
         // composeMcpUrl(listenHost) which would carry through the
-        // wildcard '0.0.0.0'. This closes the v0.7.7 known issue --
-        // a LAN client consuming /api/discovery now gets a URL it can
-        // actually connect to. IPv6 literals get RFC 3986 brackets.
-        const bool isIPv6 = gatewayHost.find(':') != std::string::npos;
-        const std::string hostInUrl = isIPv6 ? ("[" + gatewayHost + "]") : gatewayHost;
+        // wildcard '0.0.0.0'. v0.9.3: shares bracketIpv6Host with
+        // adminBase + onboarding URL builders.
+        const std::string hostInUrl = bracketIpv6Host(gatewayHost);
         document.gateway.mcpUrl    = "http://" + hostInUrl + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.mcpPath;
         document.gateway.healthUrl = "http://" + hostInUrl + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.healthPath;
         document.gateway.state = mcpGateway_ ? to_string(mcpGateway_->CurrentStatus().state) : "disabled";
@@ -8727,7 +8867,11 @@ public:
         if (lanIp.empty() || lanIp == "0.0.0.0") {
             lanIp = "127.0.0.1";
         }
-        const std::string adminBase = "http://" + lanIp + ":" + std::to_string(configuration.browserPort);
+        // v0.9.3: bracket IPv6 host literals so onboarding profile URLs
+        // are RFC 3986-parseable. Pre-v0.9.3 governanceBundleUrl +
+        // discoveryUrl came out as "http://fde3:c02c:...:32c8:7300/..."
+        // which RFC 3986 parsers reject as "Invalid port specified."
+        const std::string adminBase = "http://" + bracketIpv6Host(lanIp) + ":" + std::to_string(configuration.browserPort);
 
         OnboardingProfile profile;
         profile.clientType = normalized;
@@ -9782,6 +9926,74 @@ void SimpleHttpServer::sendResponse(SOCKET client, const HttpResponse& response)
 }
 
 void SimpleHttpServer::run() {
+    // v0.9.3: dual-stack bind. Pre-v0.9.3 SimpleHttpServer called
+    // getaddrinfo(AF_UNSPEC, AI_PASSIVE) for "0.0.0.0" and the IPv4
+    // wildcard came back first, so the loop bound IPv4-only and the
+    // admin port was unreachable on IPv6. The discovery doc on a
+    // dual-stack host still happily advertised an IPv6 onboarding URL
+    // (which IS reachable from IPv6 clients in principle) but the
+    // admin port wasn't actually listening on IPv6 -- so the
+    // advertised URL produced "Unable to connect" from any IPv6
+    // client. Fix: when bindAddress is wildcard ("0.0.0.0", "::",
+    // empty), bind a single dual-stack IPv6 socket with IPV6_V6ONLY
+    // off. Windows' dual-stack semantics let the same socket accept
+    // IPv4-mapped (::ffff:1.2.3.4) and native IPv6 simultaneously.
+    // Specific bindAddress values (e.g. "192.168.1.7") still go
+    // through the per-family path so an operator-pinned IPv4 address
+    // produces a clean IPv4-only listener.
+    const bool wildcard = bindAddress_.empty()
+        || bindAddress_ == "0.0.0.0"
+        || bindAddress_ == "::"
+        || bindAddress_ == "[::]";
+
+    if (wildcard) {
+        listenSocket_ = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+        if (listenSocket_ != INVALID_SOCKET) {
+            const int reuse = 1;
+            setsockopt(listenSocket_, SOL_SOCKET, SO_REUSEADDR,
+                       reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+            // Critical: turn off IPV6_V6ONLY so this single socket
+            // accepts both IPv4 and IPv6 connections.
+            const int v6only = 0;
+            setsockopt(listenSocket_, IPPROTO_IPV6, IPV6_V6ONLY,
+                       reinterpret_cast<const char*>(&v6only), sizeof(v6only));
+
+            sockaddr_in6 addr{};
+            addr.sin6_family = AF_INET6;
+            addr.sin6_addr = in6addr_any;
+            addr.sin6_port = htons(port_);
+
+            if (bind(listenSocket_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0
+                && listen(listenSocket_, SOMAXCONN) == 0) {
+                {
+                    std::lock_guard<std::mutex> lock(startupMutex_);
+                    startupSucceeded_ = true;
+                    startupComplete_ = true;
+                }
+                startupCv_.notify_all();
+
+                while (running_) {
+                    sockaddr_storage clientAddr{};
+                    int clientLen = sizeof(clientAddr);
+                    SOCKET client = accept(listenSocket_,
+                                            reinterpret_cast<sockaddr*>(&clientAddr),
+                                            &clientLen);
+                    if (client == INVALID_SOCKET) {
+                        if (running_) continue;
+                        break;
+                    }
+                    handleClient(client);
+                }
+                return;
+            }
+            closesocket(listenSocket_);
+            listenSocket_ = INVALID_SOCKET;
+        }
+        // Dual-stack failed (e.g. operator disabled IPv6 stack). Fall
+        // through to the legacy per-family path which will pick
+        // whichever family getaddrinfo returns first for "0.0.0.0".
+    }
+
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
@@ -10391,8 +10603,16 @@ bool MasterControlApplication::Impl::initialize() {
         baselinePool.template_.transport         = "stdio_jsonrpc";
         baselinePool.template_.healthProbe.transport = "stdio_handshake";
         baselinePool.scalePolicy.minInstances              = 1;
-        baselinePool.scalePolicy.maxInstances              = 1;
-        baselinePool.scalePolicy.maxActiveLeasesPerInstance = 4;
+        // v0.9.3: lift max instance + max leases-per-instance ceilings.
+        // Pre-v0.9.3 maxActiveLeasesPerInstance=4 throttled 10 parallel
+        // tools/call probes to 4 successes + 6 lease failures even though
+        // each call is a microsecond-scale stdio round-trip. Each lease
+        // is held only for the lifetime of one tools/call (the gateway
+        // releases on response). 64 concurrent leases per instance is
+        // far past any realistic bridge-saturation point and gives
+        // headroom for bursty clients without forcing scale-out.
+        baselinePool.scalePolicy.maxInstances              = 2;
+        baselinePool.scalePolicy.maxActiveLeasesPerInstance = 64;
         baselinePool.scalePolicy.scaleOutQueueWaitMs        = 1500;
         baselinePool.scalePolicy.scaleInIdleSeconds         = 300;
 
@@ -10434,33 +10654,19 @@ bool MasterControlApplication::Impl::initialize() {
         nativeAdapter->AttachWorkerBridge(workerSupervisor_, leaseRouter_);
     }
 
-    // v0.9.0: auto-start the gateway at boot when configuration says
-    // enabled=true (the new default). Pre-v0.9.0 the gateway only started
-    // on an explicit POST /api/gateway/start, so a fresh install left
-    // /api/discovery advertising state='disabled' and the mcpUrl
-    // unreachable -- exactly what the operator hit testing as a LAN
-    // client. Auto-start makes the freshly-installed system self-host
-    // its MCP gateway out of the box.
-    if (mcpGateway_ && configurationService_->current().mcpGateway.enabled) {
-        const auto bootStatus = mcpGateway_->Start();
-        if (telemetryAggregator_) {
-            TelemetryEvent evt;
-            evt.category = TelemetryCategory::Gateway;
-            evt.severity = TelemetrySeverity::Info;
-            evt.message  = "Gateway auto-started at boot. State: " + bootStatus.message;
-            telemetryAggregator_->recordEvent(std::move(evt));
-        }
-    }
-    // v0.7.1: hand the worker layer to the AdminApi so snapshot() can
-    // compute per-sub-agent utilization + active-client attribution for
-    // the new Overview / Telemetry deck panels. AdminApi was constructed
-    // earlier (before the supervisor existed), hence this late bind.
-
     // PHASE-08 (ADR-002 §9): construct the telemetry aggregator that
     // owns the activity event ring, the connected-client roster, and
     // gateway traffic counters. Honest only — no fake utilization, no
     // fabricated client metrics. Per-AI-client CPU/GPU/disk arrives via
     // POST /api/telemetry/heartbeat or sidecar.
+    //
+    // v0.9.3: aggregator construction moved BEFORE gateway auto-start.
+    // Pre-v0.9.3 the auto-start fired with telemetryAggregator_ still
+    // null, which silently dropped the boot telemetry event AND meant
+    // a Failed boot status was invisible to the activity ring. Now the
+    // aggregator exists when the gateway boots so failures are recorded
+    // as Telemetry::Gateway::Error events the operator can see in
+    // /api/activity.
     telemetryAggregator_ = std::make_shared<TelemetryAggregator>();
     {
         TelemetryEvent boot;
@@ -10468,6 +10674,36 @@ bool MasterControlApplication::Impl::initialize() {
         boot.severity = TelemetrySeverity::Info;
         boot.message = "MCOS runtime constructing telemetry aggregator. PHASE-08 baseline event.";
         telemetryAggregator_->recordEvent(std::move(boot));
+    }
+
+    // v0.9.0: auto-start the gateway at boot when configuration says
+    // enabled=true (the new default). Pre-v0.9.0 the gateway only started
+    // on an explicit POST /api/gateway/start, so a fresh install left
+    // /api/discovery advertising state='disabled' and the mcpUrl
+    // unreachable -- exactly what the operator hit testing as a LAN
+    // client. Auto-start makes the freshly-installed system self-host
+    // its MCP gateway out of the box. v0.9.3: failures are recorded as
+    // Severity::Error events (not Info) so the activity log surfaces
+    // them without the operator having to query /api/gateway/status.
+    if (mcpGateway_ && configurationService_->current().mcpGateway.enabled) {
+        const auto bootStatus = mcpGateway_->Start();
+        const bool succeeded = (bootStatus.state == GatewayState::Running);
+        TelemetryEvent evt;
+        evt.category = TelemetryCategory::Gateway;
+        evt.severity = succeeded ? TelemetrySeverity::Info : TelemetrySeverity::Error;
+        evt.message  = std::string(succeeded ? "Gateway auto-started at boot. " : "Gateway auto-start FAILED at boot. ")
+                     + "State: " + bootStatus.message;
+        telemetryAggregator_->recordEvent(std::move(evt));
+        // v0.9.3: also push to the activity ring so /api/activity
+        // shows boot-time gateway lifecycle in the operator's audit log.
+        ActivityEvent ringEvt;
+        ringEvt.kind    = "gateway_lifecycle";
+        ringEvt.actor   = "runtime-boot";
+        ringEvt.target  = "auto-start";
+        ringEvt.statusCode = succeeded ? 200 : 500;
+        ringEvt.message = std::string(succeeded ? "Gateway auto-started at boot. " : "Gateway auto-start FAILED at boot. ")
+                        + "State: " + bootStatus.message;
+        globalActivityRing().append(ringEvt);
     }
 
     // PHASE-02: register one stable logical MCP endpoint with the gateway
@@ -10590,7 +10826,9 @@ int MasterControlApplication::Impl::runInteractive() {
 std::string MasterControlApplication::Impl::browserUrl() const {
     const auto configuration = configurationService_->current();
     const auto host = configuration.bindAddress == "0.0.0.0" ? "127.0.0.1" : configuration.bindAddress;
-    return "http://" + host + ":" + std::to_string(configuration.browserPort) + "/";
+    // v0.9.3: bracket IPv6 host literals (operator-set bindAddress could
+    // be either family).
+    return "http://" + bracketIpv6Host(host) + ":" + std::to_string(configuration.browserPort) + "/";
 }
 
 void MasterControlApplication::Impl::registerConfigurationDefaults() {
@@ -11506,29 +11744,59 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "GET" && request.path == "/api/gateway/tools") {
             return jsonResponse(mcpGateway_ ? mcpGateway_->ListTools() : std::vector<McpToolDescriptor>{});
         }
-        if (request.method == "POST" && request.path == "/api/gateway/start") {
-            const auto status = mcpGateway_ ? mcpGateway_->Start() : GatewayStatus{};
-            // v0.7.4: surface gateway lifecycle in the Recent Telemetry
-            // Events ring so the operator can see when the LAN MCP surface
-            // came up.
+        // v0.9.3: helper to surface gateway lifecycle in BOTH event
+        // surfaces -- the activity ring (read by /api/activity, the
+        // operator-facing audit log) AND the telemetry aggregator
+        // (used by the dashboard's Recent Telemetry tile). Pre-v0.9.3
+        // gateway events landed only in telemetryAggregator; the
+        // operator looking at /api/activity to debug a connection
+        // problem saw zero gateway entries.
+        const auto recordGatewayLifecycle = [&](const std::string& route,
+                                                 const GatewayStatus& status,
+                                                 bool ok) {
+            ActivityEvent ringEvt;
+            ringEvt.kind    = "gateway_lifecycle";
+            ringEvt.actor   = "admin-api";
+            ringEvt.target  = route;
+            ringEvt.method  = request.method;
+            ringEvt.statusCode = ok ? 200 : 500;
+            ringEvt.message = "Gateway " + route + " -> state=" + to_string(status.state)
+                            + " (" + status.message + ")";
+            globalActivityRing().append(ringEvt);
             if (telemetryAggregator_) {
                 TelemetryEvent evt;
                 evt.category = TelemetryCategory::Gateway;
-                evt.severity = TelemetrySeverity::Info;
-                evt.message  = "Gateway start requested. State: " + status.message;
+                evt.severity = ok ? TelemetrySeverity::Info : TelemetrySeverity::Error;
+                evt.message  = "Gateway " + route + ". State: " + status.message;
                 telemetryAggregator_->recordEvent(std::move(evt));
             }
+        };
+
+        if (request.method == "POST" && request.path == "/api/gateway/start") {
+            const auto status = mcpGateway_ ? mcpGateway_->Start() : GatewayStatus{};
+            recordGatewayLifecycle("start", status, status.state == GatewayState::Running);
             return jsonResponse(status);
         }
         if (request.method == "POST" && request.path == "/api/gateway/stop") {
             const auto status = mcpGateway_ ? mcpGateway_->Stop() : GatewayStatus{};
-            if (telemetryAggregator_) {
-                TelemetryEvent evt;
-                evt.category = TelemetryCategory::Gateway;
-                evt.severity = TelemetrySeverity::Info;
-                evt.message  = "Gateway stop requested. State: " + status.message;
-                telemetryAggregator_->recordEvent(std::move(evt));
+            recordGatewayLifecycle("stop", status,
+                status.state == GatewayState::Stopped || status.state == GatewayState::Disabled);
+            return jsonResponse(status);
+        }
+        // v0.9.3: explicit gateway restart route. Pre-v0.9.3 the only
+        // recovery from a wedged gateway state (e.g. boot-time
+        // ERROR_ALREADY_EXISTS that the v0.9.3 retry-with-backoff still
+        // can't drain) was to know the route name "/api/gateway/start"
+        // -- a clean Stop()-then-Start() sequence wasn't exposed at
+        // all. Restart is the right verb for "we're failed, drop
+        // everything and try again."
+        if (request.method == "POST" && request.path == "/api/gateway/restart") {
+            if (!mcpGateway_) {
+                return jsonResponse(GatewayStatus{});
             }
+            (void)mcpGateway_->Stop();
+            const auto status = mcpGateway_->Start();
+            recordGatewayLifecycle("restart", status, status.state == GatewayState::Running);
             return jsonResponse(status);
         }
         if (request.method == "GET" && request.path == "/api/environment-hints") {
@@ -11551,6 +11819,38 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     mcpEndpoints.push_back(endpoint);
                 }
             }
+            // v0.9.3: also surface every supervised WorkerSupervisor pool
+            // whose kind is McpServer and which has at least one Ready
+            // instance. Pre-v0.9.3 this surface returned [] on a fresh
+            // install because the seeded RuntimeEndpoint list is all
+            // templates and the v0.9.1 baseline-tools pool is owned by
+            // WorkerSupervisor (not the inventory). LAN clients consuming
+            // this catalog need to see what's actually serving traffic.
+            if (workerSupervisor_) {
+                for (const auto& pool : workerSupervisor_->listPools()) {
+                    if (pool.kind != EndpointPoolKind::McpServer) continue;
+                    bool hasReady = false;
+                    for (const auto& inst : pool.instances) {
+                        if (inst.state == EndpointInstanceState::Ready) { hasReady = true; break; }
+                    }
+                    if (!hasReady) continue;
+                    RuntimeEndpoint ep;
+                    ep.id            = pool.poolId;
+                    ep.displayName   = pool.displayName.empty() ? pool.poolId : pool.displayName;
+                    ep.kind          = EndpointKind::MCPServer;
+                    ep.host          = configurationService_->current().bindAddress.empty()
+                                        ? std::string("0.0.0.0")
+                                        : configurationService_->current().bindAddress;
+                    ep.port          = configurationService_->current().mcpGateway.listenPort;
+                    ep.protocol      = "http";
+                    ep.routePath     = configurationService_->current().mcpGateway.mcpPath;
+                    ep.status        = EndpointStatus::Online;
+                    ep.description   = "Supervised MCP pool routed through the gateway. Tool names are prefixed with '" + pool.poolId + "__'.";
+                    ep.isTemplate    = false;
+                    ep.lastCheckedUtc = pool.updatedAtUtc;
+                    mcpEndpoints.push_back(std::move(ep));
+                }
+            }
             return jsonResponse(mcpEndpoints);
         }
         if (request.method == "GET" && request.path == "/api/client/sub-agents") {
@@ -11559,6 +11859,33 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             for (const auto& endpoint : endpoints) {
                 if (endpoint.kind == EndpointKind::SubAgent && !endpoint.isTemplate) {
                     subAgentEndpoints.push_back(endpoint);
+                }
+            }
+            // v0.9.3: surface live SubAgent pools too. Same rationale as
+            // /api/client/mcp-servers above.
+            if (workerSupervisor_) {
+                for (const auto& pool : workerSupervisor_->listPools()) {
+                    if (pool.kind != EndpointPoolKind::SubAgent) continue;
+                    bool hasReady = false;
+                    for (const auto& inst : pool.instances) {
+                        if (inst.state == EndpointInstanceState::Ready) { hasReady = true; break; }
+                    }
+                    if (!hasReady) continue;
+                    RuntimeEndpoint ep;
+                    ep.id            = pool.poolId;
+                    ep.displayName   = pool.displayName.empty() ? pool.poolId : pool.displayName;
+                    ep.kind          = EndpointKind::SubAgent;
+                    ep.host          = configurationService_->current().bindAddress.empty()
+                                        ? std::string("0.0.0.0")
+                                        : configurationService_->current().bindAddress;
+                    ep.port          = configurationService_->current().mcpGateway.listenPort;
+                    ep.protocol      = "http";
+                    ep.routePath     = configurationService_->current().mcpGateway.mcpPath;
+                    ep.status        = EndpointStatus::Online;
+                    ep.description   = "Supervised sub-agent pool routed through the gateway.";
+                    ep.isTemplate    = false;
+                    ep.lastCheckedUtc = pool.updatedAtUtc;
+                    subAgentEndpoints.push_back(std::move(ep));
                 }
             }
             return jsonResponse(subAgentEndpoints);

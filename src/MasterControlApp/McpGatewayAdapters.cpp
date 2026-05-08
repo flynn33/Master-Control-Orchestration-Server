@@ -23,6 +23,7 @@
 #endif
 
 #include "MasterControl/McpGatewayAdapters.h"
+#include "MasterControl/MasterControlVersion.h"
 
 #include <cctype>
 #include <chrono>
@@ -355,8 +356,28 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
     // Build the URL prefix. http://+:PORT/ binds to all interfaces.
     std::wstring urlPrefix = L"http://+:"
         + std::to_wstring(configuration_.listenPort) + L"/";
-    ULONG addUrlResult = HttpAddUrlToUrlGroup(
-        urlGroupId_, urlPrefix.c_str(), 0, 0);
+
+    // v0.9.3: retry HttpAddUrlToUrlGroup on ERROR_ALREADY_EXISTS (183).
+    // Pre-v0.9.3 a single boot-time failure was permanent: when a prior
+    // process had registered the same URL prefix and HTTP.sys had not
+    // yet GC'd that registration, the new gateway came up in Failed
+    // state and stayed there until the operator manually POSTed
+    // /api/gateway/start. The race window is tens-to-hundreds of ms
+    // for HTTP.sys to clean up after a clean exit; longer (~seconds)
+    // after a hard kill. 8 retries x 250ms = 2s total budget covers the
+    // realistic worst case. ERROR_ACCESS_DENIED is NOT retried -- it's
+    // a configuration problem (URL ACL missing, not running as
+    // LocalSystem) that won't fix itself by waiting.
+    constexpr int kMaxRetries = 8;
+    constexpr DWORD kRetryDelayMs = 250;
+    ULONG addUrlResult = NO_ERROR;
+    for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
+        addUrlResult = HttpAddUrlToUrlGroup(urlGroupId_, urlPrefix.c_str(), 0, 0);
+        if (addUrlResult != ERROR_ALREADY_EXISTS) {
+            break;
+        }
+        Sleep(kRetryDelayMs);
+    }
     if (addUrlResult != NO_ERROR) {
         status_.state = GatewayState::Failed;
         // ERROR_ACCESS_DENIED (5) here is the URL ACL issue. Be specific
@@ -368,6 +389,13 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
                 "from elevated PowerShell: netsh http add urlacl "
                 "url=http://+:" + std::to_string(configuration_.listenPort)
                 + "/ user=Everyone";
+        } else if (addUrlResult == ERROR_ALREADY_EXISTS) {
+            status_.message = "HttpAddUrlToUrlGroup: URL prefix http://+:"
+                + std::to_string(configuration_.listenPort)
+                + "/ is held by another process / leaked HTTP.sys URL group "
+                  "and did not clear within the v0.9.3 retry budget (2s). "
+                  "Identify the holder with: netsh http show servicestate "
+                  "view=requestq, then stop it.";
         } else {
             status_.message = "HttpAddUrlToUrlGroup failed (code "
                 + std::to_string(addUrlResult) + ").";
@@ -541,12 +569,20 @@ DeregistrationResult NativeHttpSysGatewayAdapter::DeregisterServer(const std::st
 }
 
 std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::ListTools() const {
-    // PHASE-12 follow-up (v0.6.10): return the cached catalog. The cache
-    // is refreshed on every MCP tools/list call (the LAN client path).
-    // Direct C++ callers see the most-recent merged view; if the cache
-    // is empty, no live tools/list has run yet -- we honor ADR-002 §9 by
-    // returning honest empty rather than fabricating.
+    // v0.9.3: prime the cache on the first ListTools() call. Pre-v0.9.3
+    // ListTools() returned the cache verbatim, which was empty until a
+    // LAN MCP client had issued tools/list -- so the admin-side
+    // /api/gateway/tools route reported [] on a fresh boot even though
+    // the supervised pool was Ready and ready to serve. The "honest
+    // empty" doctrine still applies (no fabrication), but if we have a
+    // bridge attached AND a Ready instance is reachable, we can refresh
+    // the cache truthfully right here. If the bridge isn't attached or
+    // every pool's stdio is wedged, refreshToolCatalogLocked clears
+    // the cache and we return the empty list, exactly the same outcome.
     std::lock_guard<std::mutex> lock(mutex_);
+    if (toolCatalogCache_.empty() && workerSupervisor_) {
+        refreshToolCatalogLocked();
+    }
     return toolCatalogCache_;
 }
 
@@ -571,7 +607,7 @@ void NativeHttpSysGatewayAdapter::AttachWorkerBridge(
 // instance, ask it tools/list via the stdio bridge, and merge the results
 // into a fresh catalog. Each tool entry is tagged with serverName=poolId
 // so tools/call can route by name. Caller holds mutex_.
-std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::refreshToolCatalogLocked() {
+std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::refreshToolCatalogLocked() const {
     std::vector<McpToolDescriptor> aggregated;
     if (!workerSupervisor_) {
         toolCatalogCache_.clear();
@@ -697,7 +733,12 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
             { "protocolVersion", "2024-11-05" },
             { "serverInfo", {
                 { "name", "MCOS Native Gateway" },
-                { "version", "0.7.2" }
+                // v0.9.3: report the running MCOS version through the
+                // initialize handshake. Pre-v0.9.3 this was hard-coded
+                // "0.7.2" -- a relic from when the gateway adapter was
+                // first added; clients consuming the version field for
+                // compat decisions saw a stale value.
+                { "version", MASTERCONTROL_VERSION }
             } },
             { "capabilities", {
                 { "tools", { { "listChanged", false } } }

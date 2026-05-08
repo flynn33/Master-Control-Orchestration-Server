@@ -2499,10 +2499,30 @@ ShellOperationResult ShellRuntime::UpdateHostSettings(const ShellHostSettings& s
     }
 
     configuration->SetNamedValue(L"instanceName", JsonValue::CreateStringValue(trimWideCopy(settings.instanceName)));
-    configuration->SetNamedValue(L"bindAddress", JsonValue::CreateStringValue(trimWideCopy(settings.bindAddress)));
+    const auto trimmedBindAddress = trimWideCopy(settings.bindAddress);
+    configuration->SetNamedValue(L"bindAddress", JsonValue::CreateStringValue(trimmedBindAddress));
     configuration->SetNamedValue(L"browserPort", JsonValue::CreateNumberValue(settings.browserPort));
     configuration->SetNamedValue(L"beaconPort", JsonValue::CreateNumberValue(settings.beaconPort));
     configuration->SetNamedValue(L"beaconEnabled", JsonValue::CreateBooleanValue(settings.beaconEnabled));
+
+    // v0.9.3: also push the operator's bind-address pick into
+    // activeProfile.preferredBindAddress. The discovery doc URL builder
+    // gives preferredBindAddress higher priority than bindAddress -- so
+    // pre-v0.9.3 the operator's "Bind Address" change updated only
+    // bindAddress and was silently overridden by the auto-detected
+    // preferredBindAddress in every advertised URL. Writing both fields
+    // keeps them in lockstep. Empty / "0.0.0.0" entry blanks
+    // preferredBindAddress so the runtime falls back to its own primary
+    // IP detector.
+    JsonObject activeProfile = configuration->HasKey(L"activeProfile")
+        ? configuration->GetNamedObject(L"activeProfile", JsonObject())
+        : JsonObject();
+    if (trimmedBindAddress.empty() || trimmedBindAddress == L"0.0.0.0") {
+        activeProfile.SetNamedValue(L"preferredBindAddress", JsonValue::CreateStringValue(L""));
+    } else {
+        activeProfile.SetNamedValue(L"preferredBindAddress", JsonValue::CreateStringValue(trimmedBindAddress));
+    }
+    configuration->SetNamedValue(L"activeProfile", activeProfile);
 
     JsonObject resourceAllocation = configuration->HasKey(L"resourceAllocation")
         ? configuration->GetNamedObject(L"resourceAllocation", JsonObject())

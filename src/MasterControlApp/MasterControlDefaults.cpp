@@ -157,7 +157,15 @@ std::string readOperatingSystemDescription() {
 }
 
 struct NetworkIdentity final {
-    std::string ipAddress = "127.0.0.1";
+    // v0.9.3: ipAddress now defaults to empty (was "127.0.0.1"). The
+    // detector below uses .empty() to decide whether each pass succeeded;
+    // a non-empty default short-circuited pass 1 entirely, so on every
+    // dual-stack host the bootstrapper wrote "preferredBindAddress=
+    // 127.0.0.1" into the freshly-installed config and LAN clients
+    // could only reach MCOS over loopback. The caller in
+    // detectLocalEnvironment substitutes "127.0.0.1" downstream when
+    // ipAddress is empty, so the operator-facing fallback is preserved.
+    std::string ipAddress;
     std::string macAddress;
 };
 
@@ -185,43 +193,122 @@ NetworkIdentity detectPrimaryNetworkIdentity() {
         return {};
     }
 
-    for (auto* adapter = addresses; adapter != nullptr; adapter = adapter->Next) {
-        if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
-            continue;
+    // v0.9.3: IPv4-first preference (mirrors the runtime's
+    // WindowsHostTelemetryService::readPrimaryNetworkIdentity fix).
+    // Pre-v0.9.3 this took whatever Windows surfaced first, which is
+    // typically the IPv6 ULA on dual-stack hosts -- so the bootstrapper
+    // wrote "preferredBindAddress=fde3:..." into the freshly-installed
+    // config, and even though every later URL builder bracketed the
+    // IPv6 properly, the admin port (bound to 0.0.0.0 / IPv4 only) was
+    // unreachable on that advertised IPv6. The two-pass walk takes a
+    // routable IPv4 first; only if no IPv4 exists does it fall through
+    // to routable IPv6, then link-local as last resort.
+    auto formatHost = [](const SOCKET_ADDRESS& addr, std::string& out) -> bool {
+        char host[NI_MAXHOST]{};
+        if (getnameinfo(addr.lpSockaddr,
+                        static_cast<socklen_t>(addr.iSockaddrLength),
+                        host, NI_MAXHOST,
+                        nullptr, 0,
+                        NI_NUMERICHOST) == 0) {
+            out = host;
+            return true;
         }
+        return false;
+    };
+    auto isLinkLocalIpv4 = [](const std::string& s) { return s.rfind("169.254.", 0) == 0; };
+    auto isLinkLocalIpv6 = [](const std::string& s) {
+        if (s.size() < 4) return false;
+        const char a = static_cast<char>(std::tolower(static_cast<unsigned char>(s[0])));
+        const char b = static_cast<char>(std::tolower(static_cast<unsigned char>(s[1])));
+        const char c = static_cast<char>(std::tolower(static_cast<unsigned char>(s[2])));
+        const char d = static_cast<char>(std::tolower(static_cast<unsigned char>(s[3])));
+        return a == 'f' && b == 'e' && (c == '8' || c == '9' || c == 'a' || c == 'b') && d == '0';
+    };
+    auto familyOf = [](const SOCKET_ADDRESS& addr) -> int {
+        return addr.lpSockaddr ? addr.lpSockaddr->sa_family : 0;
+    };
 
-        NetworkIdentity identity;
+    NetworkIdentity identity;
+    // v0.9.3: belt-and-suspenders -- ipAddress default was "127.0.0.1"
+    // through v0.9.2, which made the empty()-driven pass progression
+    // skip pass 1 entirely. The struct default now starts empty (see
+    // the type definition), so this line is documentation more than
+    // code, but it pins the contract.
+    identity.ipAddress.clear();
+
+    // Pass 1: routable IPv4
+    for (auto* adapter = addresses; adapter != nullptr && identity.ipAddress.empty(); adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
         for (auto* unicast = adapter->FirstUnicastAddress; unicast != nullptr; unicast = unicast->Next) {
-            char host[NI_MAXHOST]{};
-            if (getnameinfo(
-                    unicast->Address.lpSockaddr,
-                    static_cast<socklen_t>(unicast->Address.iSockaddrLength),
-                    host,
-                    NI_MAXHOST,
-                    nullptr,
-                    0,
-                    NI_NUMERICHOST) == 0) {
-                identity.ipAddress = host;
+            if (familyOf(unicast->Address) != AF_INET) continue;
+            std::string candidate;
+            if (!formatHost(unicast->Address, candidate)) continue;
+            if (isLinkLocalIpv4(candidate)) continue;
+            identity.ipAddress = candidate;
+            break;
+        }
+    }
+    // Pass 2: routable IPv6
+    if (identity.ipAddress.empty()) {
+        for (auto* adapter = addresses; adapter != nullptr && identity.ipAddress.empty(); adapter = adapter->Next) {
+            if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+            for (auto* unicast = adapter->FirstUnicastAddress; unicast != nullptr; unicast = unicast->Next) {
+                if (familyOf(unicast->Address) != AF_INET6) continue;
+                std::string candidate;
+                if (!formatHost(unicast->Address, candidate)) continue;
+                if (isLinkLocalIpv6(candidate)) continue;
+                // Strip IPv6 zone identifier (the trailing %iface) -- not
+                // legal inside an HTTP URL host.
+                const auto pct = candidate.find('%');
+                if (pct != std::string::npos) candidate.erase(pct);
+                identity.ipAddress = candidate;
                 break;
             }
         }
+    }
+    // Pass 3: any address as last resort
+    if (identity.ipAddress.empty()) {
+        for (auto* adapter = addresses; adapter != nullptr && identity.ipAddress.empty(); adapter = adapter->Next) {
+            if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+            for (auto* unicast = adapter->FirstUnicastAddress; unicast != nullptr; unicast = unicast->Next) {
+                std::string candidate;
+                if (formatHost(unicast->Address, candidate)) {
+                    const auto pct = candidate.find('%');
+                    if (pct != std::string::npos) candidate.erase(pct);
+                    identity.ipAddress = candidate;
+                    break;
+                }
+            }
+        }
+    }
 
+    // MAC: take the MAC of the first eligible adapter (matches the IP we
+    // already chose if possible; otherwise just any UP non-loopback NIC).
+    for (auto* adapter = addresses; adapter != nullptr; adapter = adapter->Next) {
+        if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+        bool match = identity.ipAddress.empty();
+        for (auto* unicast = adapter->FirstUnicastAddress; unicast != nullptr && !match; unicast = unicast->Next) {
+            std::string candidate;
+            if (formatHost(unicast->Address, candidate)) {
+                const auto pct = candidate.find('%');
+                if (pct != std::string::npos) candidate.erase(pct);
+                if (candidate == identity.ipAddress) match = true;
+            }
+        }
+        if (!match) continue;
         if (adapter->PhysicalAddressLength > 0U) {
             std::ostringstream macStream;
             for (ULONG index = 0; index < adapter->PhysicalAddressLength; ++index) {
-                if (index > 0U) {
-                    macStream << ':';
-                }
+                if (index > 0U) macStream << ':';
                 macStream << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
                           << static_cast<unsigned int>(adapter->PhysicalAddress[index]);
             }
             identity.macAddress = macStream.str();
         }
-
         return identity;
     }
 
-    return {};
+    return identity;
 }
 
 std::vector<RuntimeEndpoint> buildDefaultSeededEndpointsForHost(std::string host) {
