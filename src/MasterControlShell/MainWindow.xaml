@@ -115,7 +115,6 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
 
                                     <StackPanel Spacing="14">
@@ -174,26 +173,20 @@
                                         </Border>
                                     </StackPanel>
 
-                                    <StackPanel Grid.Column="1" Spacing="16">
-                                        <StackPanel Spacing="10">
-                                            <TextBlock Text="QUICK ACTIONS" Style="{StaticResource ShellEyebrowTextStyle}" />
-                                            <ScrollViewer HorizontalScrollBarVisibility="Auto" HorizontalScrollMode="Enabled" VerticalScrollBarVisibility="Disabled" VerticalScrollMode="Disabled">
-                                                <StackPanel x:Name="ForsettiToolbarHost" Orientation="Horizontal" Spacing="12" />
-                                            </ScrollViewer>
-                                        </StackPanel>
-
-                                        <!-- v0.8.5 HOST CONTROLS panel and GUIDED SETUP WIZARDS
-                                             panel moved to SettingsSectionControl. Operator wanted
-                                             these affordances to exist only on the Settings tab and
-                                             not clutter every other view's hero column. The
-                                             GuidedWorkflowStatusText x:Name is preserved as a
-                                             collapsed TextBlock so MainWindow's existing status
-                                             writes (UpdateGuidedWorkflowStatus etc.) compile and
-                                             execute without requiring the panel to be visible. -->
-                                        <TextBlock x:Name="GuidedWorkflowStatusText" Visibility="Collapsed" />
+                                    <!-- v0.8.6 middle hero column removed entirely. QUICK
+                                         ACTIONS was operator-flagged as redundant with the
+                                         section navigation strip. The Forsetti toolbar host
+                                         is kept as a Visibility=Collapsed StackPanel so
+                                         existing ApplySurfaceToolbar populator logic
+                                         continues to compile and run into an invisible
+                                         host. The GuidedWorkflowStatusText TextBlock keeps
+                                         its x:Name for the same reason. -->
+                                    <StackPanel Grid.Column="0" Visibility="Collapsed">
+                                        <StackPanel x:Name="ForsettiToolbarHost" Orientation="Horizontal" />
+                                        <TextBlock x:Name="GuidedWorkflowStatusText" />
                                     </StackPanel>
 
-                                    <Border Grid.Column="2" Style="{StaticResource ShellCardStyle}">
+                                    <Border Grid.Column="1" Style="{StaticResource ShellCardStyle}">
                                         <StackPanel Spacing="12">
                                             <TextBlock Text="LIVE OPERATIONS" Style="{StaticResource ShellEyebrowTextStyle}" />
                                             <TextBlock x:Name="HeroOperationsHeadlineText" Style="{StaticResource ShellStatusTextStyle}" Text="STANDBY" />

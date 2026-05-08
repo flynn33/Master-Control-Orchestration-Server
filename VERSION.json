@@ -1,11 +1,28 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.8.5",
-  "current_tag": "v0.8.5",
+  "current_version": "0.8.6",
+  "current_tag": "v0.8.6",
   "released_at": "2026-05-08",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.8.6",
+      "tag": "v0.8.6",
+      "released_at": "2026-05-08",
+      "commit": "pending",
+      "summary": "QUICK ACTIONS panel removed from the hero. Operator flagged it as redundant with the section navigation strip (Overview / Telemetry / Runtime / Imports / Exports / Security / Settings / CLU) which sits directly below the hero and provides identical destination switching. v0.8.6 drops the entire middle hero column. Layout collapses from 3 columns (command deck + telemetry / quick actions / live operations) to 2 columns (command deck + telemetry / live operations). The Forsetti toolbar host x:Name is preserved as a Visibility=Collapsed StackPanel so ApplySurfaceToolbar's existing populator logic continues to compile and execute without behavior change -- the toolbar items still get appended each tick, just into an invisible host. The GuidedWorkflowStatusText x:Name keeps the same treatment (preserved for status writes, not visible).",
+      "entries": [
+        "feat(shell): MainWindow.xaml hero column count reduced from 3 to 2. The middle column previously hosted QUICK ACTIONS (Forsetti toolbar) + the v0.8.5 collapsed wizard placeholder. Both removed visually. ForsettiToolbarHost StackPanel + GuidedWorkflowStatusText TextBlock parented under a single Visibility=Collapsed StackPanel at column 0 so existing C++ x:Name accessors resolve and the populator code in ApplySurfaceToolbar / status-update paths is unchanged.",
+        "feat(shell): MainWindow.xaml LIVE OPERATIONS column shifted from Grid.Column='2' to Grid.Column='1' to occupy the second of the two remaining hero columns. Live Operations (HeroOperationsHeadlineText / HeroOperationsBodyText / HOST IDENTITY / GOVERNANCE POSTURE / RUNTIME LEDGER) gets a wider visual share now that the middle column is gone.",
+        "docs(version): bump 0.8.5 -> 0.8.6 (drop redundant QUICK ACTIONS hero panel)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; activity stream as scrolling SwapChainPanel.",
+        "Discovery doc still serves the literal listen URL when the gateway is bound to a wildcard.",
+        "Catalog ports 7101-7125 are advertised but no worker processes are bound yet."
+      ]
+    },
     {
       "version": "0.8.5",
       "tag": "v0.8.5",
