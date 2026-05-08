@@ -115,22 +115,50 @@
 
                         <StackPanel Spacing="8">
                             <TextBlock Text="CPU Allocation %" Style="{StaticResource ShellLabelTextStyle}" />
-                            <TextBox x:Name="CpuAllocationTextBox" TextChanged="SettingsEditor_TextChanged" />
+                            <Grid ColumnSpacing="8" VerticalAlignment="Center">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Slider x:Name="CpuAllocationSlider" Minimum="0" Maximum="100" StepFrequency="1" SmallChange="1" LargeChange="10" TickFrequency="10" TickPlacement="Outside" ValueChanged="AllocationSlider_ValueChanged" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1" x:Name="CpuAllocationTextBox" Width="64" TextAlignment="Right" MaxLength="3" TextChanged="AllocationTextBox_TextChanged" VerticalAlignment="Center" />
+                            </Grid>
                         </StackPanel>
 
                         <StackPanel Grid.Column="1" Spacing="8">
                             <TextBlock Text="Memory Allocation %" Style="{StaticResource ShellLabelTextStyle}" />
-                            <TextBox x:Name="MemoryAllocationTextBox" TextChanged="SettingsEditor_TextChanged" />
+                            <Grid ColumnSpacing="8" VerticalAlignment="Center">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Slider x:Name="MemoryAllocationSlider" Minimum="0" Maximum="100" StepFrequency="1" SmallChange="1" LargeChange="10" TickFrequency="10" TickPlacement="Outside" ValueChanged="AllocationSlider_ValueChanged" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1" x:Name="MemoryAllocationTextBox" Width="64" TextAlignment="Right" MaxLength="3" TextChanged="AllocationTextBox_TextChanged" VerticalAlignment="Center" />
+                            </Grid>
                         </StackPanel>
 
                         <StackPanel Grid.Row="1" Spacing="8">
                             <TextBlock Text="Bandwidth Allocation %" Style="{StaticResource ShellLabelTextStyle}" />
-                            <TextBox x:Name="BandwidthAllocationTextBox" TextChanged="SettingsEditor_TextChanged" />
+                            <Grid ColumnSpacing="8" VerticalAlignment="Center">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Slider x:Name="BandwidthAllocationSlider" Minimum="0" Maximum="100" StepFrequency="1" SmallChange="1" LargeChange="10" TickFrequency="10" TickPlacement="Outside" ValueChanged="AllocationSlider_ValueChanged" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1" x:Name="BandwidthAllocationTextBox" Width="64" TextAlignment="Right" MaxLength="3" TextChanged="AllocationTextBox_TextChanged" VerticalAlignment="Center" />
+                            </Grid>
                         </StackPanel>
 
                         <StackPanel Grid.Row="1" Grid.Column="1" Spacing="8">
                             <TextBlock Text="Storage Allocation %" Style="{StaticResource ShellLabelTextStyle}" />
-                            <TextBox x:Name="StorageAllocationTextBox" TextChanged="SettingsEditor_TextChanged" />
+                            <Grid ColumnSpacing="8" VerticalAlignment="Center">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Slider x:Name="StorageAllocationSlider" Minimum="0" Maximum="100" StepFrequency="1" SmallChange="1" LargeChange="10" TickFrequency="10" TickPlacement="Outside" ValueChanged="AllocationSlider_ValueChanged" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1" x:Name="StorageAllocationTextBox" Width="64" TextAlignment="Right" MaxLength="3" TextChanged="AllocationTextBox_TextChanged" VerticalAlignment="Center" />
+                            </Grid>
                         </StackPanel>
                     </Grid>
 

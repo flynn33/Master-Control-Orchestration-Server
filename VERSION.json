@@ -1,11 +1,29 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.9.1",
-  "current_tag": "v0.9.1",
+  "current_version": "0.9.2",
+  "current_tag": "v0.9.2",
   "released_at": "2026-05-08",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.9.2",
+      "tag": "v0.9.2",
+      "released_at": "2026-05-08",
+      "commit": "pending",
+      "summary": "Settings tab: replace the four resource-allocation entry boxes (CPU / Memory / Bandwidth / Storage) with a Slider + small TextBox pair per allocation. Operator directive: 'replace the resource allocation entry boxes with sliders and a small box for entering exact amount.' Pre-v0.9.2 each allocation was a single free-form TextBox that accepted any text and only validated 0..100 at Apply time -- typos surfaced as 'Resource allocation values must stay between 0 and 100' instead of being prevented at the input. v0.9.2 makes the Slider the source of truth (it cannot produce out-of-range values; Minimum=0, Maximum=100, StepFrequency=1, TickFrequency=10 with outside ticks for visual reference) and pairs each Slider with a 64px right-aligned TextBox (MaxLength=3) for exact entry. The two are kept in lockstep two-way: dragging the slider updates the textbox, typing a valid integer in the textbox snaps the slider to that value. Apply, Summary, and snapshot-hydration all read from the Slider so a half-typed textbox value never reaches the admin API. The dirty/Apply enabled flow is preserved -- editing either control still flips dirty_ and re-renders the summary line (CPU/RAM/Bandwidth/Storage percentages).",
+      "entries": [
+        "feat(shell): SettingsSectionControl.xaml replaces each of the four resource-allocation StackPanels (CpuAllocationTextBox / MemoryAllocationTextBox / BandwidthAllocationTextBox / StorageAllocationTextBox) with a two-column inner Grid: column 1 is a Slider (Minimum=0, Maximum=100, StepFrequency=1, SmallChange=1, LargeChange=10, TickFrequency=10, TickPlacement=Outside), column 2 is a 64px-wide TextBox (TextAlignment=Right, MaxLength=3). The same x:Name values are kept on the TextBoxes for back-compat with code-behind references; new x:Name values *Slider are added for the sliders.",
+        "feat(shell): two new event handlers in SettingsSectionControl.xaml.cpp -- AllocationSlider_ValueChanged and AllocationTextBox_TextChanged. Each looks up the partner control by x:Name (e.g., CpuAllocationSlider <-> CpuAllocationTextBox), pushes the rounded integer percentage onto the partner under a syncingAllocation_ guard so the partner's change event does not bounce back, then flips dirty_ and re-renders summary/state. Mid-typed textbox values that don't parse leave the slider alone so the operator can type freely.",
+        "feat(shell): PopulateEditorFromSnapshot now drives both Slider.Value and TextBox.Text from the snapshot percentage in lockstep, clamping 0..100 against a stale config that violates the schema. UpdateSummary and ApplySettingsAsync read percentages exclusively from Slider.Value (the source of truth), so a half-edited textbox cannot leak an invalid value into the admin API call.",
+        "feat(shell): SettingsSectionControl.xaml.h declares the two new handlers and adds syncingAllocation_ guard flag (independent of suspendDirtyTracking_, which has a different scope -- snapshot-load vs slider/textbox sync).",
+        "docs(version): bump 0.9.1 -> 0.9.2 (Settings UX refinement; patch bump per scheme)"
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-13 follow-on: per-instance pool telemetry charts at 60Hz via Win2D CanvasControl; activity stream as scrolling SwapChainPanel.",
+        "23-server operator-facing catalog (filesystem, memory, sequential-thinking, ...) is still advertised by name only -- baseline-tools is a single in-tree pool exposing four meta-tools. Operator-bound external workers for the 23 named pools land in v0.9.x+."
+      ]
+    },
     {
       "version": "0.9.1",
       "tag": "v0.9.1",

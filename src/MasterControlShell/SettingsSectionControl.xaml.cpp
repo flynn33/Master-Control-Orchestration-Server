@@ -91,6 +91,97 @@ void SettingsSectionControl::SettingsToggle_Toggled(
     UpdateEditorState();
 }
 
+// v0.9.2: resource-allocation slider ValueChanged. Identifies which of the
+// four sliders fired by name, mirrors the new value into the partner
+// TextBox (formatted as a plain integer), and marks the editor dirty.
+// The textbox-edit path also fires here implicitly via SetValue.
+void SettingsSectionControl::AllocationSlider_ValueChanged(
+    Windows::Foundation::IInspectable const& sender,
+    Microsoft::UI::Xaml::Controls::Primitives::RangeBaseValueChangedEventArgs const&) {
+    if (syncingAllocation_) {
+        return;
+    }
+    auto slider = sender.try_as<Microsoft::UI::Xaml::Controls::Slider>();
+    if (slider == nullptr) {
+        return;
+    }
+    const auto name = std::wstring(slider.Name());
+    Microsoft::UI::Xaml::Controls::TextBox partner{ nullptr };
+    if (name == L"CpuAllocationSlider")           partner = CpuAllocationTextBox();
+    else if (name == L"MemoryAllocationSlider")   partner = MemoryAllocationTextBox();
+    else if (name == L"BandwidthAllocationSlider") partner = BandwidthAllocationTextBox();
+    else if (name == L"StorageAllocationSlider")  partner = StorageAllocationTextBox();
+    if (partner == nullptr) {
+        return;
+    }
+    const int rounded = static_cast<int>(slider.Value() + 0.5);
+    const auto desired = std::to_wstring(rounded);
+    // Avoid clobbering mid-edit if the textbox already shows the same
+    // integer value (TextChanged would re-fire and bounce back).
+    if (std::wstring(partner.Text().c_str()) == desired) {
+        if (!suspendDirtyTracking_) {
+            dirty_ = true;
+            UpdateSummary();
+            UpdateEditorState();
+        }
+        return;
+    }
+    syncingAllocation_ = true;
+    partner.Text(winrt::hstring(desired));
+    syncingAllocation_ = false;
+
+    if (suspendDirtyTracking_) {
+        return;
+    }
+    dirty_ = true;
+    UpdateSummary();
+    UpdateEditorState();
+}
+
+// v0.9.2: paired TextBox edit. Parses the integer (clamped 0..100) and
+// pushes it onto the matching Slider so the visual stays in lockstep. If
+// the entry is blank or non-numeric we leave the slider alone -- the
+// operator may be mid-typing -- but we still mark the editor dirty so
+// Apply remains enabled.
+void SettingsSectionControl::AllocationTextBox_TextChanged(
+    Windows::Foundation::IInspectable const& sender,
+    Microsoft::UI::Xaml::Controls::TextChangedEventArgs const&) {
+    if (syncingAllocation_) {
+        return;
+    }
+    auto textBox = sender.try_as<Microsoft::UI::Xaml::Controls::TextBox>();
+    if (textBox == nullptr) {
+        return;
+    }
+    const auto name = std::wstring(textBox.Name());
+    Microsoft::UI::Xaml::Controls::Slider slider{ nullptr };
+    if (name == L"CpuAllocationTextBox")           slider = CpuAllocationSlider();
+    else if (name == L"MemoryAllocationTextBox")   slider = MemoryAllocationSlider();
+    else if (name == L"BandwidthAllocationTextBox") slider = BandwidthAllocationSlider();
+    else if (name == L"StorageAllocationTextBox")  slider = StorageAllocationSlider();
+    if (slider == nullptr) {
+        return;
+    }
+    const auto parsed = parseInteger(std::wstring(textBox.Text().c_str()), 0, 100);
+    if (parsed.has_value()) {
+        const double desired = static_cast<double>(*parsed);
+        // Skip the slider write if it already matches -- avoids a no-op
+        // ValueChanged round-trip.
+        if (slider.Value() != desired) {
+            syncingAllocation_ = true;
+            slider.Value(desired);
+            syncingAllocation_ = false;
+        }
+    }
+
+    if (suspendDirtyTracking_) {
+        return;
+    }
+    dirty_ = true;
+    UpdateSummary();
+    UpdateEditorState();
+}
+
 void SettingsSectionControl::ApplySettingsButton_Click(
     Windows::Foundation::IInspectable const&,
     Microsoft::UI::Xaml::RoutedEventArgs const&) {
@@ -122,10 +213,26 @@ void SettingsSectionControl::PopulateEditorFromSnapshot() {
     BrowserPortTextBox().Text(winrt::hstring(std::to_wstring(snapshot_.browserPort)));
     BeaconPortTextBox().Text(winrt::hstring(std::to_wstring(snapshot_.beaconPort)));
     BeaconEnabledToggle().IsOn(snapshot_.beaconEnabled);
-    CpuAllocationTextBox().Text(winrt::hstring(std::to_wstring(snapshot_.cpuAllocationPercent)));
-    MemoryAllocationTextBox().Text(winrt::hstring(std::to_wstring(snapshot_.memoryAllocationPercent)));
-    BandwidthAllocationTextBox().Text(winrt::hstring(std::to_wstring(snapshot_.bandwidthAllocationPercent)));
-    StorageAllocationTextBox().Text(winrt::hstring(std::to_wstring(snapshot_.storageAllocationPercent)));
+    // v0.9.2: drive both the Slider and the partner TextBox from the
+    // snapshot's percentage value. Set Slider.Value first; the existing
+    // ValueChanged handler would normally mirror that into the TextBox,
+    // but suspendDirtyTracking_ is in effect throughout this method, so
+    // we set the TextBox text explicitly to keep them aligned during
+    // initial hydration. Both writes happen under suspendDirtyTracking_
+    // so they do not flip dirty_.
+    const auto syncAllocation = [&](Microsoft::UI::Xaml::Controls::Slider const& slider,
+                                    Microsoft::UI::Xaml::Controls::TextBox const& box,
+                                    int percent) {
+        // Clamp the persisted value into the slider's range (the schema
+        // already enforces 0..100 but a stale config could violate it).
+        const int clamped = (percent < 0) ? 0 : (percent > 100 ? 100 : percent);
+        slider.Value(static_cast<double>(clamped));
+        box.Text(winrt::hstring(std::to_wstring(clamped)));
+    };
+    syncAllocation(CpuAllocationSlider(), CpuAllocationTextBox(), snapshot_.cpuAllocationPercent);
+    syncAllocation(MemoryAllocationSlider(), MemoryAllocationTextBox(), snapshot_.memoryAllocationPercent);
+    syncAllocation(BandwidthAllocationSlider(), BandwidthAllocationTextBox(), snapshot_.bandwidthAllocationPercent);
+    syncAllocation(StorageAllocationSlider(), StorageAllocationTextBox(), snapshot_.storageAllocationPercent);
     SettingsStatusText().Text(L"Edit any field on this surface and click Apply Host Settings. The shell sends the update directly through the local admin API.");
     suspendDirtyTracking_ = false;
     UpdateSummary();
@@ -143,14 +250,23 @@ void SettingsSectionControl::UpdateSummary() {
     summary += trimCopy(std::wstring(BrowserPortTextBox().Text().c_str()));
     summary += L" | Beacon ";
     summary += BeaconEnabledToggle().IsOn() ? L"enabled" : L"disabled";
+    // v0.9.2: read percentages from the Slider (the source of truth for
+    // these four fields). The paired TextBox is kept in sync via the
+    // ValueChanged + TextChanged handlers, but during a mid-edit moment
+    // it can briefly lag (or hold an invalid intermediate value the
+    // operator is typing); the slider always reflects an in-range integer.
+    const auto formatPercent = [](double value) {
+        const int rounded = static_cast<int>(value + 0.5);
+        return std::to_wstring(rounded);
+    };
     summary += L" | CPU ";
-    summary += trimCopy(std::wstring(CpuAllocationTextBox().Text().c_str()));
+    summary += formatPercent(CpuAllocationSlider().Value());
     summary += L"% | RAM ";
-    summary += trimCopy(std::wstring(MemoryAllocationTextBox().Text().c_str()));
+    summary += formatPercent(MemoryAllocationSlider().Value());
     summary += L"% | Bandwidth ";
-    summary += trimCopy(std::wstring(BandwidthAllocationTextBox().Text().c_str()));
+    summary += formatPercent(BandwidthAllocationSlider().Value());
     summary += L"% | Storage ";
-    summary += trimCopy(std::wstring(StorageAllocationTextBox().Text().c_str()));
+    summary += formatPercent(StorageAllocationSlider().Value());
     summary += L"%";
     SettingsSummaryText().Text(winrt::hstring(summary));
 }
@@ -167,10 +283,18 @@ winrt::Windows::Foundation::IAsyncAction SettingsSectionControl::ApplySettingsAs
 
     const auto browserPort = parseInteger(std::wstring(BrowserPortTextBox().Text().c_str()), 1, 65535);
     const auto beaconPort = parseInteger(std::wstring(BeaconPortTextBox().Text().c_str()), 1, 65535);
-    const auto cpuPercent = parseInteger(std::wstring(CpuAllocationTextBox().Text().c_str()), 0, 100);
-    const auto memoryPercent = parseInteger(std::wstring(MemoryAllocationTextBox().Text().c_str()), 0, 100);
-    const auto bandwidthPercent = parseInteger(std::wstring(BandwidthAllocationTextBox().Text().c_str()), 0, 100);
-    const auto storagePercent = parseInteger(std::wstring(StorageAllocationTextBox().Text().c_str()), 0, 100);
+    // v0.9.2: read percentages from the Slider (clamped 0..100 by the
+    // control's own Minimum/Maximum). Wrap as std::optional<int> for
+    // shape compatibility with the existing branches below; the
+    // optional is unconditionally engaged because the slider cannot
+    // produce an out-of-range value.
+    const auto sliderPercent = [](Microsoft::UI::Xaml::Controls::Slider const& slider) -> std::optional<int> {
+        return static_cast<int>(slider.Value() + 0.5);
+    };
+    const auto cpuPercent = sliderPercent(CpuAllocationSlider());
+    const auto memoryPercent = sliderPercent(MemoryAllocationSlider());
+    const auto bandwidthPercent = sliderPercent(BandwidthAllocationSlider());
+    const auto storagePercent = sliderPercent(StorageAllocationSlider());
 
     const auto instanceName = trimCopy(std::wstring(InstanceNameTextBox().Text().c_str()));
     const auto bindAddress = trimCopy(std::wstring(BindAddressTextBox().Text().c_str()));
