@@ -1,9 +1,12 @@
 # Version Index
 
-Current tracked release: `v0.2.12`
+Current tracked release: `v0.10.11`
+
+> The `docs/versions/` per-release pages below v0.7.0 were produced by a retired release-management agent and are kept for historical browsing only. Authoritative release narrative for v0.7.0 and onward lives in [`CHANGELOG.md`](../../CHANGELOG.md), [`VERSION.json`](../../VERSION.json), and [`handoff/realignment/v0.X.Y-release-report.md`](../../handoff/realignment/).
 
 | Version | Date | Summary |
 | --- | --- | --- |
+| [v0.10.11](latest.md) | 2026-05-11 | LAN MCP Gateway + Supervisor Wizard + tile-grid shell (aggregate v0.9.4 -> v0.10.11). |
 | [v0.2.12](v0.2.12.md) | 2026-04-12 | Automated patch release for Master Control Orchestration Server. |
 | [v0.2.11](v0.2.11.md) | 2026-04-12 | Automated patch release for Master Control Orchestration Server. |
 | [v0.2.10](v0.2.10.md) | 2026-04-12 | Automated patch release for Master Control Orchestration Server. |

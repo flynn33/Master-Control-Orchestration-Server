@@ -1,8 +1,8 @@
 # Versions
 
 ![scheme](https://img.shields.io/badge/scheme-semver-00f6ff?style=flat-square)
-![current](https://img.shields.io/badge/current-v0.7.0-1cf2c1?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--05--05-031018?style=flat-square)
+![current](https://img.shields.io/badge/current-v0.10.11-1cf2c1?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--05--11-031018?style=flat-square)
 ![strategy](https://img.shields.io/badge/strategy-hand%20authored-5a00e8?style=flat-square)
 ![license](https://img.shields.io/badge/license-Proprietary-00aacc?style=flat-square)
 
@@ -16,16 +16,17 @@
 
 | Field | Value |
 | --- | --- |
-| **Version** | `v0.7.0` |
-| **Released** | `2026-05-05` |
-| **Theme** | Production milestone — MCOS architecture complete (PHASE-00..PHASE-12 follow-up) |
-| **Tag** | [`v0.7.0`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.7.0) |
-| **Gateway substrates** | `mcpjungle` (supervised binary) **and** `native` (in-process HTTP.sys) — both ship; operator-selectable |
-| **Next** | PHASE-13 visual-polish surfaces (Win2D charts, procedural Tron HLSL backdrop, SwapChainPanel activity stream, animated saturation rings) — incremental v0.7.x point releases per the [PHASE-13 plan file](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/handoff/realignment/PHASE-13-direct2d-shell-rendering.md) |
+| **Version** | `v0.10.11` |
+| **Released** | `2026-05-11` |
+| **Theme** | LAN MCP Gateway + Supervisor Wizard + footer-style tile-grid shell |
+| **Tag** | [`v0.10.11`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.10.11) |
+| **Gateway substrate** | `native` (in-process Windows HTTP.sys) — only shipping substrate as of v0.9.0. MCPJungle retired per operator directive. |
+| **Live state on reference host** | 26 MCP servers (25 reachable), 7 sub-agents (7 reachable), 97 advertised tools, 39/39 boot self-tests pass |
+| **Next** | v1.0.0+ candidates: CLU Phase 2/3 (`enforceAction` wiring), PHASE-14 DiagnosticsSectionControl with FileSavePicker, telemetry log rotation, tile-grid expand-on-click |
 
-### What v0.7.0 represents
+### What v0.10.11 represents
 
-Architectural-completion milestone under the manifest's `minor-on-architecture-change` policy. Every numbered phase from PHASE-00 (repository baseline + ADR lock) through PHASE-12 follow-up (native HTTP.sys gateway with end-to-end stdio bridge to supervised pool children, shipped in v0.6.10) is delivered, validated, and shipping. The 0.7.0 minor bump records the architectural-completion line: PHASE-12 follow-up was the last architectural change, and from here the work is iteration on top of the locked architecture.
+Aggregate release line spanning v0.9.4 through v0.10.11 (80+ patch releases) on top of the v0.7.0 production-milestone baseline. The architecture established at v0.7.0 is unchanged — every phase from PHASE-00 through PHASE-12 follow-up remains delivered. v0.9.x and v0.10.x iterate on top of the locked architecture across three themes: (1) gateway-substrate simplification (MCPJungle dropped, native HTTP.sys becomes the only path), (2) Supervisor Agent Assignment Wizard (operator picks one supervisor model and MCOS issues a LAN-routable config the client uses to bind), (3) WinUI Shell tile-grid realignment (Telemetry, Runtime, and the cross-tab footer all render the same per-endpoint tile shape).
 
 ```mermaid
 gantt

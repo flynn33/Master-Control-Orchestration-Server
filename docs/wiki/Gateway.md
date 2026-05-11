@@ -1,49 +1,59 @@
 # Gateway
 
 ![interface](https://img.shields.io/badge/contract-IMcpGateway-00f6ff?style=flat-square)
-![substrates](https://img.shields.io/badge/substrates-mcpjungle%20OR%20native-1cf2c1?style=flat-square)
+![substrate](https://img.shields.io/badge/substrate-native%20HTTP.sys-1cf2c1?style=flat-square)
 ![phase](https://img.shields.io/badge/landed-PHASE--02%20%2B%20PHASE--12-00aacc?style=flat-square)
 ![decision](https://img.shields.io/badge/decided%20by-ADR--003-5a00e8?style=flat-square)
 
-The MCP Gateway is the **single MCOS-advertised endpoint** every LAN AI client connects to. Per ADR-002 §2 it is wrapped behind a replaceable C++ interface (`IMcpGateway`) so the substrate can change without breaking client contracts. As of v0.6.9 / v0.7.0, **two substrates ship and are operator-selectable**:
+The MCP Gateway is the **single MCOS-advertised endpoint** every LAN AI client connects to. Per ADR-002 §2 it is wrapped behind a replaceable C++ interface (`IMcpGateway`) so the substrate can change without breaking client contracts.
 
-- `mcpjungle` — `McpJungleGatewayAdapter` supervises an external MCPJungle binary as a Job Object child. The original v0.6.x path; ADR-003's conservative default. v0.6.7's honest-503 listener fills the port when no binary is configured.
-- `native` — `NativeHttpSysGatewayAdapter` binds Windows-native HTTP.sys directly inside MCOS. No external binary. v0.6.10 stdio bridge forwards `tools/list` and `tools/call` to supervised pool children. Bootstrapper auto-registers the URL ACL at install time.
+> **v0.9.0 change:** MCPJungle support was retired per operator directive. The only shipping substrate is `NativeHttpSysGatewayAdapter` (Windows-native HTTP.sys, in-process, no external binary). The historical `McpJungleGatewayAdapter` code path and binary supervision are gone. `cfg.mcpGateway.type` is kept in the JSON schema only so existing on-disk configs deserialize — at runtime the value is ignored and the native adapter is always used. The historical MCPJungle documentation below remains for operators consulting v0.8.x and earlier deployments.
 
-Both satisfy `IMcpGateway` exactly. PHASE-03 through PHASE-12 surfaces don't see the substrate change.
+## Native HTTP.sys substrate (v0.9.0+)
+
+The active substrate. `NativeHttpSysGatewayAdapter` binds Windows-native HTTP.sys directly inside `MasterControlServiceHost.exe`. No external binary to supervise.
+
+```powershell
+# Confirm the gateway is listening
+netstat -ano | findstr :8080
+curl.exe -v http://127.0.0.1:8080/health         # adapter state
+curl.exe -v http://192.168.1.7:8080/health       # LAN-routable variant
+curl.exe -X POST http://127.0.0.1:8080/mcp `
+  -H 'Content-Type: application/json' `
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+| Field | Value |
+|---|---|
+| Listener | `0.0.0.0:cfg.mcpGateway.listenPort` (default `8080`) |
+| MCP path | `cfg.mcpGateway.mcpPath` (default `/mcp`) |
+| URL ACL | auto-installed by the bootstrapper at MSI install (`netsh http add urlacl url=http://+:8080/ user=Everyone`) so console-mode operators bind without elevation |
+| `tools/list` source | aggregated by walking each pool's first Ready instance via the v0.6.10 stdio bridge |
+| `tools/call` forwarding | lease router selects an instance, supervisor's `sendStdioJsonRpc` writes to child stdin and reads stdout |
+| Status reporting | `GET /api/dashboard.mcpGatewayStatus` and `GET /.well-known/mcos.json.gateway` carry `mcpUrl`, `healthUrl`, `state` |
 
 ---
 
-## Substrate selection
+## Historical: MCPJungle substrate (v0.8.x and earlier, retired in v0.9.0)
 
-Operators flip a single field. Default for fresh installs is `mcpjungle` for backward compatibility; new deployments are encouraged to use `native`.
+Pre-v0.9.0 the gateway could supervise an external MCPJungle binary as a Job Object child. The substrate was operator-selectable via `cfg.mcpGateway.type`, with `mcpjungle` as the default for backward compatibility. As of v0.9.0 the supervised-binary code path is gone; the rest of this section is preserved as a reference for operators consulting older deployments.
 
 ```powershell
-# Pull current configuration
+# Pre-v0.9.0 substrate selection (NO LONGER FUNCTIONAL — runtime ignores type)
 $cfg = Invoke-RestMethod http://localhost:7300/api/config
-
-# Pick substrate
-$cfg.mcpGateway.type = 'native'      # in-process HTTP.sys, no external binary
-# $cfg.mcpGateway.type = 'mcpjungle' # supervised external binary (default)
-
+$cfg.mcpGateway.type = 'native'      # in-process HTTP.sys
+# $cfg.mcpGateway.type = 'mcpjungle' # supervised external binary (RETIRED)
 $cfg.mcpGateway.enabled = $true
-
-Invoke-RestMethod http://localhost:7300/api/config -Method Post `
-  -Body ($cfg | ConvertTo-Json -Depth 12) -ContentType 'application/json' `
-  -Headers @{ 'X-Confirm-Unsafe' = '1' }
-
-Restart-Service MasterControlProgram
-Invoke-RestMethod http://localhost:7300/api/gateway/start -Method Post
 ```
 
-| Question | `mcpjungle` | `native` |
+| Question | `mcpjungle` (retired v0.9.0) | `native` (current) |
 |---|---|---|
-| External binary required? | yes — operator installs MCPJungle separately | no |
+| External binary required? | yes — operator installed MCPJungle separately | no |
 | Spawn model | Job Object child process | in-process HTTP.sys server in `MasterControlServiceHost.exe` |
-| URL ACL | not needed (the supervised child manages its own listener) | auto-installed by the bootstrapper at MSI install (`netsh http add urlacl url=http://+:8080/ user=Everyone`) |
-| `tools/list` source | MCPJungle's own catalog | aggregated by walking each pool's first Ready instance via the v0.6.10 stdio bridge |
-| `tools/call` forwarding | MCPJungle handles internally | MCOS lease router selects an instance, supervisor's `sendStdioJsonRpc` writes to child stdin and reads stdout |
-| When the substrate is unconfigured | v0.6.7 honest-503 listener returns structured JSON 503 | adapter reports `state=disabled` until enabled via `/api/config` |
+| URL ACL | not needed (the supervised child managed its own listener) | auto-installed by the bootstrapper at MSI install |
+| `tools/list` source | MCPJungle's own catalog | aggregated via the v0.6.10 stdio bridge |
+| `tools/call` forwarding | MCPJungle handled internally | MCOS lease router + `sendStdioJsonRpc` |
+| When the substrate was unconfigured | v0.6.7 honest-503 listener returned structured JSON 503 | adapter reports `state=disabled` until enabled via `/api/config` |
 
 ---
 

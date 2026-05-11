@@ -1,7 +1,7 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.7.4-00f6ff?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--05--06-031018?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.10.11-00f6ff?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--05--11-031018?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%E2%80%A2%20Server%202022-0a1018?style=flat-square)
 ![toolchain](https://img.shields.io/badge/toolchain-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20CMake-00aacc?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
@@ -33,7 +33,7 @@ flowchart LR
 
     subgraph MCOS[Master Control Orchestration Server]
         Discovery[LAN Discovery<br/>DNS-SD + UDP beacon]:::accent
-        Gateway[MCP Gateway<br/>MCPJungle OR Native HTTP.sys]:::accent
+        Gateway[MCP Gateway<br/>Native HTTP.sys]:::accent
         Onboarding[Onboarding Profiles<br/>per client type]:::accent
         Governance[Governance Bundles<br/>Windows / macOS / iOS]:::accent
         Supervisor[Worker Supervisor<br/>+ Lease Router + stdio bridge]:::accent
@@ -52,7 +52,7 @@ flowchart LR
     LANClients -.->|on demand| Governance
 ```
 
-The architecture target is the **gateway-first MCP host** declared in [ADR-002](docs/wiki/ADR-002-gateway-first-mcp-realignment.md) and locked at the substrate level by [ADR-003](docs/wiki/ADR-003-mcp-gateway-substrate-decision.md). As of v0.6.9 / v0.7.0 both substrates ship: the original supervised MCPJungle adapter (the conservative path from PHASE-02) and the in-process Windows-native HTTP.sys adapter (PHASE-12, completed end-to-end in v0.6.10). Operators select via `mcpGateway.type = "mcpjungle" | "native"`. The original [ADR-001 LAN client identity model](docs/wiki/ADR-001-lan-client-control-plane.md) survives as the operator surface that coexists with the AI-client gateway surface.
+The architecture target is the **gateway-first MCP host** declared in [ADR-002](docs/wiki/ADR-002-gateway-first-mcp-realignment.md) and locked at the substrate level by [ADR-003](docs/wiki/ADR-003-mcp-gateway-substrate-decision.md). As of v0.9.0 the only shipping substrate is the in-process Windows-native HTTP.sys adapter — MCPJungle was retired per operator directive. `cfg.mcpGateway.type` is retained for back-compat JSON deserialization only; the runtime always uses the native HTTP.sys adapter on `0.0.0.0:cfg.mcpGateway.listenPort` (default `8080`) at `cfg.mcpGateway.mcpPath` (default `/mcp`). The original [ADR-001 LAN client identity model](docs/wiki/ADR-001-lan-client-control-plane.md) survives as the operator surface that coexists with the AI-client gateway surface.
 
 ---
 
@@ -84,23 +84,28 @@ Multiple AI coding clients on the same trusted LAN need to share an MCP server a
 
 ---
 
-## v0.7.0 — production milestone
+## v0.10.11 — LAN MCP Gateway, Supervisor Wizard, tile-grid shell
 
-**Architecture complete.** Every numbered phase from PHASE-00 (repository baseline + ADR lock) through PHASE-12 follow-up (native HTTP.sys gateway with end-to-end stdio bridge to supervised pool children, shipped in v0.6.10) is delivered, validated, and shipping. The 0.7.0 minor bump under the manifest's `minor-on-architecture-change` policy marks the architectural-completion line: PHASE-12 follow-up was the last architectural change.
+The current release line, spanning v0.9.4 through v0.10.11 since the v0.7.0 production-milestone baseline.
 
-Both gateway substrates ship and are operator-selectable via `mcpGateway.type`:
+**Native HTTP.sys is the only shipping gateway substrate.** MCPJungle support was retired in v0.9.0 per operator directive. `cfg.mcpGateway.type` is kept in the JSON schema for backward-compatible deserialization, but the runtime always uses the native HTTP.sys adapter. No external binary to supervise.
 
-| `type` value | Substrate | When to pick |
-|---|---|---|
-| `"mcpjungle"` | Supervises an external MCPJungle binary as a Job Object child. v0.6.7 honest-503 listener fills the port when no binary is configured. | Conservative path. Operators with an existing MCPJungle deployment, or who want to track an upstream that may add features faster than MCOS does. |
-| `"native"` | In-process Windows-native HTTP.sys server bound directly inside MCOS. No external binary. v0.6.10 stdio bridge forwards `tools/list` and `tools/call` to supervised pool children. | Default for fresh installs. No second binary to manage. URL ACL self-registered by the bootstrapper at install time. |
+| Field | Value |
+|---|---|
+| Gateway listener | `0.0.0.0:cfg.mcpGateway.listenPort` (default `8080`) |
+| MCP path | `cfg.mcpGateway.mcpPath` (default `/mcp`) |
+| Admin / browser dashboard | `0.0.0.0:cfg.browserPort` (default `7300`) |
+| LAN discovery | `/.well-known/mcos.json` served on browser port |
+| Boot self-tests | 39 probes (from ~30 at v0.7.0) |
+| Live state on reference host | 26 MCP servers, 7 sub-agents, 97 advertised tools, 39/39 self-tests pass |
 
-What v0.7.0 brings together:
+What landed across v0.9.x and v0.10.x:
 
-- **PHASE-00 through PHASE-11** — gateway-first realignment (ADR-002), worker pool fabric, lease routing, real-time telemetry, Tron dashboard, Windows hardening, native gateway evaluation (ADR-003).
-- **PHASE-12 MVP** (v0.6.9) — `NativeHttpSysGatewayAdapter` alongside `McpJungleGatewayAdapter` and `FakeMcpGatewayAdapter`. HTTP.sys lifecycle, MCP `initialize` and `tools/list` handshakes.
-- **PHASE-12 follow-up** (v0.6.10) — `IWorkerSupervisor::sendStdioJsonRpc` synchronous JSON-RPC over child stdin/stdout with deadline-based polling and per-instance mutex; `tools/list` aggregates by walking each pool's first Ready instance via the bridge; `tools/call` resolves `params.name` against the cached catalog (qualified `{poolId}__{toolName}` or unique unprefixed match), acquires a lease, forwards via the bridge, re-stamps response id; bootstrapper installs URL ACL `http://+:<port>/ user=Everyone` so console-mode operators bind without elevation.
-- **PHASE-13** — Win2D / Direct2D high-frequency visual surfaces in the WinUI shell (per-instance telemetry charts at 60Hz, procedural Tron HLSL backdrop, SwapChainPanel activity stream, animated saturation rings) is explicitly visual-polish work, not architectural, and is scheduled to land incrementally across v0.7.x point releases per the [plan file](handoff/realignment/PHASE-13-direct2d-shell-rendering.md).
+- **Supervisor Agent Assignment Wizard.** Full backend + WinUI Shell + browser dashboard surface to assign exactly one supervisor model (`chatgpt` / `claude` / `grok`). Lifecycle: `off → config_generated → pending_connection → connected → disconnected | revoked`. 120-second heartbeat watchdog flips Connected → Disconnected. Generated config carries `server.mcpEndpoint = http://<lanIp>:<gatewayPort>/mcp` (v0.10.8 fix; pre-v0.10.8 the value was `http://127.0.0.1:<browserPort>/mcp` — wrong host AND wrong port).
+- **WinUI Shell footer-style tile grid.** `endpoint_stat_card_grid_detail::buildFooterStyleTile<StatT>` is the shared per-tile builder. Telemetry MCP / Sub-Agent panels (v0.10.6 → v0.10.7), Runtime MCP / Sub-Agent panels (v0.10.9), and the cross-tab SUB-AGENT GRID footer (v0.7.8 baseline) all render the same shape: 1px TRON-red border, 6px corner radius, 8x6 padding, uppercase semibold cyan name + reachability dot + specialization + util% + ProgressBar + active/cap ratio + 2-line client list. 7-column grid wraps to additional rows automatically.
+- **Persistent Diagnostics log.** Supervisor lifecycle, boot self-test failures, and per-boot summaries dual-emit to `<PUBLIC>\Documents\Master Control Orchestration Server\logs\<component>\events.jsonl`. Survives service restart.
+- **Telemetry log throttle** (v0.10.5). Dashboard-snapshot writes to `telemetry.jsonl` capped at one row per 60 seconds via static atomic compare-exchange. Cuts log growth from ~21 MB/day to ~350 KB/day.
+- **`scripts\Deploy-LocalLive.ps1` + `DEPLOY_LOCAL_LIVE` CMake target.** Hot-deploy helper. Stops `MasterControlProgram`, copies fresh binaries + `.xbf` / `.winmd` / `.pri` into the spaces-path install dir, restarts the service, probes `/api/version` + `/api/self-tests` + `/api/supervisor`, optionally relaunches the shell.
 
 ## What landed across v0.6.x
 
@@ -152,7 +157,7 @@ ctest --test-dir build/release -C Release --output-on-failure --timeout 300
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release -SkipBuild
 
 # 2. Install (interactive UI)
-msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.7.4-win-x64\MasterControlOrchestrationServer-v0.7.4-win-x64.msi"
+msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.10.11-win-x64\MasterControlOrchestrationServer-v0.10.11-win-x64.msi"
 
 # 3. Verify (after install)
 & "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output
@@ -166,17 +171,18 @@ Invoke-RestMethod http://localhost:7300/api/discovery | ConvertTo-Json -Depth 6
 # 5. From another LAN host: confirm Bonjour discovery
 Resolve-DnsName -Name _mcos._tcp.local -Type PTR -LlmnrFallback
 
-# 6. (Optional) Switch the gateway substrate to the native HTTP.sys adapter.
-#    Default is "mcpjungle" for backward compatibility with v0.6.x deployments.
-#    The native adapter requires no external binary and the bootstrapper has
-#    already registered the matching URL ACL during install.
-$cfg = Invoke-RestMethod http://localhost:7300/api/config
-$cfg.mcpGateway.type = 'native'
-$cfg.mcpGateway.enabled = $true
-Invoke-RestMethod http://localhost:7300/api/config -Method Post `
-  -Body ($cfg | ConvertTo-Json -Depth 12) -ContentType 'application/json' `
-  -Headers @{ 'X-Confirm-Unsafe' = '1' }
-Restart-Service MasterControlProgram
+# 6. (Optional) Assign a supervisor model via /api/supervisor.
+#    The native HTTP.sys gateway is the only shipping substrate as of v0.9.0;
+#    no operator action is needed to "select" it. To bind a supervisor model
+#    (chatgpt / claude / grok), generate the config bundle and hand it to the
+#    LAN client. The wizard's "Generate Config & Save" button on the Overview
+#    deck is the supported path; the curl equivalent below is for headless
+#    operators.
+$body = '{"providerId":"chatgpt"}'
+$resp = Invoke-RestMethod http://localhost:7300/api/supervisor/config/generate `
+  -Method Post -Body $body -ContentType 'application/json'
+$resp.config | ConvertTo-Json -Depth 6 | Set-Content `
+  -Encoding utf8 "mcos-supervisor-$($resp.config.supervisor.providerId).config.json"
 Invoke-RestMethod http://localhost:7300/api/gateway/start -Method Post
 ```
 

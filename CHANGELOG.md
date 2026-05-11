@@ -6,9 +6,55 @@ The release-management and doc-sync GitHub agents that previously generated part
 
 ## [Unreleased]
 
-### PHASE-13 visual polish (scheduled for v0.7.x point releases)
+### Deferred to v1.0.0+
 
-PHASE-13 (Win2D / Direct2D rendering for high-frequency visual surfaces in the WinUI shell) is the only phase that landed as a *plan file* in v0.6.8 without an implementation. Plan covers four surfaces: per-instance telemetry charts at 60Hz via `CanvasControl`, procedural Tron grid backdrop as an HLSL fragment, activity stream as a scrolling `SwapChainPanel`, animated saturation rings. Lands one surface at a time across v0.7.x; first-cut candidate is the saturation rings (smallest scope, single XAML primitive). Scope file: `handoff/realignment/PHASE-13-direct2d-shell-rendering.md`.
+- CLU rebuild Phase 2 + Phase 3 (`enforceAction` wiring).
+- PHASE-14 `DiagnosticsSectionControl` with FileSavePicker export — plan file in place, implementation gated on operator approval.
+- Telemetry log rotation (size / age / count). v0.10.5 throttling defers the disk-fill horizon from weeks to many months but does not bound it.
+- Expand-on-click for tile-grid endpoint detail (host:port + active-client list on hover/expand).
+- Per-pass self-test rows in the persistent Diagnostics log (behind an opt-in flag).
+
+## [0.10.11] - 2026-05-11
+
+### Summary
+
+Aggregate entry covering the 80+ patch releases between v0.9.3 (last committed baseline) and v0.10.11. Per-release detail lives in `handoff/realignment/v0.9.X-release-report.md` and `handoff/realignment/v0.10.X-release-report.md`. Commit `dcd1e8b` carries the full source.
+
+### Added
+
+- **Native HTTP.sys MCP gateway is now the only substrate.** MCPJungle support was dropped in v0.9.0 per operator directive. `cfg.mcpGateway.type` is retained for back-compat JSON deserialization only; the runtime always uses the native HTTP.sys adapter on `0.0.0.0:cfg.mcpGateway.listenPort` (default 8080) at `cfg.mcpGateway.mcpPath` (default `/mcp`).
+- **Supervisor Agent Assignment Wizard.** Full backend + WinUI Shell + browser dashboard surface for selecting one supervisor model (chatgpt / claude / grok). Lifecycle: `off → config_generated → pending_connection → connected → disconnected | revoked`. 120-second heartbeat watchdog flips Connected → Disconnected. Persistence at `<dataDirectory>/supervisor-assignment.json` survives service restart.
+- **Persistent Diagnostics log.** Supervisor lifecycle + boot self-test failures + per-boot self-test summaries dual-emit to `<PUBLIC>\Documents\Master Control Orchestration Server\logs\<component>\events.jsonl`.
+- **Boot self-test count grew to 39 probes** (was ~30 at v0.9.3). New probes include `diagnostics.log_writable` (v0.10.3), `gateway.tool_count_nonzero` (v0.10.4), supervisor lifecycle probes, and pool readiness probes.
+- **WinUI Shell footer-style tile grid.** `endpoint_stat_card_grid_detail::buildFooterStyleTile<StatT>` is the shared per-tile builder. The Telemetry MCP / Sub-Agent panels (v0.10.6 - v0.10.7), the Runtime MCP / Sub-Agent panels (v0.10.9), and the cross-tab SUB-AGENT GRID footer (v0.7.8 baseline) all render the same tile shape: 1px TRON-red border, 6px corner, 8x6 padding, uppercase semibold cyan name + reachability dot + specialization + util% + ProgressBar + active/cap ratio + 2-line client list.
+- **`scripts\Deploy-LocalLive.ps1` + `DEPLOY_LOCAL_LIVE` CMake target** (v0.9.78 / v0.9.80). Stops `MasterControlProgram`, copies `MasterControlServiceHost.exe` + `MasterControlShell.exe` + xbf + winmd + pri into the spaces-path install dir (`C:\Program Files\Master Control Orchestration Server\`), restarts the service, probes `/api/version` + `/api/self-tests` + `/api/supervisor`, optionally relaunches the shell.
+- **Pool orchestration scaffolding** under `.claude/agents/`, `.claude/scripts/`, `.claude/mcp-state/pool-policy.json`, `.claude/mcp-state/pool0.json`. Sub-agent definitions for architect, build-resolver, coordinator, debugger, documenter, git-manager, multi-file-specialist, performance-engineer, planner, refactorer, reviewer, security-auditor, sentinel, test-writer.
+
+### Changed
+
+- **`server.mcpEndpoint` in generated supervisor configs.** Pre-v0.10.8: `http://127.0.0.1:<browserPort>/mcp` (wrong host and wrong port — `/mcp` does not exist on the admin port; `127.0.0.1` is unreachable off-box). Post-v0.10.8: `http://<lanIp>:<cfg.mcpGateway.listenPort><cfg.mcpGateway.mcpPath>` using the same 5-step LAN-IP precedence chain `DiscoveryService::currentDocument()` uses for `/.well-known/mcos.json`.
+- **Telemetry dashboard-snapshot writes to the persistent telemetry log are throttled to once per 60 seconds** (v0.10.5). Cuts log growth from ~21 MB/day to ~350 KB/day.
+- **`renderEndpointStatCardGrid()` compact mode** (v0.10.7) produces a 7-column tile grid that wraps to additional rows by computing `Grid.Row = i/7, Grid.Column = i%7`. 26 MCP servers wrap to 4 rows (7+7+7+5); 7 sub-agents fit in one row.
+- **`MainWindow::ApplySubAgentFooter`** (v0.10.10): cross-tab SUB-AGENT GRID footer is now scoped to the Telemetry and Runtime destinations only. Overview, Imports, Exports, Security, CLU, Settings, and the Setup Wizard no longer carry it.
+
+### Removed
+
+- **MCPJungle gateway substrate** (v0.9.0). The `GatewayType::Mcpjungle` enum value is retained only so existing on-disk configs deserialize; the runtime always falls through to the native HTTP.sys adapter. `gatewayConfig.binaryPath`, `gatewayConfig.databasePath`, and the MCPJungle supervised-binary management code path are gone.
+- **Overview deck `MCP SERVERS` and `SUB-AGENTS` summary cards** (v0.10.10). The 2x2 status grid shrinks to 1x2 — `APIS & SERVICES` + `SECURITY STANCE` remain. The MCP / sub-agent decks live on Runtime and Telemetry as tile grids.
+- **Runtime deck `Runtime Endpoints` ListView** (v0.10.11). The flat `name | host:port | status` list that mixed MCP servers, sub-agents, and gateways into one column conflicted with the tile-grid directive. The dedicated MCP Servers and Sub-Agents tile-grid panels above carry the same data in the correct visual form.
+
+### Fixed
+
+- **Supervisor confirm regression message persistence** (v0.10.1). `revoke()` and `regenerateConfig()` now clear `assignment_.lastErrorMessage`; `loadFromDisk()` drops the stale message on load when state is terminal (Off or Revoked).
+- **Telemetry compact-card per-row Border tightness** (v0.10.6 → v0.10.7). The interim v0.10.6 flat-row rendering was wrong; v0.10.7 corrected to the footer-style tile grid per operator clarification.
+- **Supervisor service endpoint refresh** (v0.10.8). `ISupervisorAssignmentService::setEndpoints` + `MasterControlApplication::Impl::refreshSupervisorEndpoints` push live LAN-resolved values into the supervisor service just-in-time on select / generate / regenerate.
+- **Boot self-test gateway probes** (v0.10.4): added `gateway.tool_count_nonzero` so an adapter that's listening + Running but advertising 0 tools is now a visible FAIL instead of a silent misconfiguration.
+
+### Notes
+
+- Live state on the commit's reference host (v0.10.11): `GET /api/version` = `0.10.11`, `GET /api/self-tests` = 39/39 passed, `GET /api/dashboard` = 26 MCP servers (25 reachable) + 7 sub-agents (7 reachable), gateway running with 97 advertised tools.
+- The Telemetry / Runtime decks still display the SUB-AGENT GRID footer below their in-section tile grids. The repeated surface is intentional for now; further consolidation is a v1.0.0+ candidate.
+- Cloud-hosted ChatGPT cannot reach LAN IPs by definition; a tunnel (Tailscale, ngrok, Cloudflare Tunnel) is required when the supervisor client is off-LAN. Operator-side networking concern, not an MCOS bug.
 
 ## [0.7.0] - 2026-05-05
 

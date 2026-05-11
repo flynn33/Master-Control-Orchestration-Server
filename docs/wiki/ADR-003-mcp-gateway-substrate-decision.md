@@ -1,11 +1,28 @@
-## ADR-003 - MCP Gateway Substrate: Two Substrates Ship (status-updated)
+## ADR-003 - MCP Gateway Substrate: Native HTTP.sys Only (v0.9.0+, status-updated)
 
-- Status: Accepted (status updated 2026-05-05)
+- Status: Accepted (status updated 2026-05-11 — supersedes the v0.7.0 two-substrate state)
 - Original date: 2026-05-02
-- Status update date: 2026-05-05 (v0.6.9 / v0.6.10 / v0.7.0)
+- v0.7.0 status update date: 2026-05-05 (both substrates shipped; operator-selectable)
+- v0.9.0 status update date: 2026-05-07 (MCPJungle retired; native HTTP.sys is the only shipping substrate)
 - Deciders: Product owner, engineering
 - Builds on: [ADR-002 - Gateway-first MCP realignment](ADR-002-gateway-first-mcp-realignment.md) §2 (replaceable gateway adapter), §11 (vendoring rules)
 - Related: [docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md), [handoff/realignment/PHASE-11-native-gateway-option.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/handoff/realignment/PHASE-11-native-gateway-option.md), [handoff/realignment/PHASE-12-native-http-sys-gateway.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/handoff/realignment/PHASE-12-native-http-sys-gateway.md)
+
+### Status update (v0.9.0) — MCPJungle retired
+
+The v0.7.0 status update (immediately below) recorded that **both substrates ship and are operator-selectable** via `mcpGateway.type`. That intermediate state held for the v0.7.x and v0.8.x lines.
+
+In v0.9.0 the operator directive was: **"MCP Jungle support is to be dropped in place of a custom solution."** The `McpJungleGatewayAdapter` and its supervised-binary management code path were removed. The `GatewayType::Mcpjungle` enum value is retained ONLY so existing v0.6.x..v0.8.x on-disk configs deserialize without rejection — at runtime the type field is ignored and `NativeHttpSysGatewayAdapter` is always instantiated.
+
+What v0.9.0+ deliver:
+
+- `NativeHttpSysGatewayAdapter` on `0.0.0.0:cfg.mcpGateway.listenPort` (default `8080`) at `cfg.mcpGateway.mcpPath` (default `/mcp`).
+- `cfg.mcpGateway.type` field retained in JSON schema; runtime value is ignored.
+- `cfg.mcpGateway.binaryPath` and `cfg.mcpGateway.databasePath` retained in JSON schema but unused.
+- `gatewayConfig.type` is logged but does not affect adapter selection.
+- The `IMcpGateway` interface, `FakeMcpGatewayAdapter` (test harness), and every PHASE-03 through PHASE-12 surface remain exactly as they shipped — additive removal only.
+
+The v0.7.0 two-substrate state and the original v0.6.x single-substrate state follow below for historical record.
 
 ### Status update (v0.6.9 / v0.6.10 / v0.7.0)
 
