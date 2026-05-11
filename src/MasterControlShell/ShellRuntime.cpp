@@ -2151,6 +2151,79 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
         }
     }
 
+    // v0.9.75: visible self-test card. Fetch GET /api/self-tests on
+    // every snapshot tick so the per-probe pass/fail roster is fresh
+    // for the Overview surface. The runtime side already records each
+    // probe to the activity ring with statusCode 200|500, so failures
+    // also appear in the existing Error Reporting card -- this card
+    // adds the affirmative side: every PASS is visible too, which is
+    // what "VISIBLE self tests" requires.
+    {
+        std::wstring fetchError;
+        const auto resp = httpGet(dashboardHostFromBindAddress(bindAddress),
+                                   browserPort, L"/api/self-tests", fetchError);
+        ShellSelfTestSnapshot tests;
+        if (!resp.has_value() || resp->statusCode != 200) {
+            tests.fetchError = fetchError.empty()
+                ? std::wstring(L"GET /api/self-tests did not return 200.")
+                : fetchError;
+        } else if (const auto j = parseJsonObject(resp->body); j.has_value()) {
+            tests.available    = true;
+            tests.pending      = jsonBoolOr(*j, L"pending", true);
+            tests.startedAtUtc = wideFromUtf8(jsonStringOr(*j, L"startedAtUtc", ""));
+            tests.finishedAtUtc= wideFromUtf8(jsonStringOr(*j, L"finishedAtUtc", ""));
+            tests.totalCount   = static_cast<int>(jsonNumberOr(*j, L"totalCount"));
+            tests.passedCount  = static_cast<int>(jsonNumberOr(*j, L"passedCount"));
+            tests.failedCount  = static_cast<int>(jsonNumberOr(*j, L"failedCount"));
+            if (j->HasKey(L"results")) {
+                for (const auto& v : j->GetNamedArray(L"results", JsonArray())) {
+                    if (v.ValueType() != JsonValueType::Object) continue;
+                    const auto r = v.GetObject();
+                    ShellSelfTestResult sr;
+                    sr.name      = wideFromUtf8(jsonStringOr(r, L"name", ""));
+                    sr.category  = wideFromUtf8(jsonStringOr(r, L"category", ""));
+                    sr.ok        = jsonBoolOr(r, L"ok", false);
+                    sr.message   = wideFromUtf8(jsonStringOr(r, L"message", ""));
+                    sr.durationMs= static_cast<int>(jsonNumberOr(r, L"durationMs"));
+                    sr.ranAtUtc  = wideFromUtf8(jsonStringOr(r, L"ranAtUtc", ""));
+                    tests.results.push_back(std::move(sr));
+                }
+            }
+        }
+        snapshot.selfTests = std::move(tests);
+    }
+
+    // v0.9.76: Supervisor Agent Assignment status. Fetched on every
+    // snapshot tick so the Overview surface's Supervisor card stays
+    // live with the runtime-side service. activeProviderId is the
+    // single-source-of-truth for the radio toggle group: empty / "off"
+    // means no supervisor; otherwise it is exactly one of the three
+    // wizard-supported provider ids.
+    {
+        std::wstring fetchError;
+        const auto resp = httpGet(dashboardHostFromBindAddress(bindAddress),
+                                   browserPort, L"/api/supervisor/status", fetchError);
+        ShellSnapshot::SupervisorStatusFields sup;
+        if (resp.has_value() && resp->statusCode == 200) {
+            if (const auto j = parseJsonObject(resp->body); j.has_value()) {
+                sup.activeProviderId    = wideFromUtf8(jsonStringOr(*j, L"activeProviderId", ""));
+                sup.providerDisplayName = wideFromUtf8(jsonStringOr(*j, L"providerDisplayName", ""));
+                sup.mode                = wideFromUtf8(jsonStringOr(*j, L"mode", ""));
+                sup.state               = wideFromUtf8(jsonStringOr(*j, L"state", ""));
+                sup.assignmentId        = wideFromUtf8(jsonStringOr(*j, L"assignmentId", ""));
+                sup.configId            = wideFromUtf8(jsonStringOr(*j, L"configId", ""));
+                sup.clientId            = wideFromUtf8(jsonStringOr(*j, L"clientId", ""));
+                sup.issuedAtUtc         = wideFromUtf8(jsonStringOr(*j, L"issuedAtUtc", ""));
+                sup.expiresAtUtc        = wideFromUtf8(jsonStringOr(*j, L"expiresAtUtc", ""));
+                sup.connectedAtUtc      = wideFromUtf8(jsonStringOr(*j, L"connectedAtUtc", ""));
+                sup.lastHeartbeatUtc    = wideFromUtf8(jsonStringOr(*j, L"lastHeartbeatUtc", ""));
+                sup.lastErrorMessage    = wideFromUtf8(jsonStringOr(*j, L"lastErrorMessage", ""));
+                sup.active              = jsonBoolOr(*j, L"active", false);
+            }
+        }
+        snapshot.supervisorStatus = std::move(sup);
+    }
+
     return snapshot;
 }
 
@@ -2841,6 +2914,164 @@ ShellClaudePluginStatus ShellRuntime::ToggleClaudePlugin() const {
         return s;
     }
     return parseClaudePluginResponse(response->body, errorMessage);
+}
+
+// v0.9.76: Supervisor Agent Assignment Wizard helpers.
+// GenerateSupervisorConfig posts to /api/supervisor/config/generate with
+// the requested providerId; on 200 the response carries the freshly-
+// issued config JSON which the OverviewSectionControl then writes to
+// the operator-chosen path through FileSavePicker. The config-id is
+// minted server-side; the Shell never invents or persists tokens
+// itself. RevokeSupervisor posts to /api/supervisor/assignment/revoke
+// with the optional operator reason and reports a wstring error on
+// transport failure.
+//
+// Body construction uses the WinRT Windows::Data::Json types because
+// nlohmann::json is not pulled into ShellRuntime.cpp; the body is
+// simple enough that a hand-built string is the cleanest shape.
+ShellRuntime::ShellSupervisorIssueResult ShellRuntime::GenerateSupervisorConfig(
+        const std::wstring& providerId) const {
+    ShellSupervisorIssueResult out;
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    std::wstring errorMessage;
+    // Construct {"providerId":"<id>","mode":"autonomous_supervisor","exclusive":true}.
+    // Provider ids are constrained to chatgpt|claude|grok upstream so the
+    // narrow conversion is safe without escape handling.
+    const std::string body = std::string("{\"providerId\":\"")
+        + narrowFromWide(providerId)
+        + "\",\"mode\":\"autonomous_supervisor\",\"exclusive\":true}";
+    const auto response = httpRequest(
+        host, port, L"POST", L"/api/supervisor/config/generate",
+        body, {}, errorMessage);
+    if (!response.has_value()) {
+        out.ok = false;
+        out.errorMessage = errorMessage.empty()
+            ? std::wstring(L"Unable to reach the admin API.")
+            : errorMessage;
+        return out;
+    }
+    const auto parsed = parseJsonObject(response->body);
+    if (response->statusCode != 200) {
+        out.ok = false;
+        if (parsed.has_value()) {
+            out.errorMessage = wideFromUtf8(jsonStringOr(*parsed, L"errorMessage", ""));
+        }
+        if (out.errorMessage.empty()) {
+            wchar_t buf[64];
+            swprintf_s(buf, L"POST /api/supervisor/config/generate returned %d.",
+                       response->statusCode);
+            out.errorMessage = buf;
+        }
+        return out;
+    }
+    if (!parsed.has_value()) {
+        out.ok = false;
+        out.errorMessage = L"Supervisor config endpoint returned an unparseable body.";
+        return out;
+    }
+    out.ok = jsonBoolOr(*parsed, L"ok", false);
+    if (!out.ok) {
+        out.errorMessage = wideFromUtf8(jsonStringOr(*parsed, L"errorMessage", ""));
+    }
+    out.fileName = wideFromUtf8(jsonStringOr(*parsed, L"fileName", ""));
+    // Re-stringify the embedded config object so the on-disk file is
+    // the exact JSON document the schema expects (no envelope).
+    if (parsed->HasKey(L"config")) {
+        const auto cfgValue = parsed->GetNamedValue(L"config");
+        if (cfgValue.ValueType() == JsonValueType::Object) {
+            out.configJson = std::wstring(cfgValue.GetObject().Stringify().c_str());
+        }
+    }
+    if (parsed->HasKey(L"assignment")) {
+        const auto av = parsed->GetNamedValue(L"assignment");
+        if (av.ValueType() == JsonValueType::Object) {
+            const auto a = av.GetObject();
+            out.providerId   = wideFromUtf8(jsonStringOr(a, L"providerId", ""));
+            out.assignmentId = wideFromUtf8(jsonStringOr(a, L"assignmentId", ""));
+            out.configId     = wideFromUtf8(jsonStringOr(a, L"configId", ""));
+            out.expiresAtUtc = wideFromUtf8(jsonStringOr(a, L"expiresAtUtc", ""));
+        }
+    }
+    return out;
+}
+
+bool ShellRuntime::RevokeSupervisor(const std::wstring& reason,
+                                     std::wstring& errorOut) const {
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    // Body: optional reason. Pass {} when none so the runtime handler
+    // doesn't have to discriminate empty body vs. missing-field.
+    std::string body;
+    if (reason.empty()) {
+        body = "{}";
+    } else {
+        // Minimal JSON-string escape: backslash + double-quote. Operator
+        // input flows through here so quote-handling matters.
+        std::string escaped;
+        escaped.reserve(reason.size());
+        const auto narrow = narrowFromWide(reason);
+        for (char c : narrow) {
+            if (c == '\\' || c == '"') escaped.push_back('\\');
+            escaped.push_back(c);
+        }
+        body = std::string("{\"reason\":\"") + escaped + "\"}";
+    }
+    std::wstring errorMessage;
+    const auto response = httpRequest(
+        host, port, L"POST", L"/api/supervisor/assignment/revoke",
+        body, {}, errorMessage);
+    if (!response.has_value()) {
+        errorOut = errorMessage.empty()
+            ? std::wstring(L"Unable to reach the admin API.")
+            : errorMessage;
+        return false;
+    }
+    if (response->statusCode != 200) {
+        wchar_t buf[64];
+        swprintf_s(buf, L"POST /api/supervisor/assignment/revoke returned %d.",
+                   response->statusCode);
+        errorOut = buf;
+        return false;
+    }
+    return true;
+}
+
+ShellSelfTestSnapshot ShellRuntime::RunSelfTestsNow() const {
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    std::wstring errorMessage;
+    const auto response = httpRequest(
+        host, port, L"POST", L"/api/self-tests/run",
+        std::string("{}"), {}, errorMessage);
+    ShellSelfTestSnapshot tests;
+    if (!response.has_value() || response->statusCode != 200) {
+        tests.fetchError = errorMessage.empty()
+            ? std::wstring(L"POST /api/self-tests/run did not return 200.")
+            : errorMessage;
+        return tests;
+    }
+    if (const auto j = parseJsonObject(response->body); j.has_value()) {
+        tests.available    = true;
+        tests.pending      = false; // a fresh sweep just finished
+        tests.startedAtUtc = wideFromUtf8(jsonStringOr(*j, L"startedAtUtc", ""));
+        tests.finishedAtUtc= wideFromUtf8(jsonStringOr(*j, L"finishedAtUtc", ""));
+        tests.totalCount   = static_cast<int>(jsonNumberOr(*j, L"totalCount"));
+        tests.passedCount  = static_cast<int>(jsonNumberOr(*j, L"passedCount"));
+        tests.failedCount  = static_cast<int>(jsonNumberOr(*j, L"failedCount"));
+        if (j->HasKey(L"results")) {
+            for (const auto& v : j->GetNamedArray(L"results", JsonArray())) {
+                if (v.ValueType() != JsonValueType::Object) continue;
+                const auto r = v.GetObject();
+                ShellSelfTestResult sr;
+                sr.name      = wideFromUtf8(jsonStringOr(r, L"name", ""));
+                sr.category  = wideFromUtf8(jsonStringOr(r, L"category", ""));
+                sr.ok        = jsonBoolOr(r, L"ok", false);
+                sr.message   = wideFromUtf8(jsonStringOr(r, L"message", ""));
+                sr.durationMs= static_cast<int>(jsonNumberOr(r, L"durationMs"));
+                sr.ranAtUtc  = wideFromUtf8(jsonStringOr(r, L"ranAtUtc", ""));
+                tests.results.push_back(std::move(sr));
+            }
+        }
+    }
+    return tests;
 }
 
 } // namespace MasterControlShell

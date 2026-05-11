@@ -12,6 +12,41 @@
         "PATH": "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows"
       }
     },
+    "sequential-thinking": {
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js",
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ],
+      "env": {
+        "PATH": "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows"
+      }
+    },
+    "filesystem": {
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "G:\\Claude\\Master-Control-Orchastration-Server\\master-control-dashboard-main"
+      ],
+      "env": {
+        "PATH": "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows"
+      }
+    },
+    "sqlite": {
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js",
+        "-y",
+        "mcp-server-sqlite-npx",
+        "G:\\Claude\\Master-Control-Orchastration-Server\\master-control-dashboard-main\\.claude\\mcp-state\\mcos-orchestration.sqlite"
+      ],
+      "env": {
+        "PATH": "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows"
+      }
+    },
     "mcos-memory": {
       "command": "py",
       "args": ["-3", ".claude/mcp-servers/mcos-memory/server.py"]
@@ -19,6 +54,10 @@
     "mcos-contracts": {
       "command": "py",
       "args": ["-3", ".claude/mcp-servers/mcos-contracts/server.py"]
+    },
+    "mcos-watcher": {
+      "command": "py",
+      "args": ["-3", ".claude/mcp-servers/mcos-watcher/server.py"]
     },
     "mcos-bridge": {
       "command": "py",

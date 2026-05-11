@@ -262,11 +262,20 @@ async function refreshAll() {
       loadJson('/api/telemetry/events?max=200').catch(() => ({ events: [], maxEvents: 0 })),
       loadJson('/api/telemetry/clients').catch(() => []),
       loadJson('/api/telemetry/gateway').catch(() => null),
-      loadJson('/api/claude-plugin/status').catch(() => null)
+      loadJson('/api/claude-plugin/status').catch(() => null),
+      // v0.9.75: visible self-test surface alongside the existing
+      // error-reporting frame so operators see PASS rows too, not
+      // just FAIL ones.
+      loadJson('/api/self-tests').catch(() => null),
+      // v0.9.77: Supervisor Agent Assignment Wizard status for the
+      // dashboard parity card (shell shipped in v0.9.76; this is the
+      // browser-side mirror).
+      loadJson('/api/supervisor/status').catch(() => null)
     ]);
     const [health, dashboard, clients, approvals, exportsList, activity,
            gwStatus, gwHealth, gwTools, pools, discovery,
-           telEvents, telClients, telGateway, claudePlugin] = results;
+           telEvents, telClients, telGateway, claudePlugin, selfTests,
+           supervisorStatus] = results;
     state.health = health || { status: 'unreachable', time: '' };
     state.dashboard = dashboard;
     state.clients = Array.isArray(clients) ? clients : [];
@@ -286,6 +295,8 @@ async function refreshAll() {
     state.telemetryClients = Array.isArray(telClients) ? telClients : [];
     state.telemetryGateway = telGateway;
     state.claudePlugin = claudePlugin;
+    state.selfTests = selfTests || null;
+    state.supervisorStatus = supervisorStatus || null;
     // Per-pool lease + saturation (best-effort; missing routes degrade silently)
     if (state.pools.length > 0) {
       const leaseFetches = state.pools.map((p) =>
@@ -570,6 +581,8 @@ function renderOverview() {
         <p class="muted">Host metrics are PDH-direct; <code>0%</code> means idle.</p>
       </article>
       ${renderClaudePluginCard()}
+      ${renderSelfTestPanel()}
+      ${renderSupervisorPanel()}
       ${renderSubAgentUtilizationPanel({ deck: 'overview' })}
       <article class="panel-block wide">
         <h3>Recent Telemetry Events</h3>
@@ -577,6 +590,308 @@ function renderOverview() {
       </article>
     </div>
   `;
+}
+
+// v0.9.75: visible self-test panel on the Overview deck. Mirrors the
+// shell's Self-Test card (state.selfTests is the same /api/self-tests
+// payload the shell consumes). Re-run button POSTs /api/self-tests/run
+// and replaces state.selfTests with the freshly-computed snapshot so
+// the panel updates immediately, without waiting for the next 8s
+// safety-net poll or the next SSE dashboard event.
+function renderSelfTestPanel() {
+  const s = state.selfTests || null;
+  const hasResults = !!(s && Array.isArray(s.results));
+  const passed = s && typeof s.passedCount === 'number' ? s.passedCount : 0;
+  const failed = s && typeof s.failedCount === 'number' ? s.failedCount : 0;
+  const total  = s && typeof s.totalCount === 'number' ? s.totalCount : 0;
+  const pending = !s || s.pending === true;
+
+  let tone = 'info';
+  let headline = '';
+  if (!s) {
+    tone = 'warn'; headline = 'Self-tests endpoint unavailable';
+  } else if (pending) {
+    tone = 'warn';
+    headline = 'Self-tests pending — first sweep runs ~3s after service start';
+  } else if (failed > 0) {
+    tone = 'bad';
+    headline = failed + ' of ' + total + ' probe' + (total === 1 ? '' : 's') + ' FAILED';
+  } else {
+    tone = 'good';
+    headline = 'All ' + passed + ' probe' + (passed === 1 ? '' : 's') + ' passed';
+  }
+
+  const sweep = s && (s.startedAtUtc || s.finishedAtUtc)
+    ? 'Last sweep: ' + escapeHtml(s.startedAtUtc || '') +
+      (s.finishedAtUtc && s.finishedAtUtc !== s.startedAtUtc ? ' → ' + escapeHtml(s.finishedAtUtc) : '')
+    : 'Probes: admin port + gateway state + every supervised pool + activity ring + telemetry sampler + worker exe presence.';
+
+  const rows = (hasResults ? s.results : [])
+    // failures float up; alphabetical within each bucket
+    .slice()
+    .sort((a, b) => (a.ok === b.ok ? (a.name < b.name ? -1 : 1) : (a.ok ? 1 : -1)))
+    .map((r) => {
+      const cls = r.ok ? 'self-test-row pass' : 'self-test-row fail';
+      const tag = r.ok ? 'PASS' : 'FAIL';
+      return '<div class="' + cls + '">'
+           + '<span class="self-test-tag">' + tag + '</span>'
+           + '<span class="self-test-name">' + escapeHtml(r.name || '') + '</span>'
+           + '<span class="self-test-dur">' + (r.durationMs || 0) + ' ms</span>'
+           + '<div class="self-test-msg">' + escapeHtml(r.message || '') + '</div>'
+           + '</div>';
+    }).join('');
+
+  return `
+    <article class="panel-block wide self-test-panel">
+      <div class="self-test-head">
+        <div class="self-test-summary">
+          <span class="self-test-eyebrow">SELF-TESTS</span>
+          <span class="self-test-headline ${tone}">${escapeHtml(headline)}</span>
+          <span class="muted">${sweep}</span>
+        </div>
+        <button type="button" class="route-button" data-action="rerun-selftests">Re-run</button>
+      </div>
+      <div class="self-test-list">
+        ${hasResults && rows
+          ? rows
+          : '<p class="muted">No probe results yet. Sweep finishes ~3s after service start.</p>'}
+      </div>
+    </article>
+  `;
+}
+
+// v0.9.75: re-run handler — POSTs /api/self-tests/run, swaps state.selfTests,
+// re-renders the current view. Same one-shot pattern as the shell button.
+async function rerunSelfTests() {
+  try {
+    const fresh = await fetch('/api/self-tests/run', { method: 'POST' })
+      .then((r) => r.ok ? r.json() : null);
+    if (fresh) state.selfTests = fresh;
+    renderCurrent();
+  } catch (e) {
+    console.warn('rerun-selftests failed', e);
+  }
+}
+
+// v0.9.91: relative-time formatter for the supervisor heartbeat.
+// Mirrors the WinUI Shell's formatRelativeUtcTime helper (shipped in
+// v0.9.90). Parses an ISO-8601 UTC stamp, computes delta vs now,
+// renders in operator-friendly buckets (Xs / Xm Ys / Xh Ym / Xd Yh).
+// Returns empty string on parse failure so callers can fall back to
+// the raw stamp. Future stamps (clock skew) render as 'just now'.
+function formatRelativeUtcTime(isoStampUtc) {
+  if (!isoStampUtc || typeof isoStampUtc !== 'string') return '';
+  const parsed = Date.parse(isoStampUtc);
+  if (Number.isNaN(parsed)) return '';
+  const deltaMs = Date.now() - parsed;
+  if (deltaMs < 0) return 'just now';
+  const sec = Math.floor(deltaMs / 1000);
+  if (sec < 60) return sec + 's ago';
+  if (sec < 3600) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return s === 0 ? (m + 'm ago') : (m + 'm ' + s + 's ago');
+  }
+  if (sec < 86400) {
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    return m === 0 ? (h + 'h ago') : (h + 'h ' + m + 'm ago');
+  }
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  return h === 0 ? (d + 'd ago') : (d + 'd ' + h + 'h ago');
+}
+
+// v0.9.95: future-direction relative-time formatter. Symmetric with
+// formatRelativeUtcTime; mirrors the WinUI Shell's formatFutureUtcTime
+// (shipped v0.9.94). Renders 'in Xs' / 'in Xm Ys' / 'in Xh Ym' / 'in
+// Xd Yh' for stamps in the future, 'expired Xs ago' (via the past
+// helper) for stamps already in the past, '' on parse failure.
+function formatFutureUtcTime(isoStampUtc) {
+  if (!isoStampUtc || typeof isoStampUtc !== 'string') return '';
+  const parsed = Date.parse(isoStampUtc);
+  if (Number.isNaN(parsed)) return '';
+  const deltaMs = parsed - Date.now();
+  if (deltaMs <= 0) {
+    const since = formatRelativeUtcTime(isoStampUtc);
+    return since ? ('expired ' + since) : 'expired';
+  }
+  const sec = Math.floor(deltaMs / 1000);
+  if (sec < 60) return 'in ' + sec + 's';
+  if (sec < 3600) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return s === 0 ? ('in ' + m + 'm') : ('in ' + m + 'm ' + s + 's');
+  }
+  if (sec < 86400) {
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    return m === 0 ? ('in ' + h + 'h') : ('in ' + h + 'h ' + m + 'm');
+  }
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  return h === 0 ? ('in ' + d + 'd') : ('in ' + d + 'd ' + h + 'h');
+}
+
+// v0.9.77: Supervisor Agent Assignment Wizard parity for the browser
+// dashboard. Mirrors the shell Overview card shipped in v0.9.76:
+// three single-selection radio inputs (chatgpt / claude / grok),
+// Generate Config & Save (POSTs /api/supervisor/config/generate then
+// triggers a Blob download with the model-specific filename), and a
+// Revoke Active button. Status row reflects state.supervisorStatus
+// on every refresh so the operator sees the same lifecycle the shell
+// surface shows.
+function renderSupervisorPanel() {
+  const s = state.supervisorStatus || null;
+  const provider = (s && s.activeProviderId) || '';
+  const mode = (s && s.mode) || 'autonomous_supervisor';
+  const stateLabel = (s && s.state) || 'off';
+  const displayName = (s && s.providerDisplayName) || '';
+  const active = !!(s && s.active);
+
+  let tone = 'info';
+  let headline = 'No supervisor assigned.';
+  let statusLine = 'Status: off. Pick exactly one provider and click Generate Config & Save.';
+  if (stateLabel === 'connected') {
+    tone = 'good';
+    headline = 'Active supervisor: ' + escapeHtml(displayName || provider);
+    // v0.9.91: relative-time formatting on the heartbeat. Parity with
+    // the WinUI Shell's v0.9.90 ApplySupervisorCard.
+    let heartbeatPhrase = '';
+    if (!s || !s.lastHeartbeatUtc) {
+      heartbeatPhrase = ' · Last heartbeat: (none yet)';
+    } else {
+      const relative = formatRelativeUtcTime(s.lastHeartbeatUtc);
+      heartbeatPhrase = relative
+        ? (' · Last heartbeat: ' + escapeHtml(relative))
+        : (' · Last heartbeat (UTC): ' + escapeHtml(s.lastHeartbeatUtc));
+    }
+    statusLine = 'Mode: ' + escapeHtml(mode) + ' · Status: connected' + heartbeatPhrase;
+  } else if (stateLabel === 'pending_connection' || stateLabel === 'config_generated') {
+    tone = 'warn';
+    headline = escapeHtml(displayName || provider) + ' supervisor pending connection';
+    // v0.9.95: future-relative expiry rendering. Pre-v0.9.95 the
+    // expiry was a raw UTC stamp; now it shows 'Expires: in 2h 14m
+    // (2026-05-10T...)' with the raw stamp in parens for cross-check.
+    let expiryPhrase = '';
+    if (s && s.expiresAtUtc) {
+      const expRelative = formatFutureUtcTime(s.expiresAtUtc);
+      expiryPhrase = expRelative
+        ? (' · Expires: ' + escapeHtml(expRelative) + ' (' + escapeHtml(s.expiresAtUtc) + ')')
+        : (' · Expires (UTC): ' + escapeHtml(s.expiresAtUtc));
+    }
+    statusLine = 'Status: ' + escapeHtml(stateLabel) + expiryPhrase
+      + '. Move the saved config to the LAN client and import it.';
+  } else if (stateLabel === 'error') {
+    tone = 'bad';
+    headline = escapeHtml(displayName || provider) + ' supervisor error';
+    statusLine = (s && s.lastErrorMessage)
+      ? 'Error: ' + escapeHtml(s.lastErrorMessage)
+      : 'Status: error.';
+  } else if (stateLabel === 'revoked') {
+    tone = 'warn';
+    headline = escapeHtml(displayName || provider) + ' supervisor revoked';
+    statusLine = 'Status: revoked. Select a provider and Generate Config to assign a new supervisor.';
+  } else if (stateLabel === 'disconnected') {
+    tone = 'warn';
+    headline = escapeHtml(displayName || provider) + ' supervisor disconnected';
+    statusLine = 'Status: disconnected. The remote client has not heartbeated recently.';
+  }
+
+  const row = (id, label, desc) => {
+    const checked = (provider === id) ? ' checked' : '';
+    return `
+      <label class="supervisor-row">
+        <input type="radio" name="supervisor-provider" value="${id}"${checked} data-action="supervisor-select" />
+        <div class="supervisor-row-body">
+          <div class="supervisor-row-name">${label}</div>
+          <div class="supervisor-row-desc muted">${desc}</div>
+        </div>
+      </label>
+    `;
+  };
+
+  return `
+    <article class="panel-block wide supervisor-panel">
+      <div class="self-test-head">
+        <div class="self-test-summary">
+          <span class="self-test-eyebrow">SUPERVISOR AGENT</span>
+          <span class="self-test-headline ${tone}">${headline}</span>
+          <span class="muted">Choose one AI model to supervise coding agents and make project decisions through MCOS. Generate Config will download a provider-specific JSON; move it to the LAN client running that model and import it there.</span>
+        </div>
+      </div>
+      <div class="supervisor-rows">
+        ${row('chatgpt', 'ChatGPT', 'Recommended for design-authority supervision and project-level decision review.')}
+        ${row('claude',  'Claude',  'Recommended for Claude Code coordination and local coding-agent workflows.')}
+        ${row('grok',    'Grok',    'Recommended for alternate review or independent validation.')}
+      </div>
+      <div class="supervisor-actions">
+        <button type="button" class="route-button accent" data-action="supervisor-generate"${provider ? '' : ' disabled'}>Generate Config &amp; Save</button>
+        <button type="button" class="route-button" data-action="supervisor-revoke"${active ? '' : ' disabled'}>Revoke Active</button>
+      </div>
+      <p class="supervisor-status muted">${statusLine}</p>
+    </article>
+  `;
+}
+
+// v0.9.77: Generate the supervisor config via the runtime, then trigger
+// a browser-side download of the embedded config object with the
+// suggested filename. Same lifecycle the shell wizard drives, just
+// without a native FileSavePicker -- the browser save-as dialog opens
+// automatically on Blob URL navigation with the download attribute.
+async function generateSupervisorConfig(providerId) {
+  if (!providerId) return;
+  let response;
+  try {
+    response = await fetch('/api/supervisor/config/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providerId: providerId, mode: 'autonomous_supervisor', exclusive: true })
+    });
+  } catch (e) {
+    console.warn('supervisor generate transport error', e);
+    return;
+  }
+  if (!response.ok) {
+    let detail = '';
+    try { detail = JSON.stringify(await response.json()); } catch (e2) { detail = String(response.status); }
+    console.warn('supervisor generate failed', detail);
+    await refreshAll();
+    return;
+  }
+  let payload;
+  try { payload = await response.json(); } catch (e3) { return; }
+  if (!payload || !payload.ok || !payload.config) {
+    await refreshAll();
+    return;
+  }
+  // Save the config JSON to disk via a Blob URL + anchor click. Default
+  // filename comes from the server-side issuance result; falls back to
+  // the spec's canonical name when missing.
+  const fileName = payload.fileName || ('mcos-supervisor-' + providerId + '.config.json');
+  const blob = new Blob([JSON.stringify(payload.config, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  await refreshAll();
+}
+
+async function revokeSupervisor() {
+  try {
+    await fetch('/api/supervisor/assignment/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Browser dashboard Revoke Active button.' })
+    });
+  } catch (e) {
+    console.warn('supervisor revoke transport error', e);
+  }
+  await refreshAll();
 }
 
 // v0.7.1: per-sub-agent live utilization panel.
@@ -605,10 +920,12 @@ function renderSubAgentUtilizationPanel(options) {
     `;
   }
   const cards = stats.map(renderSubAgentCard).join('');
+  const summaryBanner = renderRuntimeStatSummaryBanner(stats, 'sub-agent');
   return `
     <article class="panel-block wide subagent-panel">
       <h3>Sub-Agents (${stats.length})</h3>
       <p class="muted">Live utilization. Per-sub-agent leases routed through the gateway, capacity = readyInstances * maxLeasesPerInstance. Autoscale fires when every Ready instance is at capacity and the pool isn't yet at <code>scalePolicy.maxInstances</code>.</p>
+      ${summaryBanner}
       <div class="subagent-card-grid">
         ${cards}
       </div>
@@ -664,6 +981,14 @@ function renderSubAgentCard(stat) {
     ? `<p class="muted subagent-probe-line">Last probed: ${escapeHtml(relativeAgo(stat.lastProbedAtUtc))}</p>`
     : '';
 
+  // v0.9.57: surface the v0.9.56 honest-unavailable diagnostic block.
+  // Pre-v0.9.57 the card showed only a red dot for unreachable entries
+  // and operators had to query /api/diagnostics/runtime-stats to see
+  // why. Now the card carries installState, unavailableReason,
+  // lastErrorMessage, and installHint so the operator can read
+  // "what does this entry need from me?" without leaving the page.
+  const diagnosticBlock = renderRuntimeStatDiagnostic(stat);
+
   return `
     <div class="subagent-card" data-sub-agent-id="${escapeHtml(stat.subAgentId)}">
       <div class="subagent-card-head">
@@ -680,10 +1005,90 @@ function renderSubAgentCard(stat) {
       ${endpointLine}
       ${poolLine}
       ${probeLine}
+      ${diagnosticBlock}
       <div class="subagent-clients">
         <h5>Active clients (${clients.length})</h5>
         ${clientRows}
       </div>
+    </div>
+  `;
+}
+
+// v0.9.57: render the v0.9.56 honest-unavailable diagnostic fields
+// (installState / unavailableReason / lastErrorMessage / lastErrorAtUtc
+// / installHint) into a small block on each sub-agent + MCP-server
+// card. Returns an empty string when no diagnostic info is available
+// (older runtime) so the card layout stays compact.
+function renderRuntimeStatDiagnostic(stat) {
+  const installState   = (stat && stat.installState)   ? String(stat.installState)   : '';
+  const unavailable    = (stat && stat.unavailableReason) ? String(stat.unavailableReason) : '';
+  const errorMsg       = (stat && stat.lastErrorMessage)  ? String(stat.lastErrorMessage)  : '';
+  const errorAtUtc     = (stat && stat.lastErrorAtUtc)    ? String(stat.lastErrorAtUtc)    : '';
+  const hint           = (stat && stat.installHint)       ? String(stat.installHint)       : '';
+  if (!installState && !unavailable && !errorMsg && !hint) return '';
+
+  // Map installState to a tone for the pill chip.
+  let pillTone = 'info';
+  let pillLabel = installState || 'unknown';
+  if (installState === 'installed_and_supervised') {
+    pillTone = 'good';
+    pillLabel = 'supervised';
+  } else if (installState === 'online_via_admin_port' || installState === 'online_via_external_listener') {
+    pillTone = 'warn';
+    pillLabel = installState === 'online_via_admin_port' ? 'online (admin port)' : 'online (external)';
+  } else if (installState === 'supervised_pool_not_ready') {
+    pillTone = 'critical';
+    pillLabel = 'pool stuck';
+  } else if (installState === 'awaiting_pool_registration') {
+    pillTone = 'critical';
+    pillLabel = 'no pool registered';
+  } else if (installState === 'unknown' || installState === '') {
+    pillTone = 'info';
+    pillLabel = 'unclassified';
+  }
+
+  // Only render the error / hint lines when there's content; healthy
+  // entries get just the pill chip.
+  const reasonChip = unavailable
+    ? `<span class="subagent-diag-reason">${escapeHtml(unavailable)}</span>`
+    : '';
+  const errorLine = errorMsg
+    ? `<p class="subagent-diag-error muted"><strong>Last probe:</strong> ${escapeHtml(errorMsg)}${errorAtUtc ? ` <span class="muted">(${escapeHtml(relativeAgo(errorAtUtc))})</span>` : ''}</p>`
+    : '';
+  const hintLine = hint
+    ? `<p class="subagent-diag-hint"><strong>Next step:</strong> ${escapeHtml(hint)}</p>`
+    : '';
+
+  // v0.9.58: surface the optional installCommand as a copy-paste-able
+  // code block so operators can install a known canonical npm package
+  // for the entry without having to guess the vendor. Only renders
+  // when the runtime emits a non-empty installCommand for the entry
+  // id (currently: chrome-devtools and the four already-pooled MCPs).
+  // v0.10.0: playwright removed from the catalog and from this list.
+  // v0.9.60: when the runtime has detected the canonical package
+  // already exists on disk, swap the "Install:" line for an
+  // "Already installed:" line so operators know they can skip
+  // straight to pool registration.
+  const installCmd = (stat && stat.installCommand) ? String(stat.installCommand) : '';
+  const packageDetected = !!(stat && stat.installPackageDetected);
+  let installCmdLine = '';
+  if (installCmd) {
+    if (packageDetected) {
+      installCmdLine = `<p class="subagent-diag-install-cmd"><strong>Already installed:</strong> <code>${escapeHtml(installCmd.replace(/^npm install -g /, ''))}</code> <span class="subagent-diag-detected-pill">detected</span></p>`;
+    } else {
+      installCmdLine = `<p class="subagent-diag-install-cmd"><strong>Install:</strong> <code>${escapeHtml(installCmd)}</code></p>`;
+    }
+  }
+
+  return `
+    <div class="subagent-diagnostic-block">
+      <div class="subagent-diag-pill-row">
+        <span class="subagent-diag-pill ${pillTone}">${escapeHtml(pillLabel)}</span>
+        ${reasonChip}
+      </div>
+      ${errorLine}
+      ${hintLine}
+      ${installCmdLine}
     </div>
   `;
 }
@@ -787,6 +1192,31 @@ function bindOverviewHandlers() {
     // Use 'change' instead of 'click' so keyboard activation (space bar
     // when the checkbox is focused) also drives the toggle.
     toggleSwitch.addEventListener('change', toggleClaudePlugin);
+  }
+  // v0.9.75: re-run self-tests button. POSTs /api/self-tests/run and
+  // re-renders the panel with the freshly-computed snapshot.
+  const rerunBtn = document.querySelector('[data-action="rerun-selftests"]');
+  if (rerunBtn) {
+    rerunBtn.addEventListener('click', rerunSelfTests);
+  }
+  // v0.9.77: Supervisor Agent radio selection + Generate / Revoke.
+  document.querySelectorAll('[data-action="supervisor-select"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      const btn = document.querySelector('[data-action="supervisor-generate"]');
+      if (btn) btn.disabled = !radio.checked;
+    });
+  });
+  const supGen = document.querySelector('[data-action="supervisor-generate"]');
+  if (supGen) {
+    supGen.addEventListener('click', () => {
+      const checked = document.querySelector('input[name="supervisor-provider"]:checked');
+      if (!checked) return;
+      generateSupervisorConfig(checked.value);
+    });
+  }
+  const supRev = document.querySelector('[data-action="supervisor-revoke"]');
+  if (supRev) {
+    supRev.addEventListener('click', revokeSupervisor);
   }
 }
 
@@ -1309,14 +1739,85 @@ function renderMcpServerUtilizationPanel(options) {
     `;
   }
   const cards = stats.map(renderMcpServerCard).join('');
+  const summaryBanner = renderRuntimeStatSummaryBanner(stats, 'MCP server');
   return `
     <article class="panel-block wide subagent-panel">
       <h3>MCP Servers (${stats.length})</h3>
       <p class="muted">Live utilization. Probes reachability per server (TCP connect, 200 ms timeout). Active leases show which LAN clients are using each server right now. Same telemetry shape as sub-agent cards.</p>
+      ${summaryBanner}
       <div class="subagent-card-grid">
         ${cards}
       </div>
     </article>
+  `;
+}
+
+// v0.9.59: at-a-glance summary banner above each card grid. Pre-v0.9.59
+// the grid header read "MCP Servers (28)" -- operators saw a count but
+// no breakdown of how many were actually live. v0.9.59 inserts a
+// summary line right under the heading: total / reachable / unreachable
+// + an installState bucket pill row (supervised / online / pool stuck /
+// no pool / unclassified). The pills are clickable jumpers in a future
+// iteration; for now they are read-only chips. Reads runtime stats
+// already in state.dashboard so no extra HTTP call.
+function renderRuntimeStatSummaryBanner(stats, kindLabel) {
+  if (!stats || stats.length === 0) return '';
+  const total = stats.length;
+  let reachable = 0;
+  const buckets = {
+    installed_and_supervised: 0,
+    online_via_admin_port: 0,
+    online_via_external_listener: 0,
+    supervised_pool_not_ready: 0,
+    awaiting_pool_registration: 0,
+    unknown: 0
+  };
+  let withInstallCommand = 0;
+  stats.forEach((s) => {
+    if (s.reachable) reachable += 1;
+    const key = (s.installState && buckets.hasOwnProperty(s.installState))
+      ? s.installState
+      : 'unknown';
+    buckets[key] += 1;
+    if (s.installCommand && s.installCommand.length) withInstallCommand += 1;
+  });
+  const unreachable = total - reachable;
+  const reachTone = reachable === total ? 'good'
+                  : reachable > 0       ? 'warn'
+                  : 'critical';
+
+  // Build the bucket pill row. Suppress zero-count buckets so the
+  // banner stays compact; an operator on a clean install with all
+  // entries supervised sees only the green "supervised: N" pill.
+  const pillSpec = [
+    { key: 'installed_and_supervised',     label: 'supervised',           tone: 'good'     },
+    { key: 'online_via_admin_port',        label: 'online (admin port)',  tone: 'warn'     },
+    { key: 'online_via_external_listener', label: 'online (external)',    tone: 'warn'     },
+    { key: 'supervised_pool_not_ready',    label: 'pool stuck',           tone: 'critical' },
+    { key: 'awaiting_pool_registration',   label: 'no pool registered',   tone: 'critical' },
+    { key: 'unknown',                      label: 'unclassified',         tone: 'info'     }
+  ];
+  const pills = pillSpec
+    .filter((p) => buckets[p.key] > 0)
+    .map((p) => `<span class="subagent-summary-pill ${p.tone}">${escapeHtml(p.label)}: ${buckets[p.key]}</span>`)
+    .join('');
+
+  const installLine = withInstallCommand > 0
+    ? `<p class="subagent-summary-install muted">${withInstallCommand} of the placeholders carry a known canonical install command — copy it from the entry's diagnostic block.</p>`
+    : '';
+
+  return `
+    <div class="subagent-summary-banner">
+      <div class="subagent-summary-headline">
+        <span class="subagent-summary-count ${reachTone}">${reachable} / ${total} reachable</span>
+        <span class="subagent-summary-sep">·</span>
+        <span class="muted">${unreachable} ${kindLabel}${unreachable === 1 ? '' : 's'} need attention</span>
+      </div>
+      <div class="subagent-summary-pill-row">
+        ${pills}
+      </div>
+      ${installLine}
+    </div>
   `;
 }
 
@@ -1500,7 +2001,16 @@ function renderGatewayPanel() {
   const healthLower = (health.status || 'unknown').toString().toLowerCase();
   const stateTone = stateLower === 'running' ? 'good' : (stateLower === 'failed' ? 'bad' : 'warn');
   const healthTone = healthLower === 'healthy' ? 'good' : (healthLower === 'unhealthy' ? 'bad' : 'warn');
-  const mcpUrl = status.mcpUrl || (state.discovery && state.discovery.gateway && state.discovery.gateway.mcpUrl) || '—';
+  // v0.9.74: route every gateway-URL render through resolveDisplayUrl so a
+  // wildcard bindAddress (0.0.0.0 / [::]) doesn't render as the literal
+  // listen-on-all-interfaces sentinel on this card while the Overview
+  // card 60 lines above shows the resolved LAN IP. Single source of
+  // truth for "what does an actual client type into their config?"
+  const mcpUrlRaw = status.mcpUrl || (state.discovery && state.discovery.gateway && state.discovery.gateway.mcpUrl) || '—';
+  const t = (state.dashboard && state.dashboard.telemetry) || {};
+  const lanIp = t.primaryIpAddress || (state.discovery && state.discovery.serverIpAddress) || '';
+  const mcpUrl = resolveDisplayUrl(mcpUrlRaw, lanIp);
+  const mcpUrlListen = mcpUrlRaw && mcpUrl !== mcpUrlRaw ? mcpUrlRaw : '';
   const adapter = status.adapterType || (state.discovery && state.discovery.gateway && state.discovery.gateway.type) || 'unknown';
   return `
     <div class="gateway-grid">
@@ -1522,6 +2032,9 @@ function renderGatewayPanel() {
       <article class="panel-block wide">
         <h3>Advertised MCP URL</h3>
         <p><code>${escapeHtml(mcpUrl)}</code></p>
+        ${mcpUrlListen
+          ? `<p class="muted">Listening on <code>${escapeHtml(mcpUrlListen)}</code> (wildcard bind; LAN clients connect to the resolved IP above).</p>`
+          : ''}
         <p class="muted">Clients on the trusted LAN connect here. <code>auth=none</code>; <code>trust=lan</code> per ADR-002.</p>
       </article>
       <article class="panel-block wide">
@@ -1828,6 +2341,13 @@ function renderTelemetryClients() {
   // v0.7.1: the Telemetry destination now also surfaces the per-sub-agent
   // utilization panel so operators looking at "what's hot right now"
   // don't have to bounce to the Overview deck. Same data, same cards.
+  // v0.9.70: MCP server card grid is now also surfaced on the Telemetry
+  // deck per operator directive — each MCP server gets its own small
+  // card with status indicator, usage bar, and connected-client list,
+  // identical visual shape to the sub-agent cards above. Reads
+  // state.dashboard.mcpServerRuntimeStats which the runtime populates
+  // every snapshot tick.
+  const mcpServerPanel = renderMcpServerUtilizationPanel({ deck: 'telemetry' });
   const subAgentPanel = renderSubAgentUtilizationPanel({ deck: 'telemetry' });
   if (clients.length === 0) {
     return `
@@ -1835,6 +2355,7 @@ function renderTelemetryClients() {
         <h3>No connected clients</h3>
         <p class="muted">No client has POSTed <code>/api/telemetry/heartbeat</code> yet. Clients self-report; metrics they don't supply render as "unavailable" rather than "0%" (ADR-002 §9).</p>
       </article>
+      ${mcpServerPanel}
       ${subAgentPanel}
     `;
   }
@@ -1868,6 +2389,7 @@ function renderTelemetryClients() {
       </table>
       <p class="muted">Cells reading <em>unavailable</em> mean the client did not supply that metric in its heartbeat. They are <strong>never</strong> rendered as <code>0%</code>.</p>
     </article>
+    ${mcpServerPanel}
     ${subAgentPanel}
   `;
 }
@@ -1881,9 +2403,16 @@ function renderOnboardingPanel() {
   const manualInstructions = profile.manualInstructions || [];
   const verification = profile.verificationSteps || [];
   const caveats = profile.caveats || [];
-  const gatewayUrl = profile.gatewayMcpUrl
+  // v0.9.74: same wildcard-substitution as the gateway and overview
+  // panels so onboarding always advertises the IP a remote client can
+  // actually connect to, never the literal listen-on-all-interfaces
+  // sentinel.
+  const gatewayUrlRaw = profile.gatewayMcpUrl
     || (state.discovery && state.discovery.gateway && state.discovery.gateway.mcpUrl)
     || '—';
+  const onboardLanIp = ((state.dashboard && state.dashboard.telemetry) || {}).primaryIpAddress
+    || (state.discovery && state.discovery.serverIpAddress) || '';
+  const gatewayUrl = resolveDisplayUrl(gatewayUrlRaw, onboardLanIp);
   return `
     <article class="panel-block wide onboarding-panel">
       <div class="onboarding-tabs">
@@ -1963,6 +2492,17 @@ function renderDiscoveryPanel() {
   const gw = doc.gateway || {};
   const onboardingPaths = (doc.onboarding && doc.onboarding.paths) || [];
   const governance = doc.governance || {};
+  // v0.9.74: substitute wildcard listen address with the resolved LAN
+  // IP for display only -- the discovery doc itself carries the
+  // configured value verbatim for archival use, but the operator
+  // looking at this card wants to know "what URL do I tell my
+  // teammates to type". Ship both: resolved URL prominently, raw
+  // listen string in muted text below for transparency.
+  const discLanIp = ((state.dashboard && state.dashboard.telemetry) || {}).primaryIpAddress
+    || doc.serverIpAddress || '';
+  const gwMcpUrlRender = resolveDisplayUrl(gw.mcpUrl || '', discLanIp) || '—';
+  const gwHealthUrlRender = resolveDisplayUrl(gw.healthUrl || '', discLanIp) || '—';
+  const gwMcpUrlListen = (gw.mcpUrl && gwMcpUrlRender !== gw.mcpUrl) ? gw.mcpUrl : '';
   return `
     <article class="panel-block wide discovery-doc">
       <h3>Discovery document</h3>
@@ -1973,13 +2513,15 @@ function renderDiscoveryPanel() {
         <li><span>Auth</span><strong>${escapeHtml(doc.auth || 'none')}</strong></li>
         <li><span>Trust</span><strong>${escapeHtml(doc.trust || 'lan')}</strong></li>
         <li><span>Protocol versions</span><strong>${escapeHtml((doc.protocolVersions || []).join(', '))}</strong></li>
+        <li><span>Server IP</span><strong><code>${escapeHtml(doc.serverIpAddress || '—')}</code></strong></li>
       </ul>
       <h3>Gateway</h3>
       <ul class="kv-list">
         <li><span>Type</span><strong>${escapeHtml(gw.type || '—')}</strong></li>
         <li><span>State</span><strong>${escapeHtml(gw.state || '—')}</strong></li>
-        <li><span>MCP URL</span><strong><code>${escapeHtml(gw.mcpUrl || '—')}</code></strong></li>
-        <li><span>Health URL</span><strong><code>${escapeHtml(gw.healthUrl || '—')}</code></strong></li>
+        <li><span>MCP URL</span><strong><code>${escapeHtml(gwMcpUrlRender)}</code></strong></li>
+        <li><span>Health URL</span><strong><code>${escapeHtml(gwHealthUrlRender)}</code></strong></li>
+        ${gwMcpUrlListen ? `<li><span>Bound on</span><strong><code>${escapeHtml(gwMcpUrlListen)}</code></strong> <span class="muted">(wildcard listener; the resolved URL above is what clients connect to)</span></li>` : ''}
       </ul>
       <h3>Governance</h3>
       <ul class="kv-list">
@@ -2132,11 +2674,88 @@ function boot() {
   renderHeading();
   renderCurrent();
   refreshAll();
-  // 2-second cadence matches the WinUI shell's live tick. Per-instance
-  // CPU + RAM telemetry needs at least one full cycle between samples
-  // to compute a delta, so 2s gives a fresh reading every other tick
-  // — fast enough to read as real-time, slow enough not to flood.
-  setInterval(refreshAll, 2000);
+  // v0.9.71: real-time push via Server-Sent Events. Open a stream on
+  // /api/events; server emits 'dashboard' events every snapshot tick
+  // (~1s, only on actual change) and 'activity' events as the
+  // activity ring appends. Polling continues at a much slower 8s
+  // cadence as a safety net if the SSE connection dies for some
+  // reason (proxy, network blip) and EventSource hasn't reconnected
+  // yet. The poll-cycle was 2s pre-v0.9.71; reducing it to 8s under
+  // SSE means the dashboard stays "live" without redundant polling.
+  startRealtimeStream();
+  setInterval(refreshAll, 8000);
+}
+
+let realtimeStream = null;
+let realtimeLastSnapshotAt = 0;
+function startRealtimeStream() {
+  if (typeof EventSource === 'undefined') {
+    console.warn('EventSource not supported; sticking with polling.');
+    return;
+  }
+  try { if (realtimeStream) realtimeStream.close(); } catch (e) {}
+  const stream = new EventSource('/api/events');
+  realtimeStream = stream;
+
+  stream.addEventListener('open', () => {
+    if (typeof state === 'object') {
+      state.realtimeConnected = true;
+    }
+    updateRealtimeChip(true);
+  });
+
+  stream.addEventListener('dashboard', (evt) => {
+    try {
+      const snap = JSON.parse(evt.data);
+      state.dashboard = snap;
+      realtimeLastSnapshotAt = Date.now();
+      // Re-render the active view using the freshly-pushed snapshot.
+      renderCurrent();
+      updateRealtimeChip(true);
+    } catch (e) {
+      console.warn('dashboard SSE parse failed', e);
+    }
+  });
+
+  stream.addEventListener('activity', (evt) => {
+    try {
+      const newEvent = JSON.parse(evt.data);
+      if (!state.activity) state.activity = { events: [], highWaterMarkId: '0' };
+      state.activity.events = (state.activity.events || []).concat([newEvent]);
+      // Bound the local cache at 500 most-recent events to keep the
+      // browser memory profile sane on a long-lived stream.
+      if (state.activity.events.length > 500) {
+        state.activity.events = state.activity.events.slice(-500);
+      }
+      state.activity.highWaterMarkId = newEvent.id || state.activity.highWaterMarkId;
+      // Only re-render activity-bearing decks so we don't churn
+      // unrelated views on every event.
+      const dest = state.destination || 'overview';
+      if (dest === 'overview' || dest === 'activity' || dest === 'telemetry') {
+        renderCurrent();
+      }
+    } catch (e) {
+      console.warn('activity SSE parse failed', e);
+    }
+  });
+
+  stream.addEventListener('error', () => {
+    state.realtimeConnected = false;
+    updateRealtimeChip(false);
+    // EventSource auto-reconnects unless we close it. Let it try.
+  });
+}
+
+function updateRealtimeChip(connected) {
+  const chip = document.getElementById('realtimeChip');
+  if (!chip) return;
+  if (connected) {
+    chip.dataset.tone = 'success';
+    chip.textContent = 'LIVE';
+  } else {
+    chip.dataset.tone = 'warn';
+    chip.textContent = 'POLLING';
+  }
 }
 
 if (document.readyState === 'loading') {

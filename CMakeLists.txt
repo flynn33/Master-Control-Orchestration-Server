@@ -22,6 +22,17 @@ endif()
 # ---------------------------------------------------------------------------
 # Version: single source of truth is VERSION.json
 # ---------------------------------------------------------------------------
+# v0.9.5: wire VERSION.json into CMake's configure-time depend graph so a
+# bump to current_version triggers a re-configure on the next build, which
+# in turn regenerates MasterControlVersion.h and propagates the new
+# MASTERCONTROL_VERSION literal into every TU that includes it. Pre-v0.9.5
+# CMake only watched CMakeLists.txt, so a VERSION.json bump alone left
+# MasterControlVersion.h stale and the running binary kept reporting the
+# previous version through the MCP initialize handshake until an unrelated
+# CMakeLists.txt edit forced a reconfigure.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.json")
+
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.json" _mc_version_json)
 string(JSON _mc_current_version GET "${_mc_version_json}" "current_version")
 # Strip any pre-release suffix (e.g., "0.3.0-rc.1" → "0.3.0") for CMake project()
@@ -157,6 +168,26 @@ if(WIN32 AND MASTERCONTROL_POWERSHELL)
         add_dependencies(${MASTERCONTROL_ACCEPTANCE_TARGET} IDE_PACKAGE)
         set_target_properties(${MASTERCONTROL_ACCEPTANCE_TARGET} PROPERTIES FOLDER "IDEValidationTargets")
     endforeach()
+
+    # v0.9.80: DEPLOY_LOCAL_LIVE custom target. Invokes
+    # scripts/Deploy-LocalLive.ps1 against the active preset's build
+    # tree. The script stops the MasterControlProgram service, kills
+    # any running MasterControlShell, copies the freshly-built
+    # MasterControlServiceHost.exe + MasterControlShell.exe + the
+    # share/MasterControlOrchestrationServer/web/* assets into the
+    # spaces-path live install, restarts the service, and probes
+    # /api/version + self-tests + supervisor as a smoke check. Pass
+    # the WiX MSI installer when you need a clean install; this target
+    # is the hot-patch path for development.
+    set(MASTERCONTROL_DEPLOY_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/Deploy-LocalLive.ps1")
+    add_custom_target(DEPLOY_LOCAL_LIVE
+        COMMAND "${MASTERCONTROL_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass -File "${MASTERCONTROL_DEPLOY_SCRIPT}" -BuildDir "${CMAKE_BINARY_DIR}" -RelaunchShell
+        USES_TERMINAL
+        VERBATIM
+        COMMENT "Hot-deploy the active build into the live service path (Admin required)"
+    )
+    add_dependencies(DEPLOY_LOCAL_LIVE ${MASTERCONTROL_RUNTIME_TARGETS})
+    set_target_properties(DEPLOY_LOCAL_LIVE PROPERTIES FOLDER "IDEValidationTargets")
 endif()
 
 install(

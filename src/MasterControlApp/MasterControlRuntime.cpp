@@ -27,6 +27,7 @@
 #include <bcrypt.h>
 #include <iomanip>
 #include "MasterControl/McpGatewayAdapters.h"
+#include "SupervisorAssignmentService.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -62,6 +63,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace MasterControl {
 
@@ -213,6 +215,47 @@ std::string resolveMcosServerHost(const AppConfiguration& configuration) {
         return configuration.activeProfile.preferredBindAddress;
     }
     return "127.0.0.1";
+}
+
+// v0.9.86: shared wildcard-bind substitution. Pre-v0.9.86 three route
+// handlers (/api/health/summary, /api/gateway/status, /api/gateway/
+// health) each carried their own inline lambda that did this work; v0.9.86
+// hoists the logic to one named helper so the substitution rule lives in
+// one place and the route handlers shrink to a single call. Walks the
+// same chain resolveMcosServerHost uses (bindAddress -> activeProfile
+// .preferredBindAddress -> 127.0.0.1), then substitutes any of the
+// three wildcard host forms in both URL-prefix and free-text positions.
+std::string substituteWildcardHostInUrl(const std::string& raw,
+                                          const AppConfiguration& configuration) {
+    if (raw.empty()) return raw;
+    std::string lanIp;
+    const auto& bindAddress = configuration.bindAddress;
+    const auto& preferred = configuration.activeProfile.preferredBindAddress;
+    if (!bindAddress.empty() && bindAddress != "0.0.0.0"
+        && bindAddress != "::" && bindAddress != "[::]") {
+        lanIp = bindAddress;
+    }
+    if ((lanIp.empty() || lanIp == "0.0.0.0")
+        && !preferred.empty() && preferred != "0.0.0.0") {
+        lanIp = preferred;
+    }
+    if (lanIp.empty() || lanIp == "0.0.0.0") {
+        lanIp = "127.0.0.1";
+    }
+    std::string out = raw;
+    for (const auto* wildcardForm : { "0.0.0.0", "[::]", "[::0]" }) {
+        const std::string asUrlPattern = std::string("://") + wildcardForm + ":";
+        const auto urlPos = out.find(asUrlPattern);
+        if (urlPos != std::string::npos) {
+            out.replace(urlPos + 3, std::string(wildcardForm).size(), lanIp);
+        }
+        while (true) {
+            const auto narrativePos = out.find(std::string("http://") + wildcardForm);
+            if (narrativePos == std::string::npos) break;
+            out.replace(narrativePos + 7, std::string(wildcardForm).size(), lanIp);
+        }
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1365,6 +1408,32 @@ bool isBlank(const std::string& value) {
         [](const unsigned char character) { return std::isspace(character) != 0; });
 }
 
+// v0.9.53: shared validator for any operator-supplied resource id that
+// will be embedded in a URL path segment (poolId, clientId,
+// mcpServerId, subAgentId, groupId). Restricts to ASCII letters,
+// digits, '-', '_', '.' -- the same character set every existing
+// operator entity already uses (baseline-tools, sequential-thinking,
+// etc.). Pre-v0.9.52 the only validation was non-empty / non-blank;
+// a probe with id='foo/bar' registered the entity, then the
+// /api/<resource>/{id} routes split the slash into a sub-resource
+// segment and the entity was unreachable for direct GET / DELETE.
+// Empty input is rejected by the caller's existing isBlank check;
+// this helper assumes a non-empty trimmed string.
+bool isSafeUrlSegmentId(const std::string& value) {
+    if (value.empty()) return false;
+    for (const unsigned char c : value) {
+        const bool ok = (c >= 'a' && c <= 'z')
+                     || (c >= 'A' && c <= 'Z')
+                     || (c >= '0' && c <= '9')
+                     || c == '-' || c == '_' || c == '.';
+        if (!ok) return false;
+    }
+    return true;
+}
+
+constexpr const char* kSafeIdRejectionMessage =
+    "Id must be ASCII letters, digits, '-', '_', or '.' (no slashes, whitespace, or other URL-unsafe characters).";
+
 bool pathIsWithinRoot(const std::filesystem::path& candidate, const std::filesystem::path& root) {
     const auto normalizedCandidate = lowercase(std::filesystem::weakly_canonical(candidate).generic_string());
     auto normalizedRoot = lowercase(std::filesystem::weakly_canonical(root).generic_string());
@@ -1773,6 +1842,33 @@ public:
         if (!loaded) {
             state_->configuration = buildDefaultConfiguration();
             (void)persistLocked();
+            return;
+        }
+
+        // v0.10.0: prune deprecated endpoint IDs that the operator has
+        // had removed from the catalog. Existing installs may still
+        // carry these in seededEndpoints from an older default seed;
+        // they would otherwise persist forever even after the catalog
+        // change because the loader replays whatever is on disk. The
+        // prune is idempotent and only rewrites the config file when
+        // it actually removes something, so subsequent boots are no-ops.
+        static const std::vector<std::string> kDeprecatedEndpointIds = {
+            "playwright",
+            "docker-control"
+        };
+        auto& seeded = state_->configuration.activeProfile.seededEndpoints;
+        const auto sizeBefore = seeded.size();
+        seeded.erase(
+            std::remove_if(seeded.begin(), seeded.end(),
+                [](const RuntimeEndpoint& ep) {
+                    for (const auto& deprecated : kDeprecatedEndpointIds) {
+                        if (ep.id == deprecated) return true;
+                    }
+                    return false;
+                }),
+            seeded.end());
+        if (seeded.size() != sizeBefore) {
+            (void)persistLocked();
         }
     }
 
@@ -1906,10 +2002,28 @@ HostTelemetrySnapshot WindowsHostTelemetryService::captureSnapshot() {
 }
 
 std::string WindowsHostTelemetryService::readComputerName() {
-    char buffer[MAX_COMPUTERNAME_LENGTH + 1]{};
-    DWORD size = MAX_COMPUTERNAME_LENGTH + 1;
-    if (GetComputerNameA(buffer, &size) == 0) {
-        return "MASTER-CONTROL";
+    // v0.9.30: use the DNS hostname (no 15-char cap) instead of the
+    // NetBIOS name. Pre-v0.9.30 this called GetComputerNameA which
+    // returns ComputerNamePhysicalNetBIOS by default -- capped at
+    // MAX_COMPUTERNAME_LENGTH = 15 by the NetBIOS protocol. Hosts
+    // whose actual name is longer ("PC-GAMING-R7-5800X" -> truncated
+    // to "PC-GAMING-R7-58") had their hostName silently chopped in
+    // /api/beacon, /api/dashboard, and any client surface that read
+    // it. The bug-hunt found this because the worker's tools/call
+    // host_info reports the full hostname (Win32 differs by API),
+    // making the truncation a clear inconsistency between MCOS-
+    // surfaced identity and worker-surfaced identity. RFC 1035 caps
+    // a DNS hostname at 255 octets so a 256-byte buffer suffices.
+    char buffer[256]{};
+    DWORD size = sizeof(buffer);
+    if (GetComputerNameExA(ComputerNameDnsHostname, buffer, &size) == 0) {
+        // Fall back to the NetBIOS API only if the DNS query fails
+        // outright -- truncated-but-present beats nothing.
+        DWORD legacySize = MAX_COMPUTERNAME_LENGTH + 1;
+        if (GetComputerNameA(buffer, &legacySize) == 0) {
+            return "MASTER-CONTROL";
+        }
+        return std::string(buffer, legacySize);
     }
     return std::string(buffer, size);
 }
@@ -2326,6 +2440,10 @@ public:
         if (subAgent.id.empty() || isBlank(subAgent.id)) {
             return OperationResult{ false, false, "Sub-agent ID is required." };
         }
+        if (!isSafeUrlSegmentId(trimCopy(subAgent.id))) {
+            return OperationResult{ false, false,
+                std::string("Sub-agent ID is invalid. ") + kSafeIdRejectionMessage };
+        }
         if (subAgent.displayName.empty() || isBlank(subAgent.displayName)) {
             return OperationResult{ false, false, "Sub-agent display name is required." };
         }
@@ -2476,6 +2594,10 @@ public:
         if (mcpServer.id.empty() || isBlank(mcpServer.id)) {
             return OperationResult{ false, false, "MCP server ID is required." };
         }
+        if (!isSafeUrlSegmentId(trimCopy(mcpServer.id))) {
+            return OperationResult{ false, false,
+                std::string("MCP server ID is invalid. ") + kSafeIdRejectionMessage };
+        }
         if (mcpServer.displayName.empty() || isBlank(mcpServer.displayName)) {
             return OperationResult{ false, false, "MCP server display name is required." };
         }
@@ -2583,6 +2705,10 @@ public:
     OperationResult upsertGroup(const SubAgentGroupDefinition& group) override {
         if (group.groupId.empty() || isBlank(group.groupId)) {
             return OperationResult{ false, false, "Sub-agent group ID is required." };
+        }
+        if (!isSafeUrlSegmentId(trimCopy(group.groupId))) {
+            return OperationResult{ false, false,
+                std::string("Sub-agent group ID is invalid. ") + kSafeIdRejectionMessage };
         }
         if (group.displayName.empty() || isBlank(group.displayName)) {
             return OperationResult{ false, false, "Sub-agent group display name is required." };
@@ -2772,7 +2898,29 @@ public:
     LanClientAccessService(std::shared_ptr<SharedState> state,
                            std::filesystem::path configurationFile)
         : state_(std::move(state))
-        , configurationFile_(std::move(configurationFile)) {}
+        , configurationFile_(std::move(configurationFile)) {
+        // v0.9.53: scrub previously-persisted clients with URL-unsafe ids
+        // (the v0.9.52 bug-hunt registered a "foo/bar" client before the
+        // upsert-time validation existed; that entry is unreachable for
+        // direct DELETE /api/clients/{id} because the slash splits the
+        // path). Boot-time scrub keeps the persisted file truthful and
+        // unblocks the operator's normal cleanup path.
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        auto& clients = state_->configuration.lanClients;
+        const auto before = clients.size();
+        clients.erase(
+            std::remove_if(clients.begin(), clients.end(),
+                [](const LanClient& c) {
+                    return !isSafeUrlSegmentId(trimCopy(c.clientId));
+                }),
+            clients.end());
+        if (clients.size() != before) {
+            // Persist the scrubbed list so the bad entries don't reappear.
+            // The other LanClient mutators use writeJsonFile directly with
+            // configurationFile_ + state_->configuration.
+            (void)writeJsonFile(configurationFile_, state_->configuration);
+        }
+    }
 
     std::vector<LanClient> listClients() const override {
         std::lock_guard<std::mutex> lock(state_->mutex);
@@ -2798,6 +2946,10 @@ public:
     OperationResult upsertClient(const LanClient& input) override {
         if (input.clientId.empty() || isBlank(input.clientId)) {
             return OperationResult{ false, false, "LAN client id is required." };
+        }
+        if (!isSafeUrlSegmentId(trimCopy(input.clientId))) {
+            return OperationResult{ false, false,
+                std::string("LAN client id is invalid. ") + kSafeIdRejectionMessage };
         }
         if (input.displayName.empty() || isBlank(input.displayName)) {
             return OperationResult{ false, false, "LAN client display name is required." };
@@ -4381,6 +4533,22 @@ private:
         return descriptor;
     }
 
+    // v0.9.36: DnsServiceRegister rejects pRegisterCompletionCallback==
+    // nullptr with ERROR_INVALID_PARAMETER (Win32 87 / 0x57). Pre-v0.9.36
+    // /api/beacon showed last_register_error=0x00000057 for all three
+    // platform-gateway lanes (windows / macos / ios) and the BeaconService
+    // had the same nullptr-callback bug, breaking _mcos._tcp.local
+    // announcement too. The callback is purely observability -- the
+    // synchronous DnsServiceRegister return value carries the "accepted"
+    // decision and the OS handles the actual mDNS broadcast/re-broadcast.
+    // We free the PDNS_SERVICE_INSTANCE in deregisterGatewayLocked() not
+    // in the callback, so this no-op path is safe.
+    static void CALLBACK dnsRegisterCallback(DWORD /*status*/,
+        PVOID /*pQueryContext*/,
+        PDNS_SERVICE_INSTANCE /*pInstance*/) {
+        // No-op completion handler. See comment above.
+    }
+
     void registerGatewayLocked(GatewayRegistration& registration) {
         const auto& descriptor = registration.descriptor;
         if (!descriptor.lanAdvertisementEnabled || descriptor.serviceType.empty() || descriptor.port == 0) {
@@ -4461,14 +4629,21 @@ private:
         request.Version = 1;
         request.InterfaceIndex = 0;
         request.pServiceInstance = registration.instance;
-        request.pRegisterCompletionCallback = nullptr;
+        // v0.9.36: non-null callback required (see dnsRegisterCallback
+        // comment above). nullptr here = ERROR_INVALID_PARAMETER from
+        // DnsServiceRegister.
+        request.pRegisterCompletionCallback = &PlatformServiceCatalogService::dnsRegisterCallback;
         request.pQueryContext = nullptr;
         request.hCredentials = nullptr;
         request.unicastEnabled = FALSE;
 
         const auto status = DnsServiceRegister(&request, nullptr);
         registration.request = request;
-        registration.registered = status == ERROR_SUCCESS;
+        // v0.9.36: also accept DNS_REQUEST_PENDING. The async-with-
+        // callback path returns DNS_REQUEST_PENDING (= 0x2522) to mean
+        // "registration accepted, completion will fire later"; that's
+        // the success case for our usage pattern.
+        registration.registered = (status == ERROR_SUCCESS || status == DNS_REQUEST_PENDING);
         if (registration.registered) {
             registration.descriptor.status = "advertised";
         } else {
@@ -7361,13 +7536,40 @@ public:
         document.governance.cluProfileUrl = adminBase + "/api/governance/profile";
         document.governance.decisionsUrl = adminBase + "/api/governance/decisions";
 
+        // v0.9.4: surface the operator-side admin endpoints in the
+        // discovery doc so dashboards / operator tooling can find them
+        // without out-of-band knowledge. The admin block is
+        // operator-facing -- LAN AI clients keep using the gateway URL
+        // + onboarding profiles. None of these paths require auth on
+        // the trusted LAN surface (per ADR-001), but they are gated by
+        // the same network-trust assumption as the rest of port
+        // browserPort.
+        document.admin.poolsUrl          = adminBase + "/api/pools";
+        document.admin.clientsUrl        = adminBase + "/api/clients";
+        document.admin.activityUrl       = adminBase + "/api/activity";
+        document.admin.hostTelemetryUrl  = adminBase + "/api/host/telemetry";
+        document.admin.gatewayStatusUrl  = adminBase + "/api/gateway/status";
+        document.admin.gatewayToolsUrl   = adminBase + "/api/gateway/tools";
+        document.admin.healthUrl         = adminBase + "/api/health";
+        // v0.9.18: persistence-health URL added to discovery so
+        // operators can find it from the well-known doc.
+        document.admin.activityHealthUrl = adminBase + "/api/activity/health";
+        // v0.9.22: single-URL health summary URL.
+        document.admin.healthSummaryUrl  = adminBase + "/api/health/summary";
+
         document.capabilities = {
             "mcp-gateway",
             std::string(document.gateway.type) + "-adapter",
             "dns-sd",
             "udp-beacon",
             "forsetti-governance",
-            "clu"
+            "clu",
+            // v0.9.4: signal protocol-revision parity with the
+            // discovery TXT advertisement and the gateway's
+            // initialize handshake. Strict clients can short-circuit
+            // negotiation when this string is present + matches the
+            // version they want.
+            "mcp-2025-03-26"
         };
         document.serverIpAddress = lanIp;
         document.generatedAtUtc = timestampNowUtc();
@@ -7423,6 +7625,15 @@ private:
         std::string status; // "advertised" | "registration_failed" | "disabled"
         std::string lastError;
     };
+
+    // v0.9.36: non-null pRegisterCompletionCallback is required by
+    // DnsServiceRegister. See PlatformServiceCatalogService::dnsRegisterCallback
+    // for the rationale -- same fix applied to both DNS-SD register sites.
+    static void CALLBACK dnsRegisterCallback(DWORD /*status*/,
+        PVOID /*pQueryContext*/,
+        PDNS_SERVICE_INSTANCE /*pInstance*/) {
+        // No-op completion handler.
+    }
 
     void registerAllInstancesLocked() {
         const auto configuration = configurationService_->current();
@@ -7535,14 +7746,17 @@ private:
         request.Version = 1;
         request.InterfaceIndex = 0;
         request.pServiceInstance = registration.instance;
-        request.pRegisterCompletionCallback = nullptr;
+        // v0.9.36: see dnsRegisterCallback comment above.
+        request.pRegisterCompletionCallback = &dnsRegisterCallback;
         request.pQueryContext = nullptr;
         request.hCredentials = nullptr;
         request.unicastEnabled = FALSE;
 
         const auto status = DnsServiceRegister(&request, nullptr);
         registration.request = request;
-        registration.registered = (status == ERROR_SUCCESS);
+        // v0.9.36: also accept DNS_REQUEST_PENDING (async-with-callback
+        // success path).
+        registration.registered = (status == ERROR_SUCCESS || status == DNS_REQUEST_PENDING);
         if (registration.registered) {
             registration.status = "advertised";
         } else {
@@ -7587,42 +7801,285 @@ private:
 // pools whose template is missing must NOT spawn children -- ADR-002 §9
 // ("no fake live infrastructure"). The supervised-mock path reports
 // supervised=false and statusMessage="Supervised-mock mode".
+
+// v0.9.8: forward declarations so WorkerSupervisor::drainAndEmit
+// SupervisorEvents can append pool death/respawn/quarantine events
+// to the global activity ring without seeing the ActivityEventRing
+// class definition (which lives later in this TU, around line
+// 10523). Pre-v0.9.8 the supervisor only fed the PHASE-08
+// TelemetryAggregator; pool death/respawn events did NOT surface in
+// /api/activity, leaving operators reading the audit log blind to
+// those events. The helpers below are defined alongside the ring so
+// they have full visibility into the ActivityEvent + Ring shape;
+// here we only declare them.
+void appendPoolLifecycleActivity(const std::string& kind,
+                                 const std::string& poolId,
+                                 const std::string& message,
+                                 int statusCodeHint);
+
+// v0.9.10: separate helper for the supervisor-shutdown wedge event.
+// Same pattern as appendPoolLifecycleActivity -- defined alongside
+// the global activity ring and forward-declared here so the
+// supervisor destructor can call it without visibility into the
+// ActivityEventRing class. Pre-v0.9.10 the destructor's detach path
+// silently swallowed the wedge; now operators see exactly when the
+// watchdog had to be detached and what state the supervisor was in
+// at that moment.
+void appendSupervisorWedgeActivity(const std::string& message,
+                                   int poolCount,
+                                   int childCount);
+
 class WorkerSupervisor final : public IWorkerSupervisor {
 public:
+    WorkerSupervisor() {
+        // v0.9.6: start the background watchdog. The watchdog calls
+        // reapDeadInstancesLocked every kWatchdogIntervalMs so a pool
+        // whose only worker died while no LAN-client traffic was
+        // arriving still gets respawned. Pre-v0.9.6 reap was purely
+        // opportunistic (ran inside listPools/findPool/ensureMin
+        // Instances/scaleUpOnce); a pool with no traffic + a dead
+        // worker stayed dark until the next operator query, which
+        // could be never on a quiet LAN.
+        //
+        // v0.9.7: after each reap pass the watchdog drains the
+        // accumulated DeathLogEntry / RespawnLogEntry vectors and
+        // emits TelemetryEvents through telemetryAggregator_ (if set
+        // via setTelemetryAggregator). The drain runs OUTSIDE
+        // mutex_ to avoid the supervisor mutex_ overlapping with
+        // the aggregator's internal lock; the drain method takes
+        // mutex_ briefly to swap the vectors out, then releases it
+        // before emitting.
+        watchdogRunning_ = true;
+        watchdogThread_ = std::thread([this]() {
+            while (watchdogRunning_.load(std::memory_order_acquire)) {
+                // v0.9.12: condition_variable wait_for replaces the
+                // 100ms-step polled sleep. Symmetric with
+                // BeaconService's v0.9.11 conversion. The destructor's
+                // bounded-shutdown path uses notify_all (added below)
+                // to wake the watchdog immediately, so the worst-case
+                // shutdown is now one full reap+drain cycle (~few ms)
+                // instead of "up to 100ms of sleep, then reap, then
+                // drain". Pre-v0.9.12 the 100ms granularity was fine
+                // for SCM but felt sloppy compared to BeaconService.
+                {
+                    std::unique_lock<std::mutex> lock(watchdogSleepMutex_);
+                    watchdogSleepCv_.wait_for(lock,
+                        std::chrono::milliseconds(kWatchdogIntervalMs),
+                        [this]() { return !watchdogRunning_.load(std::memory_order_acquire); });
+                }
+                if (!watchdogRunning_.load(std::memory_order_acquire)) {
+                    return;
+                }
+                // Reap is short (a few GetExitCodeProcess calls + a
+                // possible spawn or two); we hold mutex_ for that
+                // window only. Operator API calls may pile up
+                // briefly during a reap that triggers a respawn;
+                // that's the same path operator-driven scale takes.
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    (void)reapDeadInstancesLocked();
+                }
+                // v0.9.7: drain + emit events outside mutex_.
+                drainAndEmitSupervisorEvents();
+                // v0.9.8: garbage-collect crash-window timestamps that
+                // have aged out of the kCrashWindowSeconds rolling
+                // window. Keeps poolFailureTimestamps_ from growing
+                // unboundedly on long-running pools.
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    pruneCrashWindowsLocked();
+                }
+            }
+        });
+    }
+
+    // v0.9.7: setter for the TelemetryAggregator pointer. Wired by
+    // the runtime composition root so the supervisor can emit
+    // pool-lifecycle events without the runtime having to poll.
+    // Leaving it null (the default) keeps the supervisor aggregator-
+    // agnostic for tests and the supervised-mock path.
+    void setTelemetryAggregator(std::shared_ptr<ITelemetryAggregator> aggregator) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        telemetryAggregator_ = std::move(aggregator);
+    }
+
     ~WorkerSupervisor() override {
+        // v0.9.9: bounded shutdown. Pre-v0.9.9 the destructor called
+        // watchdogThread_.join() unconditionally, which blocks
+        // indefinitely if the watchdog is wedged inside a long reap
+        // (e.g., a CreateProcessW that's hanging while the auto-
+        // respawn path tries to spin up a fresh child during the
+        // service-stop signal). The v0.9.8 deploy hit this directly:
+        // SCM showed the service in StopPending for 60+ seconds and
+        // had to be force-killed. Now the destructor:
+        //
+        //   1. Flips watchdogRunning_ to false (the loop's 100ms
+        //      sleep step picks this up within 100ms when the loop
+        //      is between cycles).
+        //   2. Joins with a bounded deadline. The watchdog should
+        //      observe the flag and exit within one cycle (~2.1s
+        //      worst case = sleep + reap). We give it 5s to be
+        //      generous.
+        //   3. If join doesn't complete in time, detach the thread.
+        //      The process is exiting anyway; the OS will reclaim
+        //      the thread when the process terminates. This is
+        //      strictly better than blocking SCM forever.
+        watchdogRunning_ = false;
+        // v0.9.12: notify the watchdog's sleep cv so it observes the
+        // flag immediately. Pre-v0.9.12 the destructor relied on the
+        // watchdog's 100ms polled sleep step picking up the flag,
+        // which added up to 100ms before the reap-and-exit path
+        // could run. Now the watchdog wakes within the cv-wakeup
+        // latency (microseconds) and exits.
+        {
+            std::lock_guard<std::mutex> lock(watchdogSleepMutex_);
+            watchdogSleepCv_.notify_all();
+        }
+        if (watchdogThread_.joinable()) {
+            // std::thread doesn't expose a join-with-timeout natively.
+            // Spin a helper thread that joins, and time-bound the
+            // wait via a future. If the helper finishes within the
+            // deadline, the watchdog joined cleanly; otherwise we
+            // detach and proceed.
+            std::atomic<bool> joinComplete{ false };
+            std::thread joiner([this, &joinComplete]() {
+                if (watchdogThread_.joinable()) {
+                    watchdogThread_.join();
+                }
+                joinComplete.store(true, std::memory_order_release);
+            });
+            const auto deadline = std::chrono::steady_clock::now()
+                                + std::chrono::milliseconds(kShutdownJoinTimeoutMs);
+            while (std::chrono::steady_clock::now() < deadline
+                   && !joinComplete.load(std::memory_order_acquire)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            if (joinComplete.load(std::memory_order_acquire)) {
+                joiner.join();
+            } else {
+                // v0.9.10: surface the wedge in two places so the
+                // operator (and post-mortem analysis) can see WHY
+                // the process took the detach path instead of a
+                // clean join. globalActivityRing() is fine to
+                // touch here because shutdownAll hasn't run yet
+                // and the activity ring is thread-safe + a process-
+                // global static with a stable lifetime. We capture
+                // a coarse snapshot of supervisor state (pool count,
+                // child count) to help spot patterns -- e.g. if all
+                // wedges happen with a respawn-in-flight, the
+                // pattern is CreateProcessW slowness, not a
+                // deadlock.
+                const int poolCount = [&]() {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    return static_cast<int>(pools_.size());
+                }();
+                const int childCount = [&]() {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    return static_cast<int>(children_.size());
+                }();
+                appendSupervisorWedgeActivity(
+                    "Watchdog did not exit within "
+                    + std::to_string(kShutdownJoinTimeoutMs)
+                    + "ms of watchdogRunning_=false. Detaching.",
+                    poolCount, childCount);
+
+                // Watchdog wedged. Detach both the watchdog (so its
+                // destructor doesn't terminate() the program) and
+                // the joiner (it will return when the watchdog
+                // eventually unblocks; until then the process is
+                // already exiting and we don't care).
+                watchdogThread_.detach();
+                joiner.detach();
+            }
+        }
         (void)shutdownAll();
     }
 
     std::vector<ManagedEndpointPool> listPools() const override {
-        std::lock_guard<std::mutex> lock(mutex_);
         std::vector<ManagedEndpointPool> result;
-        result.reserve(pools_.size());
-        for (const auto& [_, pool] : pools_) {
-            ManagedEndpointPool snapshot = pool;
-            refreshInstanceLoadLocked(snapshot);
-            result.push_back(std::move(snapshot));
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            // v0.9.5: opportunistic reap so operator queries see live state.
+            // Pre-v0.9.5 a dead worker was still listed as Ready until the
+            // next outbound stdio call failed. const_cast is safe here:
+            // listPools is logically const (read view of state) but
+            // physically mutates the bookkeeping (children_ + pool.instances)
+            // when a child has exited; that mutation is incidental upkeep,
+            // not a change to the user-visible contract.
+            const_cast<WorkerSupervisor*>(this)->reapDeadInstancesLocked();
+            result.reserve(pools_.size());
+            for (const auto& [_, pool] : pools_) {
+                ManagedEndpointPool snapshot = pool;
+                refreshInstanceLoadLocked(snapshot);
+                snapshot.quarantinedUntilUtc =
+                    const_cast<WorkerSupervisor*>(this)->quarantineExpiryUtcLocked(snapshot.poolId);
+                result.push_back(std::move(snapshot));
+            }
+            std::sort(result.begin(), result.end(),
+                      [](const ManagedEndpointPool& a, const ManagedEndpointPool& b) {
+                          return a.poolId < b.poolId;
+                      });
         }
-        std::sort(result.begin(), result.end(),
-                  [](const ManagedEndpointPool& a, const ManagedEndpointPool& b) {
-                      return a.poolId < b.poolId;
-                  });
+        // v0.9.7: emit any death/respawn events that the reap above
+        // produced. Run with mutex_ released to avoid lock-ordering
+        // issues with the aggregator's own internal lock.
+        const_cast<WorkerSupervisor*>(this)->drainAndEmitSupervisorEvents();
         return result;
     }
 
     std::optional<ManagedEndpointPool> findPool(const std::string& poolId) const override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        const auto iterator = pools_.find(poolId);
-        if (iterator == pools_.end()) {
-            return std::nullopt;
+        std::optional<ManagedEndpointPool> result;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            // v0.9.5: opportunistic reap (see listPools). Same const_cast
+            // rationale.
+            const_cast<WorkerSupervisor*>(this)->reapDeadInstancesLocked();
+            const auto iterator = pools_.find(poolId);
+            if (iterator == pools_.end()) {
+                return std::nullopt;
+            }
+            ManagedEndpointPool snapshot = iterator->second;
+            refreshInstanceLoadLocked(snapshot);
+            snapshot.quarantinedUntilUtc =
+                const_cast<WorkerSupervisor*>(this)->quarantineExpiryUtcLocked(snapshot.poolId);
+            result = std::move(snapshot);
         }
-        ManagedEndpointPool snapshot = iterator->second;
-        refreshInstanceLoadLocked(snapshot);
-        return snapshot;
+        // v0.9.7: emit reap-produced events outside mutex_.
+        const_cast<WorkerSupervisor*>(this)->drainAndEmitSupervisorEvents();
+        return result;
     }
 
     OperationResult upsertPool(ManagedEndpointPool pool) override {
         if (pool.poolId.empty()) {
             return OperationResult{ false, false, "Pool id is required." };
+        }
+        // v0.9.52: validate poolId character set. Pre-v0.9.52 a poolId
+        // like "foo/bar" was accepted, registered, and then unreachable
+        // because /api/pools/{poolId} split the slash into a sub-
+        // resource segment ("foo" with subresource "bar") -- the pool
+        // could not be removed via the API.
+        // v0.9.53: factored to the shared isSafeUrlSegmentId helper so
+        // every operator-supplied id (clientId, mcpServerId, subAgentId,
+        // groupId, poolId) goes through the same gate.
+        if (!isSafeUrlSegmentId(pool.poolId)) {
+            return OperationResult{ false, false,
+                std::string("Pool id is invalid. ") + kSafeIdRejectionMessage };
+        }
+        // v0.9.52: scale-policy sanity check. Pre-v0.9.52 a registration
+        // with minInstances > maxInstances was accepted; ensureMin
+        // Instances would then loop trying to spawn workers up to the
+        // unreachable target. Negative values were accepted as well.
+        if (pool.scalePolicy.minInstances < 0) {
+            return OperationResult{ false, false,
+                "scalePolicy.minInstances must be >= 0." };
+        }
+        if (pool.scalePolicy.maxInstances < 1) {
+            return OperationResult{ false, false,
+                "scalePolicy.maxInstances must be >= 1." };
+        }
+        if (pool.scalePolicy.minInstances > pool.scalePolicy.maxInstances) {
+            return OperationResult{ false, false,
+                "scalePolicy.minInstances must be <= scalePolicy.maxInstances." };
         }
         std::lock_guard<std::mutex> lock(mutex_);
         const auto now = timestampNowUtc();
@@ -7654,6 +8111,13 @@ public:
 
     OperationResult ensureMinInstances(const std::string& poolId) override {
         std::lock_guard<std::mutex> lock(mutex_);
+        // v0.9.5: reap before counting -- a dead worker that has not yet
+        // been reaped would otherwise count toward the "current" total
+        // and short-circuit the spawn-replacement path. Pre-v0.9.5 the
+        // sequence (kill worker; POST /api/pools/{id}/scale) reported
+        // "Pool already at or above minInstances" while the actual
+        // ready count was zero, leaving the pool dark.
+        reapDeadInstancesLocked();
         const auto iterator = pools_.find(poolId);
         if (iterator == pools_.end()) {
             return OperationResult{ false, false, "Unknown pool id." };
@@ -7662,7 +8126,14 @@ public:
         // Parenthesize std::max to bypass the Windows.h max() macro
         // collision when NOMINMAX isn't reached for this TU.
         const int desired = (std::max)(0, pool.scalePolicy.minInstances);
-        const int current = static_cast<int>(pool.instances.size());
+        // v0.9.5: count only Starting/Ready/Busy. Failed/Stopped/
+        // Draining instances do not contribute to user-visible
+        // capacity and must not block respawn. (Note: post-reap there
+        // shouldn't be any Failed/Stopped left in pool.instances --
+        // reapDeadInstancesLocked erases them entirely -- but keep the
+        // healthy-only count in case a future code path leaves a
+        // Failed instance in place for inspection.)
+        const int current = healthyInstanceCountLocked(pool);
         if (current >= desired) {
             return OperationResult{ true, false, "Pool already at or above minInstances." };
         }
@@ -7693,13 +8164,19 @@ public:
         // reached scalePolicy.maxInstances. Spawns one new instance and
         // returns its id (empty if the pool is already at max).
         std::lock_guard<std::mutex> lock(mutex_);
+        // v0.9.5: reap first so the maxInstances cap reflects healthy
+        // count rather than including dead-but-unreaped placeholders.
+        reapDeadInstancesLocked();
         const auto iterator = pools_.find(poolId);
         if (iterator == pools_.end()) {
             return std::string();
         }
         ManagedEndpointPool& pool = iterator->second;
         const int max = (std::max)(0, pool.scalePolicy.maxInstances);
-        const int current = static_cast<int>(pool.instances.size());
+        // v0.9.5: count healthy instances against the cap. Same
+        // rationale as ensureMinInstances -- Failed/Stopped do not
+        // count toward "what is contributing to capacity right now".
+        const int current = healthyInstanceCountLocked(pool);
         if (current >= max) {
             return std::string();
         }
@@ -7758,6 +8235,33 @@ private:
         std::unique_ptr<std::mutex> stdioMutex;
         std::string stdioReadBuffer;
         uint64_t nextRequestId = 1;
+        // v0.9.4: lazy MCP initialize handshake state. Spec-compliant
+        // MCP servers (every Anthropic / community npx-installable
+        // server -- @modelcontextprotocol/server-memory, server-
+        // sequential-thinking, server-filesystem, mcp-server-sqlite-
+        // npx, etc.) refuse `tools/list`, `tools/call`, and other
+        // session methods until the client has completed the
+        // `initialize` -> `notifications/initialized` handshake. The
+        // in-tree MCOS baseline-tools worker happens to dispatch
+        // tools/list regardless of session state, which masked this
+        // gap pre-v0.9.4 -- baseline-tools "just worked", but every
+        // externally-supervised pool we registered came up Ready and
+        // then contributed zero tools to /api/gateway/tools because
+        // its `tools/list` reply was a JSON-RPC error the gateway
+        // catalog refresh silently dropped (per
+        // refreshToolCatalogLocked's "skip empty / non-result"
+        // policy).
+        //
+        // The self-handshake below runs once per ChildProcess, on the
+        // first `sendStdioJsonRpc` call. After it succeeds the flag
+        // stays true for the lifetime of the supervised child; if the
+        // child exits and a new one is spawned for the same pool, a
+        // fresh ChildProcess record is created and the handshake
+        // re-runs. If the handshake itself fails (timeout / child
+        // exited / parse error) the flag stays false, the original
+        // call returns the bridge error, and the next attempt will
+        // re-try the handshake.
+        bool mcpInitialized = false;
 #endif
         bool active = false;
     };
@@ -7951,6 +8455,420 @@ private:
         pool.instances.clear();
     }
 
+    // v0.9.8: humanize a Windows exit code into a short suffix the
+    // operator can read. Raw 32-bit codes are returned by
+    // GetExitCodeProcess; common death causes map to NTSTATUS values
+    // (which are >= 0x80000000 and surface as huge unsigned ints in
+    // the death message). Pre-v0.9.8 the death message read e.g.
+    // "exitCode=4294967295" which is uninformative; now it reads
+    // "exitCode=4294967295 (STATUS_PROCESS_KILLED -- forced kill /
+    // taskkill /f / Stop-Process -Force)".
+    static std::string humanizeExitCode(uint32_t code) {
+        switch (code) {
+            case 0x00000000u: return "STATUS_SUCCESS -- normal exit";
+            case 0x00000001u: return "exit(1) -- generic error";
+            case 0xC0000005u: return "STATUS_ACCESS_VIOLATION -- segfault / null deref / bad pointer";
+            case 0xC000001Du: return "STATUS_ILLEGAL_INSTRUCTION -- bad opcode / corrupt code page";
+            case 0xC0000094u: return "STATUS_INTEGER_DIVIDE_BY_ZERO";
+            case 0xC0000409u: return "STATUS_STACK_BUFFER_OVERRUN -- /GS triggered";
+            case 0xC000013Au: return "STATUS_CONTROL_C_EXIT -- Ctrl+C / interactive stop";
+            case 0xC0000142u: return "STATUS_DLL_INIT_FAILED -- DLL load failure on startup";
+            case 0xC0000374u: return "STATUS_HEAP_CORRUPTION";
+            case 0xC0000017u: return "STATUS_NO_MEMORY -- out of memory";
+            case 0xFFFFFFFFu: return "STATUS_PROCESS_KILLED -- forced kill / taskkill /f / Stop-Process -Force";
+            default: break;
+        }
+        // Anything else: return empty so the caller emits just the
+        // numeric code.
+        return std::string{};
+    }
+
+    // v0.9.8: prune crash-window entries older than kCrashWindowSeconds.
+    // Caller holds mutex_.
+    void pruneCrashWindowsLocked() {
+        const auto cutoff = std::chrono::steady_clock::now()
+                          - std::chrono::seconds(kCrashWindowSeconds);
+        for (auto& [poolId, timestamps] : poolFailureTimestamps_) {
+            timestamps.erase(
+                std::remove_if(timestamps.begin(), timestamps.end(),
+                    [&](const std::chrono::steady_clock::time_point& t) { return t < cutoff; }),
+                timestamps.end());
+        }
+        // Also retire expired quarantines.
+        const auto now = std::chrono::steady_clock::now();
+        for (auto it = poolQuarantineUntil_.begin(); it != poolQuarantineUntil_.end(); ) {
+            if (it->second <= now) {
+                it = poolQuarantineUntil_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    // v0.9.8: returns true if the pool is currently quarantined (in
+    // its cool-down window). Caller holds mutex_.
+    bool isPoolQuarantinedLocked(const std::string& poolId) const {
+        const auto it = poolQuarantineUntil_.find(poolId);
+        if (it == poolQuarantineUntil_.end()) return false;
+        return std::chrono::steady_clock::now() < it->second;
+    }
+
+    // v0.9.40: convert the in-memory steady_clock quarantine expiry
+    // into a wall-clock ISO-8601 UTC timestamp for /api/pools/{id}.
+    // Returns empty string when the pool is not quarantined. Caller
+    // holds mutex_. Conversion: take the steady_clock remaining
+    // duration and add it to the current system_clock so the wall-
+    // clock expiry tracks the true cool-down deadline even if
+    // monotonic and wall clocks have drifted.
+    std::string quarantineExpiryUtcLocked(const std::string& poolId) const {
+        const auto it = poolQuarantineUntil_.find(poolId);
+        if (it == poolQuarantineUntil_.end()) return std::string{};
+        const auto steadyNow = std::chrono::steady_clock::now();
+        if (it->second <= steadyNow) return std::string{}; // already expired
+        const auto remaining = it->second - steadyNow;
+        // Cast to system_clock::duration to satisfy to_time_t()'s
+        // expected time_point<system_clock, system_clock::duration>;
+        // adding steady_clock::duration (nanoseconds on MSVC) directly
+        // yields a time_point<system_clock, nanoseconds> which the
+        // overload doesn't match.
+        const auto wallExpiry = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+            std::chrono::system_clock::now() + remaining);
+        const std::time_t expiryTime = std::chrono::system_clock::to_time_t(wallExpiry);
+        std::tm utcTime{};
+        gmtime_s(&utcTime, &expiryTime);
+        char buffer[32]{};
+        std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utcTime);
+        return std::string(buffer);
+    }
+
+    // v0.9.5: instance count helper that excludes Failed/Stopped/Draining --
+    // those are not contributing to user-visible "is this pool serving
+    // traffic" capacity. ensureMinInstances + scaleUpOnce + autoscale
+    // policy decisions all use this rather than raw `instances.size()`,
+    // which previously counted Failed/Stopped instances toward
+    // minInstances and prevented auto-respawn after a worker died.
+    static int healthyInstanceCountLocked(const ManagedEndpointPool& pool) {
+        int n = 0;
+        for (const auto& instance : pool.instances) {
+            if (instance.state == EndpointInstanceState::Starting
+                || instance.state == EndpointInstanceState::Ready
+                || instance.state == EndpointInstanceState::Busy) {
+                ++n;
+            }
+        }
+        return n;
+    }
+
+    // v0.9.5: reap instances whose underlying child process has exited.
+    //
+    // Pre-v0.9.5 the supervisor learned about child death only when an
+    // outbound `sendStdioJsonRpc` write failed -- and even then it just
+    // returned the error without updating the pool's instance state, so
+    // `GET /api/pools/{poolId}` continued to advertise the dead instance
+    // as "ready" until the next operator-driven scale or remove.
+    //
+    // This helper walks every pool, calls GetExitCodeProcess on each
+    // child handle, and for any instance whose process is no longer
+    // STILL_ACTIVE: transitions it to Failed, records the exit code in
+    // statusMessage, closes handles, drops the children_ record, and
+    // erases the instance from pool.instances. After all reaps, every
+    // pool whose healthyInstanceCount fell below minInstances spawns
+    // replacements -- this is the auto-respawn path operators expect
+    // from a "supervised" pool (without it, a single worker crash leaves
+    // the pool dark forever). Telemetry events for each reap and each
+    // respawn are emitted via the runtime's TelemetryAggregator
+    // interface, attached after construction; we tolerate it being
+    // null during early-boot reaps before the aggregator is wired.
+    //
+    // Caller MUST hold mutex_. Returns the number of instances reaped.
+    int reapDeadInstancesLocked() {
+#if !defined(_WIN32)
+        return 0;
+#else
+        int reaped = 0;
+        for (auto& [poolId, pool] : pools_) {
+            for (auto it = pool.instances.begin(); it != pool.instances.end(); ) {
+                const auto childIt = children_.find(it->instanceId);
+                bool deadChild = false;
+                DWORD exitCode = 0;
+                if (childIt != children_.end()
+                    && childIt->second.processInfo.hProcess != nullptr) {
+                    if (GetExitCodeProcess(childIt->second.processInfo.hProcess, &exitCode)) {
+                        // STILL_ACTIVE (259) means the process is alive;
+                        // any other value means it exited.
+                        if (exitCode != STILL_ACTIVE) {
+                            deadChild = true;
+                        }
+                    } else {
+                        // Handle invalid -- treat as dead.
+                        deadChild = true;
+                    }
+                } else if (it->supervised
+                           && it->state != EndpointInstanceState::Stopped
+                           && it->state != EndpointInstanceState::Failed) {
+                    // Supervised instance has no child record -- this is
+                    // an inconsistency; reap to bring state in line.
+                    deadChild = true;
+                }
+
+                if (deadChild) {
+                    // Capture death info before we mutate state.
+                    const std::string deadInstanceId = it->instanceId;
+                    const std::string statusBefore = to_string(it->state);
+
+                    if (childIt != children_.end()) {
+                        ChildProcess& child = childIt->second;
+                        if (child.childStdinWrite != nullptr) {
+                            CloseHandle(child.childStdinWrite);
+                            child.childStdinWrite = nullptr;
+                        }
+                        if (child.childStdoutRead != nullptr) {
+                            CloseHandle(child.childStdoutRead);
+                            child.childStdoutRead = nullptr;
+                        }
+                        if (child.jobObject != nullptr) {
+                            CloseHandle(child.jobObject);
+                            child.jobObject = nullptr;
+                        }
+                        if (child.processInfo.hProcess != nullptr) {
+                            CloseHandle(child.processInfo.hProcess);
+                            child.processInfo.hProcess = nullptr;
+                        }
+                        if (child.processInfo.hThread != nullptr) {
+                            CloseHandle(child.processInfo.hThread);
+                            child.processInfo.hThread = nullptr;
+                        }
+                        children_.erase(childIt);
+                    }
+
+                    // Erase the instance entirely from the pool. We do
+                    // not keep a Failed-tombstone because the pool's
+                    // operational view is "what is alive now"; the
+                    // activity ring carries the historical record.
+                    it = pool.instances.erase(it);
+                    ++reaped;
+
+                    // Defer telemetry emission until after the mutex is
+                    // released by the caller (we just record it now).
+                    deathLog_.push_back(DeathLogEntry{
+                        poolId, deadInstanceId, statusBefore,
+                        static_cast<uint32_t>(exitCode)
+                    });
+
+                    // v0.9.8: register the failure in the crash
+                    // circuit breaker's rolling window. If the count
+                    // crosses kCrashThreshold within
+                    // kCrashWindowSeconds, mark the pool quarantined.
+                    auto& timestamps = poolFailureTimestamps_[poolId];
+                    timestamps.push_back(std::chrono::steady_clock::now());
+                    // Inline prune (the watchdog also prunes; do it
+                    // here so the count is fresh).
+                    const auto cutoff = std::chrono::steady_clock::now()
+                                      - std::chrono::seconds(kCrashWindowSeconds);
+                    timestamps.erase(
+                        std::remove_if(timestamps.begin(), timestamps.end(),
+                            [&](const std::chrono::steady_clock::time_point& t) { return t < cutoff; }),
+                        timestamps.end());
+                    if (static_cast<int>(timestamps.size()) >= kCrashThreshold
+                        && !isPoolQuarantinedLocked(poolId)) {
+                        poolQuarantineUntil_[poolId] =
+                            std::chrono::steady_clock::now()
+                            + std::chrono::seconds(kQuarantineCooldownSeconds);
+                        // v0.9.9: dedicated quarantine entry (was an
+                        // ad-hoc DeathLogEntry pre-v0.9.9). Cleaner
+                        // intent + lets the consumer carry all four
+                        // fields (poolId, failureCount, window,
+                        // cooldown) into the human-readable message
+                        // rather than packing them into the exitCode
+                        // slot.
+                        quarantineLog_.push_back(QuarantineLogEntry{
+                            poolId,
+                            static_cast<int>(timestamps.size()),
+                            kCrashWindowSeconds,
+                            kQuarantineCooldownSeconds
+                        });
+                    }
+                } else {
+                    ++it;
+                }
+            }
+        }
+
+        // Auto-respawn pass. After reap, any pool below minInstances
+        // gets fresh instances spawned to bring it back to its
+        // contracted floor. The operator's contract for `minInstances`
+        // is "this many are serving traffic at all times"; honoring
+        // that requires us to spawn replacements without an explicit
+        // POST /api/pools/{poolId}/scale.
+        //
+        // v0.9.8: skip pools currently in quarantine. The cool-down
+        // gives a misbehaving worker time to be diagnosed by the
+        // operator without MCOS spinning a respawn loop in the
+        // background that fills the activity log with errors.
+        // Operators can force re-spawn by POST /api/pools/{id}/scale
+        // (which calls ensureMinInstances; ensureMinInstances does
+        // not consult the quarantine, so it's the explicit override).
+        for (auto& [poolId, pool] : pools_) {
+            if (isPoolQuarantinedLocked(poolId)) {
+                continue;
+            }
+            const int desired = (std::max)(0, pool.scalePolicy.minInstances);
+            int healthy = healthyInstanceCountLocked(pool);
+            while (healthy < desired) {
+                EndpointInstance instance = startInstanceLocked(pool);
+                respawnLog_.push_back(RespawnLogEntry{ poolId, instance.instanceId });
+                pool.instances.push_back(std::move(instance));
+                ++healthy;
+            }
+            if (reaped > 0) {
+                pool.updatedAtUtc = timestampNowUtc();
+            }
+        }
+
+        return reaped;
+#endif
+    }
+
+    // v0.9.5: drained outside the supervisor mutex by callers that have
+    // a TelemetryAggregator handle. We capture death/respawn events
+    // under mutex_ (where we can read pool/child state safely) but
+    // emit them to the activity ring without the mutex held, because
+    // the aggregator path may itself acquire other locks.
+    struct DeathLogEntry {
+        std::string poolId;
+        std::string instanceId;
+        std::string previousState;  // e.g. "ready"
+        uint32_t exitCode = 0;
+    };
+    struct RespawnLogEntry {
+        std::string poolId;
+        std::string newInstanceId;
+    };
+    // v0.9.9: dedicated quarantine entry. Pre-v0.9.9 quarantine events
+    // were ad-hoc-encoded as DeathLogEntry with empty instanceId and
+    // exitCode = failure-count-in-window; the consumer in drainAndEmit
+    // distinguished by instanceId.empty(). That worked but conflated
+    // two distinct lifecycle events in one struct. The dedicated type
+    // makes intent explicit and lets the failure-count and the window
+    // travel independently.
+    struct QuarantineLogEntry {
+        std::string poolId;
+        int failureCountInWindow = 0;
+        int windowSeconds = 0;
+        int cooldownSeconds = 0;
+    };
+    std::vector<DeathLogEntry>     deathLog_;
+    std::vector<RespawnLogEntry>   respawnLog_;
+    std::vector<QuarantineLogEntry> quarantineLog_;
+
+    void drainSupervisorEvents(std::vector<DeathLogEntry>& deaths,
+                               std::vector<RespawnLogEntry>& respawns) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        deaths   = std::move(deathLog_);
+        respawns = std::move(respawnLog_);
+        deathLog_.clear();
+        respawnLog_.clear();
+    }
+
+    // v0.9.7: drains the accumulated death/respawn events under mutex_,
+    // then emits them through telemetryAggregator_ with the mutex
+    // released. Pool deaths are Telemetry::Worker::Error (operators
+    // need to see them); auto-respawns are Telemetry::Worker::Info.
+    // Called from the watchdog tick after every reap pass and from
+    // operator-API entries that triggered a reap.
+    //
+    // The two-phase pattern (drain under lock, emit unlocked) is
+    // mandatory because the aggregator's recordEvent may itself take
+    // a different mutex (the events ring buffer's own lock); holding
+    // mutex_ across that call risks deadlock when a future
+    // aggregator-side path inversely needs supervisor state.
+    void drainAndEmitSupervisorEvents() {
+        std::vector<DeathLogEntry>      deaths;
+        std::vector<RespawnLogEntry>    respawns;
+        std::vector<QuarantineLogEntry> quarantines;
+        std::shared_ptr<ITelemetryAggregator> aggregator;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            deaths      = std::move(deathLog_);
+            respawns    = std::move(respawnLog_);
+            quarantines = std::move(quarantineLog_);
+            deathLog_.clear();
+            respawnLog_.clear();
+            quarantineLog_.clear();
+            aggregator = telemetryAggregator_;
+        }
+        // v0.9.9: real worker deaths only. Quarantine events have
+        // their own struct + their own loop below.
+        for (const auto& death : deaths) {
+            // v0.9.8: humanize the exit code so the operator can see
+            // at a glance what kind of crash happened. Falls back to
+            // the bare number when the code isn't in the table.
+            std::string codeText = std::to_string(death.exitCode);
+            const std::string humanized = humanizeExitCode(death.exitCode);
+            if (!humanized.empty()) {
+                codeText += " (" + humanized + ")";
+            }
+            const std::string message =
+                "Pool worker '" + death.instanceId + "' exited unexpectedly"
+                " (was state=" + death.previousState + ", exitCode=" + codeText + ")";
+
+            if (aggregator) {
+                TelemetryEvent evt;
+                evt.category = TelemetryCategory::Worker;
+                evt.severity = TelemetrySeverity::Error;
+                evt.message = message;
+                evt.poolId = death.poolId;
+                aggregator->recordEvent(std::move(evt));
+            }
+            appendPoolLifecycleActivity(
+                "pool_worker_death", death.poolId, message,
+                500 /* operator-side severity hint */);
+        }
+        // v0.9.9: dedicated quarantine emit loop. Carries all four
+        // QuarantineLogEntry fields into the message naturally.
+        for (const auto& q : quarantines) {
+            const std::string message =
+                "Pool '" + q.poolId + "' QUARANTINED -- "
+                + std::to_string(q.failureCountInWindow)
+                + " worker crashes within " + std::to_string(q.windowSeconds)
+                + "s window; auto-respawn paused for "
+                + std::to_string(q.cooldownSeconds)
+                + "s. Operator can force respawn via POST /api/pools/"
+                + q.poolId + "/scale.";
+
+            if (aggregator) {
+                TelemetryEvent evt;
+                evt.category = TelemetryCategory::Worker;
+                evt.severity = TelemetrySeverity::Error;
+                evt.message = message;
+                evt.poolId = q.poolId;
+                aggregator->recordEvent(std::move(evt));
+            }
+            appendPoolLifecycleActivity(
+                "pool_quarantine", q.poolId, message,
+                500 /* operator-side severity hint */);
+        }
+        for (const auto& respawn : respawns) {
+            const std::string message = "Pool '" + respawn.poolId
+                + "' auto-respawned to instance '" + respawn.newInstanceId
+                + "' (watchdog or reap-driven)";
+            if (aggregator) {
+                TelemetryEvent evt;
+                evt.category = TelemetryCategory::Worker;
+                evt.severity = TelemetrySeverity::Info;
+                evt.message = message;
+                evt.poolId = respawn.poolId;
+                aggregator->recordEvent(std::move(evt));
+            }
+            // v0.9.8: dual-emit to activity ring (see deaths above).
+            appendPoolLifecycleActivity(
+                "pool_worker_respawn",
+                respawn.poolId,
+                message,
+                200 /* operator-side severity hint */);
+        }
+    }
+
     mutable std::mutex mutex_;
     std::map<std::string, ManagedEndpointPool> pools_;
     // children_ is mutable because refreshInstanceLoadLocked() updates
@@ -7959,6 +8877,70 @@ private:
     // child contract, so it lives here under the same lock.
     mutable std::map<std::string, ChildProcess> children_;
     std::atomic<uint64_t> nextInstanceSerial_{ 1 };
+
+    // v0.9.6: background watchdog. Wakes every kWatchdogIntervalMs and
+    // calls reapDeadInstancesLocked so dead workers are detected and
+    // replaced even when no LAN-client traffic is arriving. The interval
+    // is intentionally larger than the typical worker startup time so
+    // we don't see "ghost reap" of an instance that's still completing
+    // its initialize handshake (kStartupGraceMs handles that side; the
+    // watchdog only inspects established children via
+    // GetExitCodeProcess). 2 seconds is operator-noticeable as
+    // "auto-recovery happens within a couple seconds" without
+    // generating noisy reap traffic on quiet LANs.
+    static constexpr int kWatchdogIntervalMs = 2000;
+    // v0.9.9: bounded shutdown deadline -- if the watchdog can't stop
+    // within this many milliseconds, the destructor detaches the
+    // thread and proceeds. Strictly larger than one full reap cycle
+    // (~2.1s worst case) so a clean watchdog always joins; large
+    // enough to avoid false-positive detachment under transient
+    // CreateProcessW slowness during a respawn spawned right at
+    // shutdown time. 5 seconds is the SCM patience threshold most
+    // operators tolerate.
+    static constexpr int kShutdownJoinTimeoutMs = 5000;
+    std::thread watchdogThread_;
+    std::atomic<bool> watchdogRunning_{ false };
+    // v0.9.12: condition variable for the watchdog sleep, symmetric
+    // with BeaconService's v0.9.11 sleep model. Pre-v0.9.12 the
+    // watchdog used a 100ms-step polled sleep that observed
+    // watchdogRunning_=false within 100ms; the cv lets the
+    // destructor wake it immediately via notify_all. Worst-case
+    // shutdown is now bounded by one in-flight reap+drain cycle
+    // (a few ms) instead of "up to 100ms of sleep, then reap".
+    std::mutex watchdogSleepMutex_;
+    std::condition_variable watchdogSleepCv_;
+
+    // v0.9.7: telemetry aggregator pointer used by drainAndEmit
+    // SupervisorEvents. Set via setTelemetryAggregator from the
+    // runtime composition root; null until the runtime wires it.
+    // Held under mutex_ for safe atomic shared_ptr swap (modeling
+    // future hot-swap scenarios -- today the runtime sets it once
+    // at startup and never changes it).
+    std::shared_ptr<ITelemetryAggregator> telemetryAggregator_;
+
+    // v0.9.8: per-pool crash circuit breaker.
+    //
+    // poolFailureTimestamps_[poolId] holds the steady_clock timestamps
+    // of recent worker deaths for that pool. The reap path appends a
+    // timestamp on every death; the watchdog tick prunes entries older
+    // than kCrashWindowSeconds. If the count of timestamps within the
+    // window crosses kCrashThreshold, the pool is quarantined: the
+    // auto-respawn loop in reapDeadInstancesLocked skips that pool,
+    // and a Telemetry::Worker::Error is emitted naming the
+    // quarantine. Quarantine lifts after kQuarantineCooldownSeconds;
+    // operators can also force re-spawn via POST /api/pools/{id}/scale.
+    //
+    // Pre-v0.9.8 a worker that crashed in a tight loop got auto-
+    // respawned every 2s indefinitely, filling the activity log with
+    // hundreds of error events per minute and consuming a Job Object
+    // slot on every cycle.
+    static constexpr int kCrashThreshold        = 5;   // failures
+    static constexpr int kCrashWindowSeconds    = 60;  // rolling window
+    static constexpr int kQuarantineCooldownSeconds = 60;
+    std::map<std::string, std::vector<std::chrono::steady_clock::time_point>>
+        poolFailureTimestamps_;
+    std::map<std::string, std::chrono::steady_clock::time_point>
+        poolQuarantineUntil_;
 
 #if defined(_WIN32)
     // Cached host logical-CPU count (denominator for percent-of-system
@@ -8096,6 +9078,7 @@ StdioBridgeResult WorkerSupervisor::sendStdioJsonRpc(const std::string& instance
     HANDLE writeHandle = nullptr;
     HANDLE readHandle  = nullptr;
     std::mutex* perInstanceMutex = nullptr;
+    bool needsHandshake = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = children_.find(instanceId);
@@ -8119,12 +9102,174 @@ StdioBridgeResult WorkerSupervisor::sendStdioJsonRpc(const std::string& instance
         writeHandle      = child.childStdinWrite;
         readHandle       = child.childStdoutRead;
         perInstanceMutex = child.stdioMutex.get();
+        needsHandshake   = !child.mcpInitialized;
     }
 
     // Phase 2: per-instance stdio lock. Concurrent requests to the same
     // instance queue here; concurrent requests to different instances run
     // in parallel.
     std::lock_guard<std::mutex> perInstanceLock(*perInstanceMutex);
+
+    // v0.9.4 Phase 2.5: lazy MCP `initialize` handshake. Spec-compliant
+    // MCP servers (every Anthropic / community npx-installable server)
+    // refuse session methods until the client has completed the
+    // initialize -> notifications/initialized handshake. We perform it
+    // here, transparently, on the first sendStdioJsonRpc call per
+    // ChildProcess. The in-tree baseline-tools worker tolerates being
+    // called without initialize, so its mcpInitialized flag also gets
+    // flipped on first call but the handshake itself is just a no-op
+    // exchange of valid envelopes -- no behavioral change for it.
+    //
+    // Concurrency: needsHandshake is read under mutex_ above, but the
+    // handshake itself runs only inside perInstanceLock. We re-check
+    // under perInstanceLock + briefly under mutex_ to handle the
+    // (theoretical) race where two callers see needsHandshake=true
+    // simultaneously; the second caller will find mcpInitialized
+    // already true after acquiring perInstanceLock and skip.
+    if (needsHandshake) {
+        // Re-check under the supervisor mutex now that we have the
+        // per-instance lock, in case another thread already
+        // handshook this instance.
+        bool stillNeeds = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = children_.find(instanceId);
+            if (it == children_.end()) {
+                result.errorMessage = "instance disappeared before handshake";
+                return result;
+            }
+            stillNeeds = !it->second.mcpInitialized;
+        }
+
+        if (stillNeeds) {
+            // Use a fresh request id for the handshake so we never
+            // collide with the caller's id (which the dispatcher just
+            // rewrote to bridgeRequestIdCounter_++ for this very
+            // reason). We give the handshake a short, fixed deadline
+            // (3s) -- if a child takes longer than that to respond
+            // to `initialize`, it is wedged or unhealthy and the
+            // caller's request would have failed anyway.
+            const std::string handshakeId = std::string("\"mcos-handshake-")
+                + instanceId + std::string("\"");
+            const std::string initEnvelope = std::string(
+                "{\"jsonrpc\":\"2.0\",\"id\":") + handshakeId + std::string(
+                ",\"method\":\"initialize\",\"params\":"
+                "{\"protocolVersion\":\"2025-03-26\","
+                "\"capabilities\":{},"
+                "\"clientInfo\":{\"name\":\"mcos-supervisor\",\"version\":\""
+                MASTERCONTROL_VERSION
+                "\"}}}\n");
+
+            // Write the initialize envelope.
+            {
+                const char* cursor = initEnvelope.data();
+                DWORD remaining = static_cast<DWORD>(initEnvelope.size());
+                while (remaining > 0) {
+                    DWORD written = 0;
+                    if (!WriteFile(writeHandle, cursor, remaining, &written, nullptr) || written == 0) {
+                        result.errorMessage = "WriteFile (initialize handshake) failed";
+                        return result;
+                    }
+                    cursor += written;
+                    remaining -= written;
+                }
+            }
+
+            // Drain stdout for up to 3s, scanning for a line whose `id`
+            // is our handshakeId. Discard everything else (banner
+            // text from `npx` / `node`, server boot messages on
+            // merged stderr, etc.). Reuses the same poll-read pattern
+            // as the main loop below.
+            {
+                const auto handshakeDeadline =
+                    std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
+                std::vector<char> readChunk(4096);
+                bool gotInitResponse = false;
+                while (std::chrono::steady_clock::now() < handshakeDeadline && !gotInitResponse) {
+                    DWORD bytesAvailable = 0;
+                    if (!PeekNamedPipe(readHandle, nullptr, 0, nullptr, &bytesAvailable, nullptr)) {
+                        result.errorMessage = "PeekNamedPipe failed during initialize handshake";
+                        return result;
+                    }
+                    if (bytesAvailable > 0) {
+                        const DWORD toRead = (bytesAvailable < (DWORD)readChunk.size())
+                            ? bytesAvailable : (DWORD)readChunk.size();
+                        DWORD readBytes = 0;
+                        if (!ReadFile(readHandle, readChunk.data(), toRead, &readBytes, nullptr) || readBytes == 0) {
+                            result.errorMessage = "ReadFile failed during initialize handshake";
+                            return result;
+                        }
+                        std::lock_guard<std::mutex> lock(mutex_);
+                        auto it = children_.find(instanceId);
+                        if (it == children_.end()) {
+                            result.errorMessage = "instance disappeared during handshake read";
+                            return result;
+                        }
+                        it->second.stdioReadBuffer.append(readChunk.data(), readBytes);
+
+                        // Consume complete lines, looking for our id.
+                        auto& buf = it->second.stdioReadBuffer;
+                        size_t consumedThrough = 0;
+                        size_t lineStart = 0;
+                        for (size_t i = 0; i < buf.size(); ++i) {
+                            if (buf[i] == '\n') {
+                                std::string line = buf.substr(lineStart, i - lineStart);
+                                if (!line.empty() && line.back() == '\r') line.pop_back();
+                                lineStart = i + 1;
+                                consumedThrough = i + 1;
+                                try {
+                                    auto j = nlohmann::json::parse(line);
+                                    if (j.contains("id") && j["id"].dump() == handshakeId) {
+                                        gotInitResponse = true;
+                                        break;
+                                    }
+                                } catch (...) {
+                                    // Banner text or non-JSON -- skip.
+                                }
+                            }
+                        }
+                        if (consumedThrough > 0) {
+                            buf.erase(0, consumedThrough);
+                        }
+                    } else {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+                    }
+                }
+                if (!gotInitResponse) {
+                    result.errorMessage = "initialize handshake timed out (no response in 3s)";
+                    return result;
+                }
+            }
+
+            // Send notifications/initialized (notification -- no id,
+            // no response expected).
+            {
+                const std::string notifEnvelope =
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n";
+                const char* cursor = notifEnvelope.data();
+                DWORD remaining = static_cast<DWORD>(notifEnvelope.size());
+                while (remaining > 0) {
+                    DWORD written = 0;
+                    if (!WriteFile(writeHandle, cursor, remaining, &written, nullptr) || written == 0) {
+                        result.errorMessage = "WriteFile (notifications/initialized) failed";
+                        return result;
+                    }
+                    cursor += written;
+                    remaining -= written;
+                }
+            }
+
+            // Mark this instance as initialized so subsequent calls
+            // skip the handshake.
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                auto it = children_.find(instanceId);
+                if (it != children_.end()) {
+                    it->second.mcpInitialized = true;
+                }
+            }
+        }
+    }
 
     // Phase 3: write request + '\n' to child stdin. WriteFile may make a
     // partial write on a full pipe, so loop until the whole envelope is
@@ -8143,6 +9288,54 @@ StdioBridgeResult WorkerSupervisor::sendStdioJsonRpc(const std::string& instance
             DWORD written = 0;
             if (!WriteFile(writeHandle, cursor, remaining, &written, nullptr) || written == 0) {
                 result.errorMessage = "WriteFile to child stdin failed (child likely exited)";
+                // v0.9.5: mark the instance as Failed so the next
+                // listPools/findPool call (which now reaps before
+                // returning) sees correct state immediately, instead
+                // of advertising the dead instance as Ready until a
+                // separate reap pass runs. We also pull the
+                // ChildProcess record out of children_ here so the
+                // background reap doesn't have to enumerate again.
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    auto childIt = children_.find(instanceId);
+                    if (childIt != children_.end()) {
+                        ChildProcess& child = childIt->second;
+                        if (child.childStdinWrite != nullptr) {
+                            CloseHandle(child.childStdinWrite);
+                            child.childStdinWrite = nullptr;
+                        }
+                        if (child.childStdoutRead != nullptr) {
+                            CloseHandle(child.childStdoutRead);
+                            child.childStdoutRead = nullptr;
+                        }
+                        if (child.jobObject != nullptr) {
+                            CloseHandle(child.jobObject);
+                            child.jobObject = nullptr;
+                        }
+                        if (child.processInfo.hProcess != nullptr) {
+                            CloseHandle(child.processInfo.hProcess);
+                            child.processInfo.hProcess = nullptr;
+                        }
+                        if (child.processInfo.hThread != nullptr) {
+                            CloseHandle(child.processInfo.hThread);
+                            child.processInfo.hThread = nullptr;
+                        }
+                        children_.erase(childIt);
+                    }
+                    for (auto& [poolId, pool] : pools_) {
+                        for (auto it = pool.instances.begin(); it != pool.instances.end(); ++it) {
+                            if (it->instanceId == instanceId) {
+                                deathLog_.push_back(DeathLogEntry{
+                                    poolId, instanceId,
+                                    to_string(it->state), 0
+                                });
+                                pool.instances.erase(it);
+                                pool.updatedAtUtc = timestampNowUtc();
+                                break;
+                            }
+                        }
+                    }
+                }
                 return result;
             }
             cursor += written;
@@ -9098,6 +10291,16 @@ private:
     std::shared_ptr<DiscoveryService> discoveryService_;
     std::atomic<bool> running_{ false };
     std::thread worker_;
+    // v0.9.11: interruptible sleep. Pre-v0.9.11 the worker called
+    // std::this_thread::sleep_for(beaconBroadcastIntervalSeconds), so
+    // stop() had to wait up to a full broadcast interval (15s by
+    // default) before the worker observed running_=false and exited.
+    // Service stop measured 14.8s on v0.9.10 because of this. The
+    // condition variable lets stop() notify_all() and the worker
+    // wakes immediately (wait_for returns), checks running_, and
+    // exits within ms.
+    std::mutex sleepMutex_;
+    std::condition_variable sleepCv_;
 };
 
 void BeaconService::start() {
@@ -9118,7 +10321,12 @@ void BeaconService::start() {
         while (running_) {
             const auto configuration = configurationService_->current();
             if (!configuration.beaconEnabled) {
-                std::this_thread::sleep_for(std::chrono::seconds(1));
+                // v0.9.11: also use the condition-variable wait here
+                // so stop() can interrupt the disabled-state poll
+                // promptly.
+                std::unique_lock<std::mutex> lock(sleepMutex_);
+                sleepCv_.wait_for(lock, std::chrono::seconds(1),
+                                  [this]() { return !running_.load(); });
                 continue;
             }
 
@@ -9136,7 +10344,17 @@ void BeaconService::start() {
                 ? nlohmann::json(discoveryService_->currentDocument()).dump()
                 : nlohmann::json(currentAdvertisement()).dump();
             sendto(socketHandle, payload.c_str(), static_cast<int>(payload.size()), 0, reinterpret_cast<sockaddr*>(&address), sizeof(address));
-            std::this_thread::sleep_for(std::chrono::seconds(configuration.beaconBroadcastIntervalSeconds));
+            // v0.9.11: interruptible sleep. wait_for returns when
+            // either the predicate is true (running_ flipped to
+            // false) OR the timeout elapses, whichever comes first.
+            // Pre-v0.9.11 a plain sleep_for blocked stop() until
+            // the next broadcast interval ended.
+            {
+                std::unique_lock<std::mutex> lock(sleepMutex_);
+                sleepCv_.wait_for(lock,
+                    std::chrono::seconds(configuration.beaconBroadcastIntervalSeconds),
+                    [this]() { return !running_.load(); });
+            }
         }
 
         closesocket(socketHandle);
@@ -9145,6 +10363,15 @@ void BeaconService::start() {
 
 void BeaconService::stop() {
     running_ = false;
+    // v0.9.11: notify the sleeping worker so it observes
+    // running_=false immediately rather than waiting for the next
+    // broadcast interval. Notify under the mutex so there's no
+    // missed-wakeup race (the worker's wait_for predicate
+    // re-checks running_ after notification).
+    {
+        std::lock_guard<std::mutex> lock(sleepMutex_);
+        sleepCv_.notify_all();
+    }
     if (worker_.joinable()) {
         worker_.join();
     }
@@ -9196,10 +10423,660 @@ public:
         leaseRouter_ = std::move(leaseRouter);
     }
 
+    // v0.9.15: start a background thread that keeps the reachability
+    // cache warm. Every kReachabilityProberIntervalMs the thread walks
+    // the current inventory and probes every (host, port) pair so the
+    // cache is rebuilt before its TTL expires. With this in place the
+    // operator dashboard never blocks on probes -- every snapshot is
+    // a cache hit. Pre-v0.9.15 the v0.9.14 cache delivered ~36ms
+    // dashboard latency in steady state but a periodic 6-20s spike
+    // every 30s when the TTL expired and the next snapshot had to
+    // re-sweep all probes synchronously. v0.9.15 eliminates the spike
+    // by moving the probe work to a separate thread.
+    void StartReachabilityProber() {
+        if (reachabilityProberRunning_.exchange(true)) return;
+        reachabilityProberThread_ = std::thread([this]() {
+            // Initial settle so we don't start probing while inventory
+            // is still hydrating during runtime construction.
+            for (int slept = 0; slept < kReachabilityProberSettleMs; slept += 100) {
+                if (!reachabilityProberRunning_.load(std::memory_order_acquire)) return;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            while (reachabilityProberRunning_.load(std::memory_order_acquire)) {
+                // Walk inventory, probe each endpoint to refresh
+                // its cache entry.
+                // v0.9.16: walk the SAME endpoint union the
+                // dashboard snapshot probes. Pre-v0.9.16 the prober
+                // only walked inventoryService_->listEndpoints(),
+                // missing platform gateways and governance servers
+                // that the snapshot synthesizes inline (lines
+                // ~10417 + ~10439). Those misses meant every
+                // dashboard call had to do synchronous probes for
+                // 5-13 seconds for the missing endpoints, even
+                // when the prober was running. Now the prober
+                // probes the union {inventory + platform gateways
+                // + governance servers}.
+                try {
+                    auto probeOne = [this](const std::string& host, uint16_t port) {
+                        if (!reachabilityProberRunning_.load(std::memory_order_acquire)) return;
+                        if (host.empty() || port == 0) return;
+                        std::string hostPortIgnored;
+                        // v0.9.16: prober explicitly opts into the
+                        // synchronous-probe path -- it has to actually
+                        // populate the cache. Snapshot callers leave
+                        // allowSynchronousProbe at the default false
+                        // so they never block.
+                        (void)probeReachabilityCached(host, port, hostPortIgnored,
+                                                      /*allowSynchronousProbe=*/true);
+                    };
+                    if (inventoryService_) {
+                        for (const auto& ep : inventoryService_->listEndpoints()) {
+                            probeOne(ep.host, ep.port);
+                        }
+                    }
+                    if (platformServiceCatalogService_) {
+                        for (const auto& gateway : platformServiceCatalogService_->listGateways()) {
+                            probeOne(gateway.ipAddress, gateway.port);
+                        }
+                        // Governance servers route through the gateway
+                        // (snapshot uses the gateway's host:port for
+                        // the governance entry too) so probing the
+                        // gateway covers them; explicitly walking
+                        // listGovernanceServers() would just re-probe
+                        // the same host:port pairs from a different
+                        // angle.
+                    }
+                } catch (...) {
+                    // Inventory / catalog walk threw -- skip this
+                    // cycle; try again next interval.
+                }
+                // Interruptible sleep symmetric with the supervisor
+                // watchdog and BeaconService patterns.
+                std::unique_lock<std::mutex> lock(reachabilityProberSleepMutex_);
+                reachabilityProberSleepCv_.wait_for(lock,
+                    std::chrono::milliseconds(kReachabilityProberIntervalMs),
+                    [this]() { return !reachabilityProberRunning_.load(std::memory_order_acquire); });
+            }
+        });
+    }
+
+    void StopReachabilityProber() {
+        if (!reachabilityProberRunning_.exchange(false)) return;
+        {
+            std::lock_guard<std::mutex> lock(reachabilityProberSleepMutex_);
+            reachabilityProberSleepCv_.notify_all();
+        }
+        if (reachabilityProberThread_.joinable()) {
+            reachabilityProberThread_.join();
+        }
+    }
+
+    ~AdminApiService() override {
+        StopReachabilityProber();
+    }
+
+private:
+    // v0.9.14: per-endpoint reachability cache. Pre-v0.9.14 the
+    // dashboard snapshot did a 200ms TCP-connect probe for EVERY
+    // sub-agent and EVERY mcp-server endpoint serially -- with ~30
+    // endpoints in a typical install that ran 6.6 seconds warm and
+    // 20 seconds cold (live-probe at /api/dashboard). The shell
+    // and browser dashboard both poll /api/dashboard, so the slow
+    // snapshot blocked every refresh. The cache turns a re-probe
+    // within kReachabilityCacheTtlSeconds into an O(1) map lookup,
+    // cutting snapshot latency to <100ms in steady state. The
+    // host:port string is the cache key. Probes still happen on
+    // first call and on TTL expiry.
+    // v0.9.14 follow-up: TTL must be larger than the worst-case time
+    // to populate the entire cache from cold (one probe per endpoint
+    // serially, ~6s for ~30 endpoints with 200ms per address). 5s
+    // (the original) was shorter than that, so by the time a full
+    // sweep completed the first entries' TTL had already expired and
+    // the next snapshot re-probed everything. 30s is comfortably
+    // longer than any plausible cold-sweep duration AND short enough
+    // that operator-visible reachability changes (worker came back
+    // online, network blip recovered) surface within half a minute.
+    static constexpr int kReachabilityCacheTtlSeconds = 30;
+    // v0.9.15: background prober interval. Every this-many-ms the
+    // prober thread re-probes every known endpoint so the cache is
+    // refreshed before its TTL expires. 10s is comfortably under
+    // the 30s TTL so even a slow sweep (current worst observed: 6s)
+    // finishes well within the cache validity window. The settle is
+    // a one-time wait at thread start so we don't probe before the
+    // inventory has finished hydrating during runtime construction.
+    static constexpr int kReachabilityProberIntervalMs = 10000;
+    static constexpr int kReachabilityProberSettleMs   = 2000;
+
+    // v0.9.56: per-cache-entry failure diagnostic. Pre-v0.9.56 the
+    // cache only remembered reachable=bool; the dashboard had no way
+    // to surface WHY a probe failed, so operators saw a red dot with
+    // empty status text and had to guess (firewall? wrong port? no
+    // listener? DNS?). lastErrorCategory is a stable enum
+    // ("connection_refused"/"timeout"/"dns_failed"/"socket_error"/"")
+    // and lastErrorMessage is a human-readable line including the
+    // host:port. The snapshot path mirrors these into the runtime
+    // stats so the dashboard can render an actionable diagnostic.
+    struct ReachabilityCacheEntry {
+        bool reachable = false;
+        std::chrono::steady_clock::time_point lastProbedAt;
+        std::string lastErrorCategory;
+        std::string lastErrorMessage;
+        std::string lastErrorAtUtc;
+    };
+    mutable std::mutex reachabilityCacheMutex_;
+    mutable std::map<std::string, ReachabilityCacheEntry> reachabilityCache_;
+
+    // v0.9.56: lookup last-known reachability diagnostic for a
+    // formatted host:port key. Returns nullopt when no probe has
+    // happened yet so the snapshot path can decide whether to render
+    // "no_endpoint_registered" vs "no_listener". Read-only; safe to
+    // call from the snapshot thread.
+    struct ReachabilityDiagnostic {
+        bool reachable = false;
+        std::string errorCategory;
+        std::string errorMessage;
+        std::string errorAtUtc;
+    };
+    std::optional<ReachabilityDiagnostic>
+    lastReachabilityDiagnostic(const std::string& hostPort) const {
+        std::lock_guard<std::mutex> lock(reachabilityCacheMutex_);
+        auto it = reachabilityCache_.find(hostPort);
+        if (it == reachabilityCache_.end()) return std::nullopt;
+        ReachabilityDiagnostic out;
+        out.reachable     = it->second.reachable;
+        out.errorCategory = it->second.lastErrorCategory;
+        out.errorMessage  = it->second.lastErrorMessage;
+        out.errorAtUtc    = it->second.lastErrorAtUtc;
+        return out;
+    }
+
+    // v0.9.60: detection of pre-installed npm MCP packages. Scans
+    // candidate npm-root directories for canonical package paths
+    // (entityId -> "C:\\...\\node_modules\\<package>") and caches
+    // a yes/no per known entity id. Lazy: runs on first call to
+    // packageDetected() and stored in detectedPackagesCache_.
+    //
+    // Why we infer the npm root from existing pool args first: the 4
+    // already-pooled MCPs (filesystem / memory / sequential-thinking
+    // / sqlite) carry an absolute path through node_modules, so the
+    // operator's actual installation root is captured there. Falling
+    // back to common locations (per-user APPDATA, C:\Program Files\
+    // nodejs) covers fresh installs that don't have any pool yet.
+    //
+    // Returns true iff the canonical install path for the given
+    // seeded entity id exists on disk. Returns false for unknown ids
+    // or when no scan root could be derived.
+    mutable std::mutex detectedPackagesMutex_;
+    mutable bool detectedPackagesScanned_ = false;
+    mutable std::map<std::string, bool> detectedPackagesCache_;
+
+    bool packageDetected(const std::string& entityId) const {
+        std::lock_guard<std::mutex> lock(detectedPackagesMutex_);
+        if (!detectedPackagesScanned_) {
+            performNpmPackageDetectionLocked();
+            detectedPackagesScanned_ = true;
+        }
+        auto it = detectedPackagesCache_.find(entityId);
+        return it != detectedPackagesCache_.end() && it->second;
+    }
+
+    // Caller must hold detectedPackagesMutex_.
+    void performNpmPackageDetectionLocked() const {
+        // entityId -> canonical package directory name under node_modules
+        // ("@scope/name" or "name"). Only entries with a verified
+        // canonical npm package; matches the kKnownInstallCommand
+        // map in enrichRuntimeStatDiagnostics so the operator-facing
+        // surfaces stay consistent.
+        // v0.10.0: playwright dropped from the catalog and from this map.
+        const std::vector<std::pair<std::string, std::string>> knownPackages = {
+            { "chrome-devtools",     "chrome-devtools-mcp" },
+            { "filesystem",          "@modelcontextprotocol/server-filesystem" },
+            { "memory",              "@modelcontextprotocol/server-memory" },
+            { "sequential-thinking", "@modelcontextprotocol/server-sequential-thinking" },
+            { "sqlite",              "mcp-server-sqlite-npx" }
+        };
+
+        // Collect candidate npm roots. First, infer from any existing
+        // pool whose args contain "node_modules"; that captures the
+        // operator's actual install path. Then add common fallbacks.
+        std::vector<std::filesystem::path> candidateRoots;
+        if (workerSupervisor_) {
+            try {
+                for (const auto& pool : workerSupervisor_->listPools()) {
+                    for (const auto& arg : pool.template_.args) {
+                        const auto pos = arg.find("node_modules");
+                        if (pos != std::string::npos) {
+                            // arg looks like
+                            //   <root>\node_modules\<scope>\<pkg>\dist\index.js
+                            // We want the prefix ending right at
+                            //   <root>\node_modules
+                            const auto rootEnd = pos + std::string("node_modules").size();
+                            candidateRoots.emplace_back(arg.substr(0, rootEnd));
+                            break;
+                        }
+                    }
+                }
+            } catch (...) {
+                // Supervisor walk threw -- fall through to fallback roots.
+            }
+        }
+        // Fallback roots covering typical Windows npm globals. Use
+        // Win32 GetEnvironmentVariableW (not std::getenv) to honor
+        // the Windows-native rule (`.claude/rules/10-windows-native-cpp.md`)
+        // and to avoid the CRT-deprecated getenv warning.
+#if defined(_WIN32)
+        {
+            wchar_t appdataBuf[MAX_PATH * 2];
+            const DWORD len = ::GetEnvironmentVariableW(L"APPDATA",
+                                                        appdataBuf,
+                                                        ARRAYSIZE(appdataBuf));
+            if (len > 0 && len < ARRAYSIZE(appdataBuf)) {
+                candidateRoots.emplace_back(
+                    std::filesystem::path(std::wstring(appdataBuf, len))
+                    / L"npm" / L"node_modules");
+            }
+        }
+#endif
+        candidateRoots.emplace_back(std::filesystem::path("C:/Program Files/nodejs/node_modules"));
+
+        // Deduplicate paths (case-insensitive on Windows would be
+        // ideal, but std::filesystem::path equality covers the common
+        // case where the same string was added twice).
+        std::set<std::filesystem::path> uniqueRoots(candidateRoots.begin(), candidateRoots.end());
+
+        for (const auto& [entityId, packageName] : knownPackages) {
+            bool found = false;
+            for (const auto& root : uniqueRoots) {
+                std::error_code ec;
+                if (std::filesystem::exists(root / packageName, ec)) {
+                    found = true;
+                    break;
+                }
+            }
+            detectedPackagesCache_[entityId] = found;
+        }
+    }
+
+    // v0.9.56: classify the install-state for a runtime stat entry
+    // and synthesize an actionable operator hint. Stat T must have
+    // .reachable, .poolId, .endpointHostPort, .readyInstanceCount,
+    // .unavailableReason, .lastErrorMessage, .lastErrorAtUtc,
+    // .installState, .installHint -- both SubAgentRuntimeStat and
+    // McpServerRuntimeStat satisfy that shape. Pre-v0.9.56 these
+    // five fields didn't exist, so the dashboard had no way to tell
+    // operators (a) whether an entry was a stdio-supervised pool
+    // wrap, an admin-port helper, or a placeholder waiting for a
+    // pool, and (b) why a TCP probe was failing. The classification
+    // is conservative: reachable=true + ready instances => install
+    // state "installed_and_supervised"; reachable=true + admin port
+    // => "online_via_admin_port"; otherwise the seeded catalog
+    // entry is treated as a placeholder needing a pool.
+    template <typename Stat>
+    void enrichRuntimeStatDiagnostics(Stat& stat,
+                                      const std::string& entityId,
+                                      const std::string& kind, // "sub-agent" or "MCP server"
+                                      uint16_t adminPort,
+                                      bool hasManagedPool,
+                                      uint16_t seededPort,
+                                      const std::string& seededHost) const {
+        // Resolve diagnostic from the cache by reformatting the
+        // probe key, since stats may have rewritten endpointHostPort
+        // to "stdio (supervised pool: ...)" by the time we run.
+        std::optional<ReachabilityDiagnostic> diag;
+        if (!seededHost.empty() && seededPort != 0) {
+            const bool isIPv6Literal = seededHost.find(':') != std::string::npos;
+            const std::string probeKey = isIPv6Literal
+                ? "[" + seededHost + "]:" + std::to_string(seededPort)
+                : seededHost + ":" + std::to_string(seededPort);
+            diag = lastReachabilityDiagnostic(probeKey);
+        }
+        if (diag.has_value()) {
+            stat.lastErrorMessage = diag->errorMessage;
+            stat.lastErrorAtUtc   = diag->errorAtUtc;
+        }
+
+        // Path 1: stdio-supervised pool with ready instances. The
+        // v0.9.25 truth-wins fix already set reachable=true and
+        // rewrote endpointHostPort to "stdio (supervised pool: N
+        // ready instance)". Mark installState accordingly and clear
+        // the unavailableReason.
+        if (hasManagedPool && stat.readyInstanceCount > 0 && stat.reachable) {
+            stat.installState      = "installed_and_supervised";
+            stat.unavailableReason = "";
+            stat.installHint       = "Healthy. Pool '" + stat.poolId
+                                   + "' supervises " + std::to_string(stat.readyInstanceCount)
+                                   + " ready instance(s).";
+            // Clear the legacy probe error -- this entry is
+            // explicitly NOT a TCP-listener entry. Pre-v0.9.56 the
+            // cached "connection_refused" message lingered even on
+            // healthy stdio pools because the cache key was the
+            // seeded TCP host:port that we never bind to.
+            stat.lastErrorMessage = "";
+            stat.lastErrorAtUtc   = "";
+            return;
+        }
+
+        // Path 2: pool exists but no ready instances yet (cold or
+        // crashed). reachable can be true via stdio supervision but
+        // readyInstanceCount=0 means leases will fail.
+        if (hasManagedPool && stat.readyInstanceCount == 0) {
+            stat.installState      = "supervised_pool_not_ready";
+            stat.unavailableReason = "supervised_pool_not_ready";
+            stat.installHint       = "Pool '" + stat.poolId
+                                   + "' is registered but no instances are Ready. "
+                                   + "Inspect supervisor logs (Job Object exit codes) for the worker process.";
+            if (stat.lastErrorMessage.empty()) {
+                stat.lastErrorMessage = "Supervised pool has 0 ready instances.";
+            }
+            return;
+        }
+
+        // Path 3: reachable=true with no managed pool. The probe
+        // succeeded against a TCP listener (e.g. governance servers
+        // reporting at the admin port). Render as online but clearly
+        // not pool-managed so operators can tell it apart from a
+        // supervised stdio pool.
+        if (stat.reachable && !hasManagedPool) {
+            const bool servedFromAdmin = (seededPort == adminPort);
+            stat.installState      = servedFromAdmin
+                ? "online_via_admin_port"
+                : "online_via_external_listener";
+            stat.unavailableReason = "";
+            stat.installHint       = servedFromAdmin
+                ? "Served by the MCOS admin port (" + std::to_string(adminPort)
+                  + "). For supervised lifecycle, register a pool: "
+                  "POST /api/pools with poolId=\"" + entityId + "\"."
+                : "Reachable at " + stat.endpointHostPort
+                  + " but not under MCOS supervision. "
+                  "Register a pool: POST /api/pools with poolId=\"" + entityId + "\".";
+            stat.lastErrorMessage = "";
+            stat.lastErrorAtUtc   = "";
+            return;
+        }
+
+        // Path 4: not reachable, no pool. This is the fake-telemetry
+        // case the v0.9.56 diagnostic surface was added to expose.
+        // Use the cached probe failure category to set
+        // unavailableReason; if no probe has happened yet
+        // (cache empty) fall back to "no_endpoint_registered" if
+        // there's no host/port at all, otherwise "no_listener".
+        stat.installState = "awaiting_pool_registration";
+        if (diag.has_value() && !diag->errorCategory.empty()) {
+            stat.unavailableReason = diag->errorCategory;
+        } else if (seededHost.empty() || seededPort == 0) {
+            stat.unavailableReason = "no_endpoint_registered";
+        } else {
+            stat.unavailableReason = "no_listener";
+        }
+
+        // v0.9.58: surface a known canonical install command for
+        // entries that map to a public npm MCP package. Pre-v0.9.58
+        // the installHint just said "register a managed pool" with
+        // no install path; operators couldn't tell apart "this MCP
+        // has a published package, just install it" from "this is
+        // an opaque catalog name with no obvious vendor." The map
+        // is conservative -- only entries with a verified canonical
+        // npm package are populated. Empty string means "no known
+        // canonical install path; operator authors the pool template
+        // by hand." Detection of whether the package is already
+        // installed is deferred (see installPackageDetected default).
+        // v0.10.0: playwright removed from the install-hint map alongside
+        // its catalog removal.
+        static const std::map<std::string, std::string> kKnownInstallCommand = {
+            { "chrome-devtools",            "npm install -g chrome-devtools-mcp" },
+            { "filesystem",                 "npm install -g @modelcontextprotocol/server-filesystem" },
+            { "memory",                     "npm install -g @modelcontextprotocol/server-memory" },
+            { "sequential-thinking",        "npm install -g @modelcontextprotocol/server-sequential-thinking" },
+            { "sqlite",                     "npm install -g mcp-server-sqlite-npx" },
+        };
+        const auto installIt = kKnownInstallCommand.find(entityId);
+        if (installIt != kKnownInstallCommand.end()) {
+            stat.installCommand = installIt->second;
+        }
+
+        // v0.9.60: detect whether the canonical npm package is
+        // already installed on disk. When detected, the install hint
+        // changes from "install + register" to "register" so the
+        // operator knows they can skip the npm step. The detection
+        // result is cached on first call so we don't re-walk node_
+        // modules on every snapshot.
+        if (!stat.installCommand.empty()) {
+            stat.installPackageDetected = packageDetected(entityId);
+        }
+
+        std::string installSuffix;
+        if (!stat.installCommand.empty()) {
+            if (stat.installPackageDetected) {
+                installSuffix = " Canonical npm package detected on disk; skip the install and register a pool.";
+            } else {
+                installSuffix = " Known install command: `" + stat.installCommand + "`.";
+            }
+        }
+        stat.installHint = std::string("Catalog placeholder for ") + kind
+                         + " '" + entityId + "'. No process listens on "
+                         + (seededPort == 0
+                              ? std::string("the registered endpoint")
+                              : seededHost + ":" + std::to_string(seededPort))
+                         + ". Register a managed pool to make this entry live: "
+                           "POST /api/pools with poolId=\"" + entityId + "\" "
+                           "and an executable template."
+                         + installSuffix;
+        if (stat.lastErrorMessage.empty()) {
+            // Synthesize a message even if the prober hasn't run yet
+            // so the dashboard has SOMETHING to render in the
+            // 30-second window before the first sweep completes.
+            stat.lastErrorMessage = "No probe result yet for "
+                + (seededPort == 0
+                    ? std::string("(no endpoint)")
+                    : seededHost + ":" + std::to_string(seededPort))
+                + ". Background prober runs every "
+                + std::to_string(kReachabilityProberIntervalMs / 1000)
+                + "s.";
+        }
+    }
+
+    // v0.9.15: background prober.
+    std::thread reachabilityProberThread_;
+    std::atomic<bool> reachabilityProberRunning_{ false };
+    std::mutex reachabilityProberSleepMutex_;
+    std::condition_variable reachabilityProberSleepCv_;
+
+    // Probe (or cache-hit) the reachability of a host:port pair.
+    // outHostPort is the operator-display string ("host:port" or
+    // "[ipv6]:port"). Returns true iff the probe (or cached probe)
+    // succeeded.
+    //
+    // v0.9.16 follow-up: the snapshot caller path is non-blocking
+    // when the background prober is alive -- a cache miss returns
+    // the stale value (or false if no prior probe has happened) and
+    // the prober is responsible for keeping the cache fresh. Pre-
+    // v0.9.16 a stale entry triggered a synchronous re-probe which
+    // blocked the dashboard for up to N×200ms per missing endpoint
+    // (5-19s observed with ~30 endpoints). Since the prober now
+    // covers the same endpoint set the snapshot probes, every
+    // endpoint should be reliably cached after the first sweep
+    // completes. The dashboard never blocks again.
+    //
+    // The synchronous-probe-on-miss path is only taken when the
+    // prober is NOT running (test mode, supervised-mock paths).
+    bool probeReachabilityCached(const std::string& host,
+                                 uint16_t port,
+                                 std::string& outHostPort,
+                                 bool allowSynchronousProbe = false) const {
+        if (host.empty() || port == 0) {
+            outHostPort.clear();
+            return false;
+        }
+        const bool isIPv6Literal = host.find(':') != std::string::npos;
+        if (isIPv6Literal) {
+            outHostPort = "[" + host + "]:" + std::to_string(port);
+        } else {
+            outHostPort = host + ":" + std::to_string(port);
+        }
+
+        // Cache check.
+        const auto now = std::chrono::steady_clock::now();
+        bool cacheHasEntry = false;
+        bool cachedValue = false;
+        {
+            std::lock_guard<std::mutex> lock(reachabilityCacheMutex_);
+            auto it = reachabilityCache_.find(outHostPort);
+            if (it != reachabilityCache_.end()) {
+                cacheHasEntry = true;
+                cachedValue = it->second.reachable;
+                if ((now - it->second.lastProbedAt)
+                       < std::chrono::seconds(kReachabilityCacheTtlSeconds)) {
+                    return it->second.reachable;
+                }
+            }
+        }
+
+        // v0.9.16: stale-or-empty + caller doesn't allow synchronous
+        // probe (i.e., this is the snapshot path, not the prober) +
+        // prober is alive -> return last-known-good (or false)
+        // WITHOUT blocking. The prober will refresh the entry on its
+        // next sweep. Snapshots are always O(map lookups) regardless
+        // of TTL expiry, eliminating the v0.9.15 periodic spike.
+        //
+        // Pre-v0.9.16 stale entries triggered a synchronous re-probe
+        // which blocked the dashboard for up to N x 200ms per
+        // missing endpoint (5-19s observed). The prober now covers
+        // the same endpoint set the snapshot probes, so every
+        // endpoint is reliably cached after the first sweep
+        // completes; the snapshot can return immediately.
+        if (!allowSynchronousProbe
+            && reachabilityProberRunning_.load(std::memory_order_acquire)) {
+            return cacheHasEntry ? cachedValue : false;
+        }
+
+        // Cache miss: actually probe. Logic is identical to the
+        // v0.7.6 / v0.8.2 / v0.9.x in-line probe -- non-blocking
+        // TCP connect with a 200ms select timeout per resolved
+        // address. v0.9.56 extends it to also capture the failure
+        // category (dns_failed / connection_refused / timeout /
+        // socket_error) so the snapshot can render an actionable
+        // diagnostic instead of an empty status string.
+        bool reachable = false;
+        std::string errorCategory;
+        std::string errorMessage;
+#if defined(_WIN32)
+        addrinfo hints{};
+        hints.ai_family   = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_protocol = IPPROTO_TCP;
+        addrinfo* resolved = nullptr;
+        const std::string portStr = std::to_string(port);
+        const int gaiResult = ::getaddrinfo(host.c_str(),
+                                            portStr.c_str(),
+                                            &hints, &resolved);
+        if (gaiResult != 0 || resolved == nullptr) {
+            errorCategory = "dns_failed";
+            errorMessage  = "DNS resolution failed for " + outHostPort
+                          + " (getaddrinfo=" + std::to_string(gaiResult) + ").";
+        } else {
+            int lastSockErr = 0;
+            bool anyTimeout = false;
+            for (addrinfo* it = resolved; it != nullptr && !reachable; it = it->ai_next) {
+                SOCKET s = ::socket(it->ai_family, it->ai_socktype, it->ai_protocol);
+                if (s == INVALID_SOCKET) continue;
+                u_long nb = 1;
+                ::ioctlsocket(s, FIONBIO, &nb);
+                const int connectResult = ::connect(s, it->ai_addr, (int)it->ai_addrlen);
+                if (connectResult == 0) {
+                    reachable = true;
+                } else {
+                    const int wsaErr = WSAGetLastError();
+                    if (wsaErr == WSAEWOULDBLOCK) {
+                        fd_set writeSet{};
+                        FD_ZERO(&writeSet);
+                        FD_SET(s, &writeSet);
+                        fd_set errorSet{};
+                        FD_ZERO(&errorSet);
+                        FD_SET(s, &errorSet);
+                        timeval tv{};
+                        tv.tv_sec = 0;
+                        tv.tv_usec = 200 * 1000; // 200ms
+                        const int sel = ::select(0, nullptr, &writeSet, &errorSet, &tv);
+                        if (sel == 0) {
+                            anyTimeout = true;
+                        } else if (sel > 0 && FD_ISSET(s, &writeSet)) {
+                            int sockErr = 0;
+                            int sockErrLen = sizeof(sockErr);
+                            ::getsockopt(s, SOL_SOCKET, SO_ERROR,
+                                         reinterpret_cast<char*>(&sockErr), &sockErrLen);
+                            if (sockErr == 0) {
+                                reachable = true;
+                            } else {
+                                lastSockErr = sockErr;
+                            }
+                        } else {
+                            lastSockErr = WSAGetLastError();
+                        }
+                    } else {
+                        lastSockErr = wsaErr;
+                    }
+                }
+                ::closesocket(s);
+            }
+            ::freeaddrinfo(resolved);
+            if (!reachable) {
+                if (lastSockErr == WSAECONNREFUSED) {
+                    errorCategory = "connection_refused";
+                    errorMessage  = "TCP connect refused at " + outHostPort
+                                  + " - no process listening on the port.";
+                } else if (lastSockErr == WSAEHOSTUNREACH || lastSockErr == WSAENETUNREACH) {
+                    errorCategory = "host_unreachable";
+                    errorMessage  = "Host unreachable for " + outHostPort
+                                  + " (WSA error " + std::to_string(lastSockErr) + ").";
+                } else if (anyTimeout && lastSockErr == 0) {
+                    errorCategory = "timeout";
+                    errorMessage  = "TCP connect to " + outHostPort
+                                  + " timed out after 200ms - target may be firewalled or down.";
+                } else if (lastSockErr != 0) {
+                    errorCategory = "socket_error";
+                    errorMessage  = "Socket error connecting to " + outHostPort
+                                  + " (WSA error " + std::to_string(lastSockErr) + ").";
+                } else {
+                    errorCategory = "no_listener";
+                    errorMessage  = "No TCP listener answered at " + outHostPort + ".";
+                }
+            }
+        }
+#endif
+
+        // Cache the result, including v0.9.56 diagnostic fields.
+        const std::string nowUtc = reachable ? std::string() : timestampNowUtc();
+        {
+            std::lock_guard<std::mutex> lock(reachabilityCacheMutex_);
+            ReachabilityCacheEntry entry;
+            entry.reachable          = reachable;
+            entry.lastProbedAt       = now;
+            entry.lastErrorCategory  = errorCategory;
+            entry.lastErrorMessage   = errorMessage;
+            entry.lastErrorAtUtc     = nowUtc;
+            reachabilityCache_[outHostPort] = std::move(entry);
+        }
+        return reachable;
+    }
+
+public:
+
     DashboardSnapshot snapshot() override {
-        // Use synchronous refresh so the snapshot always reflects the latest
-        // configuration state — callers expect a consistent view.
-        inventoryService_->refresh();
+        // v0.9.16: refreshAsync instead of refresh. Pre-v0.9.16 this
+        // call did synchronous 400ms-per-endpoint TCP probes inside
+        // RuntimeInventoryService::probeEndpoint -- with ~30
+        // endpoints that's 12 seconds of blocking on the dashboard
+        // path. The contract comment on refreshAsync literally
+        // mentions "10+ seconds" -- it was added in mutating handlers
+        // for exactly this reason but never adopted in snapshot.
+        // refreshAsync fires the probe loop on a detached background
+        // thread and returns immediately; the snapshot then reads
+        // the inventory state as it currently is (might be slightly
+        // stale on the very first call after a configuration mutation,
+        // but never blocks). The reachability cache + background
+        // prober handle the dashboard's reachability needs
+        // independently of the inventory's own probes.
+        inventoryService_->refreshAsync();
 
         DashboardSnapshot snapshot;
         snapshot.telemetry = telemetryService_->captureSnapshot();
@@ -9297,6 +11174,11 @@ public:
             for (const auto& pool : pools) {
                 poolById.emplace(pool.poolId, pool);
             }
+            // v0.9.56: pull the admin port once so the diagnostic
+            // enrichment helper can classify "online_via_admin_port"
+            // entries (governance servers reuse the admin port).
+            const uint16_t diagAdminPort =
+                configurationService_ ? configurationService_->current().browserPort : 0;
             for (const auto& endpoint : snapshot.endpoints) {
                 if (endpoint.kind != EndpointKind::SubAgent) {
                     continue;
@@ -9307,72 +11189,19 @@ public:
                 stat.specialization = endpoint.specialization;
                 stat.status         = to_string(endpoint.status);
 
-                // v0.7.6: always populate the endpoint string + reachability
-                // probe so cards have meaningful data even when no managed
-                // pool wraps the sub-agent. Probes the host:port via a
-                // non-blocking TCP connect with a 200 ms timeout per
-                // sub-agent. Total snapshot budget for 7 baseline sub-agents:
-                // ~1.4 s in the worst case (all unreachable). Most probes
-                // return immediately for reachable endpoints.
+                // v0.9.14: reachability probe is now routed through
+                // probeReachabilityCached so a 30-endpoint dashboard
+                // snapshot can serve from the cache (kReachabilityCache
+                // TtlSeconds=5) instead of doing 30 serial 200ms TCP
+                // probes (~6 seconds wall time). Pre-v0.9.14 inline
+                // probe block was 60+ lines of WinSock; now it's one
+                // call. The cache key is host:port (formatted with
+                // RFC 3986 IPv6 brackets per v0.8.2).
                 if (!endpoint.host.empty() && endpoint.port != 0) {
-                    // v0.8.1 / v0.8.2: bracket-wrap IPv6 literals per RFC 3986
-                    // for the operator-facing display string, and probe via
-                    // getaddrinfo so both IPv4 and IPv6 hosts (and DNS names)
-                    // resolve. Pre-v0.8.2 the probe was AF_INET-only via
-                    // inet_pton -- IPv6 ULAs (the seven default sub-agent
-                    // hosts on a stock install) silently failed parse and
-                    // the dot stayed red. Now we try every address family
-                    // returned by getaddrinfo until one connects or all
-                    // exhaust the 200 ms timeout.
-                    const bool isIPv6Literal = endpoint.host.find(':') != std::string::npos;
-                    if (isIPv6Literal) {
-                        stat.endpointHostPort = "[" + endpoint.host + "]:" + std::to_string(endpoint.port);
-                    } else {
-                        stat.endpointHostPort = endpoint.host + ":" + std::to_string(endpoint.port);
-                    }
-#if defined(_WIN32)
-                    addrinfo hints{};
-                    hints.ai_family   = AF_UNSPEC;       // accept v4 + v6
-                    hints.ai_socktype = SOCK_STREAM;
-                    hints.ai_protocol = IPPROTO_TCP;
-                    addrinfo* resolved = nullptr;
-                    const std::string portStr = std::to_string(endpoint.port);
-                    const int gaiResult = ::getaddrinfo(endpoint.host.c_str(),
-                                                         portStr.c_str(),
-                                                         &hints, &resolved);
-                    if (gaiResult == 0 && resolved != nullptr) {
-                        for (addrinfo* it = resolved; it != nullptr && !stat.reachable; it = it->ai_next) {
-                            SOCKET s = ::socket(it->ai_family, it->ai_socktype, it->ai_protocol);
-                            if (s == INVALID_SOCKET) continue;
-                            u_long nonblocking = 1;
-                            ::ioctlsocket(s, FIONBIO, &nonblocking);
-                            const int connectResult = ::connect(s, it->ai_addr, (int)it->ai_addrlen);
-                            if (connectResult == 0) {
-                                stat.reachable = true;
-                            } else if (WSAGetLastError() == WSAEWOULDBLOCK) {
-                                fd_set writeSet{};
-                                FD_ZERO(&writeSet);
-                                FD_SET(s, &writeSet);
-                                fd_set errorSet{};
-                                FD_ZERO(&errorSet);
-                                FD_SET(s, &errorSet);
-                                timeval tv{};
-                                tv.tv_sec  = 0;
-                                tv.tv_usec = 200 * 1000;  // 200 ms per address
-                                const int selectResult = ::select(0, nullptr, &writeSet, &errorSet, &tv);
-                                if (selectResult > 0 && FD_ISSET(s, &writeSet)) {
-                                    int sockErr = 0;
-                                    int sockErrLen = sizeof(sockErr);
-                                    ::getsockopt(s, SOL_SOCKET, SO_ERROR,
-                                                 reinterpret_cast<char*>(&sockErr), &sockErrLen);
-                                    stat.reachable = (sockErr == 0);
-                                }
-                            }
-                            ::closesocket(s);
-                        }
-                        ::freeaddrinfo(resolved);
-                    }
-#endif
+                    stat.reachable =
+                        probeReachabilityCached(endpoint.host,
+                                                endpoint.port,
+                                                stat.endpointHostPort);
                     stat.lastProbedAtUtc = timestampNowUtc();
                 }
 
@@ -9384,6 +11213,14 @@ public:
                     // of "unavailable". The leaseCapacity stays 0 so the
                     // operator sees that no leases are routed yet.
                     stat.utilizationPercent = 0.0;
+                    // v0.9.56: even without a pool, classify install
+                    // state + capture probe diagnostic so the dashboard
+                    // can render an actionable hint instead of an empty
+                    // status field.
+                    enrichRuntimeStatDiagnostics(stat, endpoint.id, "sub-agent",
+                                                 diagAdminPort,
+                                                 /*hasManagedPool=*/false,
+                                                 endpoint.port, endpoint.host);
                     snapshot.subAgentRuntimeStats.push_back(std::move(stat));
                     continue;
                 }
@@ -9430,6 +11267,34 @@ public:
                     // 0% (cold) rather than -1.0 (unconfigured).
                     stat.utilizationPercent = 0.0;
                 }
+                // v0.9.25: when a sub-agent has a supervised pool with
+                // at least one Ready instance, override reach=true.
+                // Pre-v0.9.25 the dashboard reported reach=false based
+                // solely on the legacy TCP probe to the inventory's
+                // host:port, which is meaningless for stdio-supervised
+                // pools (workers run as MCOS children, not TCP
+                // listeners on the inventory's port). The result was
+                // an operator looking at the dashboard seeing red
+                // dots for 'filesystem', 'memory', etc. while
+                // tools/list at the gateway happily aggregated their
+                // tools. Now the supervised-pool truth wins.
+                if (readyCount > 0) {
+                    stat.reachable = true;
+                    stat.endpointHostPort = "stdio (supervised pool: "
+                        + std::to_string(readyCount) + " ready instance"
+                        + (readyCount == 1 ? "" : "s") + ")";
+                    stat.lastProbedAtUtc = timestampNowUtc();
+                }
+                // v0.9.56: classify install state for the pool-wrapped
+                // sub-agent. This populates installState=
+                // "installed_and_supervised" when readyCount>0 and
+                // "supervised_pool_not_ready" when the pool exists
+                // but no instances are Ready, so operators can tell
+                // a healthy stdio pool from a stuck one.
+                enrichRuntimeStatDiagnostics(stat, endpoint.id, "sub-agent",
+                                             diagAdminPort,
+                                             /*hasManagedPool=*/true,
+                                             endpoint.port, endpoint.host);
                 snapshot.subAgentRuntimeStats.push_back(std::move(stat));
             }
 
@@ -9451,62 +11316,34 @@ public:
                 stat.specialization = endpoint.specialization;
                 stat.status         = to_string(endpoint.status);
 
+                // v0.9.14: routed through the cached reachability
+                // helper. Same probe semantics as the sub-agent
+                // path above; same cache; same TTL. Drops the
+                // mcp-server portion of the snapshot from O(N
+                // probes) to O(N map lookups) on every refresh
+                // within the TTL window.
                 if (!endpoint.host.empty() && endpoint.port != 0) {
-                    const bool isIPv6Literal = endpoint.host.find(':') != std::string::npos;
-                    if (isIPv6Literal) {
-                        stat.endpointHostPort = "[" + endpoint.host + "]:" + std::to_string(endpoint.port);
-                    } else {
-                        stat.endpointHostPort = endpoint.host + ":" + std::to_string(endpoint.port);
-                    }
-#if defined(_WIN32)
-                    addrinfo hints{};
-                    hints.ai_family   = AF_UNSPEC;
-                    hints.ai_socktype = SOCK_STREAM;
-                    hints.ai_protocol = IPPROTO_TCP;
-                    addrinfo* resolved = nullptr;
-                    const std::string portStr = std::to_string(endpoint.port);
-                    const int gaiResult = ::getaddrinfo(endpoint.host.c_str(),
-                                                         portStr.c_str(),
-                                                         &hints, &resolved);
-                    if (gaiResult == 0 && resolved != nullptr) {
-                        for (addrinfo* it = resolved; it != nullptr && !stat.reachable; it = it->ai_next) {
-                            SOCKET s = ::socket(it->ai_family, it->ai_socktype, it->ai_protocol);
-                            if (s == INVALID_SOCKET) continue;
-                            u_long nonblocking = 1;
-                            ::ioctlsocket(s, FIONBIO, &nonblocking);
-                            const int connectResult = ::connect(s, it->ai_addr, (int)it->ai_addrlen);
-                            if (connectResult == 0) {
-                                stat.reachable = true;
-                            } else if (WSAGetLastError() == WSAEWOULDBLOCK) {
-                                fd_set writeSet{};
-                                FD_ZERO(&writeSet);
-                                FD_SET(s, &writeSet);
-                                fd_set errorSet{};
-                                FD_ZERO(&errorSet);
-                                FD_SET(s, &errorSet);
-                                timeval tv{};
-                                tv.tv_sec  = 0;
-                                tv.tv_usec = 200 * 1000;
-                                const int selectResult = ::select(0, nullptr, &writeSet, &errorSet, &tv);
-                                if (selectResult > 0 && FD_ISSET(s, &writeSet)) {
-                                    int sockErr = 0;
-                                    int sockErrLen = sizeof(sockErr);
-                                    ::getsockopt(s, SOL_SOCKET, SO_ERROR,
-                                                 reinterpret_cast<char*>(&sockErr), &sockErrLen);
-                                    stat.reachable = (sockErr == 0);
-                                }
-                            }
-                            ::closesocket(s);
-                        }
-                        ::freeaddrinfo(resolved);
-                    }
-#endif
+                    stat.reachable =
+                        probeReachabilityCached(endpoint.host,
+                                                endpoint.port,
+                                                stat.endpointHostPort);
                     stat.lastProbedAtUtc = timestampNowUtc();
                 }
 
                 const auto poolIt = poolById.find(endpoint.id);
                 if (poolIt == poolById.end()) {
                     stat.utilizationPercent = 0.0;
+                    // v0.9.56: same diagnostic enrichment as the
+                    // sub-agent path above. Catalog placeholders
+                    // (computer-use, desktop-control, chrome-devtools,
+                    // etc.) hit this branch and need
+                    // installState="awaiting_pool_registration"
+                    // plus a probe-failure category in
+                    // unavailableReason.
+                    enrichRuntimeStatDiagnostics(stat, endpoint.id, "MCP server",
+                                                 diagAdminPort,
+                                                 /*hasManagedPool=*/false,
+                                                 endpoint.port, endpoint.host);
                     snapshot.mcpServerRuntimeStats.push_back(std::move(stat));
                     continue;
                 }
@@ -9551,21 +11388,70 @@ public:
                 } else {
                     stat.utilizationPercent = 0.0;
                 }
+                // v0.9.25: same supervised-pool truth-wins fix as
+                // the sub-agent path above. With this in place a
+                // dashboard query against a healthy 5-pool
+                // deployment shows reach=true for the pool-wrapped
+                // mcp-servers (filesystem, memory, sequential-
+                // thinking, sqlite, baseline-tools) instead of red
+                // dots from the meaningless-for-stdio TCP probe.
+                if (readyCount > 0) {
+                    stat.reachable = true;
+                    stat.endpointHostPort = "stdio (supervised pool: "
+                        + std::to_string(readyCount) + " ready instance"
+                        + (readyCount == 1 ? "" : "s") + ")";
+                    stat.lastProbedAtUtc = timestampNowUtc();
+                }
+                // v0.9.56: same diagnostic enrichment as the sub-agent
+                // pool-wrapped branch. Healthy pools (filesystem,
+                // memory, sequential-thinking, sqlite, baseline-tools)
+                // get installState="installed_and_supervised"; a pool
+                // that registered but has 0 ready instances gets
+                // "supervised_pool_not_ready" with an inspect-the-
+                // supervisor-logs hint.
+                enrichRuntimeStatDiagnostics(stat, endpoint.id, "MCP server",
+                                             diagAdminPort,
+                                             /*hasManagedPool=*/true,
+                                             endpoint.port, endpoint.host);
                 snapshot.mcpServerRuntimeStats.push_back(std::move(stat));
             }
         }
 
-        MasterControl::Diagnostics::appendTelemetry(
-            L"runtime",
-            "dashboard-snapshot",
-            nlohmann::json{
-                { "hostName", snapshot.telemetry.hostName },
-                { "primaryIpAddress", snapshot.telemetry.primaryIpAddress },
-                { "cpuPercent", snapshot.telemetry.cpuPercent },
-                { "endpoints", snapshot.endpoints.size() },
-                { "subAgentStats", snapshot.subAgentRuntimeStats.size() },
-                { "mcpServerStats", snapshot.mcpServerRuntimeStats.size() }
-            });
+        // v0.10.5: throttle dashboard-snapshot writes to once per
+        // 60 seconds. Pre-v0.10.5 every call to snapshot() (which
+        // happens on every shell + browser poll, ~1 Hz combined)
+        // wrote a full telemetry row to disk. Live measurement on
+        // this host: telemetry.jsonl grew to 24 MB after ~27 hours
+        // of continuous running and would have crossed 1 GB inside
+        // 6 weeks with no rotation policy. Throttling to 60-second
+        // intervals cuts growth ~60x to ~350 KB/day while still
+        // giving the operator a per-minute trend. Other event types
+        // (self-test, supervisor lifecycle, etc.) are unaffected
+        // because they aren't snapshot-rate.
+        {
+            using clock = std::chrono::steady_clock;
+            static std::atomic<int64_t> lastDashboardSnapshotEpoch{ 0 };
+            const auto nowEpoch = std::chrono::duration_cast<std::chrono::seconds>(
+                clock::now().time_since_epoch()).count();
+            int64_t prev = lastDashboardSnapshotEpoch.load(std::memory_order_relaxed);
+            constexpr int64_t kIntervalSeconds = 60;
+            if (prev == 0 || (nowEpoch - prev) >= kIntervalSeconds) {
+                if (lastDashboardSnapshotEpoch.compare_exchange_strong(prev, nowEpoch,
+                        std::memory_order_acq_rel)) {
+                    MasterControl::Diagnostics::appendTelemetry(
+                        L"runtime",
+                        "dashboard-snapshot",
+                        nlohmann::json{
+                            { "hostName", snapshot.telemetry.hostName },
+                            { "primaryIpAddress", snapshot.telemetry.primaryIpAddress },
+                            { "cpuPercent", snapshot.telemetry.cpuPercent },
+                            { "endpoints", snapshot.endpoints.size() },
+                            { "subAgentStats", snapshot.subAgentRuntimeStats.size() },
+                            { "mcpServerStats", snapshot.mcpServerRuntimeStats.size() }
+                        });
+                }
+            }
+        }
         return snapshot;
     }
 
@@ -9699,7 +11585,20 @@ private:
 
 struct HttpRequest final {
     std::string method;
+    // v0.9.50: `path` is the URI path WITHOUT the query string. Pre-
+    // v0.9.50 parseRequest stored the full target verbatim ("/api/
+    // dashboard?cache=bust") and route handlers used strict equality
+    // (request.path == "/api/dashboard"); a probe with any query string
+    // therefore failed to match the route and fell through to the
+    // v0.9.28 supportedMethodsForPath logic, which DID strip the query
+    // for its lookup -- so the path appeared "known" but the request
+    // appeared "method not allowed" and the client got 405 for an
+    // ordinary cache-bust GET. Splitting at parse time keeps every
+    // route comparison correct and leaves the query string available
+    // via the new `query` member for routes that need it (/api/activity
+    // since=, /api/telemetry/events max=).
     std::string path;
+    std::string query; // v0.9.50: portion after '?', no leading '?'.
     std::unordered_map<std::string, std::string> headers;
     std::string body;
 };
@@ -9708,6 +11607,28 @@ struct HttpResponse final {
     int statusCode = 200;
     std::string contentType = "application/json";
     std::string body;
+    // v0.9.26: when true, sendResponse emits headers + Content-
+    // Length matching the body size, but skips writing the body
+    // bytes themselves. Set by SimpleHttpServer's HEAD-rewrite
+    // path so HEAD requests get GET-equivalent headers without
+    // the payload (RFC 7231 §4.3.2).
+    bool suppressBody = false;
+    // v0.9.28: arbitrary response headers emitted after the
+    // standard Content-Type / Content-Length / CORS block. Used
+    // for the Allow: header on 405 Method Not Allowed responses
+    // (RFC 7231 §6.5.5) and forward-compat for Retry-After,
+    // Location, ETag, etc. when later routes need them.
+    std::vector<std::pair<std::string, std::string>> extraHeaders;
+    // v0.9.71: when set, SimpleHttpServer recognizes this as a
+    // streaming response, sends Content-Type: text/event-stream
+    // headers + Cache-Control: no-cache + Connection: keep-alive,
+    // then hands the socket to the streamHandler callback which
+    // owns the connection until it returns. The callback runs on a
+    // detached worker thread so the accept loop is never blocked
+    // by an SSE client. The handler is responsible for closing
+    // the socket when it exits.
+    bool streamMode = false;
+    std::function<void(SOCKET, std::atomic<bool>* /*serverRunning*/)> streamHandler;
 };
 
 // ---------------------------------------------------------------------------
@@ -9723,6 +11644,40 @@ class ActivityEventRing final {
 public:
     static constexpr size_t kCapacity = 512;
 
+    // v0.9.13: persist appends to a JSON-lines file so events survive
+    // service restart. Pre-v0.9.13 the ring was in-memory only -- a
+    // wedge / crash / SCM force-stop lost all forensic data, including
+    // the v0.9.10 supervisor_shutdown_wedge events that were
+    // specifically designed for post-mortem. Now operators reading the
+    // activity surface after a restart see the prior process's tail
+    // events plus the new process's events, which is exactly what
+    // deploy retros need.
+    //
+    // Format: one JSON object per line, encoded via the existing
+    // ActivityEvent NLOHMANN macros. Append-only; the file is read
+    // once at construction (the first call to globalActivityRing())
+    // to repopulate the in-memory ring with the most recent
+    // kPersistedTailMax events. The file is truncated and rewritten
+    // when it exceeds kFileBytesSoftMax to keep on-disk size bounded.
+    static constexpr size_t kPersistedTailMax = kCapacity;
+    static constexpr size_t kFileBytesSoftMax = 8 * 1024 * 1024; // 8 MB
+
+    // Set the persistence path. Called once during runtime
+    // construction with %LOCALAPPDATA%\Master Control Orchestration
+    // Server\activity.jsonl. If never set (e.g. test mode or
+    // pre-runtime-init code paths), append() runs in-memory only and
+    // load() is a no-op.
+    void setPersistencePath(const std::filesystem::path& path) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        persistPath_ = path;
+        // Try to load existing file content into the ring so
+        // post-restart readers see continuity. We deliberately ignore
+        // load failures (corrupt file, permission issues, etc.) --
+        // worst case is we start with an empty ring, which is the
+        // pre-v0.9.13 baseline behavior.
+        loadFromDiskLocked();
+    }
+
     void append(const ActivityEvent& input) {
         std::lock_guard<std::mutex> lock(mutex_);
         ActivityEvent event = input;
@@ -9731,15 +11686,34 @@ public:
         if (event.timestampUtc.empty()) {
             event.timestampUtc = currentUtcTimestamp();
         }
+        // v0.9.13: write to disk before pushing to the in-memory
+        // ring. If the disk write fails we still update the ring;
+        // an operator querying /api/activity sees the event and a
+        // future improvement could surface persistence health.
+        appendToDiskLocked(event);
         ring_.push_back(std::move(event));
         if (ring_.size() > kCapacity) {
             ring_.pop_front();
         }
     }
 
-    // Returns events with id > sinceId (sinceId may be empty = return all).
+    // Returns events with id > sinceId (sinceId may be empty).
     // Also returns the current high-water-mark id so the caller can poll
     // incrementally.
+    //
+    // v0.9.32: when sinceId is empty (the "give me recent activity" use
+    // case from operator dashboards), return the LATEST maxCount events,
+    // oldest-first within the slice. Pre-v0.9.32 the loop iterated the
+    // ring forward and stopped at maxCount, returning the OLDEST maxCount
+    // events -- which for a 459-event ring with max=10 surfaced events
+    // from hours ago, not the live tail. The /api/activity?max=N
+    // bug-hunt of v0.9.32 caught this when probing what "recent 10
+    // events" looked like and got events from 06:46:11Z (boot-time
+    // pool_worker_respawns) instead of 20:55:12Z (current). When sinceId
+    // is provided (incremental polling: "give me what's new since N"),
+    // iterate forward and return the OLDEST maxCount events newer than
+    // sinceId so the caller renders them in chronological order without
+    // missing intermediate events.
     struct Snapshot {
         std::vector<ActivityEvent> events;
         std::string highWaterMarkId;
@@ -9749,10 +11723,22 @@ public:
         Snapshot out;
         out.highWaterMarkId = std::to_string(nextSequence_);
 
-        uint64_t sinceSeq = 0;
-        if (!sinceId.empty()) {
-            try { sinceSeq = std::stoull(sinceId); } catch (...) { sinceSeq = 0; }
+        if (sinceId.empty()) {
+            // Tail semantics: latest maxCount events, oldest-first within
+            // the slice.
+            const size_t take = (maxCount < ring_.size()) ? maxCount : ring_.size();
+            const size_t startIdx = ring_.size() - take;
+            out.events.reserve(take);
+            for (size_t i = startIdx; i < ring_.size(); ++i) {
+                out.events.push_back(ring_[i]);
+            }
+            return out;
         }
+
+        // Incremental-poll semantics: events newer than sinceId, oldest-
+        // first, capped at maxCount.
+        uint64_t sinceSeq = 0;
+        try { sinceSeq = std::stoull(sinceId); } catch (...) { sinceSeq = 0; }
 
         size_t collected = 0;
         for (const auto& event : ring_) {
@@ -9788,6 +11774,156 @@ private:
     mutable std::mutex mutex_;
     std::deque<ActivityEvent> ring_;
     uint64_t nextSequence_ = 0;
+
+    // v0.9.13: persistence members.
+    std::filesystem::path persistPath_;
+    // v0.9.17: persistence health surface. Operators previously had
+    // no signal whether disk-write failures were silently swallowed
+    // by appendToDiskLocked. Now health snapshot is exposed via a
+    // dedicated method (PersistenceHealth) so /api/activity/health
+    // can return it. Counters increment on each write attempt;
+    // lastErrorMessage_ captures the most recent failure for
+    // diagnosis. All under mutex_ so reads are consistent.
+    uint64_t persistedAppendCount_ = 0;
+    uint64_t persistedAppendErrorCount_ = 0;
+    std::string lastPersistErrorMessage_;
+    std::chrono::steady_clock::time_point lastPersistErrorAt_{};
+
+    // Caller holds mutex_. No-op if persistPath_ is empty.
+    void appendToDiskLocked(const ActivityEvent& event) {
+        if (persistPath_.empty()) return;
+        ++persistedAppendCount_;
+        try {
+            // Make the parent directory if it doesn't exist yet (first run).
+            std::error_code ec;
+            std::filesystem::create_directories(persistPath_.parent_path(), ec);
+            // Truncate-and-rewrite when file gets large. We do this
+            // INLINE on the append path because the alternative (a
+            // separate maintenance thread) is more moving parts than
+            // this need warrants. The check is a stat() so it is
+            // cheap; the rewrite only runs when the file crosses the
+            // soft cap (8MB ~= weeks of typical traffic).
+            const auto size = std::filesystem::file_size(persistPath_, ec);
+            if (!ec && size > kFileBytesSoftMax) {
+                rewriteFromRingLocked();
+            }
+            std::ofstream out(persistPath_, std::ios::app | std::ios::binary);
+            if (!out) {
+                // v0.9.17: surface the open failure in the health
+                // counters so /api/activity/health can report it.
+                ++persistedAppendErrorCount_;
+                lastPersistErrorMessage_ = "ofstream open failed (path=" +
+                    persistPath_.string() + ")";
+                lastPersistErrorAt_ = std::chrono::steady_clock::now();
+                return;
+            }
+            out << nlohmann::json(event).dump() << '\n';
+            if (!out) {
+                ++persistedAppendErrorCount_;
+                lastPersistErrorMessage_ = "ofstream write failed (path=" +
+                    persistPath_.string() + ")";
+                lastPersistErrorAt_ = std::chrono::steady_clock::now();
+            }
+        } catch (const std::exception& ex) {
+            // Persistence is best-effort; don't let it disrupt the
+            // in-memory append path or the caller. v0.9.17: capture
+            // the exception text so /api/activity/health surfaces it.
+            ++persistedAppendErrorCount_;
+            lastPersistErrorMessage_ = std::string("exception: ") + ex.what();
+            lastPersistErrorAt_ = std::chrono::steady_clock::now();
+        } catch (...) {
+            ++persistedAppendErrorCount_;
+            lastPersistErrorMessage_ = "exception: unknown";
+            lastPersistErrorAt_ = std::chrono::steady_clock::now();
+        }
+    }
+
+public:
+    // v0.9.17: persistence health snapshot for /api/activity/health.
+    // Returns a JSON-able view of the persistence layer's recent
+    // behavior so operators can spot disk-full / permission /
+    // path-issues without reading the file itself.
+    struct PersistenceHealth {
+        bool persistenceEnabled = false;
+        std::string filePath;
+        uint64_t bytesOnDisk = 0;
+        uint64_t totalAppends = 0;
+        uint64_t totalAppendErrors = 0;
+        std::string lastErrorMessage;     // empty if no errors observed
+        int64_t lastErrorSecondsAgo = -1; // -1 if no errors observed
+        size_t inMemoryRingSize = 0;
+        uint64_t highWaterMarkId = 0;
+    };
+    PersistenceHealth persistenceHealth() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        PersistenceHealth out;
+        out.persistenceEnabled = !persistPath_.empty();
+        out.filePath = persistPath_.string();
+        out.totalAppends = persistedAppendCount_;
+        out.totalAppendErrors = persistedAppendErrorCount_;
+        out.lastErrorMessage = lastPersistErrorMessage_;
+        if (lastPersistErrorAt_ != std::chrono::steady_clock::time_point{}) {
+            const auto age = std::chrono::steady_clock::now() - lastPersistErrorAt_;
+            out.lastErrorSecondsAgo = std::chrono::duration_cast<std::chrono::seconds>(age).count();
+        }
+        out.inMemoryRingSize = ring_.size();
+        out.highWaterMarkId = nextSequence_;
+        if (!persistPath_.empty()) {
+            std::error_code ec;
+            const auto size = std::filesystem::file_size(persistPath_, ec);
+            if (!ec) out.bytesOnDisk = size;
+        }
+        return out;
+    }
+private:
+
+    // Caller holds mutex_. Truncates the file and writes the current
+    // in-memory ring as the new content. Bounds disk size.
+    void rewriteFromRingLocked() {
+        try {
+            std::ofstream out(persistPath_, std::ios::trunc | std::ios::binary);
+            if (!out) return;
+            for (const auto& evt : ring_) {
+                out << nlohmann::json(evt).dump() << '\n';
+            }
+        } catch (...) { /* best-effort */ }
+    }
+
+    // Caller holds mutex_. Reads the persisted file and repopulates
+    // the in-memory ring with up to kPersistedTailMax most-recent
+    // events. Sets nextSequence_ from the highest id observed so
+    // future events get fresh ids.
+    void loadFromDiskLocked() {
+        if (persistPath_.empty()) return;
+        std::error_code ec;
+        if (!std::filesystem::exists(persistPath_, ec)) return;
+        try {
+            std::ifstream in(persistPath_, std::ios::binary);
+            if (!in) return;
+            std::deque<ActivityEvent> loaded;
+            std::string line;
+            uint64_t maxSeqSeen = 0;
+            while (std::getline(in, line)) {
+                if (line.empty()) continue;
+                try {
+                    auto j = nlohmann::json::parse(line);
+                    auto evt = j.get<ActivityEvent>();
+                    uint64_t seq = 0;
+                    try { seq = std::stoull(evt.id); } catch (...) {}
+                    if (seq > maxSeqSeen) maxSeqSeen = seq;
+                    loaded.push_back(std::move(evt));
+                    if (loaded.size() > kPersistedTailMax) {
+                        loaded.pop_front();
+                    }
+                } catch (...) {
+                    // Skip malformed lines; previous-version files or
+                    // partial writes shouldn't poison the new run.
+                }
+            }
+            ring_       = std::move(loaded);
+            nextSequence_ = maxSeqSeen;
+        } catch (...) { /* best-effort */ }
+    }
 };
 
 // Process-global activity ring. Using a static inside a function avoids the
@@ -9805,6 +11941,49 @@ void appendLanClientActivity(const std::string& kind,
     event.actor = "lan-client-access";
     event.target = target;
     event.message = message;
+    globalActivityRing().append(event);
+}
+
+// v0.9.8: pool-lifecycle activity-ring helper. Called from
+// WorkerSupervisor::drainAndEmitSupervisorEvents to surface worker
+// death / auto-respawn / quarantine events in /api/activity.
+// Forward-declared near the supervisor class so the supervisor (which
+// is defined earlier in this TU than the activity ring class) can
+// call it without seeing the full ring/event types. Pre-v0.9.8
+// /api/activity was blind to pool-lifecycle events because no
+// producer reached the global ring from the supervisor.
+void appendPoolLifecycleActivity(const std::string& kind,
+                                 const std::string& poolId,
+                                 const std::string& message,
+                                 int statusCodeHint) {
+    ActivityEvent event;
+    event.kind = kind;             // pool_worker_death | pool_worker_respawn | pool_quarantine
+    event.actor = "supervisor-watchdog";
+    event.target = poolId;         // for joins with /api/pools by poolId
+    event.statusCode = statusCodeHint;
+    event.message = message;
+    globalActivityRing().append(event);
+}
+
+// v0.9.10: emit a supervisor_shutdown_wedge ActivityEvent from the
+// supervisor's destructor when the watchdog had to be detached.
+// Captures the supervisor's pool/child count at detach time so
+// post-mortem analysis can spot patterns (e.g. always wedges when
+// children > N, or always wedges with a respawn-in-flight).
+// Forward-declared near the supervisor class for visibility-without-
+// dependency reasons; defined here so the ActivityEvent struct is
+// fully visible.
+void appendSupervisorWedgeActivity(const std::string& message,
+                                   int poolCount,
+                                   int childCount) {
+    ActivityEvent event;
+    event.kind   = "supervisor_shutdown_wedge";
+    event.actor  = "supervisor-destructor";
+    event.target = "watchdog-thread";
+    event.statusCode = 504;        // gateway-timeout flavor
+    event.message = message
+        + " supervisor-state-at-detach: pools=" + std::to_string(poolCount)
+        + " children=" + std::to_string(childCount) + ".";
     globalActivityRing().append(event);
 }
 
@@ -9887,6 +12066,16 @@ HttpRequest SimpleHttpServer::parseRequest(const std::string& rawRequest) {
     std::istringstream requestLineStream(requestLine);
     requestLineStream >> request.method >> request.path;
 
+    // v0.9.50: split path at '?' so route handlers can do strict
+    // equality / prefix matching without manually stripping. The
+    // raw query (without leading '?') is preserved in request.query
+    // for routes that need to parse it (since=, max=, etc.).
+    const auto queryPos = request.path.find('?');
+    if (queryPos != std::string::npos) {
+        request.query = request.path.substr(queryPos + 1);
+        request.path = request.path.substr(0, queryPos);
+    }
+
     std::string headerLine;
     while (std::getline(stream, headerLine)) {
         if (headerLine == "\r" || headerLine.empty()) {
@@ -9917,9 +12106,33 @@ void SimpleHttpServer::sendResponse(SOCKET client, const HttpResponse& response)
     std::ostringstream stream;
     stream << "HTTP/1.1 " << response.statusCode << ' ' << reasonPhrase(response.statusCode) << "\r\n";
     stream << "Content-Type: " << response.contentType << "\r\n";
+    // v0.9.26: Content-Length always reflects the GET-equivalent
+    // body size, even when suppressBody is true (HEAD path), per
+    // RFC 7231 §4.3.2. The actual body is written below only when
+    // suppressBody is false.
     stream << "Content-Length: " << response.body.size() << "\r\n";
+    // v0.9.27: maximally-permissive CORS headers on every response.
+    // The MCOS LAN-trust model (ADR-001: no app-layer auth on the
+    // AI-client surface; network-level trust only) means any client
+    // that can reach this port is by definition allowed to call any
+    // endpoint -- the wildcard origin doesn't grant access that
+    // wasn't already implicit. Operator dashboards running from a
+    // different LAN origin (e.g. a browser tab opened against a
+    // local file or a dev server on a different port) can now make
+    // cross-origin XHR/fetch calls without a 404 on preflight.
+    stream << "Access-Control-Allow-Origin: *\r\n";
+    stream << "Access-Control-Allow-Methods: GET, HEAD, POST, OPTIONS\r\n";
+    stream << "Access-Control-Allow-Headers: Content-Type, X-MCOS-Client-Id, X-MCOS-Client-Type\r\n";
+    stream << "Access-Control-Max-Age: 86400\r\n";
+    // v0.9.28: emit any additional response-specific headers
+    // (e.g. Allow on a 405) before terminating the header block.
+    for (const auto& [name, value] : response.extraHeaders) {
+        stream << name << ": " << value << "\r\n";
+    }
     stream << "Connection: close\r\n\r\n";
-    stream << response.body;
+    if (!response.suppressBody) {
+        stream << response.body;
+    }
 
     const auto data = stream.str();
     send(client, data.c_str(), static_cast<int>(data.size()), 0);
@@ -10083,9 +12296,85 @@ void SimpleHttpServer::handleClient(SOCKET client) {
         }
     }
 
-    const auto request = parseRequest(requestBuffer);
-    const auto response = handler_(request);
+    auto request = parseRequest(requestBuffer);
+
+    // v0.9.27: OPTIONS preflight short-circuit. Browser-based
+    // dashboards from a different origin (e.g. an operator running
+    // a debug UI on http://localhost:9999 hitting the MCOS admin
+    // port) need a CORS preflight response. Pre-v0.9.27 every
+    // OPTIONS returned 404 because no route matched method ==
+    // "OPTIONS"; the browser then refused to send the actual
+    // request. The LAN-trust model (no app-layer auth, network-
+    // level trust per ADR-001) means we can return the maximally-
+    // permissive CORS headers without compromising security
+    // posture: any LAN client that can reach the port already
+    // has the same access an embedded same-origin dashboard does.
+    if (request.method == "OPTIONS") {
+        HttpResponse cors;
+        cors.statusCode = 204;
+        cors.contentType = "text/plain";
+        cors.body = "";
+        // The wildcard origin works because the trust model is
+        // "any client that can reach this port is trusted." Sub-
+        // sequent actual requests use the same Access-Control-
+        // Allow-* headers (added below for every response).
+        cors.suppressBody = true;
+        sendResponse(client, cors);
+        return;
+    }
+
+    // v0.9.26: HEAD requests should produce the same response as
+    // GET, minus the body (RFC 7231 §4.3.2). Pre-v0.9.26 every HEAD
+    // hit our 404 fall-through because no route matched on
+    // method=='HEAD'. Common monitoring tools (Pingdom, Uptime
+    // Robot, healthchecks.io, even curl -I) probe with HEAD for
+    // cheap liveness checks; getting a 404 made every operator
+    // route look dead.
+    //
+    // We rewrite the verb to GET for the handler dispatch so every
+    // existing GET route handles HEAD transparently. The send-
+    // response path then suppresses the body via a flag so HEAD
+    // gets the headers but no payload bytes.
+    const bool isHead = (request.method == "HEAD");
+    if (isHead) {
+        request.method = "GET";
+    }
+    auto response = handler_(request);
+    if (isHead) {
+        // Keep Content-Length reflecting what the body WOULD be,
+        // per RFC 7231 §4.3.2. Just don't send the body itself.
+        response.suppressBody = true;
+    }
+    // v0.9.71: streaming response (SSE). Send the SSE-style headers
+    // synchronously, then hand the socket to a detached worker
+    // thread that runs the streamHandler until it decides to exit.
+    // Returning from this function lets the accept loop pick up the
+    // next client; the SSE thread owns its socket from here.
+    if (response.streamMode && response.streamHandler) {
+        std::ostringstream hdr;
+        hdr << "HTTP/1.1 200 OK\r\n";
+        hdr << "Content-Type: text/event-stream\r\n";
+        hdr << "Cache-Control: no-cache, no-store, must-revalidate\r\n";
+        hdr << "Pragma: no-cache\r\n";
+        hdr << "Connection: keep-alive\r\n";
+        hdr << "X-Accel-Buffering: no\r\n";
+        hdr << "Access-Control-Allow-Origin: *\r\n";
+        hdr << "Access-Control-Allow-Methods: GET, OPTIONS\r\n";
+        hdr << "\r\n";
+        const auto headerBytes = hdr.str();
+        ::send(client, headerBytes.c_str(), static_cast<int>(headerBytes.size()), 0);
+        auto handler = std::move(response.streamHandler);
+        std::atomic<bool>* serverRunning = &running_;
+        std::thread([client, serverRunning, handler = std::move(handler)]() {
+            handler(client, serverRunning);
+            ::shutdown(client, SD_BOTH);
+            ::closesocket(client);
+        }).detach();
+        return;
+    }
     sendResponse(client, response);
+    ::shutdown(client, SD_BOTH);
+    ::closesocket(client);
 }
 
 std::string contentTypeForPath(const std::filesystem::path& path) {
@@ -10384,6 +12673,88 @@ inline bool removeClaudePluginJunction(const std::string& target, std::string& e
     return false;
 }
 
+// v0.10.0: extend the Claude plugin toggle so it not only creates the
+// junction at ~/.claude/plugins/mcos-control but also flips the
+// "mcos-control" entry in ~/.claude/settings.json's enabledPlugins map.
+// Pre-v0.10.0 the junction alone was insufficient: Claude Code only
+// loads plugins whose key appears in enabledPlugins, so the operator
+// would toggle on, see the junction created, restart Claude Code, and
+// still find no /mcos-control:* commands or skills available. This
+// helper is best-effort — failure to write the settings file does not
+// fail the toggle (the junction is the authoritative state); the
+// resulting issue is surfaced through claudeSettingsLastError so the
+// UI status row can show it. The chosen key form is just "mcos-control"
+// (no @marketplace suffix) which matches the local-plugin convention.
+struct ClaudeSettingsUpdateOutcome {
+    bool attempted = false;
+    bool succeeded = false;
+    std::string errorMessage;
+};
+
+inline ClaudeSettingsUpdateOutcome setClaudeMcosPluginEnabled(const std::string& profileDir,
+                                                              bool enabled) {
+    ClaudeSettingsUpdateOutcome out;
+    if (profileDir.empty()) return out;
+    out.attempted = true;
+
+    const std::filesystem::path settingsPath =
+        std::filesystem::path(profileDir) / ".claude" / "settings.json";
+
+    nlohmann::json doc = nlohmann::json::object();
+    std::error_code ec;
+    if (std::filesystem::exists(settingsPath, ec)) {
+        std::ifstream in(settingsPath, std::ios::binary);
+        if (in) {
+            try {
+                in >> doc;
+                if (!doc.is_object()) doc = nlohmann::json::object();
+            } catch (const nlohmann::json::exception& e) {
+                out.errorMessage = std::string("settings.json parse failed: ") + e.what();
+                return out;
+            }
+        }
+    }
+
+    if (!doc.contains("enabledPlugins") || !doc["enabledPlugins"].is_object()) {
+        doc["enabledPlugins"] = nlohmann::json::object();
+    }
+    auto& enabledPlugins = doc["enabledPlugins"];
+    static constexpr const char* kPluginKey = "mcos-control";
+
+    if (enabled) {
+        enabledPlugins[kPluginKey] = true;
+    } else {
+        if (enabledPlugins.contains(kPluginKey)) {
+            enabledPlugins.erase(kPluginKey);
+        } else {
+            // Already in the desired state; nothing to write.
+            out.succeeded = true;
+            return out;
+        }
+    }
+
+    // Ensure parent (.claude\) tree exists before write.
+    std::filesystem::create_directories(settingsPath.parent_path(), ec);
+    if (ec) {
+        out.errorMessage = "create_directories(" + settingsPath.parent_path().string()
+            + "): " + ec.message();
+        return out;
+    }
+
+    std::ofstream outFile(settingsPath, std::ios::binary | std::ios::trunc);
+    if (!outFile) {
+        out.errorMessage = "open for write failed: " + settingsPath.string();
+        return out;
+    }
+    outFile << doc.dump(2);
+    if (!outFile.good()) {
+        out.errorMessage = "write failed: " + settingsPath.string();
+        return out;
+    }
+    out.succeeded = true;
+    return out;
+}
+
 inline nlohmann::json claudePluginStatusJson(const ClaudePluginState& s,
                                              bool ok = true,
                                              const std::string& explicitError = {}) {
@@ -10438,6 +12809,16 @@ private:
     OperationResult manageForsettiModule(const std::string& moduleId, const std::string& action);
     HttpResponse handleHttpRequest(const HttpRequest& request);
     HttpResponse staticFileResponse(std::string path) const;
+    // v0.10.8: resolve the supervisor service's mcpEndpoint /
+    // discoveryEndpoint / fingerprintSeed against the current
+    // configuration + telemetry snapshot, and push them into
+    // supervisorAssignmentService_ via setEndpoints(). Called by the
+    // route layer before any select/generate/confirm so the JSON the
+    // operator hands to a remote supervisor client carries a URL the
+    // remote can actually reach (LAN-routable IPv4 + gateway port +
+    // /mcp), matching the same resolution chain DiscoveryService uses
+    // for the well-known discovery doc.
+    void refreshSupervisorEndpoints();
     // v0.6.8: mirror WorkerSupervisor::pools_ into AppConfiguration.pools
     // and persist to disk. Called from /api/pools POST and /api/pools/{id}/remove
     // so pool definitions survive service restart / MSI upgrade.
@@ -10445,7 +12826,22 @@ private:
 
     template <typename T>
     static HttpResponse jsonResponse(const T& value, int statusCode = 200) {
-        return HttpResponse{ statusCode, "application/json", nlohmann::json(value).dump(2) };
+        // v0.9.49: dump() with error_handler_t::replace so invalid UTF-8
+        // bytes in any string field become U+FFFD instead of throwing
+        // type_error.316. Pre-v0.9.49 the admin port returned 500 with
+        // "invalid UTF-8 byte at index N" when a client's POST body had
+        // mojibake/Latin-1 bytes -- the catch arm built a diagnostic
+        // message embedding ex.what() (which contained the bad byte),
+        // and jsonResponse->dump() then threw on the bad byte itself,
+        // bouncing up to the outer 500 handler. The /mcp port had the
+        // same pattern but with worse blast radius (v0.9.48 crash); the
+        // admin port had the outer 500 catch as a backstop. v0.9.49
+        // makes both paths produce a clean 400 with the bytes replaced
+        // by U+FFFD, which is what RFC 8259 §8.1 expects of a tolerant
+        // JSON serializer.
+        return HttpResponse{ statusCode, "application/json",
+            nlohmann::json(value).dump(2, ' ', false,
+                nlohmann::json::error_handler_t::replace) };
     }
 
     std::unique_ptr<ScopedWinsock> winsock_;
@@ -10468,6 +12864,12 @@ private:
     std::shared_ptr<IPlatformGovernanceToolService> platformGovernanceToolService_;
     std::shared_ptr<ICommandLogicUnitService> commandLogicUnitService_;
     std::shared_ptr<IModuleControlSurfaceService> controlSurfaceService_;
+    // v0.9.76: Supervisor Agent Assignment Wizard backend. Backs the
+    // /api/supervisor/* routes and the WinUI Shell's selection popup.
+    // unique_ptr because the impl is module-private and exposed only
+    // via the ISupervisorAssignmentService interface; no other service
+    // shares ownership.
+    std::unique_ptr<MasterControl::ISupervisorAssignmentService> supervisorAssignmentService_;
     std::shared_ptr<IForsettiSurfaceService> surfaceService_;
     std::shared_ptr<IBeaconService> beaconService_;
     std::shared_ptr<IMcpGateway> mcpGateway_;
@@ -10485,9 +12887,42 @@ private:
     std::unique_ptr<SimpleHttpServer> httpServer_;
     std::atomic<bool> stopRequested_{ false };
     bool initialized_ = false;
+
+    // v0.9.69: boot self-test machinery. runBootSelfTestsAsync spawns
+    // a worker thread that probes the freshly-booted runtime (admin
+    // API endpoints, supervised pool handshakes, gateway state,
+    // activity ring, telemetry sampler, on-disk worker exes), records
+    // each result to the activity ring (kind="self_test", statusCode
+    // 200/500), and caches the snapshot for /api/self-tests. The
+    // existing v0.8.7 Error Reporting frame on the WinUI Overview
+    // surface harvests error-flagged activity events automatically,
+    // so failed probes appear there with no further wiring.
+    mutable std::mutex selfTestMutex_;
+    SelfTestSnapshot lastSelfTestSnapshot_;
+    std::thread selfTestThread_;
+    std::atomic<bool> selfTestThreadJoinable_{ false };
+
+    void runBootSelfTestsAsync();
+    SelfTestSnapshot runBootSelfTestsNow();
+    SelfTestSnapshot getLastSelfTestSnapshot() const {
+        std::lock_guard<std::mutex> lock(selfTestMutex_);
+        return lastSelfTestSnapshot_;
+    }
 };
 
 bool MasterControlApplication::Impl::initialize() {
+    // v0.9.13: wire activity-ring persistence to a JSON-lines file
+    // under the data dir so events survive service restart. Pre-
+    // v0.9.13 the ring was in-memory only, which meant a wedge or
+    // crash lost all forensic data including the v0.9.10
+    // supervisor_shutdown_wedge events that were specifically
+    // designed for post-mortem. Now operators reading
+    // /api/activity after a restart see the prior process's tail
+    // events plus the new run's events. Done FIRST in initialize()
+    // so any subsequent activity-ring appends (gateway boot,
+    // configuration load, etc.) get persisted.
+    globalActivityRing().setPersistencePath(paths_.dataDirectory / "activity.jsonl");
+
     configurationService_ = std::make_shared<FileBackedConfigurationService>(state_, paths_.configurationFile);
     resourceAllocationService_ = std::make_shared<ResourceAllocationService>(state_, paths_.configurationFile);
     telemetryService_ = std::make_shared<WindowsHostTelemetryService>();
@@ -10515,6 +12950,52 @@ bool MasterControlApplication::Impl::initialize() {
         platformServiceCatalogService_,
         platformGovernanceToolService_);
     controlSurfaceService_ = std::make_shared<ModuleControlSurfaceService>();
+
+    // v0.9.76: Supervisor Agent Assignment Wizard backend. The wizard
+    // surfaces three providers (chatgpt | claude | grok) through the
+    // WinUI Shell + browser dashboard; the service issues short-lived
+    // tokenRef-style configuration files conforming to
+    // mcos.supervisor.config.v1 and tracks lifecycle state to disk so
+    // a restart preserves the operator's selection.
+    //
+    // v0.10.8: the mcpEndpoint baked into the generated config used to
+    // point at "http://127.0.0.1:<browserPort>/mcp" (e.g. :7300/mcp).
+    // That URL is wrong on two axes for a remote ChatGPT supervisor:
+    //   - the MCP gateway listener is the native HTTP.sys adapter on
+    //     <gatewayPort> (default 8080) at gateway.mcpPath ("/mcp"), NOT
+    //     the admin/browser port; ":7300/mcp" returns 404 because
+    //     /mcp is not a route on the browser HTTP server.
+    //   - 127.0.0.1 is only reachable from the same host. A remote
+    //     supervisor client (LAN ChatGPT desktop, ChatGPT cloud connector
+    //     via tunnel, anything off-box) must be handed the LAN-routable
+    //     IPv4 the discovery doc already advertises.
+    // The initial value here is a same-host fallback (127.0.0.1 +
+    // gatewayPort). The route layer (handleHttpRequest) calls
+    // refreshSupervisorEndpoints() just before select/generate/confirm
+    // to overwrite this with the live LAN-resolved values, mirroring
+    // the exact resolution chain DiscoveryService uses for the well-
+    // known doc.
+    {
+        const auto cfg = configurationService_->current();
+        const auto bindHost = !cfg.bindAddress.empty() ? cfg.bindAddress : std::string("127.0.0.1");
+        const auto resolvedHost = (bindHost == "0.0.0.0" || bindHost == "::"
+            || bindHost == "[::]" || bindHost == "::0")
+            ? std::string("127.0.0.1") : bindHost;
+        const auto adminBase = std::string("http://") + resolvedHost + ":" + std::to_string(cfg.browserPort);
+        const auto gatewayMcpPath = cfg.mcpGateway.mcpPath.empty() ? std::string("/mcp") : cfg.mcpGateway.mcpPath;
+        const auto gatewayBase = std::string("http://") + resolvedHost + ":" + std::to_string(cfg.mcpGateway.listenPort);
+        MasterControl::SupervisorAssignmentServiceContext supervisorCtx;
+        supervisorCtx.dataDirectory = paths_.dataDirectory;
+        supervisorCtx.mcpEndpoint = gatewayBase + gatewayMcpPath;
+        supervisorCtx.discoveryEndpoint = adminBase + "/.well-known/mcos.json";
+        supervisorCtx.serverDisplayName = cfg.instanceName.empty()
+            ? std::string("Master Control Orchestration Server")
+            : cfg.instanceName;
+        supervisorCtx.fingerprintSeed = bindHost + ":" + std::to_string(cfg.browserPort)
+            + "|" + supervisorCtx.serverDisplayName;
+        supervisorAssignmentService_ = MasterControl::createSupervisorAssignmentService(std::move(supervisorCtx));
+    }
+
     registerConfigurationDefaults();
     createForsettiRuntime();
 
@@ -10617,6 +13098,210 @@ bool MasterControlApplication::Impl::initialize() {
         baselinePool.scalePolicy.scaleInIdleSeconds         = 300;
 
         workerSupervisor_->upsertPool(baselinePool);
+
+        // v0.9.61: terminal-shell pool. Reuses the same worker exe with
+        // a --specialization arg so a single binary serves multiple
+        // logical MCPs. Pre-v0.9.61 the catalog advertised
+        // 'terminal-shell' at hardcoded port 7108 with nothing actually
+        // listening; v0.9.61 backs that catalog id with a real
+        // supervised stdio pool exposing shell.exec(command, [cwd],
+        // [timeoutMs]) -> {stdout, stderr, exitCode, timedOut}. The
+        // gateway's tools/list aggregate now namespaces it as
+        // terminal-shell__shell.exec; LAN AI clients can use it the
+        // same way they use filesystem__read_file etc.
+        ManagedEndpointPool shellPool;
+        shellPool.poolId         = "terminal-shell";
+        shellPool.kind           = EndpointPoolKind::McpServer;
+        shellPool.displayName    = "Terminal / Shell MCP";
+        shellPool.logicalMcpUrl  = "";
+        shellPool.template_.executable        = baselineWorkerPath;
+        shellPool.template_.args              = { "--specialization=terminal-shell" };
+        shellPool.template_.workingDirectory  = paths_.executableDirectory.string();
+        shellPool.template_.transport         = "stdio_jsonrpc";
+        shellPool.template_.healthProbe.transport = "stdio_handshake";
+        shellPool.scalePolicy.minInstances              = 1;
+        shellPool.scalePolicy.maxInstances              = 2;
+        shellPool.scalePolicy.maxActiveLeasesPerInstance = 8;
+        shellPool.scalePolicy.scaleOutQueueWaitMs        = 1500;
+        shellPool.scalePolicy.scaleInIdleSeconds         = 300;
+        workerSupervisor_->upsertPool(shellPool);
+
+        // v0.9.62: local-git pool. Same multi-spec worker, different
+        // --specialization arg. Exposes git.run(args[], [cwd],
+        // [timeoutMs]) -- arbitrary git invocations are routed
+        // through CreateProcessW + pipes so the LAN AI client gets
+        // exitCode + stdout/stderr without having to shell out itself.
+        ManagedEndpointPool gitPool;
+        gitPool.poolId         = "local-git";
+        gitPool.kind           = EndpointPoolKind::McpServer;
+        gitPool.displayName    = "Local Git MCP";
+        gitPool.logicalMcpUrl  = "";
+        gitPool.template_.executable        = baselineWorkerPath;
+        gitPool.template_.args              = { "--specialization=local-git" };
+        gitPool.template_.workingDirectory  = paths_.executableDirectory.string();
+        gitPool.template_.transport         = "stdio_jsonrpc";
+        gitPool.template_.healthProbe.transport = "stdio_handshake";
+        gitPool.scalePolicy.minInstances              = 1;
+        gitPool.scalePolicy.maxInstances              = 2;
+        gitPool.scalePolicy.maxActiveLeasesPerInstance = 8;
+        gitPool.scalePolicy.scaleOutQueueWaitMs        = 1500;
+        gitPool.scalePolicy.scaleInIdleSeconds         = 300;
+        workerSupervisor_->upsertPool(gitPool);
+
+        // v0.9.62: file-search pool. Exposes search.grep(pattern,
+        // [path], [glob], [maxMatches], [timeoutMs]) using ripgrep
+        // when on PATH and a PowerShell Select-String fallback when
+        // not, so a fresh install without rg still serves the tool.
+        ManagedEndpointPool searchPool;
+        searchPool.poolId         = "file-search";
+        searchPool.kind           = EndpointPoolKind::McpServer;
+        searchPool.displayName    = "File Search MCP";
+        searchPool.logicalMcpUrl  = "";
+        searchPool.template_.executable        = baselineWorkerPath;
+        searchPool.template_.args              = { "--specialization=file-search" };
+        searchPool.template_.workingDirectory  = paths_.executableDirectory.string();
+        searchPool.template_.transport         = "stdio_jsonrpc";
+        searchPool.template_.healthProbe.transport = "stdio_handshake";
+        searchPool.scalePolicy.minInstances              = 1;
+        searchPool.scalePolicy.maxInstances              = 2;
+        searchPool.scalePolicy.maxActiveLeasesPerInstance = 4;
+        searchPool.scalePolicy.scaleOutQueueWaitMs        = 1500;
+        searchPool.scalePolicy.scaleInIdleSeconds         = 300;
+        workerSupervisor_->upsertPool(searchPool);
+
+        // v0.9.63: client-tracker pool. Bridges the LAN-client roster
+        // surface (already populated via /api/telemetry/heartbeat into
+        // /api/clients) up as an MCP tool so AI clients can query
+        // "who else is connected to MCOS right now" without having to
+        // know about the admin port directly.
+        ManagedEndpointPool clientTrackerPool;
+        clientTrackerPool.poolId         = "client-tracker";
+        clientTrackerPool.kind           = EndpointPoolKind::McpServer;
+        clientTrackerPool.displayName    = "Client Tracker MCP";
+        clientTrackerPool.logicalMcpUrl  = "";
+        clientTrackerPool.template_.executable        = baselineWorkerPath;
+        clientTrackerPool.template_.args              = { "--specialization=client-tracker" };
+        clientTrackerPool.template_.workingDirectory  = paths_.executableDirectory.string();
+        clientTrackerPool.template_.transport         = "stdio_jsonrpc";
+        clientTrackerPool.template_.healthProbe.transport = "stdio_handshake";
+        clientTrackerPool.scalePolicy.minInstances              = 1;
+        clientTrackerPool.scalePolicy.maxInstances              = 2;
+        clientTrackerPool.scalePolicy.maxActiveLeasesPerInstance = 4;
+        clientTrackerPool.scalePolicy.scaleOutQueueWaitMs        = 1500;
+        clientTrackerPool.scalePolicy.scaleInIdleSeconds         = 300;
+        workerSupervisor_->upsertPool(clientTrackerPool);
+
+        // v0.9.63: metrics pool. Bridges the host telemetry +
+        // gateway throughput surfaces up as MCP tools (metrics.host,
+        // metrics.gateway). Honest-unavailable contract preserved:
+        // capturedAtUtc=='' on host telemetry means the sampler
+        // hasn't taken its first reading yet (PHASE-08 §9), and the
+        // bridge passes that signal through unchanged.
+        ManagedEndpointPool metricsPool;
+        metricsPool.poolId         = "metrics";
+        metricsPool.kind           = EndpointPoolKind::McpServer;
+        metricsPool.displayName    = "Metrics MCP";
+        metricsPool.logicalMcpUrl  = "";
+        metricsPool.template_.executable        = baselineWorkerPath;
+        metricsPool.template_.args              = { "--specialization=metrics" };
+        metricsPool.template_.workingDirectory  = paths_.executableDirectory.string();
+        metricsPool.template_.transport         = "stdio_jsonrpc";
+        metricsPool.template_.healthProbe.transport = "stdio_handshake";
+        metricsPool.scalePolicy.minInstances              = 1;
+        metricsPool.scalePolicy.maxInstances              = 2;
+        metricsPool.scalePolicy.maxActiveLeasesPerInstance = 4;
+        metricsPool.scalePolicy.scaleOutQueueWaitMs        = 1500;
+        metricsPool.scalePolicy.scaleInIdleSeconds         = 300;
+        workerSupervisor_->upsertPool(metricsPool);
+
+        // v0.9.64: register the next batch of in-tree pools that all
+        // share the multi-spec mcos-baseline-tools-worker.exe binary.
+        // Each pool wraps a different --specialization arg so the
+        // gateway aggregator namespaces their tools per pool. Pre-
+        // v0.9.64 these catalog ids were placeholders without backings;
+        // they're now first-class supervised pools that come up on
+        // boot.
+        auto registerWorkerPool = [&](const std::string& poolId,
+                                       const std::string& displayName,
+                                       int leasesPerInstance) {
+            ManagedEndpointPool p;
+            p.poolId         = poolId;
+            p.kind           = EndpointPoolKind::McpServer;
+            p.displayName    = displayName;
+            p.logicalMcpUrl  = "";
+            p.template_.executable        = baselineWorkerPath;
+            p.template_.args              = { "--specialization=" + poolId };
+            p.template_.workingDirectory  = paths_.executableDirectory.string();
+            p.template_.transport         = "stdio_jsonrpc";
+            p.template_.healthProbe.transport = "stdio_handshake";
+            p.scalePolicy.minInstances              = 1;
+            p.scalePolicy.maxInstances              = 2;
+            p.scalePolicy.maxActiveLeasesPerInstance = leasesPerInstance;
+            p.scalePolicy.scaleOutQueueWaitMs        = 1500;
+            p.scalePolicy.scaleInIdleSeconds         = 300;
+            workerSupervisor_->upsertPool(p);
+        };
+        registerWorkerPool("code-execution-repl", "Code Execution / REPL MCP", 4);
+        registerWorkerPool("local-test-runner",   "Local Test Runner MCP",     2);
+        registerWorkerPool("local-build-tool",    "Local Build Tool MCP",      2);
+        registerWorkerPool("local-linter",        "Local Linter MCP",          4);
+        registerWorkerPool("local-indexer",       "Local Indexer MCP",         4);
+        // v0.9.65: native-storage + watcher batch.
+        registerWorkerPool("persistent-context",  "Persistent Context MCP",    8);
+        registerWorkerPool("knowledge-graph",     "Knowledge Graph MCP",       8);
+        registerWorkerPool("file-watcher",        "File Watcher MCP",          4);
+        // v0.9.66: Win32-input batch.
+        registerWorkerPool("keyboard-mouse-control", "Keyboard & Mouse Control MCP", 4);
+        registerWorkerPool("screen-capture-vision",  "Screen Capture / Vision MCP",  2);
+        registerWorkerPool("desktop-control",        "Desktop Control MCP",          4);
+        registerWorkerPool("computer-use",           "Computer Use MCP",             4);
+
+        // v0.9.67: 7 default sub-agents. Same multi-spec worker
+        // binary, --specialization=<role>. kind=SubAgent so the
+        // dashboard renders them in the sub-agent grid (separate
+        // from the MCP server grid). The sub-agent runtime stat
+        // pipeline (line ~10729 in this file) keys by poolId, so
+        // the supervisor pool's poolId matching the seeded
+        // sub-agent id is what flips installState to
+        // installed_and_supervised.
+        auto registerSubAgentPool = [&](const std::string& poolId,
+                                         const std::string& displayName) {
+            ManagedEndpointPool p;
+            p.poolId         = poolId;
+            p.kind           = EndpointPoolKind::SubAgent;
+            p.displayName    = displayName;
+            p.logicalMcpUrl  = "";
+            p.template_.executable        = baselineWorkerPath;
+            p.template_.args              = { "--specialization=" + poolId };
+            p.template_.workingDirectory  = paths_.executableDirectory.string();
+            p.template_.transport         = "stdio_jsonrpc";
+            p.template_.healthProbe.transport = "stdio_handshake";
+            p.scalePolicy.minInstances              = 1;
+            p.scalePolicy.maxInstances              = 2;
+            p.scalePolicy.maxActiveLeasesPerInstance = 4;
+            p.scalePolicy.scaleOutQueueWaitMs        = 1500;
+            p.scalePolicy.scaleInIdleSeconds         = 300;
+            workerSupervisor_->upsertPool(p);
+        };
+        registerSubAgentPool("sentinel",   "Sentinel — rule guard + activity tail");
+        registerSubAgentPool("architect",  "Architect — phases + ADR drafting");
+        registerSubAgentPool("forge",      "Forge — pool templates + specialization registry");
+        registerSubAgentPool("scribe",     "Scribe — release reports + version state");
+        registerSubAgentPool("recon",      "Recon — dashboard + diagnostics + gateway tools");
+        registerSubAgentPool("nexus",      "Nexus — coordination + discovery + clients");
+        registerSubAgentPool("watchtower", "Watchtower — health + activity monitoring");
+
+        // v0.9.68: external-dependency MCPs registered as default
+        // pools too. The multi-spec worker exposes a small status
+        // surface (docker-control: docker.status / docker.list_containers
+        // shelling out to docker.exe; local-database: db.status /
+        // db.set_connection_string persisting via persistent-context).
+        // These pools are installed_and_supervised because the worker
+        // itself is in-tree -- the underlying capability (Docker
+        // Desktop / a configured DSN) is the operator concern, but
+        // the MCP wire is live.
+        registerWorkerPool("docker-control", "Docker Control MCP",   2);
+        registerWorkerPool("local-database", "Local Database MCP",   2);
     }
 
     // v0.9.1: auto-spawn instances for any pool whose minInstances >= 1.
@@ -10674,6 +13359,21 @@ bool MasterControlApplication::Impl::initialize() {
         boot.severity = TelemetrySeverity::Info;
         boot.message = "MCOS runtime constructing telemetry aggregator. PHASE-08 baseline event.";
         telemetryAggregator_->recordEvent(std::move(boot));
+    }
+
+    // v0.9.7: hand the aggregator to the worker supervisor so its
+    // background watchdog can emit Telemetry::Worker::{Error,Info}
+    // events when it reaps a dead instance or auto-respawns one.
+    // Pre-v0.9.7 the supervisor's deathLog_ / respawnLog_ vectors
+    // collected events but no consumer drained them; operators
+    // saw nothing in /api/activity when a worker crashed and
+    // got auto-restarted in the background. With this wire-up the
+    // operator sees, for example, "Pool worker 'memory#3' exited
+    // unexpectedly (was state=ready, exitCode=0) ... Pool 'memory'
+    // auto-respawned to instance 'memory#7' (watchdog or reap-driven)"
+    // in the activity surface within the watchdog interval (2s).
+    if (auto sup = std::dynamic_pointer_cast<WorkerSupervisor>(workerSupervisor_)) {
+        sup->setTelemetryAggregator(telemetryAggregator_);
     }
 
     // v0.9.0: auto-start the gateway at boot when configuration says
@@ -10751,6 +13451,11 @@ bool MasterControlApplication::Impl::initialize() {
     // method is on the concrete type, so we dynamic_pointer_cast to call.
     if (auto concrete = std::dynamic_pointer_cast<AdminApiService>(adminApiService_)) {
         concrete->AttachWorkerLayer(workerSupervisor_, leaseRouter_);
+        // v0.9.15: kick off the background reachability prober so
+        // /api/dashboard never blocks on TCP probes. The prober
+        // refreshes the cache every 10s; the cache TTL is 30s, so
+        // the dashboard always sees a warm cache.
+        concrete->StartReachabilityProber();
     }
 
     runtime_->boot();
@@ -10787,12 +13492,348 @@ bool MasterControlApplication::Impl::initialize() {
         return false;
     }
     initialized_ = true;
+    // v0.9.69: kick off the boot self-test sweep on a background
+    // thread. The probes wait a few seconds for pool instances to
+    // hand-shake before running, so they don't false-fail on a
+    // freshly-spawned worker that's still spelling out its initialize
+    // response. Failed probes record kind="self_test" /
+    // statusCode=500 activity events that the existing Error
+    // Reporting frame on the Overview deck surfaces automatically.
+    runBootSelfTestsAsync();
     return true;
+}
+
+void MasterControlApplication::Impl::runBootSelfTestsAsync() {
+    if (selfTestThreadJoinable_.load()) {
+        if (selfTestThread_.joinable()) selfTestThread_.join();
+        selfTestThreadJoinable_.store(false);
+    }
+    selfTestThreadJoinable_.store(true);
+    selfTestThread_ = std::thread([this]() {
+        // Pool instances need a moment to spawn + complete their MCP
+        // handshake. 3s is comfortably past observed handshake latency
+        // (~80-200ms per worker on the test rig).
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+        if (stopRequested_.load()) return;
+        auto snap = runBootSelfTestsNow();
+        std::lock_guard<std::mutex> lock(selfTestMutex_);
+        lastSelfTestSnapshot_ = std::move(snap);
+    });
+}
+
+namespace {
+// v0.9.69: TCP-connect probe used by self-test http_endpoint
+// category. Returns {ok, durationMs, message}. Same non-blocking
+// connect / 500ms select pattern AdminApiService::probeReachability
+// Cached uses, but standalone here so the self-test machinery
+// doesn't depend on the AdminApiService internals.
+struct TcpProbeResult { bool ok = false; int durationMs = 0; std::string message; };
+TcpProbeResult selfTestTcpProbe(const std::string& host, uint16_t port, DWORD timeoutMs) {
+    TcpProbeResult out;
+    const auto start = std::chrono::steady_clock::now();
+    addrinfo hints{};
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    addrinfo* resolved = nullptr;
+    const std::string portStr = std::to_string(port);
+    const int gai = ::getaddrinfo(host.c_str(), portStr.c_str(), &hints, &resolved);
+    if (gai != 0 || resolved == nullptr) {
+        out.message = "DNS resolution failed for " + host + ":" + portStr;
+        out.durationMs = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start).count());
+        return out;
+    }
+    bool reachable = false;
+    for (addrinfo* it = resolved; it != nullptr && !reachable; it = it->ai_next) {
+        SOCKET s = ::socket(it->ai_family, it->ai_socktype, it->ai_protocol);
+        if (s == INVALID_SOCKET) continue;
+        u_long nb = 1;
+        ::ioctlsocket(s, FIONBIO, &nb);
+        const int connectResult = ::connect(s, it->ai_addr, (int)it->ai_addrlen);
+        if (connectResult == 0) {
+            reachable = true;
+        } else if (WSAGetLastError() == WSAEWOULDBLOCK) {
+            fd_set ws{}, es{};
+            FD_ZERO(&ws); FD_SET(s, &ws);
+            FD_ZERO(&es); FD_SET(s, &es);
+            timeval tv{};
+            tv.tv_sec  = timeoutMs / 1000;
+            tv.tv_usec = (timeoutMs % 1000) * 1000;
+            if (::select(0, nullptr, &ws, &es, &tv) > 0 && FD_ISSET(s, &ws)) {
+                int sockErr = 0; int sockErrLen = sizeof(sockErr);
+                ::getsockopt(s, SOL_SOCKET, SO_ERROR,
+                             reinterpret_cast<char*>(&sockErr), &sockErrLen);
+                reachable = (sockErr == 0);
+            }
+        }
+        ::closesocket(s);
+    }
+    ::freeaddrinfo(resolved);
+    out.ok = reachable;
+    out.durationMs = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start).count());
+    if (out.ok) {
+        out.message = "TCP connect to " + host + ":" + portStr + " OK in "
+                    + std::to_string(out.durationMs) + "ms";
+    } else {
+        out.message = "TCP connect to " + host + ":" + portStr
+                    + " failed after " + std::to_string(out.durationMs) + "ms";
+    }
+    return out;
+}
+
+void emitSelfTestActivity(const SelfTestResult& r) {
+    ActivityEvent evt;
+    evt.kind       = "self_test";
+    evt.actor      = "boot-self-test";
+    evt.target     = r.name;
+    evt.statusCode = r.ok ? 200 : 500;
+    evt.message    = (r.ok ? "PASS: " : "FAIL: ") + r.name + " — " + r.message;
+    evt.latencyMs  = r.durationMs;
+    globalActivityRing().append(evt);
+
+    // v0.10.2: also route self-test FAILURES to the persistent
+    // Diagnostics log so the operator's audit trail survives a
+    // service restart and can be inspected from outside MCOS. The
+    // operator directive on this surface was "If a test fails, then
+    // it MUST be reported in the Overview Error Frame AND reported
+    // to the diagnostic module." The activity ring covers the Error
+    // Frame; this call covers the diagnostic module side. Passes
+    // remain in the activity ring only -- writing every PASS to the
+    // persistent jsonl would generate ~30+ lines per boot indefinitely
+    // and the per-pass detail is recoverable from the activity ring
+    // when needed.
+    if (!r.ok) {
+        MasterControl::Diagnostics::appendEvent(
+            L"runtime",
+            "error",
+            "self_test_failure",
+            r.message,
+            nlohmann::json{
+                { "name",       r.name },
+                { "category",   r.category },
+                { "durationMs", r.durationMs },
+                { "ranAtUtc",   r.ranAtUtc }
+            });
+    }
+}
+} // namespace
+
+SelfTestSnapshot MasterControlApplication::Impl::runBootSelfTestsNow() {
+    SelfTestSnapshot snap;
+    snap.startedAtUtc = timestampNowUtc();
+
+    auto record = [&](const std::string& name,
+                      const std::string& category,
+                      bool ok,
+                      const std::string& message,
+                      int durationMs) {
+        SelfTestResult r;
+        r.name = name;
+        r.category = category;
+        r.ok = ok;
+        r.message = message;
+        r.durationMs = durationMs;
+        r.ranAtUtc = timestampNowUtc();
+        emitSelfTestActivity(r);
+        snap.results.push_back(std::move(r));
+    };
+
+    // 1. Admin HTTP server reachable on its bind port.
+    const auto cfg = configurationService_ ? configurationService_->current() : AppConfiguration{};
+    {
+        const auto p = selfTestTcpProbe("127.0.0.1", cfg.browserPort, 1000);
+        record("http.admin_port", "http_endpoint", p.ok, p.message, p.durationMs);
+    }
+    // 2. Gateway listening port reachable.
+    if (mcpGateway_) {
+        // Parse the gateway URL host:port. Format is http://<host>:<port>/<path>.
+        const auto status = mcpGateway_->CurrentStatus();
+        std::string host = "127.0.0.1";
+        uint16_t port = 8080;
+        const auto& url = status.mcpUrl;
+        const auto schemeEnd = url.find("://");
+        if (schemeEnd != std::string::npos) {
+            const auto hostStart = schemeEnd + 3;
+            const auto pathStart = url.find('/', hostStart);
+            const auto hostPort  = url.substr(hostStart,
+                                              pathStart == std::string::npos
+                                                ? std::string::npos
+                                                : pathStart - hostStart);
+            const auto colon = hostPort.find(':');
+            if (colon != std::string::npos) {
+                host = hostPort.substr(0, colon);
+                if (host == "0.0.0.0") host = "127.0.0.1";
+                try { port = static_cast<uint16_t>(std::stoi(hostPort.substr(colon + 1))); }
+                catch (...) { port = 8080; }
+            }
+        }
+        const auto p = selfTestTcpProbe(host, port, 1000);
+        record("gateway.tcp_listen", "gateway", p.ok, p.message, p.durationMs);
+        const bool gwRunning = (status.state == GatewayState::Running);
+        record("gateway.state_running", "gateway", gwRunning,
+               gwRunning ? "Gateway state=running" : ("Gateway state=" + to_string(status.state)),
+               0);
+        // v0.10.4: assert the gateway is advertising at least one tool.
+        // 0 tools means pool registration silently failed (or no pools
+        // exist) and external AI clients connecting through the gateway
+        // would see an empty tools/list response. Live MCOS deployments
+        // expect ~90 tools (one per registered MCP-server / sub-agent
+        // catalog entry, summed across the worker pools), so a zero
+        // count is a genuine misconfiguration the operator should see.
+        const auto toolCount = mcpGateway_->ListTools().size();
+        const bool hasTools = toolCount >= 1;
+        std::string toolMsg = "Gateway is advertising " + std::to_string(toolCount) + " tools.";
+        if (!hasTools) {
+            toolMsg += " Expected >= 1; check pool registration and worker handshake state.";
+        }
+        record("gateway.tool_count_nonzero", "gateway", hasTools, toolMsg, 0);
+    }
+    // 3. Each registered pool: at least one Ready instance OR
+    //    minInstances=0 (intentionally not auto-started).
+    if (workerSupervisor_) {
+        const auto pools = workerSupervisor_->listPools();
+        for (const auto& pool : pools) {
+            const auto pStart = std::chrono::steady_clock::now();
+            int ready = 0;
+            for (const auto& inst : pool.instances) {
+                if (inst.state == EndpointInstanceState::Ready) ++ready;
+            }
+            const bool expectedRunning = pool.scalePolicy.minInstances >= 1;
+            const bool ok = expectedRunning ? (ready >= 1) : true;
+            std::string msg = "pool=" + pool.poolId + " kind=" + to_string(pool.kind)
+                           + " ready=" + std::to_string(ready)
+                           + "/" + std::to_string(pool.instances.size());
+            if (!expectedRunning) msg += " (minInstances=0; skipped)";
+            const int dur = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - pStart).count());
+            const std::string category = (pool.kind == EndpointPoolKind::SubAgent)
+                ? "sub_agent" : "pool_handshake";
+            record("pool." + pool.poolId, category, ok, msg, dur);
+        }
+    }
+    // 4. Activity ring persistence health.
+    {
+        const auto rh = globalActivityRing().persistenceHealth();
+        const bool ok = rh.persistenceEnabled && rh.totalAppendErrors == 0;
+        std::string msg = "persistenceEnabled=" + std::string(rh.persistenceEnabled ? "true" : "false")
+                       + ", totalAppends=" + std::to_string(rh.totalAppends)
+                       + ", totalAppendErrors=" + std::to_string(rh.totalAppendErrors);
+        record("activity_ring.persistence", "telemetry", ok, msg, 0);
+    }
+    // 5. Telemetry sampler liveness.
+    if (telemetryService_) {
+        const auto t = telemetryService_->captureSnapshot();
+        const bool ok = !t.capturedAtUtc.empty();
+        record("telemetry.sampler", "telemetry", ok,
+               ok ? ("Sampler captured at " + t.capturedAtUtc)
+                  : "Sampler has not produced a reading yet",
+               0);
+    }
+    // 6. On-disk worker exe presence.
+    {
+        const auto exe = paths_.executableDirectory / "mcos-baseline-tools-worker.exe";
+        std::error_code ec;
+        const bool ok = std::filesystem::exists(exe, ec);
+        record("process.baseline_worker_exe", "process", ok,
+               ok ? ("Worker exe present at " + exe.string())
+                  : ("Worker exe MISSING at " + exe.string()),
+               0);
+    }
+    // 7. v0.10.3: Persistent Diagnostics log writability.
+    //    Self-test failures are routed to the persistent log via
+    //    MasterControl::Diagnostics::appendEvent (added v0.10.2). If
+    //    the destination directory is unwritable (locked-down account,
+    //    missing PUBLIC env var, ACL change, etc.) those rows are
+    //    silently dropped and the operator loses the audit trail.
+    //    Probe writability explicitly so a failure surfaces in the
+    //    Overview Error Frame instead of being invisible.
+    {
+        const auto pStart = std::chrono::steady_clock::now();
+        const auto paths = MasterControl::Diagnostics::resolvePersistentLogPaths(L"runtime");
+        std::error_code ec;
+        std::filesystem::create_directories(paths.componentDirectory, ec);
+        bool ok = !ec;
+        std::string msg;
+        if (!ok) {
+            msg = "create_directories(" + paths.componentDirectory.string() + "): " + ec.message();
+        } else {
+            const auto probe = paths.componentDirectory / ".write-probe";
+            {
+                std::ofstream out(probe, std::ios::binary | std::ios::trunc);
+                ok = out.is_open();
+                if (ok) {
+                    out << "{}";
+                    ok = out.good();
+                }
+            }
+            if (ok) {
+                std::filesystem::remove(probe, ec);
+                msg = "Diagnostics log directory writable at " + paths.componentDirectory.string();
+            } else {
+                msg = "Diagnostics log directory write failed at " + paths.componentDirectory.string();
+            }
+        }
+        const int dur = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - pStart).count());
+        record("diagnostics.log_writable", "telemetry", ok, msg, dur);
+    }
+
+    snap.finishedAtUtc = timestampNowUtc();
+    snap.totalCount = static_cast<int>(snap.results.size());
+    snap.passedCount = 0;
+    for (const auto& r : snap.results) if (r.ok) ++snap.passedCount;
+    snap.failedCount = snap.totalCount - snap.passedCount;
+
+    // Aggregate result -> single activity event so a watcher reading
+    // the audit log sees one PASS/FAIL summary alongside the per-probe
+    // detail rows.
+    {
+        ActivityEvent evt;
+        evt.kind       = "self_test_summary";
+        evt.actor      = "boot-self-test";
+        evt.target     = "boot";
+        evt.statusCode = (snap.failedCount == 0) ? 200 : 500;
+        evt.message    = "Boot self-test "
+                       + std::to_string(snap.passedCount) + "/"
+                       + std::to_string(snap.totalCount) + " passed";
+        globalActivityRing().append(evt);
+    }
+    // v0.10.2: also write the summary to the persistent Diagnostics
+    // log so each boot leaves one clear audit-trail line on disk
+    // (operator directive on visible self-tests + diagnostic module).
+    // Severity is "info" when all probes passed and "warn" when any
+    // failed; the per-failure detail rows already wrote at "error"
+    // severity inside emitSelfTestActivity above.
+    MasterControl::Diagnostics::appendEvent(
+        L"runtime",
+        snap.failedCount == 0 ? "info" : "warn",
+        "self_test_summary",
+        std::string("Boot self-test ")
+            + std::to_string(snap.passedCount) + "/"
+            + std::to_string(snap.totalCount) + " passed",
+        nlohmann::json{
+            { "passed",        snap.passedCount },
+            { "failed",        snap.failedCount },
+            { "total",         snap.totalCount },
+            { "startedAtUtc",  snap.startedAtUtc },
+            { "finishedAtUtc", snap.finishedAtUtc }
+        });
+    return snap;
 }
 
 void MasterControlApplication::Impl::shutdown() {
     if (!initialized_) {
         return;
+    }
+    // v0.9.69: signal the self-test thread to bail (it sleeps 3s
+    // before running) and join so a fast stop doesn't leave it
+    // running into a torn-down runtime.
+    stopRequested_.store(true);
+    if (selfTestThreadJoinable_.load() && selfTestThread_.joinable()) {
+        selfTestThread_.join();
+        selfTestThreadJoinable_.store(false);
     }
     if (httpServer_) {
         httpServer_->stop();
@@ -10817,8 +13858,52 @@ void MasterControlApplication::Impl::shutdown() {
 }
 
 int MasterControlApplication::Impl::runInteractive() {
+    // v0.9.78: supervisor heartbeat watchdog. Every ~5s, ask the
+    // supervisor service to flip Connected -> Disconnected if its
+    // lastHeartbeatUtc is older than the threshold. When a transition
+    // happens, emit a supervisor_disconnected activity event so the
+    // operator sees the lifecycle change in /api/activity + the
+    // Overview Error Reporting card. Threshold is generous (120s) so
+    // a single missed heartbeat from a connector with retry/backoff
+    // doesn't trigger spurious disconnects.
+    constexpr auto kSupervisorHeartbeatThreshold = std::chrono::seconds(120);
+    constexpr auto kSupervisorSweepInterval = std::chrono::seconds(5);
+    auto lastSupervisorSweep = std::chrono::steady_clock::now();
     while (!stopRequested_) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        if (supervisorAssignmentService_) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now - lastSupervisorSweep >= kSupervisorSweepInterval) {
+                lastSupervisorSweep = now;
+                if (supervisorAssignmentService_->expireConnectionIfStale(kSupervisorHeartbeatThreshold)) {
+                    const auto status = supervisorAssignmentService_->getStatus();
+                    ActivityEvent evt;
+                    evt.kind = "supervisor_disconnected";
+                    evt.actor = "supervisor-watchdog";
+                    evt.target = MasterControl::providerIdString(status.provider);
+                    evt.statusCode = 504;
+                    evt.message = std::string("Supervisor watchdog flipped state to Disconnected (no heartbeat for >")
+                        + std::to_string(kSupervisorHeartbeatThreshold.count()) + "s). Assignment "
+                        + status.assignmentId + ".";
+                    globalActivityRing().append(evt);
+                    // v0.9.92: persistent diagnostics mirror. Watchdog
+                    // disconnects are operator-relevant: they often
+                    // indicate the remote supervisor client crashed or
+                    // lost network. Severity=warn (not error) so the
+                    // log marker is visible without flagging health.ok.
+                    MasterControl::Diagnostics::appendEvent(
+                        L"supervisor",
+                        "warn",
+                        "supervisor_disconnected",
+                        evt.message,
+                        nlohmann::json{
+                            { "providerId", MasterControl::providerIdString(status.provider) },
+                            { "assignmentId", status.assignmentId },
+                            { "thresholdSeconds", static_cast<int64_t>(kSupervisorHeartbeatThreshold.count()) }
+                        });
+                }
+            }
+        }
     }
     return 0;
 }
@@ -11065,6 +14150,254 @@ static std::string findHeaderCaseInsensitive(const std::unordered_map<std::strin
     return {};
 }
 
+// v0.9.28: enumerate the supported methods for known operator API
+// paths so an unsupported method on a known path returns 405 with
+// an Allow header per RFC 7231 §6.5.5, instead of falling through
+// to a 404 that hides whether the path exists at all.
+//
+// Maintenance: when adding a new route to handleHttpRequest below,
+// add the (path, methods) pair here so verb-mismatch on the new
+// route returns 405. The exact-match table covers literal path
+// matches; the prefix table covers the routes that use
+// startsWith() / rfind(... , 0) == 0 dispatch. HEAD and OPTIONS are
+// added to every entry's Allow header automatically because the
+// HEAD->GET rewrite and OPTIONS preflight short-circuit live in
+// SimpleHttpServer::handleClient and apply universally.
+static std::vector<std::string> supportedMethodsForPath(const std::string& path) {
+    // Strip query string for the lookup -- /api/foo?bar=baz is the
+    // same logical resource as /api/foo for method-allow purposes.
+    std::string p = path;
+    const auto q = p.find('?');
+    if (q != std::string::npos) {
+        p = p.substr(0, q);
+    }
+
+    static const std::unordered_map<std::string, std::vector<std::string>> kExact = {
+        // Liveness / version
+        {"/api/health", {"GET"}},
+        {"/api/version", {"GET"}},
+        {"/api/health/summary", {"GET"}},
+        {"/api/host/telemetry", {"GET"}},
+        {"/api/readiness", {"GET"}},
+        {"/api/activity/health", {"GET"}},
+        // Discovery / onboarding / governance
+        {"/.well-known/mcos.json", {"GET"}},
+        {"/api/discovery", {"GET"}},
+        {"/api/onboarding", {"GET"}},
+        {"/api/beacon", {"GET"}},
+        {"/api/environment-hints", {"GET"}},
+        {"/api/governance/profile", {"GET"}},
+        {"/api/governance/bundles", {"GET"}},
+        {"/api/governance/decisions", {"GET", "POST"}},
+        // Snapshot / config
+        {"/api/dashboard", {"GET"}},
+        {"/api/config", {"GET", "POST"}},
+        {"/api/exports", {"GET"}},
+        {"/api/clu", {"GET"}},
+        {"/api/clu/tools", {"GET"}},
+        {"/api/clu/apple-operations", {"GET"}},
+        {"/api/clu/apple-operations/cancel", {"POST"}},
+        {"/api/clu/approvals", {"GET"}},
+        {"/api/clu/execute", {"POST"}},
+        {"/api/forsetti/surface", {"GET"}},
+        {"/api/forsetti/modules", {"GET"}},
+        {"/api/forsetti/modules/state", {"POST"}},
+        // Pools
+        {"/api/pools", {"GET", "POST"}},
+        // Telemetry
+        {"/api/telemetry/clients", {"GET"}},
+        {"/api/telemetry/gateway", {"GET"}},
+        {"/api/telemetry/heartbeat", {"POST"}},
+        // Gateway control
+        {"/api/gateway/status", {"GET"}},
+        {"/api/gateway/health", {"GET"}},
+        {"/api/gateway/tools", {"GET"}},
+        {"/api/gateway/start", {"POST"}},
+        {"/api/gateway/stop", {"POST"}},
+        {"/api/gateway/restart", {"POST"}},
+        // Client surfaces
+        {"/api/client/mcp-servers", {"GET"}},
+        {"/api/client/sub-agents", {"GET"}},
+        {"/api/client/activity", {"GET"}},
+        {"/api/client/governance/profile", {"GET"}},
+        {"/api/client/governance/decisions", {"POST"}},
+        {"/api/client/heartbeat", {"POST"}},
+        {"/api/clients", {"GET", "POST"}},
+        // Setup / install
+        {"/api/setup/start", {"POST"}},
+        {"/api/setup/complete", {"POST"}},
+        {"/api/setup/reset", {"POST"}},
+        {"/api/setup/dependencies", {"GET"}},
+        {"/api/setup/workflow-templates", {"GET"}},
+        {"/api/install/history", {"GET"}},
+        {"/api/install/package", {"POST"}},
+        {"/api/install/repo", {"POST"}},
+        {"/api/install/zip", {"POST"}},
+        // Settings / runtime registration
+        {"/api/settings/advanced-mode", {"POST"}},
+        {"/api/runtime/mcp-servers", {"POST"}},
+        {"/api/runtime/mcp-servers/remove", {"POST"}},
+        {"/api/runtime/subagents", {"POST"}},
+        {"/api/runtime/subagents/remove", {"POST"}},
+        {"/api/runtime/subagent-groups", {"POST"}},
+        {"/api/runtime/subagent-groups/remove", {"POST"}},
+        // Platform services
+        {"/api/platform-services", {"GET"}},
+        {"/api/platform-services/gateways", {"GET"}},
+        {"/api/platform-services/governance", {"GET"}},
+        {"/api/platform-services/apple-hosts", {"GET", "POST"}},
+        {"/api/platform-services/apple-hosts/remove", {"POST"}},
+        // Plugin status
+        {"/api/claude-plugin/status", {"GET"}},
+        {"/api/claude-plugin/toggle", {"POST"}},
+        // v0.9.56: operator-facing diagnostic surface. Returns the
+        // same per-entry runtime stats as /api/dashboard but bundled
+        // with an aggregate count by installState so the operator
+        // can answer "how many of my catalog entries are actually
+        // live, supervised, or just placeholders?" in one request.
+        {"/api/diagnostics/runtime-stats", {"GET"}},
+        // v0.9.69: boot-time self-test snapshot + re-run trigger.
+        {"/api/self-tests",     {"GET"}},
+        {"/api/self-tests/run", {"POST"}},
+        // v0.9.71: real-time SSE push channel for dashboard +
+        // activity events. Connection stays open until the client
+        // disconnects or the server stops.
+        {"/api/events",         {"GET"}},
+        // v0.9.73: Forsetti Agentic Edition governance surface.
+        // The manifest endpoint catalogs vendored documents +
+        // policies + agents + contracts + schemas + standards by
+        // path; the document endpoint serves them by relative path.
+        {"/api/governance/agentic-edition/manifest", {"GET"}},
+        // v0.9.76: Supervisor Agent Assignment Wizard surface.
+        {"/api/supervisor/assignment",        {"GET"}},
+        {"/api/supervisor/assignment/select", {"POST"}},
+        {"/api/supervisor/assignment/revoke", {"POST"}},
+        {"/api/supervisor/config/generate",   {"POST"}},
+        {"/api/supervisor/connect/confirm",   {"POST"}},
+        {"/api/supervisor/heartbeat",         {"POST"}},
+        {"/api/supervisor/status",            {"GET"}},
+    };
+
+    static const std::vector<std::pair<std::string, std::vector<std::string>>> kPrefix = {
+        // Note: longer prefixes first so "/api/setup/dependencies/" wins
+        // over "/api/setup/" if both ever overlap.
+        {"/api/onboarding/", {"GET"}},
+        {"/api/governance/bundles/", {"GET"}},
+        {"/api/setup/dependencies/", {"POST"}},
+        {"/api/platform-services/config/", {"GET"}},
+        {"/api/clients/", {"GET", "DELETE"}},
+        {"/api/leases/", {"POST"}},
+        {"/api/pools/", {"GET", "POST"}},
+        {"/api/telemetry/events", {"GET"}},
+        {"/api/activity", {"GET"}},
+        {"/mcp/gateway/", {"GET"}},
+        {"/mcp/governance/", {"GET", "POST"}},
+        // v0.9.73: prefix route for fetching individual Forsetti
+        // Agentic Edition documents by relative path. Manifest
+        // endpoint is exact-match above.
+        {"/api/governance/agentic-edition/document/", {"GET"}},
+    };
+
+    auto exact = kExact.find(p);
+    if (exact != kExact.end()) {
+        return exact->second;
+    }
+    for (const auto& entry : kPrefix) {
+        const auto& prefix = entry.first;
+        if (p.size() >= prefix.size()
+            && p.compare(0, prefix.size(), prefix) == 0) {
+            return entry.second;
+        }
+    }
+    return {};
+}
+
+// v0.9.28: build a canonical Allow-header value from a route's
+// supported method list. Always surfaces HEAD when GET is supported
+// (the HEAD->GET rewrite makes this transparently true) and always
+// surfaces OPTIONS (preflight short-circuit handles it for every
+// path). Keeps the header in stable verb order so caches don't see
+// spurious vary churn between requests.
+static std::string buildAllowHeader(const std::vector<std::string>& methods) {
+    static const std::vector<std::string> kOrder = {
+        "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"
+    };
+    std::unordered_set<std::string> set(methods.begin(), methods.end());
+    if (set.count("GET")) {
+        set.insert("HEAD");
+    }
+    set.insert("OPTIONS");
+    std::string allow;
+    for (const auto& verb : kOrder) {
+        if (set.count(verb)) {
+            if (!allow.empty()) {
+                allow += ", ";
+            }
+            allow += verb;
+        }
+    }
+    return allow;
+}
+
+void MasterControlApplication::Impl::refreshSupervisorEndpoints() {
+    // v0.10.8: mirror DiscoveryService::currentDocument() precedence chain
+    // so the supervisor config carries the same LAN-routable URL the
+    // well-known discovery doc advertises. Run on-demand from the route
+    // layer because the supervisor service is constructed in
+    // initialize() -- before the first telemetry capture -- and the
+    // initial mcpEndpoint stamped into the context is necessarily a
+    // 127.0.0.1 fallback. By the time the operator clicks "Generate
+    // Config" the snapshot tick has run and the primary IPv4 LAN
+    // address is known, so we refresh just-in-time.
+    if (!supervisorAssignmentService_) return;
+    if (!configurationService_) return;
+
+    const auto cfg = configurationService_->current();
+    std::string lanIp;
+    const std::string& bindAddress = cfg.bindAddress;
+    const std::string& preferred = cfg.activeProfile.preferredBindAddress;
+    if (!bindAddress.empty()
+        && bindAddress != "0.0.0.0"
+        && bindAddress != "::"
+        && bindAddress != "[::]") {
+        lanIp = bindAddress;
+    }
+    if ((lanIp.empty() || lanIp == "0.0.0.0")
+        && !preferred.empty() && preferred != "0.0.0.0") {
+        lanIp = preferred;
+    }
+    if ((lanIp.empty() || lanIp == "0.0.0.0") && telemetryService_) {
+        try {
+            const auto snap = telemetryService_->captureSnapshot();
+            if (!snap.primaryIpAddress.empty()) {
+                lanIp = snap.primaryIpAddress;
+            }
+        } catch (...) {
+            // telemetry capture is best-effort here; fall through to
+            // the bind/loopback fallbacks below.
+        }
+    }
+    if (lanIp.empty() || lanIp == "0.0.0.0") {
+        lanIp = cfg.bindAddress;
+    }
+    if (lanIp.empty() || lanIp == "0.0.0.0") {
+        lanIp = "127.0.0.1";
+    }
+
+    const auto hostInUrl = bracketIpv6Host(lanIp);
+    const auto adminBase = std::string("http://") + hostInUrl + ":" + std::to_string(cfg.browserPort);
+    const auto gatewayMcpPath = cfg.mcpGateway.mcpPath.empty() ? std::string("/mcp") : cfg.mcpGateway.mcpPath;
+    const auto gatewayBase = std::string("http://") + hostInUrl + ":" + std::to_string(cfg.mcpGateway.listenPort);
+    const auto mcpEndpoint = gatewayBase + gatewayMcpPath;
+    const auto discoveryEndpoint = adminBase + "/.well-known/mcos.json";
+    const auto serverName = cfg.instanceName.empty()
+        ? std::string("Master Control Orchestration Server")
+        : cfg.instanceName;
+    const auto fingerprintSeed = lanIp + ":" + std::to_string(cfg.browserPort) + "|" + serverName;
+
+    supervisorAssignmentService_->setEndpoints(mcpEndpoint, discoveryEndpoint, fingerprintSeed);
+}
+
 HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest& request) {
     // Phase 6 - resolve the per-request authentication context. Identity is
     // by header alone (the LAN is trusted per ADR-001); a missing or unknown
@@ -11097,27 +14430,638 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
     }
 
+    // v0.9.71: real-time push channel. /api/events upgrades to a
+    // Server-Sent Events stream that emits the current dashboard
+    // snapshot, the latest health summary, and any new activity-ring
+    // entries on every tick. Dashboard JS opens an EventSource and
+    // replaces its 2s polling interval with stream-driven updates so
+    // every tab/view reflects new state within a beat. Falls back to
+    // polling automatically when the connection drops (EventSource
+    // re-connects on its own; the dashboard's polling timer is left
+    // running at a slower 5s cadence as a safety net).
+    if (request.method == "GET" && request.path == "/api/events") {
+        HttpResponse resp;
+        resp.statusCode = 200;
+        resp.streamMode = true;
+        resp.streamHandler = [this](SOCKET client, std::atomic<bool>* serverRunning) {
+            auto sendEvent = [&](const std::string& eventName,
+                                 const std::string& jsonBody) -> bool {
+                std::ostringstream frame;
+                frame << "event: " << eventName << "\n";
+                // Split on \n so each line is prefixed with "data:"
+                // per RFC SSE; nlohmann's dump(0) emits no newlines
+                // so the entire body lives on a single data: line,
+                // but we still iterate to be safe.
+                std::istringstream lineStream(jsonBody);
+                std::string line;
+                while (std::getline(lineStream, line)) {
+                    frame << "data: " << line << "\n";
+                }
+                frame << "\n";
+                const auto bytes = frame.str();
+                int sent = ::send(client, bytes.c_str(),
+                                  static_cast<int>(bytes.size()), 0);
+                return sent == static_cast<int>(bytes.size());
+            };
+            // Initial keepalive comment so EventSource clients fire
+            // 'open' immediately. Per SSE spec, lines starting with
+            // ':' are ignored by the client.
+            const std::string hello = ": mcos sse stream open\n\n";
+            ::send(client, hello.c_str(), static_cast<int>(hello.size()), 0);
+
+            std::string lastActivityId;
+            std::string lastSnapshotHash;
+            int loopsWithoutChange = 0;
+
+            while (true) {
+                if (serverRunning && !serverRunning->load()) break;
+                if (stopRequested_.load()) break;
+                // Snapshot tick.
+                try {
+                    if (adminApiService_) {
+                        const auto snap = adminApiService_->snapshot();
+                        const std::string body = nlohmann::json(snap).dump();
+                        // Cheap "did anything change" hash so unchanged
+                        // payloads can be skipped (saves bytes for idle
+                        // clients). Use std::hash on the dumped string.
+                        const auto h = std::to_string(std::hash<std::string>{}(body));
+                        if (h != lastSnapshotHash) {
+                            lastSnapshotHash = h;
+                            loopsWithoutChange = 0;
+                            if (!sendEvent("dashboard", body)) break;
+                        } else {
+                            ++loopsWithoutChange;
+                        }
+                    }
+                } catch (...) {
+                    // Snapshot threw -- skip this tick.
+                }
+                // Activity-event tick. Stream events appended since
+                // the high-water mark we last sent. ActivityEventRing's
+                // public read() takes (sinceId, maxCount).
+                try {
+                    const auto recent = globalActivityRing().read(
+                        lastActivityId, 100);
+                    if (!recent.events.empty()) {
+                        for (const auto& evt : recent.events) {
+                            const std::string body = nlohmann::json(evt).dump();
+                            if (!sendEvent("activity", body)) break;
+                        }
+                        lastActivityId = recent.highWaterMarkId;
+                    } else if (lastActivityId.empty()) {
+                        // First tick with no events -- still record
+                        // the high-water mark so subsequent ticks ask
+                        // for "events newer than this".
+                        lastActivityId = recent.highWaterMarkId;
+                    }
+                } catch (...) {
+                    // Activity ring threw -- skip this tick.
+                }
+                // Heartbeat keepalive every 15s of no-change so proxies
+                // / browsers don't time out the idle connection.
+                if (loopsWithoutChange > 0 && loopsWithoutChange % 15 == 0) {
+                    const std::string ping = ": ping\n\n";
+                    if (::send(client, ping.c_str(),
+                               static_cast<int>(ping.size()), 0)
+                        != static_cast<int>(ping.size())) {
+                        break;
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            }
+        };
+        return resp;
+    }
+
+    // v0.9.73: Forsetti Agentic Edition governance surface. The new
+    // governance authority (FORSETTI_CONSTITUTION.md, COMPLIANCE_
+    // POLICY.md, CHANGE_CONTROL_POLICY.md, RELEASE_POLICY.md,
+    // DOCUMENTATION_POLICY.md, VISION.md, AGENTS.md, agents/*.md,
+    // contracts/*.md, core/policies/*.json, policies/*.json,
+    // schemas/*.json, standards/*.md) is vendored at
+    // <install>/share/Forsetti-Agentic-Edition/. CLU surfaces it
+    // directly so any LAN AI client (or operator-side tool) can
+    // pull the canonical authority documents over the gateway
+    // without a separate distribution channel. Per operator
+    // directive: this governance supersedes any previous governance.
+    if (request.method == "GET" && request.path == "/api/governance/agentic-edition/manifest") {
+        auto root = paths_.executableDirectory / "share" / "Forsetti-Agentic-Edition";
+        if (!std::filesystem::exists(root)) {
+            return HttpResponse{ 503, "application/json",
+                nlohmann::json{
+                    { "available", false },
+                    { "expectedRoot", root.string() },
+                    { "hint", "Vendor the forsetti-agentic-edition source tree under share/Forsetti-Agentic-Edition/ in the install directory." }
+                }.dump() };
+        }
+        nlohmann::json manifest = {
+            { "available", true },
+            { "root",      root.string() },
+            { "documents", nlohmann::json::array() },
+            { "policies",  nlohmann::json::array() },
+            { "agents",    nlohmann::json::array() },
+            { "contracts", nlohmann::json::array() },
+            { "schemas",   nlohmann::json::array() },
+            { "standards", nlohmann::json::array() }
+        };
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(root, ec)) {
+            if (ec) break;
+            if (!entry.is_regular_file()) continue;
+            auto rel = std::filesystem::relative(entry.path(), root, ec);
+            if (ec) continue;
+            std::string relStr = rel.generic_string();
+            std::string ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                           [](unsigned char c){ return std::tolower(c); });
+            const auto sz = static_cast<int64_t>(std::filesystem::file_size(entry.path(), ec));
+            nlohmann::json item = {
+                { "path",      relStr },
+                { "sizeBytes", ec ? 0 : sz }
+            };
+            // Bucket by location so consumers can navigate by
+            // category. The same file is also surfaced in the flat
+            // 'documents' array so a client that just wants
+            // everything can iterate one list.
+            manifest["documents"].push_back(item);
+            const std::string lower = [&]() {
+                std::string s = relStr;
+                std::transform(s.begin(), s.end(), s.begin(),
+                               [](unsigned char c){ return std::tolower(c); });
+                return s;
+            }();
+            if ((lower.rfind("policies/", 0) == 0 || lower.rfind("core/policies/", 0) == 0)
+                && ext == ".json") {
+                manifest["policies"].push_back(item);
+            }
+            if (lower.rfind("agents/", 0) == 0 && ext == ".md") {
+                manifest["agents"].push_back(item);
+            }
+            if (lower.rfind("contracts/", 0) == 0 && ext == ".md") {
+                manifest["contracts"].push_back(item);
+            }
+            if (lower.rfind("schemas/", 0) == 0 && ext == ".json") {
+                manifest["schemas"].push_back(item);
+            }
+            if (lower.rfind("standards/", 0) == 0 && ext == ".md") {
+                manifest["standards"].push_back(item);
+            }
+        }
+        return HttpResponse{ 200, "application/json", manifest.dump() };
+    }
+    if (request.method == "GET" &&
+        request.path.rfind("/api/governance/agentic-edition/document/", 0) == 0) {
+        // Strip the prefix and look up the file under the vendored
+        // directory. Reject any path that contains '..' to prevent
+        // traversal outside the governance tree.
+        const std::string prefix = "/api/governance/agentic-edition/document/";
+        std::string rel = request.path.substr(prefix.size());
+        if (rel.find("..") != std::string::npos
+            || rel.find('\\') != std::string::npos) {
+            return HttpResponse{ 400, "application/json",
+                nlohmann::json{ { "error", "Path traversal rejected." } }.dump() };
+        }
+        auto root = paths_.executableDirectory / "share" / "Forsetti-Agentic-Edition";
+        auto target = root / rel;
+        std::error_code ec;
+        if (!std::filesystem::exists(target, ec) || std::filesystem::is_directory(target, ec)) {
+            return HttpResponse{ 404, "application/json",
+                nlohmann::json{ { "error", "Document not found." },
+                                { "requested", rel } }.dump() };
+        }
+        std::ifstream in(target, std::ios::binary);
+        std::stringstream ss;
+        ss << in.rdbuf();
+        std::string body = ss.str();
+        std::string contentType = "text/plain; charset=utf-8";
+        const auto ext = target.extension().string();
+        if (ext == ".md")   contentType = "text/markdown; charset=utf-8";
+        if (ext == ".json") contentType = "application/json";
+        if (ext == ".html") contentType = "text/html; charset=utf-8";
+        return HttpResponse{ 200, contentType, std::move(body) };
+    }
+
+    // v0.9.76: Supervisor Agent Assignment Wizard surface.
+    // Six routes implementing the lifecycle described in the
+    // Supervisor Agent Assignment Wizard Implementation Package
+    // (docs/IMPLEMENTATION_INSTRUCTIONS.md, BACKEND_SPEC.md):
+    //
+    //   GET  /api/supervisor/assignment        - current SupervisorAssignment
+    //   POST /api/supervisor/assignment/select - pick provider, issue config
+    //   POST /api/supervisor/assignment/revoke - revoke active/pending
+    //   POST /api/supervisor/config/generate   - re-issue config without revoke
+    //   POST /api/supervisor/connect/confirm   - remote client confirms
+    //   GET  /api/supervisor/status            - compact status for UI card
+    //
+    // All routes audit-log to the activity ring with kind="supervisor_*"
+    // so the operator can audit-trail through /api/activity. LAN-trust:
+    // no app-layer auth is required to *reach* the surface (the trust
+    // model is enforced at the network level per .claude/rules/00-mcos-
+    // realignment.md). Server-side capability validation enforces the
+    // forbidden-by-default tool list for every confirm-connection call.
+    if (request.method == "GET" && request.path == "/api/supervisor/assignment") {
+        if (!supervisorAssignmentService_) {
+            return HttpResponse{ 503, "application/json",
+                nlohmann::json{ {"ok", false}, {"errorMessage", "Supervisor service not initialized."} }.dump() };
+        }
+        auto body = MasterControl::toJson(supervisorAssignmentService_->getCurrentAssignment());
+        return HttpResponse{ 200, "application/json", body.dump() };
+    }
+    if (request.method == "GET" && request.path == "/api/supervisor/status") {
+        if (!supervisorAssignmentService_) {
+            return HttpResponse{ 503, "application/json",
+                nlohmann::json{ {"ok", false}, {"errorMessage", "Supervisor service not initialized."} }.dump() };
+        }
+        auto body = MasterControl::toJson(supervisorAssignmentService_->getStatus());
+        return HttpResponse{ 200, "application/json", body.dump() };
+    }
+    if (request.method == "POST" && request.path == "/api/supervisor/assignment/select") {
+        if (!supervisorAssignmentService_) {
+            return HttpResponse{ 503, "application/json",
+                nlohmann::json{ {"ok", false}, {"errorMessage", "Supervisor service not initialized."} }.dump() };
+        }
+        nlohmann::json parsed;
+        try { parsed = nlohmann::json::parse(request.body); }
+        catch (...) {
+            return HttpResponse{ 400, "application/json",
+                nlohmann::json{ {"ok", false}, {"errorMessage", "Request body is not valid JSON."} }.dump() };
+        }
+        MasterControl::SupervisorSelectRequest selectRequest;
+        const auto err = MasterControl::parseSelectRequest(parsed, selectRequest);
+        if (!err.empty()) {
+            return HttpResponse{ 400, "application/json",
+                nlohmann::json{ {"ok", false}, {"errorMessage", err} }.dump() };
+        }
+        // v0.10.8: refresh the supervisor's stamped endpoints right
+        // before issuing the config so the JSON carries the LAN-routable
+        // gateway URL the remote ChatGPT/Claude/Grok client must reach.
+        refreshSupervisorEndpoints();
+        const auto issue = supervisorAssignmentService_->selectAndIssue(selectRequest);
+        {
+            ActivityEvent evt;
+            evt.kind = "supervisor_select";
+            evt.actor = context.actor;
+            evt.target = MasterControl::providerIdString(selectRequest.provider);
+            evt.statusCode = issue.ok ? 200 : 400;
+            evt.message = issue.ok
+                ? std::string("Supervisor selected: ")
+                    + MasterControl::providerDisplayName(selectRequest.provider)
+                    + " (assignment " + issue.assignment.assignmentId
+                    + ", config " + issue.assignment.configId + ")."
+                : std::string("Supervisor select rejected: ") + issue.errorMessage;
+            globalActivityRing().append(evt);
+            // v0.9.92: dual-emit to the persistent Diagnostics module so
+            // supervisor lifecycle survives in <PUBLIC>\Documents\...\
+            // logs\supervisor\events.jsonl across service restarts.
+            MasterControl::Diagnostics::appendEvent(
+                L"supervisor",
+                issue.ok ? "info" : "error",
+                "supervisor_select",
+                evt.message,
+                nlohmann::json{
+                    { "providerId", MasterControl::providerIdString(selectRequest.provider) },
+                    { "assignmentId", issue.assignment.assignmentId },
+                    { "configId", issue.assignment.configId },
+                    { "actor", context.actor }
+                });
+        }
+        return HttpResponse{ issue.ok ? 200 : 400, "application/json",
+            MasterControl::toJson(issue).dump() };
+    }
+    if (request.method == "POST" && request.path == "/api/supervisor/config/generate") {
+        if (!supervisorAssignmentService_) {
+            return HttpResponse{ 503, "application/json",
+                nlohmann::json{ {"ok", false}, {"errorMessage", "Supervisor service not initialized."} }.dump() };
+        }
+        // Body is optional. If providerId is supplied, treat this as
+        // shorthand for select+issue so the WinUI Shell can post a
+        // single request from the wizard. Otherwise re-emit the
+        // config for the existing assignment.
+        nlohmann::json parsed = nlohmann::json::object();
+        if (!request.body.empty()) {
+            try { parsed = nlohmann::json::parse(request.body); }
+            catch (...) {
+                return HttpResponse{ 400, "application/json",
+                    nlohmann::json{ {"ok", false}, {"errorMessage", "Request body is not valid JSON."} }.dump() };
+            }
+        }
+        if (parsed.is_object() && parsed.contains("providerId") && parsed["providerId"].is_string()) {
+            MasterControl::SupervisorSelectRequest selectRequest;
+            const auto err = MasterControl::parseSelectRequest(parsed, selectRequest);
+            if (!err.empty()) {
+                return HttpResponse{ 400, "application/json",
+                    nlohmann::json{ {"ok", false}, {"errorMessage", err} }.dump() };
+            }
+            // v0.10.8: refresh endpoints so the (re)issued config has
+            // the LAN-routable gateway URL, not the 127.0.0.1 fallback.
+            refreshSupervisorEndpoints();
+            const auto issue = supervisorAssignmentService_->selectAndIssue(selectRequest);
+            {
+                ActivityEvent evt;
+                evt.kind = "supervisor_config_issue";
+                evt.actor = context.actor;
+                evt.target = MasterControl::providerIdString(selectRequest.provider);
+                evt.statusCode = issue.ok ? 200 : 400;
+                evt.message = issue.ok
+                    ? std::string("Supervisor config generated for ")
+                        + MasterControl::providerDisplayName(selectRequest.provider)
+                        + " (config " + issue.assignment.configId + ")."
+                    : std::string("Supervisor config generation rejected: ") + issue.errorMessage;
+                globalActivityRing().append(evt);
+                // v0.9.93: persistent diagnostics mirror (parity with the
+                // other supervisor_* lifecycle dual-emits added in v0.9.92).
+                MasterControl::Diagnostics::appendEvent(
+                    L"supervisor",
+                    issue.ok ? "info" : "error",
+                    "supervisor_config_issue",
+                    evt.message,
+                    nlohmann::json{
+                        { "providerId", MasterControl::providerIdString(selectRequest.provider) },
+                        { "assignmentId", issue.assignment.assignmentId },
+                        { "configId", issue.assignment.configId },
+                        { "actor", context.actor }
+                    });
+            }
+            return HttpResponse{ issue.ok ? 200 : 400, "application/json",
+                MasterControl::toJson(issue).dump() };
+        }
+        // v0.10.8: regenerate-without-providerId also refreshes endpoints
+        // so the new configId carries the LAN-routable URL.
+        refreshSupervisorEndpoints();
+        const auto issue = supervisorAssignmentService_->regenerateConfig();
+        {
+            ActivityEvent evt;
+            evt.kind = "supervisor_config_regenerate";
+            evt.actor = context.actor;
+            evt.target = issue.ok ? MasterControl::providerIdString(issue.assignment.provider) : "";
+            evt.statusCode = issue.ok ? 200 : 400;
+            evt.message = issue.ok
+                ? std::string("Supervisor config regenerated (config ")
+                    + issue.assignment.configId + ")."
+                : std::string("Supervisor config regenerate rejected: ") + issue.errorMessage;
+            globalActivityRing().append(evt);
+            // v0.9.93: persistent diagnostics mirror.
+            MasterControl::Diagnostics::appendEvent(
+                L"supervisor",
+                issue.ok ? "info" : "error",
+                "supervisor_config_regenerate",
+                evt.message,
+                nlohmann::json{
+                    { "providerId", MasterControl::providerIdString(issue.assignment.provider) },
+                    { "assignmentId", issue.assignment.assignmentId },
+                    { "configId", issue.assignment.configId },
+                    { "actor", context.actor }
+                });
+        }
+        return HttpResponse{ issue.ok ? 200 : 400, "application/json",
+            MasterControl::toJson(issue).dump() };
+    }
+    if (request.method == "POST" && request.path == "/api/supervisor/assignment/revoke") {
+        if (!supervisorAssignmentService_) {
+            return HttpResponse{ 503, "application/json",
+                nlohmann::json{ {"ok", false}, {"errorMessage", "Supervisor service not initialized."} }.dump() };
+        }
+        std::string reason;
+        if (!request.body.empty()) {
+            try {
+                const auto parsed = nlohmann::json::parse(request.body);
+                if (parsed.is_object()) reason = parsed.value("reason", std::string{});
+            } catch (...) { /* allow empty body */ }
+        }
+        const auto previous = supervisorAssignmentService_->getCurrentAssignment();
+        supervisorAssignmentService_->revoke(reason);
+        {
+            ActivityEvent evt;
+            evt.kind = "supervisor_revoke";
+            evt.actor = context.actor;
+            evt.target = MasterControl::providerIdString(previous.provider);
+            evt.statusCode = 200;
+            evt.message = std::string("Supervisor revoked")
+                + (previous.assignmentId.empty()
+                    ? std::string(" (no prior assignment).")
+                    : std::string(" (assignment ") + previous.assignmentId + "). Reason: ")
+                + (reason.empty() ? std::string("operator-initiated") : reason) + ".";
+            globalActivityRing().append(evt);
+            // v0.9.92: persistent diagnostics mirror.
+            MasterControl::Diagnostics::appendEvent(
+                L"supervisor",
+                "warn",
+                "supervisor_revoke",
+                evt.message,
+                nlohmann::json{
+                    { "providerId", MasterControl::providerIdString(previous.provider) },
+                    { "assignmentId", previous.assignmentId },
+                    { "reason", reason },
+                    { "actor", context.actor }
+                });
+        }
+        nlohmann::json body = nlohmann::json::object();
+        body["ok"] = true;
+        body["assignment"] = MasterControl::toJson(supervisorAssignmentService_->getCurrentAssignment());
+        return HttpResponse{ 200, "application/json", body.dump() };
+    }
+    if (request.method == "POST" && request.path == "/api/supervisor/heartbeat") {
+        if (!supervisorAssignmentService_) {
+            return HttpResponse{ 503, "application/json",
+                nlohmann::json{ {"ok", false}, {"errorMessage", "Supervisor service not initialized."} }.dump() };
+        }
+        std::string clientId;
+        if (!request.body.empty()) {
+            try {
+                const auto parsed = nlohmann::json::parse(request.body);
+                if (parsed.is_object()) clientId = parsed.value("clientId", std::string{});
+            } catch (...) { /* tolerate empty / malformed body */ }
+        }
+        supervisorAssignmentService_->recordHeartbeat(clientId);
+        auto status = supervisorAssignmentService_->getStatus();
+        return HttpResponse{ 200, "application/json",
+            MasterControl::toJson(status).dump() };
+    }
+    if (request.method == "POST" && request.path == "/api/supervisor/connect/confirm") {
+        if (!supervisorAssignmentService_) {
+            return HttpResponse{ 503, "application/json",
+                nlohmann::json{ {"ok", false}, {"errorMessage", "Supervisor service not initialized."} }.dump() };
+        }
+        nlohmann::json parsed;
+        try { parsed = nlohmann::json::parse(request.body); }
+        catch (...) {
+            return HttpResponse{ 400, "application/json",
+                nlohmann::json{ {"ok", false}, {"errorMessage", "Request body is not valid JSON."} }.dump() };
+        }
+        MasterControl::SupervisorConnectionClaim claim;
+        const auto err = MasterControl::parseConnectionClaim(parsed, claim);
+        if (!err.empty()) {
+            return HttpResponse{ 400, "application/json",
+                nlohmann::json{ {"ok", false}, {"errorMessage", err} }.dump() };
+        }
+        const auto result = supervisorAssignmentService_->confirmConnection(claim);
+        {
+            ActivityEvent evt;
+            evt.kind = result.ok ? "supervisor_connect" : "supervisor_connect_rejected";
+            evt.actor = context.actor;
+            evt.target = MasterControl::providerIdString(claim.provider);
+            evt.statusCode = result.ok ? 200 : 403;
+            evt.message = result.ok
+                ? std::string("Supervisor connection confirmed for ")
+                    + MasterControl::providerDisplayName(claim.provider)
+                    + " (client " + result.clientId + ", assignment "
+                    + result.assignmentId + ")."
+                : std::string("Supervisor connection rejected: ") + result.errorMessage;
+            globalActivityRing().append(evt);
+            // v0.9.92: persistent diagnostics mirror. Rejected connects
+            // land as severity=error so the per-component log is the
+            // operator's first stop when a supervisor handshake fails.
+            MasterControl::Diagnostics::appendEvent(
+                L"supervisor",
+                result.ok ? "info" : "error",
+                result.ok ? "supervisor_connect" : "supervisor_connect_rejected",
+                evt.message,
+                nlohmann::json{
+                    { "providerId", MasterControl::providerIdString(claim.provider) },
+                    { "assignmentId", result.assignmentId },
+                    { "configId", claim.configId },
+                    { "clientId", claim.clientId },
+                    { "capabilities", claim.capabilities },
+                    { "actor", context.actor }
+                });
+        }
+        return HttpResponse{ result.ok ? 200 : 403, "application/json",
+            MasterControl::toJson(result).dump() };
+    }
+
+    // v0.9.69: boot self-test surface. Returns the cached snapshot
+    // produced by runBootSelfTestsNow() (results, counts, timing).
+    // Served BEFORE /api/activity so the route is reachable even
+    // before the activity ring has any events. The body is empty
+    // until the boot sweep finishes (~3s after service start).
+    if (request.method == "GET" && request.path == "/api/self-tests") {
+        const auto snap = getLastSelfTestSnapshot();
+        nlohmann::json body = snap;
+        body["pending"] = snap.startedAtUtc.empty();
+        return HttpResponse{ 200, "application/json", body.dump() };
+    }
+    // v0.9.69: re-run the self-test sweep on demand. Operator-only;
+    // no body required. Returns the freshly-computed snapshot.
+    if (request.method == "POST" && request.path == "/api/self-tests/run") {
+        auto snap = runBootSelfTestsNow();
+        {
+            std::lock_guard<std::mutex> lock(selfTestMutex_);
+            lastSelfTestSnapshot_ = snap;
+        }
+        return HttpResponse{ 200, "application/json", nlohmann::json(snap).dump() };
+    }
+
     // Dedicated /api/activity read route — served before the main handler
+    // v0.9.17: persistence health surface. Reports the activity
+    // ring's persistence layer state -- file path, bytes on disk,
+    // total append count, error count, last error message + when
+    // it happened, current ring size + high-water-mark id. Sits
+    // BEFORE the /api/activity prefix match so it isn't shadowed.
+    if (request.method == "GET" && request.path == "/api/activity/health") {
+        const auto h = globalActivityRing().persistenceHealth();
+        nlohmann::json body;
+        body["persistenceEnabled"]  = h.persistenceEnabled;
+        body["filePath"]            = h.filePath;
+        body["bytesOnDisk"]         = h.bytesOnDisk;
+        body["totalAppends"]        = h.totalAppends;
+        body["totalAppendErrors"]   = h.totalAppendErrors;
+        body["lastErrorMessage"]    = h.lastErrorMessage;
+        body["lastErrorSecondsAgo"] = h.lastErrorSecondsAgo;
+        body["inMemoryRingSize"]    = h.inMemoryRingSize;
+        body["highWaterMarkId"]     = h.highWaterMarkId;
+        // Also a top-level "ok" flag for quick-check semantics.
+        body["ok"] = h.persistenceEnabled
+                  && h.totalAppendErrors == 0;
+        return HttpResponse{ 200, "application/json", body.dump() };
+    }
+
     // body so incremental polling stays cheap and never touches the heavier
     // snapshot path. Clients pass `?since={id}` to get only new events.
-    if (request.method == "GET" && request.path.rfind("/api/activity", 0) == 0) {
+    // v0.9.89: also supports `?kind=<exact|prefix*>` so an operator
+    // dashboard can subscribe to a slice (supervisor_*, pool_worker_*,
+    // self_test, etc.). The match is server-side so cross-LAN consumers
+    // don't have to pull the full ring just to filter client-side.
+    if (request.method == "GET" && request.path == "/api/activity") {
         std::string sinceId;
-        const auto queryStart = request.path.find('?');
-        if (queryStart != std::string::npos) {
-            const auto query = request.path.substr(queryStart + 1);
+        std::string kindFilter;
+        bool kindFilterIsPrefix = false;
+        // v0.9.50: query string now lives in request.query (parseRequest
+        // splits at '?'). Route now matches strict /api/activity equality
+        // because the query string is no longer in request.path; pre-
+        // v0.9.50 we used rfind("/api/activity", 0) == 0 to absorb the
+        // query suffix.
+        size_t maxCount = ActivityEventRing::kCapacity;
+        if (!request.query.empty()) {
+            const auto& query = request.query;
             const auto sincePos = query.find("since=");
             if (sincePos != std::string::npos) {
                 sinceId = query.substr(sincePos + 6);
                 const auto amp = sinceId.find('&');
                 if (amp != std::string::npos) sinceId = sinceId.substr(0, amp);
             }
+            const auto maxPos = query.find("max=");
+            if (maxPos != std::string::npos) {
+                auto maxValue = query.substr(maxPos + 4);
+                const auto amp = maxValue.find('&');
+                if (amp != std::string::npos) {
+                    maxValue = maxValue.substr(0, amp);
+                }
+                try {
+                    const auto parsed = std::stoull(maxValue);
+                    if (parsed > 0) {
+                        maxCount = (parsed > ActivityEventRing::kCapacity)
+                            ? ActivityEventRing::kCapacity
+                            : static_cast<size_t>(parsed);
+                    }
+                } catch (...) {
+                    // Bad max= value -> fall through to the default cap.
+                }
+            }
+            // v0.9.89: kind filter. Accepts either exact match
+            // ("?kind=supervisor_connect") or a prefix wildcard
+            // ("?kind=supervisor_*") so operators can subscribe to a
+            // whole family of events without enumerating individual
+            // kinds. Unknown URL-encoding is left as-is.
+            const auto kindPos = query.find("kind=");
+            if (kindPos != std::string::npos) {
+                kindFilter = query.substr(kindPos + 5);
+                const auto amp = kindFilter.find('&');
+                if (amp != std::string::npos) kindFilter = kindFilter.substr(0, amp);
+                if (!kindFilter.empty() && kindFilter.back() == '*') {
+                    kindFilterIsPrefix = true;
+                    kindFilter.pop_back();
+                }
+            }
         }
-        const auto snap = globalActivityRing().read(sinceId);
+        // Read 2x the requested cap when filtering so the filter doesn't
+        // starve the response when 99% of events are not the requested
+        // kind. The ring caps at kCapacity overall, so an upper bound
+        // on read size avoids unbounded growth. Parens around std::min
+        // defeat the windows.h min/max macros that would otherwise
+        // expand the identifier.
+        const size_t expandedReadCap = maxCount * 4;
+        const size_t ringCap = static_cast<size_t>(ActivityEventRing::kCapacity);
+        const size_t readCount = kindFilter.empty()
+            ? maxCount
+            : (expandedReadCap < ringCap ? expandedReadCap : ringCap);
+        const auto snap = globalActivityRing().read(sinceId, readCount);
         nlohmann::json body;
         body["highWaterMarkId"] = snap.highWaterMarkId;
         body["events"] = nlohmann::json::array();
+        size_t emitted = 0;
         for (const auto& e : snap.events) {
+            if (!kindFilter.empty()) {
+                if (kindFilterIsPrefix) {
+                    if (e.kind.compare(0, kindFilter.size(), kindFilter) != 0) continue;
+                } else {
+                    if (e.kind != kindFilter) continue;
+                }
+            }
             body["events"].push_back(e);
+            if (++emitted >= maxCount) break;
+        }
+        if (!kindFilter.empty()) {
+            body["kindFilter"] = kindFilter + (kindFilterIsPrefix ? "*" : "");
         }
         return HttpResponse{ 200, "application/json", body.dump() };
     }
@@ -11341,6 +15285,179 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "GET" && request.path == "/api/health") {
             return jsonResponse(nlohmann::json{ { "status", "ok" }, { "time", timestampNowUtc() } });
         }
+        // v0.9.24: minimal version probe -- lighter than /api/health/summary
+        // for monitoring tools that just want to know "what version is
+        // running here." Returns { version, time } so a poller can detect
+        // a deploy by watching the version string flip. The v0.9.24 bug-
+        // hunt found that /api/version was a 404 even though the version
+        // string is already embedded in /api/health/summary, the
+        // /.well-known/mcos.json doc, and the MCP initialize handshake's
+        // serverInfo.version -- but there was no single-field shortcut.
+        if (request.method == "GET" && request.path == "/api/version") {
+            return jsonResponse(nlohmann::json{
+                { "version", std::string{ MASTERCONTROL_VERSION } },
+                { "time",    timestampNowUtc() }
+            });
+        }
+        // v0.9.21: /api/health/summary -- single-URL operational
+        // health view for monitoring tools, deploy gates, and the
+        // operator dashboard's status chip. Stitches together
+        // version, gateway state + tool count, pool roster
+        // (healthy/quarantined), activity-ring persistence health,
+        // and host telemetry into one JSON object so a poller
+        // doesn't have to fan out across 7+ endpoints. Returns
+        // top-level "ok" boolean: true iff gateway is running AND
+        // every registered pool has at least one healthy instance
+        // AND zero pools quarantined AND activity-ring persistence
+        // has zero errors AND telemetry sampler has run at least
+        // once (capturedAtUtc non-empty).
+        if (request.method == "GET" && request.path == "/api/health/summary") {
+            nlohmann::json out;
+            out["version"] = std::string{ MASTERCONTROL_VERSION };
+            out["time"] = timestampNowUtc();
+
+            // v0.9.86: wildcard substitution lives in
+            // substituteWildcardHostInUrl() (free helper at the top of
+            // this TU). Pre-v0.9.86 this block carried an inline lambda
+            // duplicated in /api/gateway/status + /api/gateway/health.
+
+            // Gateway block.
+            nlohmann::json gw;
+            gw["state"] = "disabled";
+            gw["toolCount"] = 0;
+            if (mcpGateway_) {
+                const auto status = mcpGateway_->CurrentStatus();
+                gw["state"] = to_string(status.state);
+                gw["mcpUrl"] = substituteWildcardHostInUrl(status.mcpUrl, configurationService_->current());
+                gw["mcpUrlRaw"] = status.mcpUrl;
+                gw["adapterType"] = mcpGateway_->AdapterType();
+                gw["toolCount"] = static_cast<int>(mcpGateway_->ListTools().size());
+            }
+            out["gateway"] = gw;
+
+            // Pool block.
+            int poolCount = 0;
+            int healthyPoolCount = 0;
+            int totalHealthyInstances = 0;
+            int quarantinedPoolCount = 0;
+            if (workerSupervisor_) {
+                const auto pools = workerSupervisor_->listPools();
+                poolCount = static_cast<int>(pools.size());
+                for (const auto& pool : pools) {
+                    int healthy = 0;
+                    for (const auto& inst : pool.instances) {
+                        if (inst.state == EndpointInstanceState::Ready
+                            || inst.state == EndpointInstanceState::Starting
+                            || inst.state == EndpointInstanceState::Busy) {
+                            ++healthy;
+                        }
+                    }
+                    if (healthy > 0) {
+                        ++healthyPoolCount;
+                    } else if (pool.scalePolicy.minInstances > 0) {
+                        // Pool is supposed to have at least one
+                        // running instance but doesn't -- count as
+                        // quarantined-or-dark for the summary.
+                        ++quarantinedPoolCount;
+                    }
+                    totalHealthyInstances += healthy;
+                }
+            }
+            nlohmann::json poolsJson;
+            poolsJson["total"] = poolCount;
+            poolsJson["withHealthyInstance"] = healthyPoolCount;
+            poolsJson["totalHealthyInstances"] = totalHealthyInstances;
+            poolsJson["darkOrQuarantined"] = quarantinedPoolCount;
+            out["pools"] = poolsJson;
+
+            // Activity-ring persistence health.
+            const auto ringHealth = globalActivityRing().persistenceHealth();
+            nlohmann::json ringJson;
+            ringJson["enabled"] = ringHealth.persistenceEnabled;
+            ringJson["bytesOnDisk"] = ringHealth.bytesOnDisk;
+            ringJson["totalAppends"] = ringHealth.totalAppends;
+            ringJson["totalAppendErrors"] = ringHealth.totalAppendErrors;
+            out["activityRing"] = ringJson;
+
+            // Host-telemetry sampler liveness.
+            nlohmann::json teleJson;
+            teleJson["sampleAvailable"] = false;
+            if (telemetryService_) {
+                const auto snap = telemetryService_->captureSnapshot();
+                teleJson["sampleAvailable"] = !snap.capturedAtUtc.empty();
+                teleJson["capturedAtUtc"] = snap.capturedAtUtc;
+                teleJson["cpuPercent"] = snap.cpuPercent;
+                teleJson["memoryPercent"] = snap.memoryPercent;
+            }
+            out["hostTelemetry"] = teleJson;
+
+            // v0.9.87: supervisor block. Include the active supervisor
+            // (if any) so /api/health/summary surfaces the lifecycle
+            // state alongside gateway + pools + telemetry. An assignment
+            // in `error` state is counted against overall `ok` so the
+            // operator's dashboard health pill goes red when something's
+            // wrong with the supervisor handshake; `off`, `revoked`, and
+            // `disconnected` are not errors (operator intent / heartbeat
+            // gap respectively) so they don't trip overall ok.
+            bool supervisorOk = true;
+            if (supervisorAssignmentService_) {
+                const auto status = supervisorAssignmentService_->getStatus();
+                nlohmann::json supJson;
+                supJson["state"] = MasterControl::supervisorStateString(status.state);
+                supJson["activeProviderId"] = MasterControl::providerIdString(status.provider);
+                supJson["active"] = status.active;
+                supJson["lastErrorMessage"] = status.lastErrorMessage;
+                supervisorOk = (status.state != MasterControl::SupervisorState::Error);
+                out["supervisor"] = supJson;
+            }
+
+            // Top-level ok flag: gateway running AND every pool
+            // with minInstances>0 has a healthy instance AND
+            // persistence ring has no errors AND telemetry sampler
+            // has at least one reading AND supervisor is not in error.
+            const bool gatewayOk = (gw.value("state", std::string{}) == "running");
+            const bool poolsOk = quarantinedPoolCount == 0;
+            const bool ringOk = ringHealth.persistenceEnabled
+                              && ringHealth.totalAppendErrors == 0;
+            const bool teleOk = teleJson.value("sampleAvailable", false);
+            out["ok"] = gatewayOk && poolsOk && ringOk && teleOk && supervisorOk;
+
+            return jsonResponse(out);
+        }
+        // v0.9.4 (Fix #4): host telemetry surface. Pre-v0.9.4 the
+        // discovery doc, the dashboard, and the realignment manifest
+        // (PHASE-08 Real-Time Telemetry deliverable) all implied a
+        // host-wide telemetry endpoint, but no path returned it -- the
+        // captured `HostTelemetrySnapshot` was only embedded in
+        // composite responses (lan-config bundles, etc.). LAN
+        // operators / dashboards that want the same data the
+        // TelemetrySectionControl shows can now poll
+        // `/api/host/telemetry` directly. The shape is the
+        // `HostTelemetrySnapshot` struct serialized via the existing
+        // NLOHMANN macro: cpuPercent, memoryPercent, diskPercent,
+        // totalMemoryBytes, freeMemoryBytes, totalDiskBytes,
+        // freeDiskBytes, bytesSentPerSecond, bytesReceivedPerSecond,
+        // hostName, primaryIpAddress, primaryMacAddress,
+        // operatingSystem, capturedAtUtc.
+        //
+        // PDH counters are populated by the WindowsHostTelemetryService
+        // background sampler (see WindowsHostTelemetryService::start),
+        // so this route is honest: if the sampler hasn't taken its
+        // first reading yet (e.g. first hundred milliseconds of boot)
+        // the cpu/memory/disk percent fields read 0.0 and the
+        // capturedAtUtc field is empty -- ADR-002 §9 "no fake
+        // telemetry" applies. Clients that need the
+        // honest-unavailable signal can detect it by checking
+        // capturedAtUtc.
+        if (request.method == "GET" && request.path == "/api/host/telemetry") {
+            if (!telemetryService_) {
+                // No service wired -- emit a default-constructed
+                // snapshot rather than 503. The empty capturedAtUtc
+                // tells the consumer this is the unavailable state.
+                return jsonResponse(HostTelemetrySnapshot{});
+            }
+            return jsonResponse(telemetryService_->captureSnapshot());
+        }
         // -------------------------------------------------------------------
         // Claude Code plugin (mcos-control) registration toggle.
         //   GET  /api/claude-plugin/status — current state for the active user
@@ -11351,22 +15468,108 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         // -------------------------------------------------------------------
         if (request.method == "GET" && request.path == "/api/claude-plugin/status") {
             const auto state = resolveClaudePluginState(paths_.executableDirectory);
-            return jsonResponse(claudePluginStatusJson(state));
+            auto status = claudePluginStatusJson(state);
+            // v0.10.0: also report whether Claude Code's settings.json
+            // currently lists "mcos-control" in enabledPlugins so the
+            // operator can see at a glance whether Claude Code will
+            // actually load the plugin even though the junction exists.
+            bool settingsEnabled = false;
+            std::string settingsReadError;
+            if (state.activeUserResolved) {
+                const std::filesystem::path settingsPath =
+                    std::filesystem::path(state.profileDir) / ".claude" / "settings.json";
+                std::error_code ec;
+                if (std::filesystem::exists(settingsPath, ec)) {
+                    std::ifstream in(settingsPath, std::ios::binary);
+                    if (in) {
+                        try {
+                            nlohmann::json doc;
+                            in >> doc;
+                            if (doc.is_object()
+                                && doc.contains("enabledPlugins")
+                                && doc["enabledPlugins"].is_object()
+                                && doc["enabledPlugins"].contains("mcos-control")) {
+                                settingsEnabled = doc["enabledPlugins"]["mcos-control"].is_boolean()
+                                    ? doc["enabledPlugins"]["mcos-control"].get<bool>()
+                                    : false;
+                            }
+                        } catch (const nlohmann::json::exception& e) {
+                            settingsReadError = std::string("settings.json parse failed: ") + e.what();
+                        }
+                    }
+                }
+            }
+            status["claudeSettingsEnabled"]    = settingsEnabled;
+            status["claudeSettingsReadError"]  = settingsReadError;
+            return jsonResponse(status);
         }
         if (request.method == "POST" && request.path == "/api/claude-plugin/toggle") {
             const auto before = resolveClaudePluginState(paths_.executableDirectory);
             if (!before.activeUserResolved) {
                 return jsonResponse(claudePluginStatusJson(before, false));
             }
+            const bool desiredOn = !before.registered;
             std::string err;
-            const bool ok = before.registered
-                ? removeClaudePluginJunction(before.target, err)
-                : createClaudePluginJunction(before.target, before.source, err);
+            const bool ok = desiredOn
+                ? createClaudePluginJunction(before.target, before.source, err)
+                : removeClaudePluginJunction(before.target, err);
+            // v0.10.0: also flip the matching enabledPlugins entry in
+            // the active user's ~/.claude/settings.json so Claude Code
+            // actually loads the plugin on next start. Pre-v0.10.0
+            // operators reported "Claude Code plugin missing" because
+            // the junction alone was insufficient — Claude Code
+            // requires the key in enabledPlugins to mount the plugin.
+            ClaudeSettingsUpdateOutcome settingsOutcome;
+            if (ok) {
+                settingsOutcome = setClaudeMcosPluginEnabled(before.profileDir, desiredOn);
+            }
             const auto after = resolveClaudePluginState(paths_.executableDirectory);
-            return jsonResponse(claudePluginStatusJson(after, ok, err));
+            auto status = claudePluginStatusJson(after, ok, err);
+            status["claudeSettingsAttempted"]   = settingsOutcome.attempted;
+            status["claudeSettingsSucceeded"]   = settingsOutcome.succeeded;
+            status["claudeSettingsLastError"]   = settingsOutcome.errorMessage;
+            return jsonResponse(status);
         }
         if (request.method == "GET" && request.path == "/api/dashboard") {
             return jsonResponse(snapshot());
+        }
+        // v0.9.56: operator-facing diagnostic surface. Returns the
+        // per-entry runtime stats (with the new install-state +
+        // probe-failure-reason fields) plus an aggregate count by
+        // installState so an operator can answer "of my N MCP
+        // servers / sub-agents, how many are actually live?" in a
+        // single request. Pre-v0.9.56 this required parsing the full
+        // /api/dashboard payload (~125kB) and bucketing client-side.
+        if (request.method == "GET" && request.path == "/api/diagnostics/runtime-stats") {
+            const auto snap = snapshot();
+            auto bucket = [](const auto& vec) {
+                std::map<std::string, int> counts;
+                int reachableCount = 0;
+                for (const auto& s : vec) {
+                    counts[s.installState.empty() ? "unknown" : s.installState]++;
+                    if (s.reachable) ++reachableCount;
+                }
+                nlohmann::json out;
+                out["total"] = static_cast<int>(vec.size());
+                out["reachable"] = reachableCount;
+                out["unreachable"] = static_cast<int>(vec.size()) - reachableCount;
+                nlohmann::json byState = nlohmann::json::object();
+                for (const auto& [k, v] : counts) byState[k] = v;
+                out["byInstallState"] = byState;
+                return out;
+            };
+            nlohmann::json out;
+            out["generatedAtUtc"] = timestampNowUtc();
+            out["version"]        = std::string{ MASTERCONTROL_VERSION };
+            out["mcpServers"] = nlohmann::json{
+                { "summary", bucket(snap.mcpServerRuntimeStats) },
+                { "entries", snap.mcpServerRuntimeStats }
+            };
+            out["subAgents"] = nlohmann::json{
+                { "summary", bucket(snap.subAgentRuntimeStats) },
+                { "entries", snap.subAgentRuntimeStats }
+            };
+            return jsonResponse(out);
         }
         if (request.method == "GET" && request.path == "/api/config") {
             return jsonResponse(configurationService_->current());
@@ -11450,6 +15653,20 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "GET" && startsWith(request.path, "/api/governance/bundles/")) {
             const auto prefix = std::string("/api/governance/bundles/");
             const std::string platform = request.path.substr(prefix.size());
+            // v0.9.35: validate the platform suffix at the route layer.
+            // The underlying GovernanceBundleService::normalizePlatform
+            // defaulted to "windows" on any unknown input, so a probe at
+            // /api/governance/bundles/freebsd silently returned the
+            // windows bundle (10 417 bytes identical to ./windows). The
+            // bug-hunt found this. RFC 7231 §6.5.4: 404 is right when the
+            // server has no representation for the URI; the client gets a
+            // clear "this platform isn't supported" response instead of
+            // an unrelated platform's bundle they'd act on by mistake.
+            if (platformFromKey(platform) == PlatformTarget::Unknown) {
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Unknown governance bundle platform '") + platform
+                    + "'. Supported: windows, macos, ios." }, 404);
+            }
             return jsonResponse(governanceBundleService_
                 ? governanceBundleService_->bundleFor(platform)
                 : GovernanceBundle{});
@@ -11462,16 +15679,115 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             return jsonResponse(response);
         }
         if (request.method == "GET" && request.path == "/api/governance/decisions") {
-            // Documentation-only GET. The POST path that actually
-            // evaluates governance decisions is wired via the existing
-            // CLU enforcement surface in PHASE-07 — for PHASE-05 the
-            // GET advertises the contract so smoke probes do not 404.
+            // Documentation-only GET. The POST path is wired below
+            // (v0.9.19) so a 'curl GET' smoke probe still gets a
+            // contract-shape response without exercising
+            // enforcement.
+            //
+            // v0.9.20: also surface the valid action-enum and
+            // outcome-enum strings + a complete request-shape
+            // example. Pre-v0.9.20 a client posting to this
+            // endpoint had to read the source (or stumble through
+            // 'Unknown enum string' errors) to discover that
+            // 'action' is snake_case ('remote_install',
+            // 'client_register', ...). Now the GET response is a
+            // self-describing contract.
             nlohmann::json response;
             response["method"] = "POST";
             response["expects"] = "GovernanceEnforcementRequest";
             response["returns"] = "GovernanceEnforcementDecision";
-            response["note"] = "POST handler lands in PHASE-07 alongside the lease router.";
+            response["note"] = "POST /api/governance/decisions evaluates a request through CLU's enforceAction.";
+
+            // Enumerate every valid action-enum string by walking
+            // the enum and using to_string. This stays in sync
+            // automatically if the enum grows.
+            response["validActionStrings"] = {
+                to_string(GovernanceActionKind::ClientRegister),
+                to_string(GovernanceActionKind::ClientPrivilegeChange),
+                to_string(GovernanceActionKind::ClientAutonomousModeChange),
+                to_string(GovernanceActionKind::ClientRevoke),
+                to_string(GovernanceActionKind::McpServerCreate),
+                to_string(GovernanceActionKind::McpServerModify),
+                to_string(GovernanceActionKind::McpServerRemove),
+                to_string(GovernanceActionKind::SubAgentCreate),
+                to_string(GovernanceActionKind::SubAgentModify),
+                to_string(GovernanceActionKind::SubAgentRemove),
+                to_string(GovernanceActionKind::ModuleEnable),
+                to_string(GovernanceActionKind::ModuleDisable),
+                to_string(GovernanceActionKind::GovernancePolicyChange),
+                to_string(GovernanceActionKind::RemoteInstall)
+            };
+            response["possibleOutcomeStrings"] = {
+                to_string(GovernanceDecisionOutcome::Allow),
+                to_string(GovernanceDecisionOutcome::Block),
+                to_string(GovernanceDecisionOutcome::RequiresOperatorApproval)
+            };
+            response["requestShapeExample"] = {
+                { "action", to_string(GovernanceActionKind::RemoteInstall) },
+                { "actor", "<client-id>" },
+                { "subjectId", "<package-source-or-resource-id>" },
+                { "allowUntrustedExecution", false }
+            };
+            response["responseShapeExample"] = {
+                { "action", to_string(GovernanceActionKind::RemoteInstall) },
+                { "allowed", true },
+                { "outcome", to_string(GovernanceDecisionOutcome::Allow) },
+                { "blockingFindings", nlohmann::json::array() },
+                { "deferredActionId", "" },
+                { "message", "" },
+                { "posture", "<governance-posture>" },
+                { "ruleId", "" }
+            };
             return jsonResponse(response);
+        }
+        // v0.9.19: POST /api/governance/decisions wires CLU's
+        // enforceAction. The GET stub in v0.9.4 promised "POST
+        // handler lands in PHASE-07 alongside the lease router" but
+        // PHASE-07 shipped without this; the POST returned
+        // {"message":"Not found"} for ten releases. The
+        // commandLogicUnitService_->enforceAction surface has
+        // existed since PHASE-05 and is already used by the
+        // installPackageJson / installRepoJson / executeForsetti
+        // ToolJson handlers; this route just reuses that path
+        // without any new logic.
+        //
+        // Body shape (GovernanceEnforcementRequest):
+        //   { "action": <enum string>, "actor": <client-id>,
+        //     "subjectId": <string>, "allowUntrustedExecution": <bool> }
+        // Response shape (GovernanceEnforcementDecision):
+        //   { "action": ..., "allowed": <bool>, "outcome": <enum>,
+        //     "message": <string>, "posture": <enum>,
+        //     "blockedFindings": [...] }
+        if (request.method == "POST" && request.path == "/api/governance/decisions") {
+            if (!commandLogicUnitService_) {
+                // v0.9.39: 503 Service Unavailable -- the named runtime
+                // service is not initialized (partial-init / shutdown
+                // window). RFC 7231 §6.6.4: a 503 communicates that the
+                // server is currently unable to handle the request due
+                // to a temporary overload or maintenance.
+                return jsonResponse(OperationResult{ false, false,
+                    "CLU service is not running." }, 503);
+            }
+            try {
+                const auto enforcementRequest =
+                    nlohmann::json::parse(request.body)
+                        .get<GovernanceEnforcementRequest>();
+                const auto decision =
+                    commandLogicUnitService_->enforceAction(enforcementRequest);
+                return jsonResponse(decision);
+            } catch (const std::exception& ex) {
+                // v0.9.29: malformed/empty client body is a 400, not 200.
+                // Pre-v0.9.29 the catch returned 200 with succeeded:false
+                // and a parse-error string; clients that key on HTTP status
+                // (every standard HTTP middleware: nginx upstream metrics,
+                // Prometheus blackbox exporter, browser fetch.ok, retry
+                // libraries) saw "200 OK" and treated the response as a
+                // success. RFC 7231 §6.5.1: 400 is the correct verdict
+                // when the request body cannot be parsed.
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid GovernanceEnforcementRequest JSON: ")
+                    + ex.what() }, 400);
+            }
         }
         // -------------------------------------------------------------------
         // PHASE-06 (ADR-002 §7): managed worker pool surface.
@@ -11505,13 +15821,18 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     : PoolSaturation{});
             }
             if (!subResource.empty()) {
-                return jsonResponse(OperationResult{ false, false, "Unknown pool sub-resource; expected leases|saturation." });
+                // v0.9.30: route-shape error -> 400, not 200.
+                return jsonResponse(OperationResult{ false, false, "Unknown pool sub-resource; expected leases|saturation." }, 400);
             }
             const auto pool = workerSupervisor_
                 ? workerSupervisor_->findPool(poolId)
                 : std::optional<ManagedEndpointPool>{};
             if (!pool.has_value()) {
-                return jsonResponse(OperationResult{ false, false, "Unknown pool id." });
+                // v0.9.30: a real "resource doesn't exist" response.
+                // Pre-v0.9.30 returned 200 OK with succeeded:false.
+                // RFC 7231 §6.5.4: 404 is the right status when the
+                // server has no current representation for the URI.
+                return jsonResponse(OperationResult{ false, false, "Unknown pool id." }, 404);
             }
             return jsonResponse(*pool);
         }
@@ -11519,7 +15840,8 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             try {
                 auto poolBody = nlohmann::json::parse(request.body).get<ManagedEndpointPool>();
                 if (!workerSupervisor_) {
-                    return jsonResponse(OperationResult{ false, false, "Worker supervisor is not running." });
+                    // v0.9.39: 503 -- supervisor not initialized (see CLU 503 above).
+                return jsonResponse(OperationResult{ false, false, "Worker supervisor is not running." }, 503);
                 }
                 const std::string poolIdEvt = poolBody.poolId;
                 const std::string poolKindEvt = to_string(poolBody.kind);
@@ -11528,6 +15850,13 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     // v0.6.8 persistence: mirror the supervisor's pool list
                     // to disk so the definition survives restart / upgrade.
                     persistSupervisedPoolsToConfiguration();
+                    // v0.9.6: bump the gateway's tool-catalog cache so
+                    // LAN-client tools/list reflects the new pool's
+                    // tools immediately. Pre-v0.9.6 operators waited
+                    // up to 30s (the TTL) for the new pool to surface.
+                    if (mcpGateway_) {
+                        mcpGateway_->InvalidateToolCatalog();
+                    }
                     // v0.6.8 telemetry events ring producer: emit a
                     // categorized event so the dashboard's Recent Telemetry
                     // Events panel and /api/telemetry/events surface this
@@ -11544,9 +15873,15 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                         telemetryAggregator_->recordEvent(std::move(evt));
                     }
                 }
-                return jsonResponse(result);
+                if (result.succeeded) { return jsonResponse(result, 200); }
+                // v0.9.52: upsertPool now validates poolId character set
+                // and scalePolicy bounds. Failure is client error -> 400.
+                return jsonResponse(result, 400);
             } catch (const std::exception& ex) {
-                return jsonResponse(OperationResult{ false, false, std::string("Invalid pool JSON: ") + ex.what() });
+                // v0.9.29: malformed body -> 400 (see governance-decisions
+                // catch above for the rationale -- middleware/observability
+                // can't tell a parse error apart from success otherwise).
+                return jsonResponse(OperationResult{ false, false, std::string("Invalid pool JSON: ") + ex.what() }, 400);
             }
         }
         if (request.method == "POST" && startsWith(request.path, "/api/pools/")) {
@@ -11559,12 +15894,19 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const std::string poolId = suffix.substr(0, slash);
             const std::string action = suffix.substr(slash + 1);
             if (!workerSupervisor_) {
-                return jsonResponse(OperationResult{ false, false, "Worker supervisor is not running." });
+                // v0.9.39: 503 -- supervisor not initialized (see CLU 503 above).
+                return jsonResponse(OperationResult{ false, false, "Worker supervisor is not running." }, 503);
             }
             if (action == "remove") {
                 const auto result = workerSupervisor_->removePool(poolId);
                 if (result.succeeded) {
                     persistSupervisedPoolsToConfiguration();
+                    // v0.9.6: invalidate tools/list cache -- removed
+                    // pool's tools must drop out of the next LAN-client
+                    // tools/list response.
+                    if (mcpGateway_) {
+                        mcpGateway_->InvalidateToolCatalog();
+                    }
                     if (telemetryAggregator_) {
                         TelemetryEvent evt;
                         evt.category = TelemetryCategory::Worker;
@@ -11578,33 +15920,105 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             }
             if (action == "scale") {
                 const auto result = workerSupervisor_->ensureMinInstances(poolId);
-                if (result.succeeded && telemetryAggregator_) {
-                    TelemetryEvent evt;
-                    evt.category = TelemetryCategory::Worker;
-                    evt.severity = TelemetrySeverity::Info;
-                    evt.message = "Pool scaled to minInstances: " + poolId;
-                    evt.poolId = poolId;
-                    telemetryAggregator_->recordEvent(std::move(evt));
+                if (result.succeeded) {
+                    // v0.9.6: invalidate tools/list cache -- a fresh
+                    // instance may report a different tool catalog
+                    // (e.g., after a pool was previously dark with
+                    // zero instances).
+                    if (mcpGateway_) {
+                        mcpGateway_->InvalidateToolCatalog();
+                    }
+                    if (telemetryAggregator_) {
+                        TelemetryEvent evt;
+                        evt.category = TelemetryCategory::Worker;
+                        evt.severity = TelemetrySeverity::Info;
+                        evt.message = "Pool scaled to minInstances: " + poolId;
+                        evt.poolId = poolId;
+                        telemetryAggregator_->recordEvent(std::move(evt));
+                    }
                 }
                 return jsonResponse(result);
             }
             if (action == "drain") {
                 const auto result = workerSupervisor_->drainPool(poolId);
-                if (result.succeeded && telemetryAggregator_) {
+                if (result.succeeded) {
+                    // v0.9.6: invalidate tools/list cache -- draining
+                    // pool's tools should not advertise as available
+                    // for new traffic.
+                    if (mcpGateway_) {
+                        mcpGateway_->InvalidateToolCatalog();
+                    }
+                    if (telemetryAggregator_) {
+                        TelemetryEvent evt;
+                        evt.category = TelemetryCategory::Worker;
+                        evt.severity = TelemetrySeverity::Warning;
+                        evt.message = "Pool draining: " + poolId
+                            + " (existing sticky leases finish on their bound instance; new sessions route elsewhere)";
+                        evt.poolId = poolId;
+                        telemetryAggregator_->recordEvent(std::move(evt));
+                    }
+                }
+                return jsonResponse(result);
+            }
+            // v0.9.23: POST /api/pools/{poolId}/restart -- hot-rotate
+            // a pool's workers in one operator call. Equivalent to
+            // sending the existing /remove + (re-register from
+            // persisted config) + /scale sequence, but atomic from
+            // the operator's perspective. Use cases: a misbehaving
+            // worker that hasn't crossed the quarantine threshold,
+            // a config-file change to the pool's environment that
+            // needs a respawn to take effect, or a precautionary
+            // rotation after a memory-leak suspicion. Implementation
+            // re-uses removePool + the persisted configuration's
+            // pool definition + ensureMinInstances; nothing here is
+            // new behavior, just convenience composition. The
+            // operator alternative is two separate POSTs which is
+            // racy if monitoring polls in between.
+            if (action == "restart") {
+                // Snapshot the current pool's definition before we
+                // remove it -- the supervisor zeroes the instances
+                // list on remove but keeps no archived template.
+                auto snapshot = workerSupervisor_->findPool(poolId);
+                if (!snapshot.has_value()) {
+                    return jsonResponse(OperationResult{ false, false,
+                        "Cannot restart unknown pool '" + poolId + "'." });
+                }
+                ManagedEndpointPool def = *snapshot;
+                def.instances.clear();          // re-spawned by ensureMinInstances
+                def.createdAtUtc.clear();       // upsert resets these
+                def.updatedAtUtc.clear();
+
+                const auto removeResult = workerSupervisor_->removePool(poolId);
+                if (!removeResult.succeeded) {
+                    return jsonResponse(removeResult);
+                }
+                const auto upsertResult = workerSupervisor_->upsertPool(def);
+                if (!upsertResult.succeeded) {
+                    return jsonResponse(upsertResult);
+                }
+                const auto scaleResult = workerSupervisor_->ensureMinInstances(poolId);
+                // Persistence + cache invalidation (same as the
+                // remove/upsert/scale handlers above).
+                persistSupervisedPoolsToConfiguration();
+                if (mcpGateway_) {
+                    mcpGateway_->InvalidateToolCatalog();
+                }
+                if (telemetryAggregator_) {
                     TelemetryEvent evt;
                     evt.category = TelemetryCategory::Worker;
-                    evt.severity = TelemetrySeverity::Warning;
-                    evt.message = "Pool draining: " + poolId
-                        + " (existing sticky leases finish on their bound instance; new sessions route elsewhere)";
+                    evt.severity = TelemetrySeverity::Info;
+                    evt.message = "Pool restarted: " + poolId;
                     evt.poolId = poolId;
                     telemetryAggregator_->recordEvent(std::move(evt));
                 }
-                return jsonResponse(result);
+                return jsonResponse(OperationResult{ true, false,
+                    "Pool restarted (removed + re-registered + scaled to minInstances): " + scaleResult.message });
             }
             // PHASE-07 lease acquire: POST /api/pools/{poolId}/leases
             if (action == "leases") {
                 if (!leaseRouter_) {
-                    return jsonResponse(OperationResult{ false, false, "Lease router is not running." });
+                    // v0.9.39: 503 -- lease router not initialized.
+                return jsonResponse(OperationResult{ false, false, "Lease router is not running." }, 503);
                 }
                 LeaseRequest leaseRequest;
                 leaseRequest.poolId = poolId;
@@ -11631,9 +16045,22 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     evt.instanceId = lease.instanceId;
                     telemetryAggregator_->recordEvent(std::move(evt));
                 }
+                // v0.9.33: surface "unknown pool" through HTTP status. The
+                // lease router reports the failure via lease.state=Failed
+                // with statusMessage="Unknown pool."; pre-v0.9.33 the route
+                // returned the failed lease object with HTTP 200, so a
+                // client that polled lease.state had to parse the
+                // statusMessage to tell "pool not yet up" apart from "pool
+                // does not exist." 404 + the same body lets generic HTTP
+                // monitoring reach the same conclusion without parsing
+                // the inner state machine.
+                if (lease.state == LeaseState::Failed && lease.statusMessage == "Unknown pool.") {
+                    return jsonResponse(lease, 404);
+                }
                 return jsonResponse(lease);
             }
-            return jsonResponse(OperationResult{ false, false, "Unknown pool action; expected remove|scale|drain|leases." });
+            // v0.9.30: route-shape error -> 400, not 200.
+            return jsonResponse(OperationResult{ false, false, "Unknown pool action; expected remove|scale|drain|leases." }, 400);
         }
         // -------------------------------------------------------------------
         // PHASE-08 (ADR-002 §9): real-time telemetry surface.
@@ -11641,15 +16068,15 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         // GET  /api/telemetry/clients       -> connected-client roster.
         // GET  /api/telemetry/gateway       -> gateway traffic snapshot.
         // POST /api/telemetry/heartbeat     -> AI-client heartbeat ingest.
-        if (request.method == "GET" && request.path.rfind("/api/telemetry/events", 0) == 0) {
+        if (request.method == "GET" && request.path == "/api/telemetry/events") {
             // Honor ?max=N. Through v0.6.7 the route only matched the
             // bare path; ?max=N produced a 404 and the route also
             // returned a raw array instead of the {events, maxEvents}
             // envelope the dashboard expects. Both fixed in v0.6.8.
+            // v0.9.50: query string is in request.query now.
             std::size_t maxEvents = 1024;
-            const auto query = request.path.find('?');
-            if (query != std::string::npos) {
-                const auto qs = request.path.substr(query + 1);
+            if (!request.query.empty()) {
+                const auto& qs = request.query;
                 const auto maxAt = qs.find("max=");
                 if (maxAt != std::string::npos) {
                     auto value = qs.substr(maxAt + 4);
@@ -11690,12 +16117,14 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "POST" && request.path == "/api/telemetry/heartbeat") {
             if (!telemetryAggregator_) {
-                return jsonResponse(OperationResult{ false, false, "Telemetry aggregator is not running." });
+                // v0.9.39: 503 -- telemetry aggregator not initialized.
+                return jsonResponse(OperationResult{ false, false, "Telemetry aggregator is not running." }, 503);
             }
             try {
                 auto heartbeat = nlohmann::json::parse(request.body).get<ClientHeartbeat>();
                 if (heartbeat.clientId.empty()) {
-                    return jsonResponse(OperationResult{ false, false, "ClientHeartbeat.clientId is required." });
+                    // v0.9.29: missing required field -> 400.
+                    return jsonResponse(OperationResult{ false, false, "ClientHeartbeat.clientId is required." }, 400);
                 }
                 telemetryAggregator_->recordHeartbeat(heartbeat);
                 TelemetryEvent event;
@@ -11706,7 +16135,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 telemetryAggregator_->recordEvent(std::move(event));
                 return jsonResponse(OperationResult{ true, false, "Heartbeat recorded." });
             } catch (const std::exception& ex) {
-                return jsonResponse(OperationResult{ false, false, std::string("Invalid heartbeat JSON: ") + ex.what() });
+                // v0.9.29: malformed body -> 400 (see governance-decisions
+                // catch above for the rationale).
+                return jsonResponse(OperationResult{ false, false, std::string("Invalid heartbeat JSON: ") + ex.what() }, 400);
             }
         }
         // PHASE-07 lease release: POST /api/leases/{leaseId}/release
@@ -11715,7 +16146,8 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const std::string suffix = request.path.substr(prefix.size());
             const auto slash = suffix.find('/');
             if (slash == std::string::npos || suffix.substr(slash + 1) != "release") {
-                return jsonResponse(OperationResult{ false, false, "Lease route is POST /api/leases/{leaseId}/release." });
+                // v0.9.30: route-shape error -> 400, not 200.
+                return jsonResponse(OperationResult{ false, false, "Lease route is POST /api/leases/{leaseId}/release." }, 400);
             }
             const std::string leaseId = suffix.substr(0, slash);
             std::string reason;
@@ -11727,19 +16159,50 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     // Reason is optional.
                 }
             }
-            return jsonResponse(leaseRouter_
-                ? leaseRouter_->releaseLease(leaseId, reason)
-                : OperationResult{ false, false, "Lease router is not running." });
+            if (!leaseRouter_) {
+                // v0.9.39: 503 -- lease router not initialized.
+                return jsonResponse(OperationResult{ false, false, "Lease router is not running." }, 503);
+            }
+            const auto releaseResult = leaseRouter_->releaseLease(leaseId, reason);
+            // v0.9.33: "Unknown lease id." -> 404. RFC 7231 §6.5.4: the
+            // resource the URI points at no longer (or never did) exist.
+            // Pre-v0.9.33 returned 200 with succeeded:false; that hid
+            // the "release failed because we never had this lease" case
+            // from generic HTTP monitoring.
+            if (!releaseResult.succeeded && releaseResult.message == "Unknown lease id.") {
+                return jsonResponse(releaseResult, 404);
+            }
+            return jsonResponse(releaseResult);
         }
         // -------------------------------------------------------------------
         // /api/gateway/* — MCP Gateway adapter surface (PHASE-02 of ADR-002).
         // PHASE-04 onboarding profiles point clients at the gateway URL
         // exposed here, not at the admin port.
+        //
+        // v0.9.86: wildcard substitution moved to free helper at the
+        // top of this TU (substituteWildcardHostInUrl). Both
+        // /api/gateway/status and /api/gateway/health rewrite the URL
+        // + the narrative message before serializing, and surface the
+        // unsubstituted URL as mcpUrlRaw for diagnostic UIs.
         if (request.method == "GET" && request.path == "/api/gateway/status") {
-            return jsonResponse(mcpGateway_ ? mcpGateway_->CurrentStatus() : GatewayStatus{});
+            GatewayStatus status = mcpGateway_ ? mcpGateway_->CurrentStatus() : GatewayStatus{};
+            const auto rawUrl = status.mcpUrl;
+            const auto& cfg = configurationService_->current();
+            status.mcpUrl = substituteWildcardHostInUrl(status.mcpUrl, cfg);
+            status.message = substituteWildcardHostInUrl(status.message, cfg);
+            nlohmann::json body = status;
+            body["mcpUrlRaw"] = rawUrl;
+            return HttpResponse{ 200, "application/json", body.dump() };
         }
         if (request.method == "GET" && request.path == "/api/gateway/health") {
-            return jsonResponse(mcpGateway_ ? mcpGateway_->Probe() : GatewayHealth{});
+            GatewayHealth health = mcpGateway_ ? mcpGateway_->Probe() : GatewayHealth{};
+            const auto rawUrl = health.mcpUrl;
+            const auto& cfg = configurationService_->current();
+            health.mcpUrl = substituteWildcardHostInUrl(health.mcpUrl, cfg);
+            health.message = substituteWildcardHostInUrl(health.message, cfg);
+            nlohmann::json body = health;
+            body["mcpUrlRaw"] = rawUrl;
+            return HttpResponse{ 200, "application/json", body.dump() };
         }
         if (request.method == "GET" && request.path == "/api/gateway/tools") {
             return jsonResponse(mcpGateway_ ? mcpGateway_->ListTools() : std::vector<McpToolDescriptor>{});
@@ -12299,6 +16762,29 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             // silently promoted a failed install to a green lane in the UI.
             return jsonResponse(result, result.succeeded ? 200 : 400);
         }
+        // v0.9.54: catch POST /api/setup/dependencies/{id}/{verb} for
+        // any verb other than /install. Pre-v0.9.54 these fell through
+        // to the v0.9.28 supportedMethodsForPath fallback which saw the
+        // prefix as POST-allowed and returned a misleading 405 ("Method
+        // Not Allowed" with Allow: POST, OPTIONS) -- POST IS allowed,
+        // it's the URL action segment that's unknown. Now we return a
+        // proper 400 listing the valid actions ('install' is the only
+        // one this gateway implements; preflight, uninstall, detect
+        // were on the bug-hunt's wishlist but never wired up).
+        if (request.method == "POST" && startsWith(request.path, "/api/setup/dependencies/")) {
+            const auto prefix = std::string("/api/setup/dependencies/");
+            const auto suffix = request.path.substr(prefix.size());
+            const auto slash = suffix.find('/');
+            if (slash != std::string::npos) {
+                const std::string action = suffix.substr(slash + 1);
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Unknown dependency action '") + action
+                    + "'. Supported actions: install." }, 400);
+            }
+            // Bare /api/setup/dependencies/{id} with no action -> also 400.
+            return jsonResponse(OperationResult{ false, false,
+                "Dependency action route is POST /api/setup/dependencies/{id}/install." }, 400);
+        }
         // -------------------------------------------------------------------
         // WS6 — Starter workflow templates
         // -------------------------------------------------------------------
@@ -12411,30 +16897,57 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             }
         }
         if (request.method == "POST" && request.path == "/api/config") {
+            // v0.9.42: wrap parse-throws as 400 (continuation of v0.9.41
+            // and v0.9.38 sweeps).
             const bool confirmUnsafeChanges = request.headers.contains("X-Confirm-Unsafe") &&
                 request.headers.at("X-Confirm-Unsafe") == "1";
-            const auto result = adminApiService_->applyConfigurationJson(request.body, confirmUnsafeChanges);
-            // v0.7.4: emit a telemetry event on every successful configuration
-            // write so the dashboard's Recent Telemetry Events panel reflects
-            // real activity. Pre-v0.7.4 the events ring stayed empty after
-            // boot for normal operator traffic (config writes, gateway
-            // start/stop, etc.), giving the impression telemetry was static.
-            if (result.succeeded && telemetryAggregator_) {
-                TelemetryEvent evt;
-                evt.category = TelemetryCategory::System;
-                evt.severity = TelemetrySeverity::Info;
-                evt.message  = "Configuration updated via /api/config.";
-                telemetryAggregator_->recordEvent(std::move(evt));
+            try {
+                const auto result = adminApiService_->applyConfigurationJson(request.body, confirmUnsafeChanges);
+                // v0.7.4: emit a telemetry event on every successful configuration
+                // write so the dashboard's Recent Telemetry Events panel reflects
+                // real activity. Pre-v0.7.4 the events ring stayed empty after
+                // boot for normal operator traffic (config writes, gateway
+                // start/stop, etc.), giving the impression telemetry was static.
+                if (result.succeeded && telemetryAggregator_) {
+                    TelemetryEvent evt;
+                    evt.category = TelemetryCategory::System;
+                    evt.severity = TelemetrySeverity::Info;
+                    evt.message  = "Configuration updated via /api/config.";
+                    telemetryAggregator_->recordEvent(std::move(evt));
+                }
+                return jsonResponse(result, result.succeeded ? 200 : 400);
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid configuration payload: ") + ex.what() }, 400);
             }
-            return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         if (request.method == "POST" && request.path == "/api/platform-services/apple-hosts") {
-            const auto result = adminApiService_->upsertAppleRemoteHostJson(request.body);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            try {
+                const auto result = adminApiService_->upsertAppleRemoteHostJson(request.body);
+                return jsonResponse(result, result.succeeded ? 200 : 400);
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid Apple remote host payload: ") + ex.what() }, 400);
+            }
         }
         if (request.method == "POST" && request.path == "/api/platform-services/apple-hosts/remove") {
-            const auto result = adminApiService_->removeAppleRemoteHostJson(request.body);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            try {
+                const auto result = adminApiService_->removeAppleRemoteHostJson(request.body);
+                if (result.succeeded) { return jsonResponse(result, 200); }
+                // v0.9.45: 404 for missing target. Closes the carry from
+                // the v0.9.44 release report. removeHost() already
+                // distinguishes "no such hostId" ("Apple remote host
+                // '<id>' was not found.") from "missing input"
+                // ("requires a hostId."), but the route was treating
+                // both as 400. Use a substring match because the not-
+                // found message embeds the hostId itself in quotes.
+                const int status = (result.message.find("was not found.") != std::string::npos) ? 404 : 400;
+                return jsonResponse(result, status);
+            } catch (const std::exception& ex) {
+                // v0.9.44: parse-error -> 400 (was uncaught -> 500).
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid Apple remote host removal payload: ") + ex.what() }, 400);
+            }
         }
         if (request.method == "POST" && request.path == "/api/runtime/mcp-servers") {
             // Distinguish create-vs-modify so the right privilege applies.
@@ -12476,8 +16989,19 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     }
                 }
             }
-            const auto result = adminApiService_->upsertMcpServerJson(request.body);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            // v0.9.38: catch the from_json invalid_argument throws ("Unknown
+            // enum string: mcp-server" when the client sent kind:'mcp-server'
+            // instead of 'mcp_server'). Pre-v0.9.38 they bubbled to the
+            // outer 500 handler -- 500 is for server-side bugs, but a
+            // client sending the wrong enum spelling is a 400. Same shape
+            // as v0.9.29's parse-error 400 fix.
+            try {
+                const auto result = adminApiService_->upsertMcpServerJson(request.body);
+                return jsonResponse(result, result.succeeded ? 200 : 400);
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid runtime MCP server payload: ") + ex.what() }, 400);
+            }
         }
         if (request.method == "POST" && request.path == "/api/runtime/mcp-servers/remove") {
             if (auto deny = requirePrivilege(context.privileges.canRemoveMcpServers,
@@ -12493,8 +17017,20 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             if (auto governance = enforceGovernance(GovernanceActionKind::McpServerRemove, removalTarget)) {
                 return *governance;
             }
-            const auto result = adminApiService_->removeMcpServerJson(request.body);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            // v0.9.44: catch parse-error throws (was uncaught -> 500).
+            // Pre-v0.9.44 the v0.9.38 404-vs-400 logic only ran when
+            // removeMcpServerJson returned cleanly; on a malformed body
+            // the inner json::parse threw past it to the outer 500.
+            try {
+                const auto result = adminApiService_->removeMcpServerJson(request.body);
+                if (result.succeeded) { return jsonResponse(result, 200); }
+                // v0.9.38: 404 for missing target, 400 for everything else.
+                const int status = (result.message == "The requested MCP server was not found.") ? 404 : 400;
+                return jsonResponse(result, status);
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid MCP server removal payload: ") + ex.what() }, 400);
+            }
         }
         if (request.method == "POST" && request.path == "/api/runtime/subagents") {
             std::string requestedId;
@@ -12531,7 +17067,16 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     }
                 }
             }
-            const auto result = adminApiService_->upsertSubAgentJson(request.body);
+            // v0.9.38: catch enum/parse throws (see /api/runtime/mcp-servers
+            // upsert above). Lift the result-only declaration into a try
+            // block; the auto-promote-to-pool block below stays inside.
+            OperationResult result;
+            try {
+                result = adminApiService_->upsertSubAgentJson(request.body);
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid runtime sub-agent payload: ") + ex.what() }, 400);
+            }
             // v0.7.2: auto-promote a sub-agent registration to a managed
             // pool when the registration carries a `command` field. This
             // makes the autoscale + utilization story turn-key: the
@@ -12593,15 +17138,24 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             if (auto governance = enforceGovernance(GovernanceActionKind::SubAgentRemove, removalTarget)) {
                 return *governance;
             }
-            const auto result = adminApiService_->removeSubAgentJson(request.body);
-            // v0.7.2: mirror the removal into the worker supervisor's
-            // pool registry so an auto-promoted pool is reaped together
-            // with its sub-agent inventory entry. removePool drains
-            // existing instances under their Job Object before erasing.
-            if (result.succeeded && workerSupervisor_ && !removalTarget.empty()) {
-                (void)workerSupervisor_->removePool(removalTarget);
+            // v0.9.44: catch parse-error throws (was uncaught -> 500).
+            try {
+                const auto result = adminApiService_->removeSubAgentJson(request.body);
+                // v0.7.2: mirror the removal into the worker supervisor's
+                // pool registry so an auto-promoted pool is reaped together
+                // with its sub-agent inventory entry. removePool drains
+                // existing instances under their Job Object before erasing.
+                if (result.succeeded && workerSupervisor_ && !removalTarget.empty()) {
+                    (void)workerSupervisor_->removePool(removalTarget);
+                }
+                if (result.succeeded) { return jsonResponse(result, 200); }
+                // v0.9.38: 404 for missing target, 400 otherwise.
+                const int status = (result.message == "The requested sub-agent was not found.") ? 404 : 400;
+                return jsonResponse(result, status);
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid sub-agent removal payload: ") + ex.what() }, 400);
             }
-            return jsonResponse(result, result.succeeded ? 200 : 400);
         }
         if (request.method == "POST" && request.path == "/api/runtime/subagent-groups") {
             // Sub-agent groups are organizational metadata over the existing
@@ -12611,16 +17165,32 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                                              "canModifySubAgents")) {
                 return *deny;
             }
-            const auto result = adminApiService_->upsertSubAgentGroupJson(request.body);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            try {
+                const auto result = adminApiService_->upsertSubAgentGroupJson(request.body);
+                return jsonResponse(result, result.succeeded ? 200 : 400);
+            } catch (const std::exception& ex) {
+                // v0.9.42: parse-error -> 400.
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid sub-agent group payload: ") + ex.what() }, 400);
+            }
         }
         if (request.method == "POST" && request.path == "/api/runtime/subagent-groups/remove") {
             if (auto deny = requirePrivilege(context.privileges.canModifySubAgents,
                                              "canModifySubAgents")) {
                 return *deny;
             }
-            const auto result = adminApiService_->removeSubAgentGroupJson(request.body);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            try {
+                const auto result = adminApiService_->removeSubAgentGroupJson(request.body);
+                if (result.succeeded) { return jsonResponse(result, 200); }
+                // v0.9.44: 404 for missing target, 400 otherwise
+                // (continues v0.9.30/v0.9.33/v0.9.37/v0.9.38/v0.9.43 sweep).
+                const int status = (result.message == "The requested sub-agent group was not found.") ? 404 : 400;
+                return jsonResponse(result, status);
+            } catch (const std::exception& ex) {
+                // v0.9.44: parse-error -> 400 (was uncaught -> 500).
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid sub-agent group removal payload: ") + ex.what() }, 400);
+            }
         }
         // -------------------------------------------------------------------
         // LAN Client Access (Phase 3 of ADR-001)
@@ -12735,7 +17305,11 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             try {
                 const auto privileges = nlohmann::json::parse(request.body).get<LanClientPrivileges>();
                 const auto result = lanClientAccessService_->setPrivileges(clientId, privileges);
-                return jsonResponse(result, result.succeeded ? 200 : 400);
+                if (result.succeeded) { return jsonResponse(result, 200); }
+                // v0.9.46: 404 for missing client (continues v0.9.30
+                // 200/false-with-not-found-message -> 404 sweep).
+                const int status = (result.message == "LAN client not found.") ? 404 : 400;
+                return jsonResponse(result, status);
             } catch (const std::exception& parseError) {
                 return jsonResponse(
                     OperationResult{ false, false, std::string("Invalid privileges payload: ") + parseError.what() },
@@ -12768,7 +17342,10 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     return *governance;
                 }
                 const auto result = lanClientAccessService_->setAutonomousMode(clientId, enabled);
-                return jsonResponse(result, result.succeeded ? 200 : 400);
+                if (result.succeeded) { return jsonResponse(result, 200); }
+                // v0.9.46: 404 for missing client.
+                const int status = (result.message == "LAN client not found.") ? 404 : 400;
+                return jsonResponse(result, status);
             } catch (const std::exception& parseError) {
                 return jsonResponse(
                     OperationResult{ false, false, std::string("Invalid autonomous-mode payload: ") + parseError.what() },
@@ -12788,14 +17365,33 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 return *governance;
             }
             const auto result = lanClientAccessService_->removeClient(clientId);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            if (result.succeeded) {
+                return jsonResponse(result, 200);
+            }
+            // v0.9.37: distinguish 404 (resource doesn't exist) from 400
+            // (request was malformed). Pre-v0.9.37 every removeClient
+            // failure returned 400 -- including the common case of "tried
+            // to delete a client that's not registered." RFC 7231 §6.5.4
+            // is the right status for that. Other failure modes (governance
+            // denial, validation errors) keep 400.
+            const int status = (result.message == "LAN client not found.") ? 404 : 400;
+            return jsonResponse(result, status);
         }
         if (request.method == "POST" && request.path == "/api/forsetti/modules/state") {
             if (auto deny = requirePrivilege(context.privileges.canManageModules,
                                              "canManageModules")) {
                 return *deny;
             }
-            const auto payload = request.body.empty() ? nlohmann::json::object() : nlohmann::json::parse(request.body);
+            // v0.9.42: parse-error -> 400. Pre-v0.9.42 nlohmann::json::parse
+            // on a malformed body threw past the route to the outer 500
+            // handler. Empty body is special-cased to {} and is fine.
+            nlohmann::json payload;
+            try {
+                payload = request.body.empty() ? nlohmann::json::object() : nlohmann::json::parse(request.body);
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid Forsetti module state payload: ") + ex.what() }, 400);
+            }
             const auto moduleId = payload.value("moduleId", std::string{});
             const auto action = payload.value("action", std::string{});
             const auto governanceAction = (action == "disable" || action == "remove")
@@ -12805,7 +17401,10 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 return *governance;
             }
             const auto result = manageForsettiModule(moduleId, action);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            if (result.succeeded) { return jsonResponse(result, 200); }
+            // v0.9.47: 404 for missing module.
+            const int status = (result.message == "The selected Forsetti module was not found.") ? 404 : 400;
+            return jsonResponse(result, status);
         }
         // -------------------------------------------------------------------
         // Approval queue (Phase 7 of ADR-001)
@@ -12824,7 +17423,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 return *deny;
             }
             if (!governanceApprovalQueueService_) {
-                return jsonResponse(OperationResult{ false, false, "Approval queue is not ready." }, 500);
+                // v0.9.43: 503 -- approval queue service not initialized
+                // (closes a v0.9.39 sweep gap).
+                return jsonResponse(OperationResult{ false, false, "Approval queue is not ready." }, 503);
             }
             const auto prefix = std::string("/api/clu/approvals/");
             const auto suffix = std::string("/approve");
@@ -12832,7 +17433,11 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 prefix.size(),
                 request.path.size() - prefix.size() - suffix.size());
             const auto result = governanceApprovalQueueService_->approve(deferredId, context.actor);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            if (result.succeeded) { return jsonResponse(result, 200); }
+            // v0.9.43: 404 for missing deferred action, 400 otherwise.
+            // Same pattern as v0.9.30 / v0.9.33 / v0.9.37 / v0.9.38.
+            const int status = (result.message == "Deferred action not found.") ? 404 : 400;
+            return jsonResponse(result, status);
         }
         if (request.method == "POST"
             && startsWith(request.path, "/api/clu/approvals/")
@@ -12842,7 +17447,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 return *deny;
             }
             if (!governanceApprovalQueueService_) {
-                return jsonResponse(OperationResult{ false, false, "Approval queue is not ready." }, 500);
+                // v0.9.43: 503 -- approval queue service not initialized
+                // (closes a v0.9.39 sweep gap).
+                return jsonResponse(OperationResult{ false, false, "Approval queue is not ready." }, 503);
             }
             const auto prefix = std::string("/api/clu/approvals/");
             const auto suffix = std::string("/reject");
@@ -12856,27 +17463,90 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 }
             } catch (...) {}
             const auto result = governanceApprovalQueueService_->reject(deferredId, context.actor, reason);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            if (result.succeeded) { return jsonResponse(result, 200); }
+            // v0.9.43: 404 for missing deferred action.
+            const int status = (result.message == "Deferred action not found.") ? 404 : 400;
+            return jsonResponse(result, status);
+        }
+        // v0.9.55: catch POST /api/clu/approvals/{id}/{verb} for any
+        // verb other than /approve or /reject. Pre-v0.9.55 these fell
+        // through to staticFileResponse and returned a generic 404 "Not
+        // found", which is technically correct but doesn't tell the
+        // operator that the URL shape is the issue. Same shape as the
+        // v0.9.54 setup-dependencies bad-verb 400.
+        if (request.method == "POST" && startsWith(request.path, "/api/clu/approvals/")) {
+            const auto prefix = std::string("/api/clu/approvals/");
+            const auto suffix = request.path.substr(prefix.size());
+            const auto slash = suffix.find('/');
+            if (slash != std::string::npos) {
+                const std::string action = suffix.substr(slash + 1);
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Unknown approval action '") + action
+                    + "'. Supported actions: approve, reject." }, 400);
+            }
+            return jsonResponse(OperationResult{ false, false,
+                "Approval action route is POST /api/clu/approvals/{id}/{approve|reject}." }, 400);
         }
         if (request.method == "POST" && request.path == "/api/clu/execute") {
-            const auto result = adminApiService_->executeGovernanceToolJson(request.body);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            try {
+                const auto result = adminApiService_->executeGovernanceToolJson(request.body);
+                return jsonResponse(result, result.succeeded ? 200 : 400);
+            } catch (const std::exception& ex) {
+                // v0.9.42: parse-error -> 400.
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid CLU execute payload: ") + ex.what() }, 400);
+            }
         }
         if (request.method == "POST" && request.path == "/api/clu/apple-operations/cancel") {
-            const auto result = adminApiService_->cancelAppleOperationJson(request.body);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            try {
+                const auto result = adminApiService_->cancelAppleOperationJson(request.body);
+                if (result.succeeded) { return jsonResponse(result, 200); }
+                // v0.9.47: 404 for missing operation. Substring match
+                // because the message embeds the operationId in quotes
+                // ("Apple operation '<id>' was not found.").
+                const int status = (result.message.find("was not found.") != std::string::npos) ? 404 : 400;
+                return jsonResponse(result, status);
+            } catch (const std::exception& ex) {
+                // v0.9.42: parse-error -> 400.
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid Apple operations cancel payload: ") + ex.what() }, 400);
+            }
         }
+        // v0.9.41: catch parse / from_json throws and return 400, not
+        // 500. Pre-v0.9.41 the three install routes called into
+        // adminApiService_'s install*Json helpers which call
+        // nlohmann::json::parse(requestBody).get<Spec>() with no try/
+        // catch; an empty body or a body that doesn't deserialize into
+        // the Spec (InstallerPackageSpec / BootstrapRepoSpec /
+        // ZipBundleSpec) threw and the throw bubbled to the outer 500
+        // handler. Same shape as the v0.9.38 fix for /api/runtime/
+        // mcp-servers and /api/runtime/subagents.
         if (request.method == "POST" && request.path == "/api/install/package") {
-            const auto result = adminApiService_->installPackageJson(request.body);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            try {
+                const auto result = adminApiService_->installPackageJson(request.body);
+                return jsonResponse(result, result.succeeded ? 200 : 400);
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid InstallerPackageSpec payload: ") + ex.what() }, 400);
+            }
         }
         if (request.method == "POST" && request.path == "/api/install/repo") {
-            const auto result = adminApiService_->installRepoJson(request.body);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            try {
+                const auto result = adminApiService_->installRepoJson(request.body);
+                return jsonResponse(result, result.succeeded ? 200 : 400);
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid BootstrapRepoSpec payload: ") + ex.what() }, 400);
+            }
         }
         if (request.method == "POST" && request.path == "/api/install/zip") {
-            const auto result = adminApiService_->installZipJson(request.body);
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            try {
+                const auto result = adminApiService_->installZipJson(request.body);
+                return jsonResponse(result, result.succeeded ? 200 : 400);
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid ZipBundleSpec payload: ") + ex.what() }, 400);
+            }
         }
         if (request.method == "POST" && startsWith(request.path, "/mcp/governance/")) {
             const auto routePlatform = platformFromKey(request.path.substr(std::string("/mcp/governance/").size()));
@@ -12886,6 +17556,31 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             }
             const auto result = commandLogicUnitService_->executeGovernanceTool(payload.get<GovernanceToolRequest>());
             return jsonResponse(result, result.succeeded ? 200 : 400);
+        }
+
+        // v0.9.28: before falling through to staticFileResponse (which
+        // returns 404 if no static file matches), check whether the
+        // path matches a known operator API route under a different
+        // method. RFC 7231 §6.5.5: a known URI hit by an unsupported
+        // verb should return 405 with an Allow header listing the
+        // supported methods. Pre-v0.9.28 this returned an opaque 404
+        // that hid the difference between "endpoint doesn't exist"
+        // and "wrong verb on a real endpoint" -- the bug-hunt found
+        // this when DELETE/PUT/PATCH on /api/version returned 404.
+        const auto allowed = supportedMethodsForPath(request.path);
+        if (!allowed.empty()) {
+            HttpResponse mna;
+            mna.statusCode = 405;
+            mna.contentType = "application/json";
+            mna.extraHeaders.push_back({"Allow", buildAllowHeader(allowed)});
+            mna.body = nlohmann::json{
+                { "succeeded", false },
+                { "message", "Method Not Allowed" },
+                { "path", request.path },
+                { "method", request.method },
+                { "allow", buildAllowHeader(allowed) }
+            }.dump();
+            return mna;
         }
 
         return staticFileResponse(request.path);

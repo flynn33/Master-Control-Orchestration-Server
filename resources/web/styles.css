@@ -1765,3 +1765,235 @@ dialog:focus-visible {
   opacity: 0.65;
   margin-top: 2px;
 }
+
+/* v0.9.57: honest-unavailable diagnostic block on each sub-agent /
+   MCP-server card. Surfaces the v0.9.56 fields (installState,
+   unavailableReason, lastErrorMessage, installHint) so operators
+   can read "why is this offline?" + "what's the next step?" without
+   leaving the page. The block is compact (~60-90px tall) and only
+   renders when the runtime emits at least one of the new fields. */
+.subagent-diagnostic-block {
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  border: 1px solid rgba(0, 246, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(0, 246, 255, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.subagent-diag-pill-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.subagent-diag-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.subagent-diag-pill.good     { background: rgba(28, 242, 193, 0.18); color: #1cf2c1; border: 1px solid rgba(28, 242, 193, 0.5); }
+.subagent-diag-pill.warn     { background: rgba(255, 175, 58, 0.18);  color: #ffaf3a; border: 1px solid rgba(255, 175, 58, 0.5); }
+.subagent-diag-pill.critical { background: rgba(255, 58, 90, 0.18);   color: #ff3a5a; border: 1px solid rgba(255, 58, 90, 0.5); }
+.subagent-diag-pill.info     { background: rgba(140, 183, 196, 0.14); color: rgba(220, 234, 240, 0.85); border: 1px solid rgba(140, 183, 196, 0.4); }
+.subagent-diag-reason {
+  font-size: 0.72rem;
+  font-family: ui-monospace, "Consolas", monospace;
+  color: rgba(220, 234, 240, 0.65);
+  letter-spacing: 0.02em;
+}
+.subagent-diag-error {
+  font-size: 0.78rem;
+  margin: 2px 0 0;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.subagent-diag-hint {
+  font-size: 0.78rem;
+  margin: 2px 0 0;
+  line-height: 1.45;
+  color: rgba(220, 234, 240, 0.85);
+  word-break: break-word;
+}
+.subagent-diag-hint strong,
+.subagent-diag-error strong,
+.subagent-diag-install-cmd strong {
+  color: rgba(0, 246, 255, 0.9);
+  font-weight: 600;
+}
+.subagent-diag-install-cmd {
+  font-size: 0.78rem;
+  margin: 2px 0 0;
+  line-height: 1.45;
+  color: rgba(220, 234, 240, 0.85);
+}
+.subagent-diag-install-cmd code {
+  display: inline-block;
+  padding: 2px 8px;
+  background: rgba(0, 246, 255, 0.08);
+  border: 1px solid rgba(0, 246, 255, 0.25);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: #1cf2c1;
+  user-select: all;
+  word-break: break-all;
+}
+/* v0.9.60: small chip that appears next to the package name when the
+   runtime has detected the canonical npm package already exists on
+   disk. The operator reads this as "you don't need to install,
+   just register the pool." */
+.subagent-diag-detected-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(28, 242, 193, 0.18);
+  color: #1cf2c1;
+  border: 1px solid rgba(28, 242, 193, 0.5);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* v0.9.59: at-a-glance summary banner above each card grid. Renders
+   the reachable count + installState bucket pill row + install-command
+   tail line in one compact strip so an operator on a fresh dashboard
+   load can answer "of my catalog, how many are operational and how
+   many need attention?" before scrolling. Style mirrors the existing
+   panel-block dark-glass aesthetic. */
+.subagent-summary-banner {
+  margin: 6px 0 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(0, 246, 255, 0.22);
+  border-radius: 10px;
+  background: linear-gradient(155deg, rgba(0, 246, 255, 0.06) 0%, rgba(3, 16, 24, 0.7) 70%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.subagent-summary-headline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.subagent-summary-count {
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.subagent-summary-count.good     { color: #1cf2c1; }
+.subagent-summary-count.warn     { color: #ffaf3a; }
+.subagent-summary-count.critical { color: #ff3a5a; }
+.subagent-summary-sep {
+  opacity: 0.5;
+}
+.subagent-summary-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.subagent-summary-pill {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.subagent-summary-pill.good     { background: rgba(28, 242, 193, 0.18); color: #1cf2c1; border: 1px solid rgba(28, 242, 193, 0.5); }
+.subagent-summary-pill.warn     { background: rgba(255, 175, 58, 0.18);  color: #ffaf3a; border: 1px solid rgba(255, 175, 58, 0.5); }
+.subagent-summary-pill.critical { background: rgba(255, 58, 90, 0.18);   color: #ff3a5a; border: 1px solid rgba(255, 58, 90, 0.5); }
+.subagent-summary-pill.info     { background: rgba(140, 183, 196, 0.14); color: rgba(220, 234, 240, 0.85); border: 1px solid rgba(140, 183, 196, 0.4); }
+.subagent-summary-install {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+/* v0.9.75: visible self-test panel on the Overview deck. Renders the
+   per-probe pass/fail roster from /api/self-tests so operators see the
+   affirmative side of boot health alongside the existing error frame
+   (which only surfaces failures). */
+.self-test-panel { padding: 14px 16px; }
+.self-test-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; margin-bottom: 10px;
+}
+.self-test-summary { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.self-test-eyebrow {
+  font-size: 0.7rem; letter-spacing: 0.12em; opacity: 0.6;
+  text-transform: uppercase;
+}
+.self-test-headline {
+  font-size: 1.1rem; font-weight: 600; letter-spacing: 0.02em;
+}
+.self-test-headline.good     { color: #1cf2c1; }
+.self-test-headline.warn     { color: #ffaf3a; }
+.self-test-headline.bad      { color: #ff3a5a; }
+.self-test-headline.info     { color: rgba(220, 234, 240, 0.8); }
+.self-test-list {
+  max-height: 320px; overflow-y: auto; padding-right: 6px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.self-test-row {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  padding: 6px 8px; border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  font-size: 0.85rem;
+}
+.self-test-row.fail {
+  background: rgba(255, 58, 90, 0.08);
+  border-color: rgba(255, 58, 90, 0.32);
+}
+.self-test-tag {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em;
+  align-self: center;
+}
+.self-test-row.pass .self-test-tag { color: #1cf2c1; }
+.self-test-row.fail .self-test-tag { color: #ff3a5a; }
+.self-test-name { font-family: ui-monospace, "Consolas", monospace; align-self: center; }
+.self-test-dur  { font-size: 0.75rem; opacity: 0.7; align-self: center; }
+.self-test-msg  {
+  grid-column: 1 / -1;
+  font-size: 0.78rem; opacity: 0.78;
+  margin-top: 2px; word-break: break-word; line-height: 1.4;
+}
+
+/* v0.9.77: Supervisor Agent card on the browser dashboard Overview. */
+.supervisor-panel { padding: 14px 16px; }
+.supervisor-rows {
+  display: flex; flex-direction: column; gap: 6px;
+  margin: 10px 0;
+}
+.supervisor-row {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 8px 10px; border-radius: 6px;
+  border: 1px solid rgba(255, 61, 46, 0.18);
+  background: rgba(255, 61, 46, 0.04);
+  cursor: pointer;
+}
+.supervisor-row:hover { background: rgba(255, 61, 46, 0.08); }
+.supervisor-row input[type="radio"] {
+  margin-top: 4px; accent-color: #ff3d2e;
+}
+.supervisor-row-body { display: flex; flex-direction: column; gap: 2px; }
+.supervisor-row-name { font-weight: 600; }
+.supervisor-row-desc { font-size: 0.78rem; line-height: 1.35; }
+.supervisor-actions {
+  display: flex; gap: 10px; align-items: center;
+  margin-top: 6px;
+}
+.supervisor-actions button[disabled] { opacity: 0.4; cursor: not-allowed; }
+.supervisor-status { margin-top: 8px; font-size: 0.85rem; line-height: 1.5; }

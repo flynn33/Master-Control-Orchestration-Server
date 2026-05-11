@@ -607,10 +607,42 @@ void NativeHttpSysGatewayAdapter::AttachWorkerBridge(
 // instance, ask it tools/list via the stdio bridge, and merge the results
 // into a fresh catalog. Each tool entry is tagged with serverName=poolId
 // so tools/call can route by name. Caller holds mutex_.
+//
+// v0.9.5: TTL cache. If the catalog was refreshed within the last
+// kToolCatalogCacheTtlSeconds (currently 30s) we return the cached
+// vector verbatim instead of re-fanning-out tools/list to every pool's
+// child via stdio. This drops the per-LAN-client tools/list cost from
+// O(pools) stdio round-trips down to a single pointer copy when the
+// cache is warm. Cache is invalidated implicitly by the time-based TTL;
+// operator actions that change the catalog shape (POST /api/pools, POST
+// /api/pools/{poolId}/{remove,scale,drain}) currently do not bump the
+// cache -- the TTL is the only revalidation mechanism. A sub-second
+// cache for the catalog is still acceptable because tools rarely
+// change registration in flight; if a pool gets registered or removed,
+// the next LAN-client tools/list within 30s sees stale state, and the
+// one after that sees the new shape. v0.9.6 candidate: explicit cache
+// bump from upsertPool/removePool/{remove,scale,drain} routes.
+namespace {
+constexpr int kToolCatalogCacheTtlSeconds = 30;
+} // namespace
+
 std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::refreshToolCatalogLocked() const {
+    // v0.9.5: serve from the in-memory cache if it's still warm. The
+    // cache validity stamp is set at the bottom of this function on
+    // every successful aggregation; a default-constructed
+    // toolCatalogCacheValidUntil_ (epoch) means "never refreshed" and
+    // forces a fresh pass.
+    const auto now = std::chrono::steady_clock::now();
+    if (now < toolCatalogCacheValidUntil_) {
+        return toolCatalogCache_;
+    }
+
     std::vector<McpToolDescriptor> aggregated;
     if (!workerSupervisor_) {
         toolCatalogCache_.clear();
+        // Even on the no-supervisor path, mark the cache valid for the
+        // TTL window so we don't loop on this branch every call.
+        toolCatalogCacheValidUntil_ = now + std::chrono::seconds(kToolCatalogCacheTtlSeconds);
         return aggregated;
     }
     const auto pools = workerSupervisor_->listPools();
@@ -670,6 +702,22 @@ std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::refreshToolCatalogLo
                 descriptor.serverName  = pool.poolId;
                 descriptor.toolName    = tool.value("name", std::string{});
                 descriptor.description = tool.value("description", std::string{});
+                // v0.9.4: capture the child-reported inputSchema verbatim
+                // as a serialized JSON object string. Pre-v0.9.4 the
+                // descriptor model didn't carry the schema, so the
+                // gateway's tools/list always emitted the open
+                // `{"type":"object"}` placeholder even when the worker
+                // advertised properties + required + descriptions for
+                // every argument. Schema-driven LAN clients (Claude
+                // Code, MCP SDK code generators) consequently couldn't
+                // discover argument names from tools/list; they had to
+                // either read the human description or guess. Now the
+                // schema flows end-to-end. Empty / non-object schemas
+                // are normalized to empty string so the consumer side
+                // handles "no schema" with a single condition.
+                if (tool.contains("inputSchema") && tool["inputSchema"].is_object()) {
+                    descriptor.inputSchemaJson = tool["inputSchema"].dump();
+                }
                 aggregated.push_back(std::move(descriptor));
             }
         } catch (const std::exception&) {
@@ -678,12 +726,48 @@ std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::refreshToolCatalogLo
         }
     }
     toolCatalogCache_ = aggregated;
+    // v0.9.5: refresh the cache validity window. Subsequent calls
+    // within the TTL serve directly from toolCatalogCache_ without
+    // re-fanning-out tools/list to every pool's child.
+    toolCatalogCacheValidUntil_ =
+        std::chrono::steady_clock::now() + std::chrono::seconds(kToolCatalogCacheTtlSeconds);
     return aggregated;
+}
+
+void NativeHttpSysGatewayAdapter::InvalidateToolCatalog() {
+    // v0.9.6: bumps the validity stamp to the past so the next
+    // refreshToolCatalogLocked call inside tools/list does a fresh
+    // fan-out instead of returning the stale cached vector. Called
+    // by the runtime's pool-admin handlers after upsertPool /
+    // removePool / scale / drain so operator pool changes surface
+    // immediately rather than after the 30s TTL.
+    std::lock_guard<std::mutex> lock(mutex_);
+    toolCatalogCacheValidUntil_ = std::chrono::steady_clock::time_point{};
 }
 
 #if defined(_WIN32)
 namespace {
 // Build a JSON-RPC error response body.
+//
+// v0.9.48: nlohmann::json::dump() throws type_error.316 on invalid UTF-8
+// bytes in any string field (including the embedded `message` text and
+// any `id` echoed from the client). The pre-v0.9.48 caller path was:
+// serveLoop -> handleMcpRequest -> json::parse(body) -> catch -> build
+// JsonRpcError(..., ex.what()) -> envelope.dump() THROWS. The throw
+// escaped both buildJsonRpcError and handleMcpRequest, leaving serveLoop
+// with an uncaught std::exception which propagated out of the worker
+// thread function and tripped std::terminate, taking the entire MCOS
+// service down. Operator-visible: any tools/* request with malformed
+// UTF-8 in its body (e.g. a Latin-1 byte 0xE9 from a CP1252 client)
+// crashed MCOS. The bug-hunt found this by accident sending `é` from
+// Git Bash on a CP1252 host.
+//
+// Fix: dump() with error_handler_t::replace so invalid byte sequences
+// become U+FFFD in the output instead of throwing. This is the standard
+// "lenient JSON serializer" behavior. We also wrap the dump in try/
+// catch as defense-in-depth in case future nlohmann versions throw on
+// other content; if dump() ever does throw we return a hand-rolled
+// minimal valid JSON-RPC error envelope.
 std::string buildJsonRpcError(int code, const std::string& message,
                               const nlohmann::json& id = nullptr) {
     nlohmann::json envelope = {
@@ -694,7 +778,17 @@ std::string buildJsonRpcError(int code, const std::string& message,
             { "message", message }
         } }
     };
-    return envelope.dump();
+    try {
+        return envelope.dump(/*indent=*/-1,
+                             /*indent_char=*/' ',
+                             /*ensure_ascii=*/false,
+                             /*error_handler=*/nlohmann::json::error_handler_t::replace);
+    } catch (const std::exception&) {
+        // Defense-in-depth: hand-roll a minimal valid JSON-RPC error.
+        // The client gets a generic -32603 internal-error response
+        // instead of a service crash.
+        return std::string(R"({"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"Internal serialization error."}})");
+    }
 }
 } // namespace
 
@@ -715,6 +809,24 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
         return buildJsonRpcError(-32700, std::string("Parse error: ") + ex.what());
     }
 
+    // v0.9.51: reject JSON-RPC batches (an array of request objects per
+    // JSON-RPC 2.0 §6) with -32600 Invalid Request. This MCP gateway
+    // handles single-request envelopes only; pre-v0.9.51 a batch body
+    // reached `req.value("method", ...)` which threw type_error.306
+    // ("cannot use value() with array"), bounced into the v0.9.48
+    // serveLoop catch, and the client got HTTP 500 with the nlohmann
+    // exception in the body. The right answer per JSON-RPC 2.0 is a
+    // single Invalid Request envelope -- not the per-element batch
+    // response array, since we don't process batches at all.
+    if (req.is_array()) {
+        return buildJsonRpcError(-32600,
+            "Invalid Request: JSON-RPC batches are not supported by this gateway. Send a single request object per HTTP POST.");
+    }
+    if (!req.is_object()) {
+        return buildJsonRpcError(-32600,
+            "Invalid Request: top-level JSON must be a request object.");
+    }
+
     const std::string method = req.value("method", std::string{});
     // nlohmann::json{nullptr} would create [null] (an array containing one
     // null element) via the initializer_list ctor; use parens to invoke the
@@ -723,14 +835,49 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
     if (req.contains("id")) {
         id = req["id"];
     }
+    // v0.9.4: per JSON-RPC 2.0 §4.1, a request with no `id` member is a
+    // Notification and the server MUST NOT reply. The MCP wire protocol
+    // uses this for `notifications/initialized` (sent by the client right
+    // after `initialize` to complete the handshake) and `notifications/
+    // cancelled`. Pre-v0.9.4 this dispatcher always built a response
+    // envelope; for an unrecognized notification it returned a -32601
+    // error with `id:null`, which strict clients (the MCP TypeScript +
+    // Python SDKs included) treat as a protocol violation. Now: if the
+    // request has no id, the dispatcher returns an empty string and the
+    // HTTP serving loop translates that to a 204 No Content response.
+    const bool isNotification = !req.contains("id");
 
     if (method.empty()) {
+        if (isNotification) {
+            return std::string{};
+        }
         return buildJsonRpcError(-32600, "Invalid Request: missing method.", id);
+    }
+
+    // v0.9.4: explicit accept-and-ignore for the standard MCP
+    // post-initialize notification. Even though the catch-all below also
+    // returns an empty string for any notification, naming this method
+    // here makes the dispatcher self-documenting and lets the activity
+    // ring (added in a later increment) attribute the handshake-complete
+    // event correctly without parsing the unknown-method fallthrough.
+    if (isNotification && (method == "notifications/initialized"
+                        || method == "notifications/cancelled")) {
+        return std::string{};
     }
 
     if (method == "initialize") {
         nlohmann::json result = {
-            { "protocolVersion", "2024-11-05" },
+            // v0.9.4: advertise the protocol version that this gateway
+            // actually implements end-to-end -- Streamable HTTP
+            // transport (introduced in MCP rev 2025-03-26) is what the
+            // onboarding profiles tell every client to use, and it is
+            // what the DNS-SD TXT advertises as `protovers=2025-03-26`.
+            // Pre-v0.9.4 the initialize handshake replied with the
+            // older `2024-11-05` literal, which was inconsistent with
+            // both the advertised protovers and the transport actually
+            // in use; strict clients negotiated down to 2024-11-05
+            // even when they could speak 2025-03-26.
+            { "protocolVersion", "2025-03-26" },
             { "serverInfo", {
                 { "name", "MCOS Native Gateway" },
                 // v0.9.3: report the running MCOS version through the
@@ -787,14 +934,30 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
             // accepts either the prefixed or the unprefixed form
             // (see below for resolution rules).
             const std::string qualifiedName = descriptor.serverName + "__" + descriptor.toolName;
+            // v0.9.4: forward the child-reported inputSchema verbatim
+            // (captured into descriptor.inputSchemaJson by
+            // refreshToolCatalogLocked). Falls back to the open
+            // `{"type":"object"}` placeholder only when the child
+            // didn't supply a schema or the captured string failed to
+            // parse -- the gateway never fabricates a schema.
+            nlohmann::json inputSchema = nlohmann::json{ { "type", "object" } };
+            if (!descriptor.inputSchemaJson.empty()) {
+                try {
+                    auto parsed = nlohmann::json::parse(descriptor.inputSchemaJson);
+                    if (parsed.is_object()) {
+                        inputSchema = std::move(parsed);
+                    }
+                } catch (const std::exception&) {
+                    // Keep the placeholder; do not silently drop the
+                    // tool. The child reported a malformed schema; we
+                    // surface the tool so it stays callable, just
+                    // without typed argument hints in tools/list.
+                }
+            }
             toolsArray.push_back({
                 { "name", qualifiedName },
                 { "description", descriptor.description },
-                // No inputSchema in McpToolDescriptor -- callers can call
-                // tools/call against the qualified name and rely on the
-                // child server to validate. v0.6.11 will preserve the
-                // child-reported inputSchema verbatim.
-                { "inputSchema", { { "type", "object" } } }
+                { "inputSchema", std::move(inputSchema) }
             });
         }
         nlohmann::json envelope = {
@@ -942,13 +1105,21 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
         const auto bridgeResult = supervisor->sendStdioJsonRpc(
             lease.instanceId, forwarded.dump(), /*timeoutMs=*/30000);
 
-        // Always release the lease. We acquired it for a single forward,
-        // and the simple least-loaded router does not require us to
-        // explicitly release short-lived leases for correctness, but
-        // honoring the contract keeps the lease accounting accurate
-        // when the operator inspects the dashboard.
-        // (LeaseRouter::releaseLease is idempotent on unknown ids.)
-        // Comment kept for clarity -- the call site is below.
+        // v0.9.34: release the lease unconditionally after the bridge
+        // call returns. Pre-v0.9.34 the comment that used to live here
+        // promised "the call site is below" but no releaseLease() call
+        // followed -- every tools/call leaked one lease. The bug-hunt
+        // probed it: 10 parallel tools/call requests left
+        // activeLeaseCount=10 forever, with all leases still in
+        // state="active" and releasedAtUtc="". With
+        // maxActiveLeasesPerInstance=64 the leak only manifests as
+        // dashboard noise + premature scale-out, but a long-running
+        // gateway would eventually saturate and start rejecting calls
+        // with "could not acquire instance lease."
+        // LeaseRouter::releaseLease is idempotent on unknown ids, so
+        // racing scenarios (e.g. supervisor reaping the instance mid-
+        // call) are safe.
+        router->releaseLease(lease.leaseId, "tools/call complete");
 
         if (!bridgeResult.succeeded) {
             return buildJsonRpcError(-32603,
@@ -969,6 +1140,14 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
         }
     }
 
+    // v0.9.4: any unrecognized notification (no id) is silently
+    // accepted -- per JSON-RPC 2.0 the server has nowhere to send the
+    // error and the client has no correlator to match it to anyway.
+    // Pre-v0.9.4 this branch always emitted an envelope, which strict
+    // MCP clients reject as a protocol error.
+    if (isNotification) {
+        return std::string{};
+    }
     return buildJsonRpcError(-32601, "Method not implemented: " + method, id);
 }
 
@@ -1138,6 +1317,12 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
         const auto& mcpPath = configuration_.mcpPath.empty()
             ? std::string("/mcp") : configuration_.mcpPath;
 
+        // v0.9.4: the MCP route can legitimately produce an empty body
+        // (a JSON-RPC 2.0 notification has no response per §4.1). Track
+        // whether we routed through MCP so we can translate empty
+        // responseBody to HTTP 204 No Content below; healthPath and the
+        // 404 fallthrough always produce a body.
+        bool wentThroughMcpRoute = false;
         if (path == healthPath || (path.size() > healthPath.size()
                                    && path.rfind(healthPath, 0) == 0
                                    && path[healthPath.size()] == '/')) {
@@ -1152,7 +1337,65 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
         } else if (path == mcpPath || (path.size() > mcpPath.size()
                                        && path.rfind(mcpPath, 0) == 0
                                        && path[mcpPath.size()] == '/')) {
-            responseBody = handleMcpRequest(path, body, clientIpAddress, clientType);
+            // v0.9.10: only POST belongs on the MCP path. JSON-RPC over
+            // Streamable HTTP uses POST for client->server messages;
+            // GET on /mcp is reserved for opening an SSE stream
+            // (which this gateway does not currently implement -- a
+            // future SSE upgrade would route GET separately). Pre-
+            // v0.9.10 a GET against /mcp produced HTTP 204 No
+            // Content because the empty body parsed to {} which the
+            // dispatcher classified as a notification; from the
+            // operator/client perspective that was an opaque success
+            // for a request that should have been refused. Now we
+            // explicitly return 405 with a helpful hint.
+            const HTTP_VERB verb = request->Verb;
+            if (verb != HttpVerbPOST) {
+                statusCode = 405;
+                reason = "Method Not Allowed";
+                nlohmann::json err = {
+                    { "error", "MCP path requires POST" },
+                    { "path", path },
+                    { "method_received",
+                      verb == HttpVerbGET     ? "GET"     :
+                      verb == HttpVerbPUT     ? "PUT"     :
+                      verb == HttpVerbDELETE  ? "DELETE"  :
+                      verb == HttpVerbHEAD    ? "HEAD"    :
+                      verb == HttpVerbOPTIONS ? "OPTIONS" :
+                      verb == HttpVerbTRACE   ? "TRACE"   :
+                      verb == HttpVerbCONNECT ? "CONNECT" :
+                                                "OTHER" },
+                    // Note: PATCH was added to HTTP_VERB in the Win10
+                    // SDK; older Windows SDKs don't expose it. We
+                    // deliberately don't reference HttpVerbPATCH here
+                    // so this file builds on every targeted SDK.
+                    // PATCH callers (rare) appear as "OTHER" above.
+                    { "hint", "MCP traffic is JSON-RPC 2.0 over POST. SSE upgrade is not implemented in this build." }
+                };
+                responseBody = err.dump();
+            } else {
+                // v0.9.48: defense-in-depth try/catch around the
+                // request handler. The buildJsonRpcError fix below
+                // closes the specific UTF-8 dump() crash that started
+                // this iteration, but ANY uncaught exception out of
+                // handleMcpRequest would propagate out of serveLoop and
+                // tripped std::terminate. Catching at the dispatcher
+                // boundary turns "service crashes" into "client gets a
+                // 500 with a generic JSON-RPC error envelope and the
+                // gateway thread keeps going."
+                try {
+                    responseBody = handleMcpRequest(path, body, clientIpAddress, clientType);
+                } catch (const std::exception& ex) {
+                    statusCode = 500;
+                    reason = "Internal Server Error";
+                    responseBody = std::string(R"({"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"Internal error: )")
+                        + ex.what() + R"("}})";
+                } catch (...) {
+                    statusCode = 500;
+                    reason = "Internal Server Error";
+                    responseBody = std::string(R"({"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"Internal error: unknown exception."}})");
+                }
+                wentThroughMcpRoute = true;
+            }
         } else {
             statusCode = 404;
             reason = "Not Found";
@@ -1164,6 +1407,19 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
             responseBody = err.dump();
         }
 
+        // v0.9.4: empty MCP-route response means handleMcpRequest
+        // recognized a JSON-RPC notification (no `id` field) and
+        // intentionally produced no envelope per spec. Reply with HTTP
+        // 204 No Content -- no body, no Content-Type header. Pre-v0.9.4
+        // the dispatcher would have returned a -32601 envelope here,
+        // which strict MCP clients (TS + Python SDKs) treat as a
+        // protocol violation when received in response to a
+        // notification.
+        if (wentThroughMcpRoute && responseBody.empty()) {
+            statusCode = 204;
+            reason = "No Content";
+        }
+
         // Build and send the HTTP response.
         HTTP_RESPONSE response{};
         response.StatusCode = statusCode;
@@ -1173,22 +1429,30 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
         HTTP_UNKNOWN_HEADER unused{};
         (void)unused;
 
-        // Set Content-Type via the known-headers slot.
-        response.Headers.KnownHeaders[HttpHeaderContentType].pRawValue = contentType.c_str();
-        response.Headers.KnownHeaders[HttpHeaderContentType].RawValueLength
-            = static_cast<USHORT>(contentType.size());
-
-        std::string lengthStr = std::to_string(responseBody.size());
-        response.Headers.KnownHeaders[HttpHeaderContentLength].pRawValue = lengthStr.c_str();
-        response.Headers.KnownHeaders[HttpHeaderContentLength].RawValueLength
-            = static_cast<USHORT>(lengthStr.size());
-
+        // 204 No Content has no body and no Content-Type per RFC 7230;
+        // suppress both header slots so HTTP.sys does not emit them.
+        // Other status codes always set Content-Type + Content-Length.
+        std::string lengthStr;
         HTTP_DATA_CHUNK dataChunk{};
-        dataChunk.DataChunkType = HttpDataChunkFromMemory;
-        dataChunk.FromMemory.pBuffer = const_cast<char*>(responseBody.data());
-        dataChunk.FromMemory.BufferLength = static_cast<ULONG>(responseBody.size());
-        response.EntityChunkCount = 1;
-        response.pEntityChunks = &dataChunk;
+        if (statusCode != 204) {
+            response.Headers.KnownHeaders[HttpHeaderContentType].pRawValue = contentType.c_str();
+            response.Headers.KnownHeaders[HttpHeaderContentType].RawValueLength
+                = static_cast<USHORT>(contentType.size());
+
+            lengthStr = std::to_string(responseBody.size());
+            response.Headers.KnownHeaders[HttpHeaderContentLength].pRawValue = lengthStr.c_str();
+            response.Headers.KnownHeaders[HttpHeaderContentLength].RawValueLength
+                = static_cast<USHORT>(lengthStr.size());
+
+            dataChunk.DataChunkType = HttpDataChunkFromMemory;
+            dataChunk.FromMemory.pBuffer = const_cast<char*>(responseBody.data());
+            dataChunk.FromMemory.BufferLength = static_cast<ULONG>(responseBody.size());
+            response.EntityChunkCount = 1;
+            response.pEntityChunks = &dataChunk;
+        } else {
+            response.EntityChunkCount = 0;
+            response.pEntityChunks = nullptr;
+        }
 
         ULONG bytesSent = 0;
         HttpSendHttpResponse(

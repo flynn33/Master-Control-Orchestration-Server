@@ -53,7 +53,20 @@ void SecuritySectionControl::GuidedSecurityActionButton_Click(
 
 void SecuritySectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot) {
     lastSnapshot_ = snapshot;
-    BindAddressText().Text(winrt::hstring(snapshot.bindAddress));
+    // v0.9.76: route through resolveDisplayBindAddress so wildcard binds
+    // surface the LAN-routable primary IP. Editor surfaces (SettingsSection,
+    // Setup Wizard) keep the raw value so operator edits round-trip; this
+    // is a display-only card.
+    const auto resolvedSecurityBind = ::MasterControlShell::Presentation::resolveDisplayBindAddress(
+        snapshot.bindAddress, snapshot.primaryIpAddress);
+    if (::MasterControlShell::Presentation::isWildcardBindAddress(snapshot.bindAddress)) {
+        BindAddressText().Text(winrt::hstring(
+            resolvedSecurityBind + L" (configured "
+            + (snapshot.bindAddress.empty() ? std::wstring(L"0.0.0.0") : snapshot.bindAddress)
+            + L")"));
+    } else {
+        BindAddressText().Text(winrt::hstring(resolvedSecurityBind));
+    }
     BrowserPortText().Text(winrt::hstring(std::to_wstring(snapshot.browserPort)));
     BeaconEnabledText().Text(winrt::hstring(boolLabel(snapshot.beaconEnabled)));
     AiAutonomyText().Text(winrt::hstring(boolLabel(snapshot.aiAutonomyEnabled)));

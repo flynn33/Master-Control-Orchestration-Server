@@ -11,6 +11,12 @@
 #endif
 
 #include "ShellFormatting.h"
+// v0.9.76: shared imperative card-grid renderer used by RuntimeSection,
+// OverviewSection, and (now) TelemetrySection. WinUI is the priority
+// surface; mirroring the browser's v0.9.70 Telemetry deck means the
+// remote-desktop operator never has to bounce to Runtime to see live
+// per-endpoint state.
+#include "EndpointStatCardGrid.h"
 
 // v0.8.0: layout persistence + detach windows
 #include <winrt/Microsoft.UI.Xaml.h>
@@ -211,11 +217,21 @@ void TelemetrySectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
                  << L"Primary MAC: " << (snapshot.primaryMacAddress.empty() ? L"pending" : snapshot.primaryMacAddress);
     HostIdentityText().Text(winrt::hstring(hostIdentity.str()));
 
+    // v0.9.76: route bind-address render through resolveDisplayBindAddress
+    // so wildcard binds surface the LAN-routable primary IP. Raw configured
+    // value is shown on the trailing line so the operator sees both the
+    // listen value and the resolved client-facing value at once.
+    const auto resolvedTelemetryBind = ::MasterControlShell::Presentation::resolveDisplayBindAddress(
+        snapshot.bindAddress, snapshot.primaryIpAddress);
     std::wostringstream environmentProfile;
     environmentProfile << L"Environment: " << (snapshot.environmentName.empty() ? L"pending" : snapshot.environmentName) << L'\n'
                        << L"Dashboard URL: " << (snapshot.dashboardUrl.empty() ? L"pending" : snapshot.dashboardUrl) << L'\n'
-                       << L"Bind address: " << (snapshot.bindAddress.empty() ? L"pending" : snapshot.bindAddress) << L':'
+                       << L"Bind address: " << (resolvedTelemetryBind.empty() ? std::wstring(L"pending") : resolvedTelemetryBind) << L':'
                        << snapshot.browserPort;
+    if (::MasterControlShell::Presentation::isWildcardBindAddress(snapshot.bindAddress)) {
+        environmentProfile << L"\nListening on: "
+                           << (snapshot.bindAddress.empty() ? std::wstring(L"0.0.0.0") : snapshot.bindAddress);
+    }
     EnvironmentProfileText().Text(winrt::hstring(environmentProfile.str()));
 
     std::wostringstream serviceSummary;
@@ -275,6 +291,104 @@ void TelemetrySectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
     paintDot(AppleOperationStatusDot(),      populationTone(snapshot.appleOperationCount,    snapshot.apiHealthy));
     paintDot(PlatformGatewayStatusDot(),     populationTone(snapshot.platformGatewayCount,   snapshot.apiHealthy));
     paintDot(GovernanceServerStatusDot(),    populationTone(snapshot.governanceServerCount,  snapshot.apiHealthy));
+
+    // v0.9.76: rebuild the MCP server + Sub-agent card grids on every
+    // snapshot tick. Visual shape exactly matches RuntimeSection /
+    // Overview surface cards via the shared template.
+    PopulateMcpServerCards(snapshot);
+    PopulateSubAgentCards(snapshot);
+
+    // v0.9.79: compact Supervisor status card in the Telemetry sidebar.
+    // Mirrors the Overview surface card without the toggle group; the
+    // Telemetry deck is monitoring-only, so the operator pivots back
+    // to Overview when they want to change the supervisor selection.
+    {
+        using winrt::Microsoft::UI::Xaml::Media::SolidColorBrush;
+        using winrt::Windows::UI::ColorHelper;
+        const auto& sup = snapshot.supervisorStatus;
+        const std::wstring state = sup.state.empty() ? std::wstring(L"off") : sup.state;
+        const std::wstring provider = sup.activeProviderId;
+        auto fromHex = [](uint8_t r, uint8_t g, uint8_t b) {
+            return ColorHelper::FromArgb(0xFF, r, g, b);
+        };
+        winrt::Windows::UI::Color tone = fromHex(0x8c, 0xb7, 0xc4); // neutral
+        std::wstring headline = L"No supervisor assigned.";
+        std::wstring detail = L"Pick a supervisor model on the Overview deck.";
+        if (state == L"connected") {
+            tone = fromHex(0x1c, 0xf2, 0xc1);
+            headline = L"Active: " + (sup.providerDisplayName.empty() ? provider : sup.providerDisplayName);
+            // v0.9.90: relative-time formatting on the heartbeat (see
+            // OverviewSectionControl::ApplySupervisorCard).
+            std::wstring heartbeatPhrase;
+            if (sup.lastHeartbeatUtc.empty()) {
+                heartbeatPhrase = std::wstring(L".");
+            } else {
+                const auto relative = ::MasterControlShell::Presentation::formatRelativeUtcTime(sup.lastHeartbeatUtc);
+                heartbeatPhrase = relative.empty()
+                    ? (L" | Last heartbeat (UTC): " + sup.lastHeartbeatUtc + L".")
+                    : (L" | Last heartbeat: " + relative + L".");
+            }
+            detail = L"Status: connected" + heartbeatPhrase;
+        } else if (state == L"pending_connection" || state == L"config_generated") {
+            tone = fromHex(0xff, 0xaf, 0x3a);
+            headline = (sup.providerDisplayName.empty() ? provider : sup.providerDisplayName)
+                + L" pending connection";
+            detail = sup.expiresAtUtc.empty()
+                ? std::wstring(L"Config issued; awaiting client connect.")
+                : (L"Config expires (UTC): " + sup.expiresAtUtc);
+        } else if (state == L"disconnected") {
+            tone = fromHex(0xff, 0xaf, 0x3a);
+            headline = (sup.providerDisplayName.empty() ? provider : sup.providerDisplayName)
+                + L" disconnected";
+            detail = L"Heartbeat timeout. Remote client may have stopped.";
+        } else if (state == L"revoked") {
+            tone = fromHex(0xff, 0xaf, 0x3a);
+            headline = (sup.providerDisplayName.empty() ? provider : sup.providerDisplayName)
+                + L" revoked";
+            detail = L"Re-select a provider on the Overview deck to reassign.";
+        } else if (state == L"error") {
+            tone = fromHex(0xff, 0x3a, 0x5a);
+            headline = (sup.providerDisplayName.empty() ? provider : sup.providerDisplayName)
+                + L" error";
+            detail = sup.lastErrorMessage.empty()
+                ? std::wstring(L"See /api/supervisor/status for detail.")
+                : sup.lastErrorMessage;
+        }
+        TelemetrySupervisorStatusDot().Background(SolidColorBrush(tone));
+        TelemetrySupervisorHeadline().Text(winrt::hstring(headline));
+        TelemetrySupervisorDetail().Text(winrt::hstring(detail));
+    }
+}
+
+// v0.9.76: thin adapters that route the per-kind XAML element names +
+// headlines through the shared renderer in EndpointStatCardGrid.h. The
+// Telemetry surface uses compact density (compact=true) so MCP-server +
+// sub-agent decks render at matching size and stack closer together than
+// the wider Runtime / Overview cards. Operator directive: "MCP Servers
+// on the telemetry page must have smaller cards. They must be close in
+// size to the current Sub-Agent Cards." Compact mode shrinks padding,
+// header/util fonts, progress-bar height, and hides the empty-state
+// "No active clients" line so the two surfaces are visually identical.
+void TelemetrySectionControl::PopulateMcpServerCards(const ::MasterControlShell::ShellSnapshot& snapshot) {
+    renderEndpointStatCardGrid(
+        TelemetryMcpServersCardStack(),
+        TelemetryMcpServersHeadlineText(),
+        snapshot.mcpServerRuntimeStats,
+        L"MCP server",
+        L"No MCP servers registered yet. Use POST /api/runtime/mcp-servers to publish one.",
+        L"No managed pool. POST /api/pools with matching id to enable autoscale.",
+        true);
+}
+
+void TelemetrySectionControl::PopulateSubAgentCards(const ::MasterControlShell::ShellSnapshot& snapshot) {
+    renderEndpointStatCardGrid(
+        TelemetrySubAgentsCardStack(),
+        TelemetrySubAgentsHeadlineText(),
+        snapshot.subAgentRuntimeStats,
+        L"sub-agent",
+        L"No sub-agents registered yet. Use the New Sub-Agent action in Runtime to publish one.",
+        L"No managed pool. POST /api/pools with matching id to enable autoscale.",
+        true);
 }
 
 // =====================================================================

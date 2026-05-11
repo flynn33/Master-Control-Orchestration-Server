@@ -366,6 +366,30 @@ struct ActivityEvent final {
     std::string detail;             // optional expanded payload (JSON-as-string)
 };
 
+// v0.9.69: boot-time self-test result. Each probe (HTTP endpoint
+// reachability, supervised pool handshake, gateway state, activity-ring
+// persistence, telemetry sampler liveness, on-disk worker exe presence)
+// produces one of these. Failures are also pushed to the activity ring
+// with kind="self_test" + statusCode=500 so the existing v0.8.7 Error
+// Reporting frame on the WinUI Overview surface picks them up.
+struct SelfTestResult final {
+    std::string name;            // short stable identifier, e.g. "http.api_health"
+    std::string category;        // "http_endpoint" / "pool_handshake" / "gateway" / "process" / "telemetry"
+    bool ok = false;
+    std::string message;         // human-readable line for the dashboard
+    int durationMs = 0;
+    std::string ranAtUtc;        // ISO-8601 UTC stamp of when the probe ran
+};
+
+struct SelfTestSnapshot final {
+    std::string startedAtUtc;
+    std::string finishedAtUtc;
+    int totalCount = 0;
+    int passedCount = 0;
+    int failedCount = 0;
+    std::vector<SelfTestResult> results;
+};
+
 struct InstallerPackageSpec final {
     InstallerKind kind = InstallerKind::Exe;
     std::string source;
@@ -755,6 +779,17 @@ struct McpToolDescriptor final {
     std::string serverName;          // registered logical server name
     std::string toolName;
     std::string description;
+    // v0.9.4: child-reported JSON Schema for the tool's arguments,
+    // serialized as a JSON object string. Captured verbatim from the
+    // worker's `tools/list` response so the gateway can republish it
+    // unchanged. Empty string means "no schema reported"; the gateway
+    // emits the open `{"type":"object"}` placeholder in that case.
+    // Pre-v0.9.4 the gateway hard-coded `{"type":"object"}` for every
+    // tool, which left schema-driven LAN clients (Claude Code, the MCP
+    // SDK code generators) unable to discover argument names from
+    // `tools/list` alone. The worker-side schemas were always present
+    // -- the descriptor model just didn't carry them through.
+    std::string inputSchemaJson;
 };
 
 struct GatewayStatus final {
@@ -878,6 +913,16 @@ struct ManagedEndpointPool final {
     std::vector<EndpointInstance> instances;
     std::string createdAtUtc;
     std::string updatedAtUtc;
+    // v0.9.40: when the per-pool crash circuit breaker has tripped
+    // (kCrashThreshold=5 worker deaths within kCrashWindowSeconds=60),
+    // the supervisor sets this to the UTC ISO-8601 timestamp at which
+    // auto-respawn will resume. Empty when the pool is not quarantined.
+    // The /api/health/summary "darkOrQuarantined" counter and the
+    // /api/activity "pool_quarantine" event already exposed this state;
+    // /api/pools/{poolId} now exposes it directly so a generic operator
+    // dashboard can render a per-pool "quarantined for Ns" badge without
+    // joining health/summary or scanning the activity ring.
+    std::string quarantinedUntilUtc;
 };
 
 // PHASE-07 (ADR-002 §8): Lease routing + autoscale. Sessions/requests
@@ -1095,6 +1140,33 @@ struct DiscoveryGovernance final {
     std::string decisionsUrl;    // /api/governance/decisions
 };
 
+// v0.9.4: discovery now advertises the operator-side admin surfaces
+// (pools, clients, activity, host telemetry, gateway control). LAN
+// operators / dashboards previously had to know these paths
+// out-of-band even though the well-known doc is the canonical
+// discovery surface; this block closes that loop.
+struct DiscoveryAdmin final {
+    std::string poolsUrl;        // /api/pools
+    std::string clientsUrl;      // /api/clients
+    std::string activityUrl;     // /api/activity
+    std::string hostTelemetryUrl; // /api/host/telemetry
+    std::string gatewayStatusUrl; // /api/gateway/status
+    std::string gatewayToolsUrl;  // /api/gateway/tools
+    std::string healthUrl;        // /api/health (operator-side)
+    // v0.9.18: surface the v0.9.17 persistence-health endpoint so
+    // operators reading the discovery doc can find it. Pre-v0.9.18
+    // /api/activity/health was undocumented in the discovery
+    // surface; deploy retros and post-mortem scripts had to know
+    // the path out-of-band. With this entry, any tool that reads
+    // discovery (e.g., the dashboard, the self-test, a future ops
+    // CLI) can pull the URL without hard-coding.
+    std::string activityHealthUrl; // /api/activity/health
+    // v0.9.22: surface the v0.9.21 single-URL health-summary
+    // endpoint so monitoring tools and deploy gates can find it
+    // from the discovery doc instead of hard-coding the path.
+    std::string healthSummaryUrl;  // /api/health/summary
+};
+
 struct DiscoveryDocument final {
     std::string product = "MCOS";
     std::string role = "mcp-gateway-host";
@@ -1105,6 +1177,7 @@ struct DiscoveryDocument final {
     DiscoveryGateway gateway;
     DiscoveryOnboarding onboarding;
     DiscoveryGovernance governance;
+    DiscoveryAdmin admin;        // v0.9.4 -- operator surface URLs
     std::vector<std::string> capabilities;
     // Beacon-only metadata (omitted from /.well-known by convention).
     std::string generatedAtUtc;
@@ -1154,6 +1227,43 @@ struct SubAgentRuntimeStat final {
     std::string endpointHostPort;    // e.g. "127.0.0.1:9101"
     std::string lastProbedAtUtc;     // ISO-8601 UTC; empty until first probe
     std::string status;              // "online" / "offline" / "degraded" / "unknown" passthrough from inventory
+    // v0.9.56: honest-unavailable diagnostic surface. Pre-v0.9.56 the
+    // dashboard reported reachable=false with empty status, leaving
+    // operators staring at a red dot with no actionable hint. The five
+    // fields below close that gap by surfacing (a) WHY the entry is
+    // unreachable, (b) what we last saw on the wire, (c) the install
+    // posture so it can be triaged separately from runtime failure, and
+    // (d) the next step the operator can take.
+    //
+    // unavailableReason values (categorized; empty when reachable):
+    //   "stdio_supervised"           - reachable via supervised pool, not TCP
+    //   "online_via_admin_port"      - listener is the MCOS admin port
+    //   "no_listener"                - TCP connect refused / no process bound
+    //   "dns_failed"                 - host name did not resolve
+    //   "timeout"                    - TCP handshake exceeded the 200ms budget
+    //   "supervised_pool_missing"    - inventory expects a stdio pool but none registered
+    //   "no_endpoint_registered"     - sub-agent slot has no host:port and no pool
+    // installState values:
+    //   "installed_and_supervised"   - managed pool is wrapping this entry
+    //   "online_via_admin_port"      - served from the MCOS admin port itself
+    //   "awaiting_pool_registration" - catalog placeholder, no pool yet
+    //   "unknown"                    - state could not be classified
+    std::string unavailableReason;
+    std::string lastErrorMessage;
+    std::string lastErrorAtUtc;
+    std::string installState;
+    std::string installHint;
+    // v0.9.58: optional install command (e.g.
+    // "npm install -g chrome-devtools-mcp") for entries that map to
+    // a well-known canonical package. Empty when no canonical install
+    // path is known for the entry id. The dashboard renders this as
+    // a copy-paste-able code block in the diagnostic surface.
+    // installPackageDetected is true when the runtime found the
+    // package in the global npm tree at boot, which means the
+    // operator only has to register a pool (not install) to
+    // promote the entry to installed_and_supervised.
+    std::string installCommand;
+    bool installPackageDetected = false;
 };
 
 // v0.8.3: per-MCP-server runtime stats. Mirrors SubAgentRuntimeStat
@@ -1181,6 +1291,16 @@ struct McpServerRuntimeStat final {
     std::string endpointHostPort;
     std::string lastProbedAtUtc;
     std::string status;
+    // v0.9.56: honest-unavailable diagnostic surface (parallel to
+    // SubAgentRuntimeStat above; same value semantics).
+    std::string unavailableReason;
+    std::string lastErrorMessage;
+    std::string lastErrorAtUtc;
+    std::string installState;
+    std::string installHint;
+    // v0.9.58: parallel to SubAgentRuntimeStat above.
+    std::string installCommand;
+    bool installPackageDetected = false;
 };
 
 struct DashboardSnapshot final {
@@ -1512,6 +1632,24 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     latencyMs,
     message,
     detail)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    SelfTestResult,
+    name,
+    category,
+    ok,
+    message,
+    durationMs,
+    ranAtUtc)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    SelfTestSnapshot,
+    startedAtUtc,
+    finishedAtUtc,
+    totalCount,
+    passedCount,
+    failedCount,
+    results)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     InstallerPackageSpec,
@@ -1880,7 +2018,14 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     reachable,
     endpointHostPort,
     lastProbedAtUtc,
-    status)
+    status,
+    unavailableReason,
+    lastErrorMessage,
+    lastErrorAtUtc,
+    installState,
+    installHint,
+    installCommand,
+    installPackageDetected)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     McpServerRuntimeStat,
@@ -1899,7 +2044,14 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     reachable,
     endpointHostPort,
     lastProbedAtUtc,
-    status)
+    status,
+    unavailableReason,
+    lastErrorMessage,
+    lastErrorAtUtc,
+    installState,
+    installHint,
+    installCommand,
+    installPackageDetected)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     DashboardSnapshot,
@@ -2031,6 +2183,18 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     decisionsUrl)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    DiscoveryAdmin,
+    poolsUrl,
+    clientsUrl,
+    activityUrl,
+    hostTelemetryUrl,
+    gatewayStatusUrl,
+    gatewayToolsUrl,
+    healthUrl,
+    activityHealthUrl,
+    healthSummaryUrl)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     DiscoveryDocument,
     product,
     role,
@@ -2041,6 +2205,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     gateway,
     onboarding,
     governance,
+    admin,
     capabilities,
     generatedAtUtc,
     serverIpAddress,
@@ -2241,7 +2406,10 @@ inline void to_json(nlohmann::json& json, const ManagedEndpointPool& pool) {
         { "drainPolicy", pool.drainPolicy },
         { "instances", pool.instances },
         { "createdAtUtc", pool.createdAtUtc },
-        { "updatedAtUtc", pool.updatedAtUtc }
+        { "updatedAtUtc", pool.updatedAtUtc },
+        // v0.9.40: empty string when not quarantined; ISO-8601 UTC
+        // expiry when the crash circuit breaker has tripped.
+        { "quarantinedUntilUtc", pool.quarantinedUntilUtc }
     };
 }
 
@@ -2258,6 +2426,11 @@ inline void from_json(const nlohmann::json& json, ManagedEndpointPool& pool) {
     pool.instances = json.value("instances", std::vector<EndpointInstance>{});
     pool.createdAtUtc = json.value("createdAtUtc", std::string{});
     pool.updatedAtUtc = json.value("updatedAtUtc", std::string{});
+    // v0.9.40: forward-compat for round-trips through config persistence.
+    // Disk-persisted pools never carry a real quarantine value (in-memory
+    // state); the field is here so json::parse(...).get<ManagedEndpointPool>()
+    // doesn't choke if a future caller hands us a payload with it.
+    pool.quarantinedUntilUtc = json.value("quarantinedUntilUtc", std::string{});
 }
 
 } // namespace MasterControl

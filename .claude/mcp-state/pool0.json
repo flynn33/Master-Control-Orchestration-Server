@@ -1,0 +1,57 @@
+[
+  {
+    "createdAtUtc": "2026-05-09T11:36:05Z",
+    "displayName": "MCOS Baseline Tools",
+    "drainPolicy": {
+      "drainStickySessions": true,
+      "drainTimeoutSeconds": 30,
+      "routeNewSessionsToReplacement": true
+    },
+    "instances": [
+      {
+        "instanceId": "baseline-tools#1",
+        "lastTransitionAtUtc": "2026-05-09T11:36:05Z",
+        "poolId": "baseline-tools",
+        "processId": 4156,
+        "startedAtUtc": "2026-05-09T11:36:05Z",
+        "state": "ready",
+        "statusMessage": "Instance started under MCOS Job Object supervision (stdio bridge active).",
+        "supervised": true,
+        "telemetry": {
+          "activeLeases": 0,
+          "cpuPercent": 0.0,
+          "inflightCalls": 0,
+          "lastHealthMessage": "",
+          "lastProbedAtUtc": "2026-05-09T11:38:31Z",
+          "memoryMbytes": 4.5234375,
+          "queueDepth": 0
+        }
+      }
+    ],
+    "kind": "mcp-server",
+    "logicalMcpUrl": "",
+    "poolId": "baseline-tools",
+    "scalePolicy": {
+      "maxActiveLeasesPerInstance": 64,
+      "maxInstances": 2,
+      "minInstances": 1,
+      "scaleInIdleSeconds": 300,
+      "scaleOutQueueWaitMs": 1500
+    },
+    "template": {
+      "args": [],
+      "environment": {},
+      "executable": "C:\\Program Files\\Master Control Orchestration Server\\mcos-baseline-tools-worker.exe",
+      "healthProbe": {
+        "intervalMs": 5000,
+        "path": "",
+        "timeoutMs": 1500,
+        "transport": "stdio_handshake",
+        "unhealthyThreshold": 3
+      },
+      "transport": "stdio_jsonrpc",
+      "workingDirectory": "C:\\Program Files\\Master Control Orchestration Server"
+    },
+    "updatedAtUtc": "2026-05-09T11:36:05Z"
+  }
+]

@@ -346,12 +346,16 @@
                 </StackPanel>
             </Border>
 
-            <Border Style="{StaticResource ShellCardStyle}">
-                <StackPanel Spacing="16">
-                    <TextBlock Text="Runtime Endpoints" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                    <ListView x:Name="EndpointsListView" ItemTemplate="{StaticResource ShellListItemTemplate}" MaxHeight="680" Style="{StaticResource ShellListViewStyle}" />
-                </StackPanel>
-            </Border>
+            <!-- v0.10.11: removed the legacy "Runtime Endpoints" ListView
+                 entirely. The operator directive was that MCP server and
+                 Sub-Agent surfaces on Runtime must match the Telemetry
+                 tile-grid style. The ListView mixed MCP servers, sub
+                 agents, and gateways into a single flat single-column
+                 text-row list using ShellListItemTemplate (the exact
+                 opposite of the tile grid). The dedicated MCP Servers
+                 and Sub-Agents tile-grid panels above (compact=true,
+                 same renderer as Telemetry) carry the same data in the
+                 correct visual form, so this flat list is redundant. -->
         </StackPanel>
     </ScrollViewer>
 </UserControl>

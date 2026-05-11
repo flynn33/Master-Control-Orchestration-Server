@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json.schemastore.org/jsonschema",
+  "version": "1.0.0",
+  "authority": "Flynn (host operator)",
+  "authorizedAt": "2026-05-10",
+  "host": {
+    "logicalCores": 16,
+    "physicalCores": 8,
+    "totalMemoryBytes": 34276823040,
+    "totalMemoryGB": 31.93
+  },
+  "pools": {
+    "mcp-servers": {
+      "jobObjectName": "Local\\MCOS-MCP-ServerPool",
+      "displayName": "MCP Server Pool",
+      "purpose": "Claude Code MCP servers spawned from .mcp.json (memory, sequential-thinking, filesystem, sqlite, mcos-memory, mcos-contracts, mcos-watcher, mcos-bridge).",
+      "limits": {
+        "cpuRateHundredthsOfPercent": 9000,
+        "cpuRateHardCap": true,
+        "jobMemoryBytes": 28719673344,
+        "affinityMaskHex": "0xFFFF",
+        "killOnJobClose": false,
+        "breakawayOk": false
+      },
+      "authorizedShare": {
+        "cpuPercent": 90,
+        "memoryPercent": 90,
+        "memoryGB": 28.73
+      }
+    },
+    "sub-agents": {
+      "jobObjectName": "Local\\MCOS-SubAgentPool",
+      "displayName": "Sub-Agent Pool",
+      "purpose": "Claude Code sub-agent processes spawned via the Agent tool (architect, sentinel, planner, reviewer, debugger, test-writer, refactorer, documenter, performance-engineer, security-auditor, git-manager, build-resolver, coordinator, multi-file-specialist, plus MCOS-specific agents).",
+      "limits": {
+        "cpuRateHundredthsOfPercent": 9000,
+        "cpuRateHardCap": true,
+        "jobMemoryBytes": 28719673344,
+        "affinityMaskHex": "0xFFFF",
+        "killOnJobClose": false,
+        "breakawayOk": false
+      },
+      "authorizedShare": {
+        "cpuPercent": 90,
+        "memoryPercent": 90,
+        "memoryGB": 28.73
+      }
+    }
+  },
+  "notes": [
+    "Caps are independent per-pool, not summed. If both pools saturate to 90% the Windows scheduler arbitrates contention; this matches the operator-authorized 'up to 90%' wording.",
+    "CPU rate uses JOBOBJECT_CPU_RATE_CONTROL_HARD_CAP so 90% is enforced, not advisory.",
+    "Memory cap uses JOB_OBJECT_LIMIT_JOB_MEMORY across all processes in the job (combined commit charge).",
+    "breakawayOk=false means child processes inherit job membership, so an MCP server that spawns helpers stays inside the cap.",
+    "killOnJobClose=false means closing handles does not terminate the workers. Pools persist for the session via the anchor handle held by pool-init.ps1.",
+    "If a pool cannot be created or assigned, pool-spawn.ps1 logs WARNING to stderr and continues unenforced. It does NOT silently pretend success (per MCOS rule against fake telemetry)."
+  ]
+}

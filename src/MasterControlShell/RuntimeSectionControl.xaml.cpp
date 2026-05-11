@@ -11,6 +11,10 @@
 #endif
 
 #include "ShellFormatting.h"
+// v0.9.76: card-grid renderer extracted to a shared header so the
+// TelemetrySectionControl can reuse the exact same imperative builder
+// without duplicating ~250 lines of WinRT code. Single source of truth.
+#include "EndpointStatCardGrid.h"
 
 namespace winrt::MasterControlShell::implementation {
 
@@ -103,7 +107,11 @@ void RuntimeSectionControl::GuidedRuntimeActionButton_Click(
 void RuntimeSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnapshot& snapshot) {
     RuntimeCountText().Text(winrt::hstring(std::to_wstring(snapshot.endpointCount)));
     RuntimeNarrativeText().Text(winrt::hstring(formatRuntimeNarrative(snapshot)));
-    populateListView(EndpointsListView(), snapshot.endpointRows);
+    // v0.10.11: EndpointsListView removed -- the dedicated MCP Servers
+    // and Sub-Agents tile-grid panels (compact=true, same renderer as
+    // Telemetry) now carry that data in the correct visual form. The
+    // gateway + Apple-host lists remain because they are separate
+    // entity types not represented in those tile grids.
     populateListView(PlatformGatewaysListView(), snapshot.platformGatewayRows);
     populateListView(AppleRemoteHostsListView(), snapshot.appleRemoteHostRows);
 
@@ -1003,259 +1011,18 @@ winrt::Windows::Foundation::IAsyncAction RuntimeSectionControl::RemoveAppleHostA
     UpdateEditorState();
 }
 
-// v0.7.6: Sub-Agents card grid. Each card is a Border around a StackPanel
-// holding the title row (name + specialization), utilization row (live
-// utilization label + ProgressBar + ratio counter), reachability dot +
-// endpoint, pool/no-pool note, and the active-client list. Cards are
-// rebuilt on every ApplySnapshot tick; in-progress operator focus is not
-// at risk because these are read-only TextBlocks/Borders without input.
-// v0.8.3: stat-kind-overloaded helpers so the templated card builder
-// below can resolve the per-kind ID field (subAgentId vs mcpServerId)
-// uniformly. Used as the fallback display label when the stat's
-// displayName is empty.
-inline const std::wstring& endpointStatId(const ::MasterControlShell::ShellSubAgentRuntimeStat& s) {
-    return s.subAgentId;
-}
-inline const std::wstring& endpointStatId(const ::MasterControlShell::ShellMcpServerRuntimeStat& s) {
-    return s.mcpServerId;
-}
-
-// v0.8.3: templated card-grid renderer shared between
-// PopulateSubAgentCards and PopulateMcpServerCards. Both stat structs
-// carry the same field set apart from the ID, which we resolve via the
-// overloaded endpointStatId() helper above. kindNoun is the singular
-// label used in the headline ("sub-agent" / "MCP server"). poolHint is
-// the muted note rendered when no managed pool wraps the entry.
-template <class StatT>
-void renderEndpointStatCardGrid(
-    winrt::Microsoft::UI::Xaml::Controls::StackPanel stack,
-    winrt::Microsoft::UI::Xaml::Controls::TextBlock headlineText,
-    const std::vector<StatT>& stats,
-    const wchar_t* kindNoun,
-    const wchar_t* emptyMessage,
-    const wchar_t* poolHintNoPool) {
-    using namespace winrt::Microsoft::UI::Xaml;
-    using namespace winrt::Microsoft::UI::Xaml::Controls;
-    using namespace winrt::Microsoft::UI::Xaml::Media;
-    using winrt::Windows::Foundation::IInspectable;
-    using winrt::Windows::UI::Color;
-    using winrt::Windows::UI::ColorHelper;
-
-    stack.Children().Clear();
-
-    if (stats.empty()) {
-        headlineText.Text(winrt::hstring(emptyMessage));
-        return;
-    }
-
-    int reachableCount = 0;
-    for (const auto& s : stats) {
-        if (s.reachable) ++reachableCount;
-    }
-    std::wstring kindPlural = std::wstring(kindNoun);
-    if (stats.size() != 1) kindPlural += L"s";
-    std::wstring headline = std::to_wstring(stats.size()) + L" " + kindPlural
-        + L" registered ; " + std::to_wstring(reachableCount) + L" reachable.";
-    headlineText.Text(winrt::hstring(headline));
-
-    // Tron-themed color helpers. We avoid pulling in App.xaml resources
-    // here so the cards work even before that ResourceDictionary is
-    // resolved. Hex literal -> Color via ColorHelper.
-    auto fromHex = [](uint8_t r, uint8_t g, uint8_t b) {
-        return ColorHelper::FromArgb(0xFF, r, g, b);
-    };
-    const auto goodColor    = fromHex(0x1c, 0xf2, 0xc1);
-    const auto warnColor    = fromHex(0xff, 0xaf, 0x3a);
-    const auto critColor    = fromHex(0xff, 0x3a, 0x5a);
-    const auto neutralColor = fromHex(0x8c, 0xb7, 0xc4);
-
-    for (const auto& stat : stats) {
-        // v0.8.1: Tron CLU red-orange accent stroke (was cyan
-        // 0x00,0xf6,0xff in v0.7.x).
-        Border card;
-        card.Background(SolidColorBrush(ColorHelper::FromArgb(0x18, 0xff, 0x3d, 0x2e)));
-        card.BorderBrush(SolidColorBrush(ColorHelper::FromArgb(0x55, 0xff, 0x3d, 0x2e)));
-        Thickness cardBorder;
-        cardBorder.Left = 1.0;
-        cardBorder.Top = 1.0;
-        cardBorder.Right = 1.0;
-        cardBorder.Bottom = 1.0;
-        card.BorderThickness(cardBorder);
-        winrt::Microsoft::UI::Xaml::CornerRadius cardCorners;
-        cardCorners.TopLeft = 8.0;
-        cardCorners.TopRight = 8.0;
-        cardCorners.BottomRight = 8.0;
-        cardCorners.BottomLeft = 8.0;
-        card.CornerRadius(cardCorners);
-        Thickness cardPadding;
-        cardPadding.Left = 14.0;
-        cardPadding.Top = 12.0;
-        cardPadding.Right = 14.0;
-        cardPadding.Bottom = 12.0;
-        card.Padding(cardPadding);
-
-        StackPanel inner;
-        inner.Spacing(6);
-
-        // Header: name + specialization.
-        StackPanel header;
-        header.Orientation(Orientation::Horizontal);
-        header.Spacing(10);
-        TextBlock nameText;
-        nameText.Text(winrt::hstring(stat.displayName.empty() ? endpointStatId(stat) : stat.displayName));
-        nameText.FontSize(16);
-        nameText.FontWeight(winrt::Windows::UI::Text::FontWeight{600});
-        TextBlock specText;
-        specText.Text(winrt::hstring(stat.specialization.empty() ? L"(no specialization)" : stat.specialization));
-        specText.Foreground(SolidColorBrush(neutralColor));
-        specText.FontSize(12);
-        header.Children().Append(nameText);
-        header.Children().Append(specText);
-        inner.Children().Append(header);
-
-        // Utilization row: percent label + ProgressBar + active/capacity ratio.
-        const double utilization = (stat.utilizationPercent < 0) ? 0.0 : stat.utilizationPercent;
-        const auto toneColor = (utilization >= 95) ? critColor
-                              : (utilization >= 75) ? warnColor
-                              : goodColor;
-        Grid utilRow;
-        ColumnDefinition col1; col1.Width(GridLengthHelper::FromPixels(64));
-        ColumnDefinition col2; col2.Width(GridLengthHelper::FromValueAndType(1.0, GridUnitType::Star));
-        ColumnDefinition col3; col3.Width(GridLengthHelper::FromPixels(80));
-        utilRow.ColumnDefinitions().Append(col1);
-        utilRow.ColumnDefinitions().Append(col2);
-        utilRow.ColumnDefinitions().Append(col3);
-        utilRow.ColumnSpacing(10);
-
-        TextBlock utilLabel;
-        wchar_t utilBuf[16];
-        swprintf_s(utilBuf, L"%d%%", static_cast<int>(utilization));
-        utilLabel.Text(utilBuf);
-        utilLabel.FontSize(20);
-        utilLabel.FontWeight(winrt::Windows::UI::Text::FontWeight{600});
-        utilLabel.Foreground(SolidColorBrush(toneColor));
-        Grid::SetColumn(utilLabel, 0);
-
-        ProgressBar utilBar;
-        utilBar.Minimum(0);
-        utilBar.Maximum(100);
-        utilBar.Value(utilization);
-        utilBar.Height(10);
-        utilBar.Foreground(SolidColorBrush(toneColor));
-        utilBar.VerticalAlignment(VerticalAlignment::Center);
-        Grid::SetColumn(utilBar, 1);
-
-        TextBlock countsText;
-        wchar_t countsBuf[32];
-        swprintf_s(countsBuf, L"%d / %d", stat.activeLeaseCount, stat.leaseCapacity);
-        countsText.Text(countsBuf);
-        countsText.FontSize(11);
-        countsText.Foreground(SolidColorBrush(neutralColor));
-        countsText.HorizontalAlignment(HorizontalAlignment::Right);
-        countsText.VerticalAlignment(VerticalAlignment::Center);
-        Grid::SetColumn(countsText, 2);
-
-        utilRow.Children().Append(utilLabel);
-        utilRow.Children().Append(utilBar);
-        utilRow.Children().Append(countsText);
-        inner.Children().Append(utilRow);
-
-        // Endpoint + reachability row.
-        if (!stat.endpointHostPort.empty()) {
-            StackPanel epRow;
-            epRow.Orientation(Orientation::Horizontal);
-            epRow.Spacing(8);
-            // Reachability dot: a 10x10 Border with a 5px CornerRadius
-            // (effectively a circle) filled with the reachability color.
-            // Avoids pulling in winrt/Microsoft.UI.Xaml.Shapes.h just for
-            // an Ellipse.
-            Border dot;
-            dot.Width(10);
-            dot.Height(10);
-            winrt::Microsoft::UI::Xaml::CornerRadius dotCorners;
-            dotCorners.TopLeft = 5.0;
-            dotCorners.TopRight = 5.0;
-            dotCorners.BottomRight = 5.0;
-            dotCorners.BottomLeft = 5.0;
-            dot.CornerRadius(dotCorners);
-            dot.VerticalAlignment(VerticalAlignment::Center);
-            dot.Background(SolidColorBrush(stat.reachable ? goodColor : critColor));
-            TextBlock epText;
-            epText.Text(winrt::hstring(stat.endpointHostPort));
-            epText.FontSize(12);
-            epText.FontFamily(winrt::Microsoft::UI::Xaml::Media::FontFamily(winrt::hstring{L"Consolas, Cascadia Mono, Courier New"}));
-            TextBlock statusText;
-            statusText.Text(winrt::hstring(stat.status.empty() ? L"unknown" : stat.status));
-            statusText.FontSize(11);
-            statusText.Foreground(SolidColorBrush(neutralColor));
-            epRow.Children().Append(dot);
-            epRow.Children().Append(epText);
-            epRow.Children().Append(statusText);
-            inner.Children().Append(epRow);
-        }
-
-        // Pool / no-pool note.
-        TextBlock poolNote;
-        if (!stat.poolId.empty()) {
-            wchar_t poolBuf[256];
-            swprintf_s(poolBuf, L"Pool %ls : %d/%d Ready : max %d : autoscale %ls",
-                       stat.poolId.c_str(),
-                       stat.readyInstanceCount,
-                       stat.totalInstanceCount,
-                       stat.maxInstancesAllowed,
-                       stat.autoscaleEnabled ? L"on" : L"off");
-            poolNote.Text(poolBuf);
-        } else {
-            poolNote.Text(winrt::hstring(poolHintNoPool));
-        }
-        poolNote.FontSize(11);
-        poolNote.Foreground(SolidColorBrush(neutralColor));
-        poolNote.TextWrapping(TextWrapping::Wrap);
-        inner.Children().Append(poolNote);
-
-        // Active client list.
-        TextBlock clientsHeader;
-        wchar_t clientsBuf[64];
-        swprintf_s(clientsBuf, L"Active clients (%zu)", stat.activeClients.size());
-        clientsHeader.Text(clientsBuf);
-        clientsHeader.FontSize(11);
-        clientsHeader.Foreground(SolidColorBrush(neutralColor));
-        clientsHeader.Margin(Thickness{0, 4, 0, 2});
-        inner.Children().Append(clientsHeader);
-
-        if (stat.activeClients.empty()) {
-            TextBlock noClients;
-            const std::wstring noClientsLine = std::wstring(L"No active clients leasing this ") + kindNoun + L".";
-            noClients.Text(winrt::hstring(noClientsLine));
-            noClients.FontSize(11);
-            noClients.Foreground(SolidColorBrush(neutralColor));
-            inner.Children().Append(noClients);
-        } else {
-            for (const auto& holder : stat.activeClients) {
-                StackPanel row;
-                row.Orientation(Orientation::Horizontal);
-                row.Spacing(8);
-                TextBlock ipText;
-                ipText.Text(winrt::hstring(holder.ipAddress.empty() ? L"unknown" : holder.ipAddress));
-                ipText.FontFamily(winrt::Microsoft::UI::Xaml::Media::FontFamily(winrt::hstring{L"Consolas, Cascadia Mono, Courier New"}));
-                ipText.FontSize(12);
-                TextBlock typeText;
-                typeText.Text(winrt::hstring(holder.clientType.empty() ? L"unknown-client" : holder.clientType));
-                typeText.FontSize(11);
-                typeText.Foreground(SolidColorBrush(neutralColor));
-                row.Children().Append(ipText);
-                row.Children().Append(typeText);
-                inner.Children().Append(row);
-            }
-        }
-
-        card.Child(inner);
-        stack.Children().Append(card);
-    }
-}
-
-// v0.7.6 / v0.8.3: thin adapters that route the per-kind XAML element
-// names + headlines through the templated renderer above.
+// v0.9.76: the templated card-grid renderer + endpointStatId overloads
+// were extracted to EndpointStatCardGrid.h so TelemetrySectionControl
+// can reuse them. The two thin adapters below keep their RuntimeSection
+// names and just route through the shared template.
+//
+// v0.10.9: operator directive -- "sub-agents and MCP servers displayed on
+// the Run Time view, need to be the same style as in the Telemetry view."
+// Both calls now pass compact=true so the Runtime deck uses the same
+// footer-style tile grid (7-column wide, wraps vertically) as the
+// Telemetry deck and the cross-tab SUB-AGENT GRID footer. The wide
+// stacked-card path remains available for any future surface that wants
+// it but is no longer used by Runtime.
 void RuntimeSectionControl::PopulateSubAgentCards(const ::MasterControlShell::ShellSnapshot& snapshot) {
     renderEndpointStatCardGrid(
         SubAgentsCardStack(),
@@ -1263,7 +1030,8 @@ void RuntimeSectionControl::PopulateSubAgentCards(const ::MasterControlShell::Sh
         snapshot.subAgentRuntimeStats,
         L"sub-agent",
         L"No sub-agents registered yet. Use the New Sub-Agent action above to publish one.",
-        L"No managed pool. POST /api/pools with matching id to enable autoscale.");
+        L"No managed pool. POST /api/pools with matching id to enable autoscale.",
+        /*compact=*/true);
 }
 
 void RuntimeSectionControl::PopulateMcpServerCards(const ::MasterControlShell::ShellSnapshot& snapshot) {
@@ -1273,7 +1041,8 @@ void RuntimeSectionControl::PopulateMcpServerCards(const ::MasterControlShell::S
         snapshot.mcpServerRuntimeStats,
         L"MCP server",
         L"No MCP servers registered yet. Use POST /api/runtime/mcp-servers to publish one.",
-        L"No managed pool. POST /api/pools with matching id to enable autoscale.");
+        L"No managed pool. POST /api/pools with matching id to enable autoscale.",
+        /*compact=*/true);
 }
 
 } // namespace winrt::MasterControlShell::implementation

@@ -26,8 +26,88 @@
                 </StackPanel>
             </Border>
 
-            <!-- Claude Code Control toggle (top of Overview, since it is the
-                 single highest-signal action a host operator takes). The
+            <!-- v0.9.99: SELF-TESTS + ERROR REPORTING side-by-side row
+                 immediately under the hero header. Operator directive:
+                 self tests must be VISIBLE on startup and failures must
+                 land in the Overview Error Frame. Pre-v0.9.99 both cards
+                 existed but lived below the Claude Code Control + the
+                 operational narratives + the 2x2 status grid; the
+                 operator had to scroll past five sections to find them.
+                 v0.9.99 lifts them to the position right under the hero
+                 so they're the first thing visible on the Overview tab,
+                 every time the shell boots. Two-column layout puts the
+                 two cards side-by-side so neither hides the other. -->
+            <Grid ColumnSpacing="20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- v0.9.75: VISIBLE self-test card.
+                     v0.9.99: lifted to the top of Overview so it is the
+                     first signal the operator sees on startup. -->
+                <Border Style="{StaticResource ShellCardStyle}" BorderBrush="{StaticResource ShellAccentBrush}">
+                    <StackPanel Spacing="10">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="SELF-TESTS" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                    <Border x:Name="SelfTestStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                                </StackPanel>
+                                <TextBlock x:Name="SelfTestHeadline"
+                                           Text="Self-tests pending..." Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                <TextBlock x:Name="SelfTestSubline"
+                                           Style="{StaticResource ShellLabelTextStyle}"
+                                           Foreground="{StaticResource ShellTextMutedBrush}"
+                                           Text="Boot-time probes against admin / gateway / every supervised pool / telemetry / on-disk workers." />
+                            </StackPanel>
+                            <Button Grid.Column="1" x:Name="ReRunSelfTestsButton" Click="ReRunSelfTestsButton_Click" Content="Re-run" Style="{StaticResource ShellCommandButtonStyle}" VerticalAlignment="Top" />
+                        </Grid>
+                        <ScrollViewer MaxHeight="280" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="SelfTestList" Spacing="4" />
+                        </ScrollViewer>
+                    </StackPanel>
+                </Border>
+
+                <!-- v0.8.7 Error Reporting frame.
+                     v0.9.99: lifted alongside Self-Tests so failures are
+                     the second signal the operator sees on startup. -->
+                <Border Grid.Column="1" Style="{StaticResource ShellCardStyle}" BorderBrush="{StaticResource ShellAccentBrush}">
+                    <StackPanel Spacing="10">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="ERROR REPORTING" Style="{StaticResource ShellEyebrowTextStyle}" />
+                                    <Border x:Name="ErrorReportingStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF1cf2c1" />
+                                </StackPanel>
+                                <TextBlock x:Name="ErrorReportingHeadline" Text="No errors recorded" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                                <TextBlock
+                                    Style="{StaticResource ShellLabelTextStyle}"
+                                    Text="HTTP 4xx/5xx events and error-kind activity captured by the local admin API." />
+                            </StackPanel>
+                            <Button Grid.Column="1" x:Name="ExportErrorsButton" Click="ExportErrorsButton_Click" Content="Export to JSON" Style="{StaticResource ShellCommandButtonStyle}" VerticalAlignment="Top" />
+                        </Grid>
+                        <TextBlock x:Name="ErrorExportStatusText"
+                                   Style="{StaticResource ShellLabelTextStyle}"
+                                   Foreground="{StaticResource ShellTextMutedBrush}"
+                                   TextWrapping="WrapWholeWords"
+                                   Text="" />
+                        <ScrollViewer MaxHeight="280" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="ErrorReportingList" Spacing="6" />
+                        </ScrollViewer>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- Claude Code Control toggle. The
                  ToggleSwitch fires Toggled on every state change including
                  programmatic ones, so the .cpp handler suspends the runtime
                  toggle call while a snapshot-driven IsOn update is pending. -->
@@ -95,20 +175,17 @@
                 </Border>
             </Grid>
 
-            <!-- v0.8.7 status grid. Four cards arranged 2x2 reporting
-                 the live state operator asked for: APIs and services,
-                 security stance, MCP server availability, sub-agent
-                 availability. Each card has a status dot + a brief
-                 read-out populated from snapshot every tick. -->
-            <Grid ColumnSpacing="20" RowSpacing="20">
+            <!-- v0.10.10: per operator directive the MCP SERVERS and
+                 SUB-AGENTS summary cards were removed from the Overview
+                 deck. Those decks live on Runtime and Telemetry as
+                 footer-style tile grids; the Overview status grid is
+                 now just APIS & SERVICES + SECURITY STANCE (single row).
+                 -->
+            <Grid ColumnSpacing="20">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
 
                 <Border Style="{StaticResource ShellCardStyle}">
                     <StackPanel Spacing="10">
@@ -135,69 +212,117 @@
                                    Text="Loading security stance..." />
                     </StackPanel>
                 </Border>
-
-                <Border Grid.Row="1" Style="{StaticResource ShellCardStyle}">
-                    <StackPanel Spacing="10">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock Text="MCP SERVERS" Style="{StaticResource ShellEyebrowTextStyle}" />
-                            <Border x:Name="McpServersStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
-                        </StackPanel>
-                        <TextBlock x:Name="McpServersHeadline" Text="Inventory loading" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                        <TextBlock x:Name="McpServersText"
-                                   Style="{StaticResource ShellDataTextStyle}"
-                                   Text="Loading MCP server availability..." />
-                    </StackPanel>
-                </Border>
-
-                <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource ShellCardStyle}">
-                    <StackPanel Spacing="10">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock Text="SUB-AGENTS" Style="{StaticResource ShellEyebrowTextStyle}" />
-                            <Border x:Name="SubAgentsStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
-                        </StackPanel>
-                        <TextBlock x:Name="SubAgentsHeadline" Text="Inventory loading" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                        <TextBlock x:Name="SubAgentsText"
-                                   Style="{StaticResource ShellDataTextStyle}"
-                                   Text="Loading sub-agent availability..." />
-                    </StackPanel>
-                </Border>
             </Grid>
 
-            <!-- v0.8.7 Error Reporting frame. Lists recent error-flagged
-                 events (HTTP 4xx/5xx and 'error'/'failure' kinds harvested
-                 from /api/activity in ShellRuntime::CaptureSnapshot).
-                 Export-to-JSON button serializes the visible set to
-                 %PUBLIC%\Documents\Master Control Orchestration Server\
-                 error-export-<timestamp>.json. -->
+            <!-- v0.9.76: Supervisor Agent Assignment Wizard card.
+                 Operator picks exactly one supervisor model (ChatGPT,
+                 Claude, or Grok) and MCOS generates a model-specific
+                 supervisor configuration JSON conforming to
+                 mcos.supervisor.config.v1. The native FileSavePicker
+                 then asks the operator where to save it; the operator
+                 moves that file to the LAN client running the chosen
+                 model. Status frame mirrors /api/supervisor/status so
+                 the card always shows the live state (off / pending
+                 connection / connected / revoked / error).
+                 Toggle group is single-selection: turning one provider
+                 on turns the others off; turning the active one off
+                 begins the revocation flow. -->
             <Border Style="{StaticResource ShellCardStyle}" BorderBrush="{StaticResource ShellAccentBrush}">
-                <StackPanel Spacing="10">
-                    <Grid ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Spacing="4">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <TextBlock Text="ERROR REPORTING" Style="{StaticResource ShellEyebrowTextStyle}" />
-                                <Border x:Name="ErrorReportingStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF1cf2c1" />
+                <StackPanel Spacing="12">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="SUPERVISOR AGENT" Style="{StaticResource ShellEyebrowTextStyle}" />
+                        <Border x:Name="SupervisorStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                    </StackPanel>
+                    <TextBlock x:Name="SupervisorHeadlineText" Text="No supervisor assigned." Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock x:Name="SupervisorSublineText"
+                               Style="{StaticResource ShellLabelTextStyle}"
+                               TextWrapping="Wrap"
+                               Text="Choose one AI model to supervise coding agents and make project decisions through MCOS. Generate Config will save a provider-specific JSON to the location you choose; move it to the LAN client running that model and import it there." />
+                    <StackPanel Spacing="6">
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="ChatGPT" Style="{StaticResource ShellDataTextStyle}" />
+                                <TextBlock Text="Recommended for design-authority supervision and project-level decision review."
+                                           Style="{StaticResource ShellLabelTextStyle}"
+                                           Foreground="{StaticResource ShellTextMutedBrush}"
+                                           TextWrapping="Wrap" />
                             </StackPanel>
-                            <TextBlock x:Name="ErrorReportingHeadline" Text="No errors recorded" Style="{StaticResource ShellSectionTitleTextStyle}" />
-                            <TextBlock
-                                Style="{StaticResource ShellLabelTextStyle}"
-                                Text="HTTP 4xx/5xx events and error-kind activity captured by the local admin API." />
-                        </StackPanel>
-                        <Button Grid.Column="1" x:Name="ExportErrorsButton" Click="ExportErrorsButton_Click" Content="Export to JSON" Style="{StaticResource ShellCommandButtonStyle}" VerticalAlignment="Top" />
-                    </Grid>
-                    <TextBlock x:Name="ErrorExportStatusText"
+                            <ToggleSwitch Grid.Column="1" x:Name="SupervisorChatGptToggle"
+                                          Tag="chatgpt"
+                                          OffContent="" OnContent=""
+                                          Toggled="SupervisorChatGptToggle_Toggled" />
+                        </Grid>
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Claude" Style="{StaticResource ShellDataTextStyle}" />
+                                <TextBlock Text="Recommended for Claude Code coordination and local coding-agent workflows."
+                                           Style="{StaticResource ShellLabelTextStyle}"
+                                           Foreground="{StaticResource ShellTextMutedBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="SupervisorClaudeToggle"
+                                          Tag="claude"
+                                          OffContent="" OnContent=""
+                                          Toggled="SupervisorClaudeToggle_Toggled" />
+                        </Grid>
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Grok" Style="{StaticResource ShellDataTextStyle}" />
+                                <TextBlock Text="Recommended for alternate review or independent validation."
+                                           Style="{StaticResource ShellLabelTextStyle}"
+                                           Foreground="{StaticResource ShellTextMutedBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="SupervisorGrokToggle"
+                                          Tag="grok"
+                                          OffContent="" OnContent=""
+                                          Toggled="SupervisorGrokToggle_Toggled" />
+                        </Grid>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button x:Name="SupervisorGenerateButton"
+                                Content="Generate Config &amp; Save..."
+                                IsEnabled="False"
+                                Click="SupervisorGenerateButton_Click"
+                                Style="{StaticResource ShellCommandButtonStyle}" />
+                        <Button x:Name="SupervisorRevokeButton"
+                                Content="Revoke Active"
+                                IsEnabled="False"
+                                Click="SupervisorRevokeButton_Click"
+                                Style="{StaticResource ShellCommandButtonStyle}" />
+                    </StackPanel>
+                    <TextBlock x:Name="SupervisorStatusText"
                                Style="{StaticResource ShellLabelTextStyle}"
                                Foreground="{StaticResource ShellTextMutedBrush}"
-                               TextWrapping="WrapWholeWords"
+                               TextWrapping="Wrap"
+                               Text="Status: off." />
+                    <!-- v0.9.79: assignment / config / expires / heartbeat detail line.
+                         Populated by ApplySupervisorCard whenever
+                         snapshot.supervisorStatus.assignmentId is set. Stays
+                         hidden when there is no active assignment so the
+                         off-state card doesn't show empty fields. -->
+                    <TextBlock x:Name="SupervisorDetailText"
+                               Style="{StaticResource ShellLabelTextStyle}"
+                               Foreground="{StaticResource ShellTextMutedBrush}"
+                               FontFamily="Consolas, Cascadia Mono, Courier New"
+                               TextWrapping="Wrap"
+                               Visibility="Collapsed"
                                Text="" />
-                    <ScrollViewer MaxHeight="280" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto">
-                        <StackPanel x:Name="ErrorReportingList" Spacing="6" />
-                    </ScrollViewer>
                 </StackPanel>
             </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

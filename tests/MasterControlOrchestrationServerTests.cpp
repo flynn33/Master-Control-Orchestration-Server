@@ -13,10 +13,22 @@
 #include "MasterControl/MasterControlModels.h"
 #include "MasterControl/MasterControlVersion.h"
 #include "MasterControl/McpGatewayAdapters.h"
+#include "MasterControl/SupervisorAssignment.h"
+// v0.9.76: Supervisor Agent Assignment Wizard backend tests use the
+// service implementation directly. The header lives next to the .cpp
+// in src/MasterControlApp/; the relative include matches the
+// MasterControlApp target's PUBLIC include path so this resolves
+// without extending the test target's include dirs.
+#include "../src/MasterControlApp/SupervisorAssignmentService.h"
 
 #include <nlohmann/json.hpp>
 
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
+#include <thread>
 
 namespace {
 
@@ -1347,6 +1359,526 @@ bool testGovernanceDeferredActionShape() {
     return ok;
 }
 
+// v0.9.76: Supervisor Agent Assignment Wizard backend tests. Cover the
+// schemas, capability defaults, provider/state enum string mappings,
+// select-and-issue happy path, reassignment supersedes, revoke, config
+// expiration semantics, and connect-confirm capability gating. Each
+// test is hermetic: the service is constructed with a unique temp
+// directory so the persisted JSON file from one test never leaks into
+// another.
+
+namespace {
+std::filesystem::path makeTempSupervisorDir(const std::string& tag) {
+    auto temp = std::filesystem::temp_directory_path() / ("mcos-supervisor-" + tag);
+    std::error_code ec;
+    std::filesystem::remove_all(temp, ec);
+    std::filesystem::create_directories(temp, ec);
+    return temp;
+}
+
+MasterControl::SupervisorAssignmentServiceContext makeSupervisorContext(
+        const std::filesystem::path& dir) {
+    MasterControl::SupervisorAssignmentServiceContext ctx;
+    ctx.dataDirectory = dir;
+    ctx.mcpEndpoint = "http://192.168.1.7:7300/mcp";
+    ctx.discoveryEndpoint = "http://192.168.1.7:7300/.well-known/mcos.json";
+    ctx.serverDisplayName = "Master Control Orchestration Server";
+    ctx.fingerprintSeed = "test-seed";
+    ctx.defaultConfigTtl = std::chrono::seconds(3600);
+    return ctx;
+}
+} // namespace
+
+bool testSupervisorProviderRoundTrip() {
+    bool ok = true;
+    ok &= expect(MasterControl::providerFromString("chatgpt") == MasterControl::SupervisorProvider::ChatGpt,
+                 "providerFromString chatgpt -> ChatGpt.");
+    ok &= expect(MasterControl::providerFromString("claude") == MasterControl::SupervisorProvider::Claude,
+                 "providerFromString claude -> Claude.");
+    ok &= expect(MasterControl::providerFromString("grok") == MasterControl::SupervisorProvider::Grok,
+                 "providerFromString grok -> Grok.");
+    ok &= expect(MasterControl::providerFromString("codex") == MasterControl::SupervisorProvider::Unknown,
+                 "providerFromString codex -> Unknown (collapsed-identity guard).");
+    ok &= expect(std::string(MasterControl::providerIdString(MasterControl::SupervisorProvider::ChatGpt)) == "chatgpt",
+                 "providerIdString ChatGpt -> chatgpt.");
+    ok &= expect(std::string(MasterControl::providerIdString(MasterControl::SupervisorProvider::Claude)) == "claude",
+                 "providerIdString Claude -> claude.");
+    ok &= expect(std::string(MasterControl::providerIdString(MasterControl::SupervisorProvider::Grok)) == "grok",
+                 "providerIdString Grok -> grok.");
+    return ok;
+}
+
+bool testSupervisorStateRoundTrip() {
+    bool ok = true;
+    const std::vector<std::pair<MasterControl::SupervisorState, std::string>> cases = {
+        { MasterControl::SupervisorState::Off,                "off" },
+        { MasterControl::SupervisorState::ConfigGenerated,    "config_generated" },
+        { MasterControl::SupervisorState::PendingConnection,  "pending_connection" },
+        { MasterControl::SupervisorState::Connected,          "connected" },
+        { MasterControl::SupervisorState::Disconnected,       "disconnected" },
+        { MasterControl::SupervisorState::Revoked,            "revoked" },
+        { MasterControl::SupervisorState::Error,              "error" }
+    };
+    for (const auto& [state, label] : cases) {
+        ok &= expect(std::string(MasterControl::supervisorStateString(state)) == label,
+                     "supervisorStateString preserves enum->label mapping.");
+        ok &= expect(MasterControl::supervisorStateFromString(label) == state,
+                     "supervisorStateFromString preserves label->enum mapping.");
+    }
+    return ok;
+}
+
+bool testSupervisorDefaultCapabilitiesAreAutonomousScoped() {
+    bool ok = true;
+    const auto allowed = MasterControl::defaultAutonomousSupervisorCapabilities();
+    ok &= expect(allowed.size() == 8,
+                 "Autonomous supervisor exposes exactly the 8 capabilities listed in SECURITY_AND_CAPABILITY_MODEL.md.");
+    const auto forbidden = MasterControl::forbiddenAutonomousSupervisorCapabilities();
+    for (const auto& deny : forbidden) {
+        const bool inAllowed = std::find(allowed.begin(), allowed.end(), deny) != allowed.end();
+        ok &= expect(!inAllowed,
+                     "No forbidden capability appears in the default allowed set.");
+    }
+    return ok;
+}
+
+bool testSupervisorSelectAndIssueChatGpt() {
+    auto dir = makeTempSupervisorDir("select-chatgpt");
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    MasterControl::SupervisorSelectRequest req;
+    req.provider = MasterControl::SupervisorProvider::ChatGpt;
+    req.mode = MasterControl::SupervisorMode::AutonomousSupervisor;
+    req.exclusive = true;
+    auto issue = svc->selectAndIssue(req);
+    bool ok = true;
+    ok &= expect(issue.ok, "selectAndIssue(ChatGpt) succeeds.");
+    ok &= expect(issue.fileName == "mcos-supervisor-chatgpt.config.json",
+                 "Generated filename matches CONFIG_GENERATION_SPEC default.");
+    ok &= expect(!issue.configJson.empty(), "configJson is non-empty.");
+    try {
+        const auto parsed = nlohmann::json::parse(issue.configJson);
+        ok &= expect(parsed.value("schema", std::string{}) == "mcos.supervisor.config.v1",
+                     "Generated config carries the v1 schema id.");
+        ok &= expect(parsed["supervisor"]["providerId"].get<std::string>() == "chatgpt",
+                     "Supervisor providerId is chatgpt.");
+        ok &= expect(parsed["supervisor"]["role"].get<std::string>() == "supervisor",
+                     "Supervisor role is the literal 'supervisor'.");
+        ok &= expect(parsed["supervisor"]["mode"].get<std::string>() == "autonomous_supervisor",
+                     "Supervisor mode is autonomous_supervisor.");
+        ok &= expect(parsed["server"]["mcpEndpoint"].get<std::string>().find("/mcp") != std::string::npos,
+                     "Server endpoint carries the gateway path.");
+        ok &= expect(parsed["auth"]["mode"].get<std::string>() == "token_reference",
+                     "Auth mode is token_reference, not raw bearer.");
+        ok &= expect(parsed["capabilities"].is_array() && parsed["capabilities"].size() >= 8,
+                     "Capabilities array carries the 8 autonomous capabilities.");
+    } catch (const std::exception&) {
+        ok &= expect(false, "Generated config parses as JSON.");
+    }
+    return ok;
+}
+
+bool testSupervisorSelectRejectsUnknownProvider() {
+    auto dir = makeTempSupervisorDir("reject-unknown");
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    MasterControl::SupervisorSelectRequest req;
+    req.provider = MasterControl::SupervisorProvider::Unknown;
+    auto issue = svc->selectAndIssue(req);
+    bool ok = true;
+    ok &= expect(!issue.ok, "selectAndIssue(Unknown) is rejected.");
+    ok &= expect(!issue.errorMessage.empty(), "Rejection carries an errorMessage.");
+    return ok;
+}
+
+bool testSupervisorReassignmentSupersedes() {
+    auto dir = makeTempSupervisorDir("reassign");
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    MasterControl::SupervisorSelectRequest first;
+    first.provider = MasterControl::SupervisorProvider::ChatGpt;
+    auto firstIssue = svc->selectAndIssue(first);
+    bool ok = expect(firstIssue.ok, "First select succeeds.");
+    const auto firstAssignmentId = firstIssue.assignment.assignmentId;
+
+    MasterControl::SupervisorSelectRequest second;
+    second.provider = MasterControl::SupervisorProvider::Claude;
+    auto secondIssue = svc->selectAndIssue(second);
+    ok &= expect(secondIssue.ok, "Second select succeeds.");
+    ok &= expect(secondIssue.assignment.assignmentId != firstAssignmentId,
+                 "Reassignment mints a new assignmentId.");
+    auto current = svc->getCurrentAssignment();
+    ok &= expect(current.provider == MasterControl::SupervisorProvider::Claude,
+                 "Current assignment is now Claude.");
+    return ok;
+}
+
+bool testSupervisorRevokeClearsActive() {
+    auto dir = makeTempSupervisorDir("revoke");
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    MasterControl::SupervisorSelectRequest req;
+    req.provider = MasterControl::SupervisorProvider::Grok;
+    svc->selectAndIssue(req);
+    svc->revoke("test reason");
+    const auto status = svc->getStatus();
+    bool ok = true;
+    ok &= expect(status.state == MasterControl::SupervisorState::Revoked,
+                 "Revoke transitions state to revoked.");
+    ok &= expect(!status.active,
+                 "Revoked assignment is not active.");
+    return ok;
+}
+
+// v0.10.1: regression for the dashboard "Config id does not match the
+// active assignment." sticky-error bug. A confirm rejection populates
+// lastErrorMessage. If the operator subsequently revokes (or, in the
+// regenerate path, re-issues a fresh config), the leftover message
+// from the prior lifecycle should not still render in the dashboard's
+// supervisor card -- the operator's voluntary state transition is the
+// authoritative new state. revoke() and regenerateConfig() both clear
+// lastErrorMessage as of v0.10.1.
+bool testSupervisorRevokeClearsStaleErrorMessage() {
+    auto dir = makeTempSupervisorDir("revoke-clears-error");
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    MasterControl::SupervisorSelectRequest req;
+    req.provider = MasterControl::SupervisorProvider::ChatGpt;
+    const auto issue = svc->selectAndIssue(req);
+    bool ok = expect(issue.ok, "selectAndIssue ChatGpt succeeds.");
+
+    // Trigger a confirm rejection so lastErrorMessage is populated.
+    MasterControl::SupervisorConnectionClaim badClaim;
+    badClaim.provider = MasterControl::SupervisorProvider::ChatGpt;
+    badClaim.configId = "CFG-WRONG-ID";
+    badClaim.clientId = "rogue-client";
+    badClaim.capabilities = { "supervisor.get_context" };
+    const auto reject = svc->confirmConnection(badClaim);
+    ok &= expect(!reject.ok, "Wrong-config-id confirm is rejected.");
+
+    auto pre = svc->getStatus();
+    ok &= expect(!pre.lastErrorMessage.empty(),
+                 "Pre-revoke status carries the rejection error message.");
+
+    // Operator-initiated revoke should clear the leftover message.
+    svc->revoke("Operator clicked Revoke Active.");
+    auto post = svc->getStatus();
+    ok &= expect(post.state == MasterControl::SupervisorState::Revoked,
+                 "Post-revoke state is Revoked.");
+    ok &= expect(post.lastErrorMessage.empty(),
+                 "Post-revoke lastErrorMessage is cleared.");
+    return ok;
+}
+
+// v0.10.1: covers the legacy state migration. A persisted file written
+// by a pre-v0.10.1 service can carry state=Revoked together with a
+// non-empty lastErrorMessage from the prior lifecycle. Loading that
+// record into a v0.10.1+ service should drop the message because the
+// state is terminal. We synthesize the legacy shape on disk, then
+// instantiate a service over the same dataDirectory and assert the
+// loaded status carries an empty lastErrorMessage.
+bool testSupervisorLoadDropsStaleErrorOnTerminalState() {
+    auto dir = makeTempSupervisorDir("load-drops-stale-error");
+    const auto file = dir / "supervisor-assignment.json";
+    nlohmann::json legacy = {
+        {"assignmentId",       "SUP-LEGACY-1"},
+        {"providerId",         "chatgpt"},
+        {"clientId",           ""},
+        {"mode",               "autonomous_supervisor"},
+        {"exclusive",          true},
+        {"state",              "revoked"},
+        {"configId",           "CFG-LEGACY-1"},
+        {"issuedAtUtc",        "2026-05-10T00:00:00Z"},
+        {"expiresAtUtc",       "2026-05-10T03:00:00Z"},
+        {"connectedAtUtc",     ""},
+        {"lastHeartbeatUtc",   ""},
+        {"revokedAtUtc",       "2026-05-10T01:30:00Z"},
+        {"revocationReason",   "Operator clicked Revoke Active."},
+        {"tokenRef",           "mcos-supervisor-token:CFG-LEGACY-1"},
+        {"serverFingerprint",  "sha256:legacy"},
+        {"auditCorrelationId", "AUD-legacy"},
+        {"lastErrorMessage",   "Config id does not match the active assignment."},
+        {"allowedCapabilities", nlohmann::json::array({"supervisor.get_context"})}
+    };
+    {
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << legacy.dump(2);
+    }
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    const auto status = svc->getStatus();
+    bool ok = true;
+    ok &= expect(status.state == MasterControl::SupervisorState::Revoked,
+                 "Loaded state is Revoked.");
+    ok &= expect(status.lastErrorMessage.empty(),
+                 "Load-time migration drops the stale lastErrorMessage on terminal state.");
+
+    // Migration also persists the cleaned record so the on-disk file
+    // converges without needing another operator action.
+    {
+        std::ifstream in(file, std::ios::binary);
+        std::stringstream buf;
+        buf << in.rdbuf();
+        const auto reread = nlohmann::json::parse(buf.str());
+        ok &= expect(reread.value("lastErrorMessage", std::string{"<MISSING>"}).empty(),
+                     "On-disk lastErrorMessage is empty after load-migration persist.");
+    }
+    return ok;
+}
+
+bool testSupervisorRegenerateClearsStaleErrorMessage() {
+    auto dir = makeTempSupervisorDir("regenerate-clears-error");
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    MasterControl::SupervisorSelectRequest req;
+    req.provider = MasterControl::SupervisorProvider::Claude;
+    const auto issue = svc->selectAndIssue(req);
+    bool ok = expect(issue.ok, "selectAndIssue Claude succeeds.");
+
+    // Trigger a confirm rejection so lastErrorMessage is populated.
+    MasterControl::SupervisorConnectionClaim badClaim;
+    badClaim.provider = MasterControl::SupervisorProvider::ChatGpt;  // wrong provider
+    badClaim.configId = issue.assignment.configId;
+    badClaim.clientId = "wrong-provider-client";
+    badClaim.capabilities = { "supervisor.get_context" };
+    const auto reject = svc->confirmConnection(badClaim);
+    ok &= expect(!reject.ok, "Wrong-provider confirm is rejected.");
+
+    auto pre = svc->getStatus();
+    ok &= expect(!pre.lastErrorMessage.empty(),
+                 "Pre-regenerate status carries the rejection error message.");
+
+    // Regenerate should clear the leftover message and re-issue a fresh config.
+    const auto regen = svc->regenerateConfig();
+    ok &= expect(regen.ok, "regenerateConfig succeeds on active assignment.");
+
+    auto post = svc->getStatus();
+    ok &= expect(post.state == MasterControl::SupervisorState::ConfigGenerated,
+                 "Post-regenerate state is ConfigGenerated.");
+    ok &= expect(post.lastErrorMessage.empty(),
+                 "Post-regenerate lastErrorMessage is cleared.");
+    return ok;
+}
+
+bool testSupervisorConfirmConnectionHappyPath() {
+    auto dir = makeTempSupervisorDir("confirm-happy");
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    MasterControl::SupervisorSelectRequest req;
+    req.provider = MasterControl::SupervisorProvider::Claude;
+    const auto issue = svc->selectAndIssue(req);
+    bool ok = expect(issue.ok, "selectAndIssue Claude succeeds.");
+
+    MasterControl::SupervisorConnectionClaim claim;
+    claim.provider = MasterControl::SupervisorProvider::Claude;
+    claim.configId = issue.assignment.configId;
+    claim.clientId = "claude-desktop-flynn-main";
+    claim.capabilities = {
+        "supervisor.get_context",
+        "supervisor.list_pending_decisions",
+        "supervisor.submit_decision"
+    };
+    const auto result = svc->confirmConnection(claim);
+    ok &= expect(result.ok, "Valid claim is accepted.");
+    ok &= expect(result.newState == MasterControl::SupervisorState::Connected,
+                 "State transitions to Connected.");
+    return ok;
+}
+
+bool testSupervisorConfirmRejectsForbiddenCapability() {
+    auto dir = makeTempSupervisorDir("confirm-forbidden");
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    MasterControl::SupervisorSelectRequest req;
+    req.provider = MasterControl::SupervisorProvider::ChatGpt;
+    const auto issue = svc->selectAndIssue(req);
+
+    MasterControl::SupervisorConnectionClaim claim;
+    claim.provider = MasterControl::SupervisorProvider::ChatGpt;
+    claim.configId = issue.assignment.configId;
+    claim.clientId = "chatgpt-desktop-flynn-main";
+    // Forbidden raw-shell tool: must be rejected per
+    // SECURITY_AND_CAPABILITY_MODEL.md. Even if the supervisor client
+    // tries to negotiate it on connect, the server-side check denies.
+    claim.capabilities = { "supervisor.get_context", "worker.run_shell" };
+    const auto result = svc->confirmConnection(claim);
+    bool ok = true;
+    ok &= expect(!result.ok, "Forbidden capability is rejected at connect.");
+    ok &= expect(!result.errorMessage.empty(),
+                 "Rejection carries a forbidden-capability errorMessage.");
+    return ok;
+}
+
+bool testSupervisorConfirmRejectsProviderMismatch() {
+    auto dir = makeTempSupervisorDir("confirm-mismatch");
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    MasterControl::SupervisorSelectRequest req;
+    req.provider = MasterControl::SupervisorProvider::Grok;
+    const auto issue = svc->selectAndIssue(req);
+
+    MasterControl::SupervisorConnectionClaim claim;
+    claim.provider = MasterControl::SupervisorProvider::Claude;  // mismatch
+    claim.configId = issue.assignment.configId;
+    claim.clientId = "claude-desktop-flynn-main";
+    claim.capabilities = { "supervisor.get_context" };
+    const auto result = svc->confirmConnection(claim);
+    return expect(!result.ok, "Provider mismatch is rejected.");
+}
+
+bool testSupervisorPersistenceSurvivesServiceRecreation() {
+    auto dir = makeTempSupervisorDir("persistence");
+    {
+        auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+        MasterControl::SupervisorSelectRequest req;
+        req.provider = MasterControl::SupervisorProvider::ChatGpt;
+        svc->selectAndIssue(req);
+    }
+    // Recreate the service against the same dataDirectory; the on-disk
+    // record must rehydrate the assignment.
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    const auto current = svc->getCurrentAssignment();
+    return expect(current.provider == MasterControl::SupervisorProvider::ChatGpt,
+                  "Service restart preserves the on-disk supervisor assignment.");
+}
+
+bool testSupervisorParseSelectRequestRejectsBreakGlass() {
+    nlohmann::json body;
+    body["providerId"] = "chatgpt";
+    body["mode"] = "break_glass_admin";
+    MasterControl::SupervisorSelectRequest out;
+    const auto err = MasterControl::parseSelectRequest(body, out);
+    return expect(!err.empty(),
+                  "parseSelectRequest rejects break_glass_admin from the wizard surface.");
+}
+
+bool testSupervisorHeartbeatWatchdogIdleStateNoTransition() {
+    // v0.9.78: the watchdog only acts on Connected. Idle (off) and
+    // pending (config_generated) assignments are not subject to the
+    // disconnect timeout.
+    auto dir = makeTempSupervisorDir("watchdog-idle");
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    bool ok = true;
+    ok &= expect(!svc->expireConnectionIfStale(std::chrono::seconds(0)),
+                 "Watchdog no-ops on Off state.");
+    MasterControl::SupervisorSelectRequest req;
+    req.provider = MasterControl::SupervisorProvider::Claude;
+    svc->selectAndIssue(req);
+    ok &= expect(!svc->expireConnectionIfStale(std::chrono::seconds(0)),
+                 "Watchdog no-ops on ConfigGenerated state.");
+    return ok;
+}
+
+bool testSupervisorInstructionsAreProviderSpecific() {
+    // v0.9.83: the generated config's instructions block must carry
+    // provider-specific guidance. Pre-v0.9.83 every provider got the
+    // same four generic steps, which were actionable for none of them.
+    bool ok = true;
+    auto run = [&](MasterControl::SupervisorProvider provider,
+                   const std::string& tag,
+                   const std::string& expectMarker) {
+        auto dir = makeTempSupervisorDir("instructions-" + tag);
+        auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+        MasterControl::SupervisorSelectRequest req;
+        req.provider = provider;
+        const auto issue = svc->selectAndIssue(req);
+        if (!issue.ok) {
+            return expect(false, "selectAndIssue should succeed for provider-specific instructions test.");
+        }
+        try {
+            const auto cfg = nlohmann::json::parse(issue.configJson);
+            const auto& steps = cfg["instructions"]["steps"];
+            const std::string joined = steps.dump();
+            return expect(joined.find(expectMarker) != std::string::npos,
+                          ("Instructions for " + tag + " carry provider-specific marker.").c_str());
+        } catch (...) {
+            return expect(false, "Generated config parses for provider-specific instructions test.");
+        }
+    };
+    // Claude config should reference its CLI / Desktop paths.
+    ok &= run(MasterControl::SupervisorProvider::Claude, "claude", "Claude Code");
+    // ChatGPT config should reference its custom connector setup.
+    ok &= run(MasterControl::SupervisorProvider::ChatGpt, "chatgpt", "Custom Connector");
+    // Grok config should reference the MCP bridge wording.
+    ok &= run(MasterControl::SupervisorProvider::Grok, "grok", "Grok MCP bridge");
+    return ok;
+}
+
+bool testSupervisorConfirmDefaultDenyOnEmptyAllowedSet() {
+    // v0.9.81 regression test for the default-deny tightening in
+    // confirmConnection. Construct an assignment via the autonomous
+    // happy-path, then forcibly downgrade the persisted mode field to
+    // a value whose capabilitiesForMode() returns an empty list. Any
+    // capability claim must then be rejected, even ones that aren't on
+    // the forbidden list. Pre-v0.9.81 the empty-allowed list short-
+    // circuit accepted everything not explicitly forbidden.
+    auto dir = makeTempSupervisorDir("default-deny");
+    {
+        auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+        MasterControl::SupervisorSelectRequest req;
+        req.provider = MasterControl::SupervisorProvider::Claude;
+        svc->selectAndIssue(req);
+    }
+    // Rewrite the persisted assignment JSON to set mode=disabled and
+    // remove allowedCapabilities so the rehydrated service falls into
+    // the empty-allowed-set path. Force a fresh service to load the
+    // tampered record.
+    const auto persisted = dir / "supervisor-assignment.json";
+    std::ifstream in(persisted);
+    std::stringstream raw;
+    raw << in.rdbuf();
+    in.close();
+    auto body = nlohmann::json::parse(raw.str());
+    body["mode"] = "disabled";
+    body["allowedCapabilities"] = nlohmann::json::array();
+    {
+        std::ofstream out(persisted);
+        out << body.dump(2);
+    }
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    const auto current = svc->getCurrentAssignment();
+
+    MasterControl::SupervisorConnectionClaim claim;
+    claim.provider = MasterControl::SupervisorProvider::Claude;
+    claim.configId = current.configId;
+    claim.clientId = "claude-default-deny-test";
+    // Single benign capability that is NOT on the forbidden list. The
+    // pre-v0.9.81 bug would have accepted this since the allowed list
+    // is empty. The fix rejects it with "Capability not allowed in
+    // current mode".
+    claim.capabilities = { "supervisor.get_context" };
+    const auto result = svc->confirmConnection(claim);
+    bool ok = true;
+    ok &= expect(!result.ok,
+                 "Default-deny: empty allowed set rejects any capability claim.");
+    ok &= expect(result.errorMessage.find("Capability not allowed") != std::string::npos,
+                 "Default-deny error message names the not-allowed path.");
+    return ok;
+}
+
+bool testSupervisorHeartbeatWatchdogFlipsConnectedToDisconnected() {
+    // v0.9.78: simulate a Connected assignment with a heartbeat from
+    // an hour ago. The watchdog with a 5s threshold must flip it to
+    // Disconnected.
+    auto dir = makeTempSupervisorDir("watchdog-stale");
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    MasterControl::SupervisorSelectRequest req;
+    req.provider = MasterControl::SupervisorProvider::Grok;
+    const auto issue = svc->selectAndIssue(req);
+    MasterControl::SupervisorConnectionClaim claim;
+    claim.provider = MasterControl::SupervisorProvider::Grok;
+    claim.configId = issue.assignment.configId;
+    claim.clientId = "grok-desktop-flynn-main";
+    claim.capabilities = { "supervisor.get_context" };
+    const auto result = svc->confirmConnection(claim);
+    bool ok = expect(result.ok, "confirmConnection succeeds for watchdog setup.");
+    // The watchdog with a 0s threshold should immediately flip the
+    // freshly-connected assignment, since lastHeartbeatUtc == now and
+    // any non-zero elapsed seconds counts as stale at threshold=0.
+    // Sleep 2s to ensure now > heartbeat + 1 second.
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    ok &= expect(svc->expireConnectionIfStale(std::chrono::seconds(1)),
+                 "Watchdog flips Connected -> Disconnected when heartbeat is older than threshold.");
+    const auto status = svc->getStatus();
+    ok &= expect(status.state == MasterControl::SupervisorState::Disconnected,
+                 "Final state is Disconnected after watchdog.");
+    // Re-running the watchdog on a Disconnected assignment must be a
+    // no-op (the state transition is one-way per sweep).
+    ok &= expect(!svc->expireConnectionIfStale(std::chrono::seconds(0)),
+                 "Watchdog is idempotent: re-run on Disconnected returns false.");
+    return ok;
+}
+
 int main() {
     bool ok = true;
     ok &= testDefaultConfiguration();
@@ -1414,5 +1946,25 @@ int main() {
     ok &= testClientHeartbeatJsonRoundTrip();
     ok &= testClientPresenceShape();
     ok &= testGatewayTrafficSnapshotShape();
+    // v0.9.76 Supervisor Agent Assignment Wizard backend tests.
+    ok &= testSupervisorProviderRoundTrip();
+    ok &= testSupervisorStateRoundTrip();
+    ok &= testSupervisorDefaultCapabilitiesAreAutonomousScoped();
+    ok &= testSupervisorSelectAndIssueChatGpt();
+    ok &= testSupervisorSelectRejectsUnknownProvider();
+    ok &= testSupervisorReassignmentSupersedes();
+    ok &= testSupervisorRevokeClearsActive();
+    ok &= testSupervisorRevokeClearsStaleErrorMessage();
+    ok &= testSupervisorLoadDropsStaleErrorOnTerminalState();
+    ok &= testSupervisorRegenerateClearsStaleErrorMessage();
+    ok &= testSupervisorConfirmConnectionHappyPath();
+    ok &= testSupervisorConfirmRejectsForbiddenCapability();
+    ok &= testSupervisorConfirmRejectsProviderMismatch();
+    ok &= testSupervisorPersistenceSurvivesServiceRecreation();
+    ok &= testSupervisorParseSelectRequestRejectsBreakGlass();
+    ok &= testSupervisorInstructionsAreProviderSpecific();
+    ok &= testSupervisorConfirmDefaultDenyOnEmptyAllowedSet();
+    ok &= testSupervisorHeartbeatWatchdogIdleStateNoTransition();
+    ok &= testSupervisorHeartbeatWatchdogFlipsConnectedToDisconnected();
     return ok ? 0 : 1;
 }

@@ -334,20 +334,28 @@ std::vector<RuntimeEndpoint> buildDefaultSeededEndpointsForHost(std::string host
     // specialization is the category the operator scans by; description
     // is the muted body line. Reachability dot will paint red until a
     // real worker process binds to the listed port.
+    // v0.10.0: Docker Control MCP and Playwright MCP removed at operator
+    // direction. MCOS hard rule .claude/rules/10-windows-native-cpp.md
+    // already classed Docker as development-only, not the Windows
+    // production path. The container surface now lives outside the MCOS
+    // baseline; operators who need container automation register a
+    // pool template explicitly. Playwright was a vendor-specific
+    // browser-automation seed that overlapped with chrome-devtools and
+    // generic computer-use; its removal aligns the catalog with the
+    // intended LAN MCP Gateway scope and shrinks the seed set from 23
+    // to 21.
     struct McpSeed { const char* id; const char* displayName; uint16_t port; const char* specialization; const char* description; };
-    const std::array<McpSeed, 23> baselineMcpCatalog = {{
+    const std::array<McpSeed, 21> baselineMcpCatalog = {{
         { "filesystem",                 "Filesystem MCP",                 7101, "filesystem",     "Read/write files and directories under operator-allowed roots." },
         { "memory",                     "Memory MCP",                     7102, "memory",         "Short-term scratch memory shared across MCP-driven sessions." },
         { "sequential-thinking",        "Sequential Thinking MCP",        7103, "reasoning",      "Step-by-step planning + reasoning trace surface for agent loops." },
         { "computer-use",               "Computer Use MCP",               7104, "automation",     "Anthropic-style computer-use primitives: screenshot, click, type, scroll." },
         { "desktop-control",            "Desktop Control MCP",            7105, "automation",     "Higher-level desktop control: window management, focus, app launch." },
-        { "playwright",                 "Playwright MCP",                 7106, "browser",        "Local browser automation via Playwright -- headed Chrome / Firefox / WebKit." },
         { "chrome-devtools",            "Chrome DevTools MCP",            7107, "browser",        "Chrome DevTools Protocol surface: DOM, network, console, performance." },
         { "terminal-shell",             "Terminal / Shell MCP",           7108, "shell",          "Execute shell commands in supervised PowerShell / cmd / bash sessions." },
         { "local-git",                  "Local Git MCP",                  7109, "vcs",            "Local git operations: status, diff, commit, branch, log, blame." },
         { "sqlite",                     "SQLite MCP",                     7110, "database",       "Direct SQLite query surface against operator-attached *.sqlite files." },
         { "local-database",             "Local Database MCP",             7111, "database",       "Generic local DB driver (Postgres / MySQL / SQL Server) over operator-supplied connection strings." },
-        { "docker-control",             "Docker Control MCP",             7112, "container",      "Docker engine API surface: list / start / stop / logs / exec on local containers." },
         { "file-search",                "File Search MCP",                7113, "filesystem",     "Indexed full-text search across operator-allowed file roots (ripgrep-backed)." },
         { "code-execution-repl",        "Code Execution / REPL MCP",      7114, "execution",      "Sandboxed Python / Node / PowerShell REPL for ad-hoc code evaluation." },
         { "local-test-runner",          "Local Test Runner MCP",          7115, "testing",        "Run pytest / jest / ctest / dotnet-test in the operator's repo and stream results." },

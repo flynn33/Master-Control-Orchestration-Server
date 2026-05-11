@@ -5,6 +5,7 @@
 #include "pch.h"
 
 #include "OverviewSectionControl.xaml.h"
+#include "ShellFormatting.h"
 
 #if __has_include("OverviewSectionControl.g.cpp")
 #include "OverviewSectionControl.g.cpp"
@@ -12,8 +13,14 @@
 
 // v0.8.7: error-export needs Win32 file APIs + KnownFolders for the
 // public documents path.
+// v0.9.76: Supervisor wizard adds IFileSaveDialog (ShObjIdl_core.h via
+// ShlObj.h), ComPtr (wrl/client.h), and KnownFolders for the
+// "Documents/MCOS/SupervisorConfigs" default folder.
+#include <algorithm>
 #include <KnownFolders.h>
 #include <ShlObj.h>
+#include <ShObjIdl.h>
+#include <wrl/client.h>
 #include <sstream>
 
 namespace winrt::MasterControlShell::implementation {
@@ -37,11 +44,29 @@ void OverviewSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnap
         : L"ADMIN API OFFLINE · CACHED STATE");
 
     // v0.8.7 status grid + error reporting frame.
+    // v0.10.10: MCP SERVERS and SUB-AGENTS summary cards removed from the
+    // Overview deck per operator directive. Those decks live on Runtime
+    // and Telemetry as footer-style tile grids; the Overview status grid
+    // now carries only APIS & SERVICES + SECURITY STANCE.
     ApplyApisAndServicesCard(snapshot);
     ApplySecurityStanceCard(snapshot);
-    ApplyMcpServersCard(snapshot);
-    ApplySubAgentsCard(snapshot);
+    // v0.9.75: visible self-tests precede the error frame so the
+    // operator sees the affirmative pass/fail roster before
+    // scrolling into the failure list.
+    ApplySelfTestCard(snapshot);
+    // v0.9.76: Supervisor Agent card lives between Self-Tests and Error
+    // Reporting. The card mirrors /api/supervisor/status into the
+    // ShellSnapshot.supervisorStatus fields on every tick, and routes
+    // the operator's selection through ShellRuntime helpers that POST
+    // /api/supervisor/* and surface the result back through this
+    // section.
+    ApplySupervisorCard(snapshot);
     ApplyErrorReportingCard(snapshot);
+    // Cache bind-host + port so async handlers (FileSavePicker dialog
+    // running off the UI thread) don't have to re-resolve them while
+    // the operator is in the dialog. Refreshes every snapshot tick.
+    supervisorBindHost_ = snapshot.bindAddress;
+    supervisorBindPort_ = snapshot.browserPort;
 
     // Refresh the Claude Code Control toggle whenever a fresh snapshot
     // lands. Skip if a toggle is currently in flight so we don't clobber
@@ -259,13 +284,23 @@ void OverviewSectionControl::ApplyApisAndServicesCard(const ::MasterControlShell
                                                : L"crit";
     paintDot(ApiServicesStatusDot(), tone);
     std::wostringstream out;
+    // v0.9.76: route the bind-address render through resolveDisplayBindAddress
+    // so wildcard binds (0.0.0.0 / ::) surface the LAN-routable primary IP.
+    // Operator can still see the raw configured value on the trailing line.
+    const auto resolvedBind = ::MasterControlShell::Presentation::resolveDisplayBindAddress(
+        snapshot.bindAddress, snapshot.primaryIpAddress);
     out << L"Service: " << serviceStateLabelOverview(snapshot.serviceState) << L'\n'
         << L"Admin API: " << (apiUp ? L"reachable" : L"offline") << L'\n'
         << L"Browser surface: " << (apiUp ? L"published" : L"unpublished") << L'\n'
         << L"Beacon: " << (snapshot.beaconEnabled ? L"on" : L"off")
         << L" : " << snapshot.beaconPort << L'\n'
-        << L"Bind: " << (snapshot.bindAddress.empty() ? std::wstring(L"0.0.0.0") : snapshot.bindAddress)
+        << L"Bind: " << resolvedBind
         << L":" << snapshot.browserPort;
+    if (::MasterControlShell::Presentation::isWildcardBindAddress(snapshot.bindAddress)) {
+        out << L"  (configured "
+            << (snapshot.bindAddress.empty() ? std::wstring(L"0.0.0.0") : snapshot.bindAddress)
+            << L")";
+    }
     ApiServicesText().Text(winrt::hstring(out.str()));
 }
 
@@ -285,74 +320,12 @@ void OverviewSectionControl::ApplySecurityStanceCard(const ::MasterControlShell:
     SecurityStanceText().Text(winrt::hstring(out.str()));
 }
 
-void OverviewSectionControl::ApplyMcpServersCard(const ::MasterControlShell::ShellSnapshot& snapshot) {
-    const size_t total = snapshot.mcpServerRuntimeStats.size();
-    int reachable = 0;
-    for (const auto& s : snapshot.mcpServerRuntimeStats) {
-        if (s.reachable) ++reachable;
-    }
-    const wchar_t* tone = (total == 0) ? L"neutral"
-                       : (reachable == 0) ? L"crit"
-                       : (reachable < (int)total) ? L"warn"
-                       : L"good";
-    paintDot(McpServersStatusDot(), tone);
-    std::wostringstream head;
-    head << total << L" registered ; " << reachable << L" reachable";
-    McpServersHeadline().Text(winrt::hstring(head.str()));
-    std::wostringstream body;
-    if (total == 0) {
-        body << L"No MCP servers registered.";
-    } else {
-        size_t shown = 0;
-        for (const auto& s : snapshot.mcpServerRuntimeStats) {
-            if (shown >= 4) break;
-            body << (s.reachable ? L"+ " : L"- ")
-                 << (s.displayName.empty() ? s.mcpServerId : s.displayName)
-                 << L'\n';
-            ++shown;
-        }
-        if (total > shown) {
-            body << L"... +" << (total - shown) << L" more in the Runtime tab grid.";
-        }
-    }
-    McpServersText().Text(winrt::hstring(body.str()));
-}
-
-void OverviewSectionControl::ApplySubAgentsCard(const ::MasterControlShell::ShellSnapshot& snapshot) {
-    const size_t total = snapshot.subAgentRuntimeStats.size();
-    int reachable = 0;
-    int activeLeases = 0;
-    for (const auto& s : snapshot.subAgentRuntimeStats) {
-        if (s.reachable) ++reachable;
-        activeLeases += s.activeLeaseCount;
-    }
-    const wchar_t* tone = (total == 0) ? L"neutral"
-                       : (reachable == 0) ? L"crit"
-                       : (reachable < (int)total) ? L"warn"
-                       : L"good";
-    paintDot(SubAgentsStatusDot(), tone);
-    std::wostringstream head;
-    head << total << L" registered ; " << reachable << L" reachable ; "
-         << activeLeases << L" active lease" << (activeLeases == 1 ? L"" : L"s");
-    SubAgentsHeadline().Text(winrt::hstring(head.str()));
-    std::wostringstream body;
-    if (total == 0) {
-        body << L"No sub-agents registered.";
-    } else {
-        size_t shown = 0;
-        for (const auto& s : snapshot.subAgentRuntimeStats) {
-            if (shown >= 4) break;
-            body << (s.reachable ? L"+ " : L"- ")
-                 << (s.displayName.empty() ? s.subAgentId : s.displayName)
-                 << L'\n';
-            ++shown;
-        }
-        if (total > shown) {
-            body << L"... +" << (total - shown) << L" more in the Runtime tab grid.";
-        }
-    }
-    SubAgentsText().Text(winrt::hstring(body.str()));
-}
+// v0.10.10: ApplyMcpServersCard + ApplySubAgentsCard removed alongside
+// the XAML elements they populated (McpServersStatusDot, McpServersHeadline,
+// McpServersText, SubAgentsStatusDot, SubAgentsHeadline, SubAgentsText).
+// Per operator directive the Overview deck no longer carries an MCP /
+// Sub-Agent summary card -- those decks live on Runtime and Telemetry
+// as footer-style tile grids.
 
 void OverviewSectionControl::ApplyErrorReportingCard(const ::MasterControlShell::ShellSnapshot& snapshot) {
     using namespace winrt::Microsoft::UI::Xaml;
@@ -455,6 +428,607 @@ void OverviewSectionControl::ApplyErrorReportingCard(const ::MasterControlShell:
         row.Child(rowStack);
         stack.Children().Append(row);
     }
+}
+
+// v0.9.75: visible self-test card. Renders ShellSnapshot.selfTests as
+// a per-probe pass/fail roster with a status dot + headline + scrollable
+// list. Tone is good when failedCount==0 and the sweep has completed,
+// warn when pending, crit when failedCount>0. Each row shows a small
+// pass/fail mark, the probe name, the duration, and the message.
+void OverviewSectionControl::ApplySelfTestCard(const ::MasterControlShell::ShellSnapshot& snapshot) {
+    using namespace winrt::Microsoft::UI::Xaml;
+    using namespace winrt::Microsoft::UI::Xaml::Controls;
+    using namespace winrt::Microsoft::UI::Xaml::Media;
+    using winrt::Windows::UI::ColorHelper;
+
+    const auto& s = snapshot.selfTests;
+
+    const wchar_t* tone = L"info";
+    std::wstring headline;
+    if (!s.fetchError.empty()) {
+        tone = L"crit";
+        headline = L"Self-tests unavailable: " + s.fetchError;
+    } else if (!s.available || s.pending) {
+        tone = L"warn";
+        headline = L"Self-tests pending — first sweep runs ~3s after service start.";
+    } else if (s.failedCount > 0) {
+        tone = L"crit";
+        headline = std::to_wstring(s.failedCount) + L" of "
+                 + std::to_wstring(s.totalCount) + L" probe"
+                 + (s.totalCount == 1 ? L"" : L"s") + L" FAILED.";
+    } else {
+        tone = L"good";
+        headline = L"All " + std::to_wstring(s.passedCount) + L" probe"
+                 + (s.passedCount == 1 ? L"" : L"s") + L" passed.";
+    }
+    paintDot(SelfTestStatusDot(), tone);
+    SelfTestHeadline().Text(winrt::hstring(headline));
+
+    std::wostringstream sub;
+    if (!s.startedAtUtc.empty()) {
+        sub << L"Last sweep: " << s.startedAtUtc;
+        if (!s.finishedAtUtc.empty() && s.finishedAtUtc != s.startedAtUtc) {
+            sub << L" → " << s.finishedAtUtc;
+        }
+    } else {
+        sub << L"Probes: admin port + gateway state + every supervised pool + activity ring + telemetry sampler + worker exe presence.";
+    }
+    SelfTestSubline().Text(winrt::hstring(sub.str()));
+
+    auto stack = SelfTestList();
+    stack.Children().Clear();
+
+    if (!s.fetchError.empty()) {
+        TextBlock txt;
+        txt.Text(winrt::hstring(L"Cannot reach /api/self-tests on the local admin port."));
+        txt.FontSize(11);
+        txt.Foreground(SolidColorBrush(ColorHelper::FromArgb(0xFF, 0xff, 0x8c, 0x4c)));
+        txt.TextWrapping(TextWrapping::Wrap);
+        stack.Children().Append(txt);
+        return;
+    }
+    if (!s.available || s.results.empty()) {
+        TextBlock txt;
+        txt.Text(s.pending
+                 ? winrt::hstring(L"Sweep has not finished yet. Re-poll in a few seconds.")
+                 : winrt::hstring(L"No probe results yet."));
+        txt.FontSize(11);
+        txt.Foreground(SolidColorBrush(ColorHelper::FromArgb(0xFF, 0x8c, 0xb7, 0xc4)));
+        txt.TextWrapping(TextWrapping::Wrap);
+        stack.Children().Append(txt);
+        return;
+    }
+
+    // Group counter so failures float up. Sort: failures first by name,
+    // then passes by name.
+    auto results = s.results;
+    std::sort(results.begin(), results.end(),
+              [](const auto& a, const auto& b) {
+                  if (a.ok != b.ok) return !a.ok && b.ok;
+                  return a.name < b.name;
+              });
+
+    for (const auto& r : results) {
+        Border row;
+        row.BorderThickness(Thickness{0, 0, 0, 1});
+        row.BorderBrush(SolidColorBrush(ColorHelper::FromArgb(
+            0x33,
+            r.ok ? 0x1c : 0xff,
+            r.ok ? 0xf2 : 0x3a,
+            r.ok ? 0xc1 : 0x5a)));
+        row.Padding(Thickness{0, 4, 0, 4});
+
+        StackPanel rowStack;
+        rowStack.Spacing(2);
+
+        StackPanel head;
+        head.Orientation(Orientation::Horizontal);
+        head.Spacing(8);
+
+        Border dot;
+        dot.Width(8); dot.Height(8);
+        winrt::Microsoft::UI::Xaml::CornerRadius dotCorners;
+        dotCorners.TopLeft = 4; dotCorners.TopRight = 4;
+        dotCorners.BottomLeft = 4; dotCorners.BottomRight = 4;
+        dot.CornerRadius(dotCorners);
+        dot.VerticalAlignment(VerticalAlignment::Center);
+        dot.Background(SolidColorBrush(statusColor(r.ok ? L"good" : L"crit")));
+
+        TextBlock nameText;
+        std::wstring nameLabel = (r.ok ? std::wstring(L"PASS") : std::wstring(L"FAIL"))
+                               + L" · " + r.name;
+        nameText.Text(winrt::hstring(nameLabel));
+        nameText.FontSize(11);
+        nameText.Foreground(SolidColorBrush(statusColor(r.ok ? L"good" : L"crit")));
+
+        TextBlock durText;
+        if (r.durationMs > 0) {
+            durText.Text(winrt::hstring(std::to_wstring(r.durationMs) + L" ms"));
+        }
+        durText.FontSize(11);
+        durText.Foreground(SolidColorBrush(ColorHelper::FromArgb(0xFF, 0x8c, 0xb7, 0xc4)));
+
+        head.Children().Append(dot);
+        head.Children().Append(nameText);
+        head.Children().Append(durText);
+
+        TextBlock messageText;
+        messageText.Text(winrt::hstring(r.message));
+        messageText.FontSize(11);
+        messageText.TextWrapping(TextWrapping::Wrap);
+        messageText.Foreground(SolidColorBrush(ColorHelper::FromArgb(
+            0xFF, 0xC8, 0xD8, 0xDD)));
+
+        rowStack.Children().Append(head);
+        rowStack.Children().Append(messageText);
+
+        row.Child(rowStack);
+        stack.Children().Append(row);
+    }
+}
+
+winrt::Windows::Foundation::IAsyncAction OverviewSectionControl::ReRunSelfTestsAsync() {
+    if (!runtime_) co_return;
+    auto runtime = runtime_;
+    // Pattern matches RefreshClaudePluginAsync above: capture the
+    // apartment_context before going to background so we can return
+    // to the UI thread without depending on resume_foreground (which
+    // isn't in this build's winrt headers).
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+    auto fresh = runtime->RunSelfTestsNow();
+    co_await uiThread;
+    // Rebuild the card from the freshly-returned snapshot so the
+    // operator sees the result immediately rather than waiting for
+    // the next live tick.
+    ::MasterControlShell::ShellSnapshot synthetic{};
+    synthetic.selfTests = std::move(fresh);
+    ApplySelfTestCard(synthetic);
+}
+
+// ============================================================
+// v0.9.76: Supervisor Agent Assignment Wizard handlers.
+// ============================================================
+//
+// The operator picks exactly one supervisor model (ChatGPT / Claude /
+// Grok) via a single-selection ToggleSwitch group. The Generate Config
+// & Save button posts /api/supervisor/config/generate, which returns
+// the freshly-issued JSON config. We then open IFileSaveDialog so the
+// operator chooses where the config file lives -- it is then ferried
+// to the supervisor client machine. The Revoke button revokes the
+// active assignment without re-issuing.
+//
+// Toggle group is "single-selection radio": turning one provider on
+// turns the other two off (suspendSupervisorToggleHandler_ guards the
+// recursive Toggled event during the programmatic deselect).
+//
+// Server-side state is the source of truth -- ApplySupervisorCard
+// reflects the live /api/supervisor/status field on every snapshot
+// tick. Toggling on disk writes nothing; only Generate Config makes a
+// new assignment. Toggling without generating just changes the local
+// "intent" but still calls /api/supervisor/config/generate when the
+// button is clicked.
+
+namespace {
+
+bool showSupervisorSaveDialog(const std::wstring& suggestedFileName,
+                               std::wstring& outChosenPath) {
+    // Win32 IFileSaveDialog is the canonical native save UX on Windows
+    // and works without WinUI 3 IInitializeWithWindow plumbing. Parent
+    // is left null; the dialog presents itself top-most relative to
+    // the active foreground window. The COM apartment must be
+    // initialized -- WinRT's MTA satisfies that.
+    ::Microsoft::WRL::ComPtr<IFileSaveDialog> dialog;
+    HRESULT hr = ::CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_ALL,
+                                     IID_PPV_ARGS(&dialog));
+    if (FAILED(hr) || !dialog) return false;
+
+    COMDLG_FILTERSPEC filters[2] = {
+        { L"JSON config", L"*.json" },
+        { L"All files",   L"*.*" }
+    };
+    dialog->SetFileTypes(static_cast<UINT>(std::size(filters)), filters);
+    dialog->SetFileTypeIndex(1);
+    dialog->SetDefaultExtension(L"json");
+    dialog->SetTitle(L"Save Supervisor Configuration");
+    dialog->SetFileName(suggestedFileName.c_str());
+
+    // Default to %USERPROFILE%\Documents\MCOS\SupervisorConfigs if it
+    // exists, otherwise ShellExecute will park the dialog wherever the
+    // shell decides (typically Documents).
+    PWSTR documentsPath = nullptr;
+    if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &documentsPath))
+        && documentsPath != nullptr) {
+        std::wstring suggestedFolder = std::wstring(documentsPath) + L"\\MCOS\\SupervisorConfigs";
+        ::CoTaskMemFree(documentsPath);
+        ::SHCreateDirectoryExW(nullptr, suggestedFolder.c_str(), nullptr);
+        ::Microsoft::WRL::ComPtr<IShellItem> defaultFolder;
+        if (SUCCEEDED(::SHCreateItemFromParsingName(suggestedFolder.c_str(),
+                                                    nullptr,
+                                                    IID_PPV_ARGS(&defaultFolder)))
+            && defaultFolder) {
+            dialog->SetDefaultFolder(defaultFolder.Get());
+        }
+    }
+
+    hr = dialog->Show(nullptr);
+    if (FAILED(hr)) return false;
+    ::Microsoft::WRL::ComPtr<IShellItem> result;
+    if (FAILED(dialog->GetResult(&result)) || !result) return false;
+    PWSTR chosenPath = nullptr;
+    if (FAILED(result->GetDisplayName(SIGDN_FILESYSPATH, &chosenPath)) || !chosenPath) {
+        return false;
+    }
+    outChosenPath = chosenPath;
+    ::CoTaskMemFree(chosenPath);
+    return true;
+}
+
+bool writeUtf8FileNoBom(const std::wstring& path, const std::wstring& wideContent) {
+    // Convert to UTF-8 without a BOM. JSON files are widely consumed
+    // and a BOM would trip strict parsers (jq, nlohmann, etc.).
+    if (wideContent.empty()) return false;
+    const int bytes = ::WideCharToMultiByte(CP_UTF8, 0,
+                                              wideContent.c_str(),
+                                              static_cast<int>(wideContent.size()),
+                                              nullptr, 0, nullptr, nullptr);
+    if (bytes <= 0) return false;
+    std::string narrow(static_cast<size_t>(bytes), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0,
+                          wideContent.c_str(),
+                          static_cast<int>(wideContent.size()),
+                          narrow.data(), bytes, nullptr, nullptr);
+    HANDLE handle = ::CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
+                                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    const BOOL ok = ::WriteFile(handle, narrow.data(),
+                                  static_cast<DWORD>(narrow.size()),
+                                  &written, nullptr);
+    ::CloseHandle(handle);
+    return ok && written == narrow.size();
+}
+
+const wchar_t* providerDisplayLabel(const std::wstring& providerId) {
+    if (providerId == L"chatgpt") return L"ChatGPT";
+    if (providerId == L"claude")  return L"Claude";
+    if (providerId == L"grok")    return L"Grok";
+    return L"";
+}
+
+} // namespace
+
+void OverviewSectionControl::ApplySupervisorCard(
+        const ::MasterControlShell::ShellSnapshot& snapshot) {
+    using winrt::Microsoft::UI::Xaml::Media::SolidColorBrush;
+    using winrt::Windows::UI::ColorHelper;
+
+    const auto& sup = snapshot.supervisorStatus;
+    const std::wstring state    = sup.state.empty() ? std::wstring(L"off") : sup.state;
+    const std::wstring provider = sup.activeProviderId;
+    const wchar_t* dotTone = L"neutral";
+    std::wstring headline;
+    std::wstring statusLine;
+    if (state == L"connected") {
+        dotTone = L"good";
+        headline = L"Active supervisor: " + std::wstring(providerDisplayLabel(provider));
+        // v0.9.90: relative-time formatting on the heartbeat. Falls
+        // back to the raw UTC stamp when the parser doesn't recognize
+        // the format. Empty heartbeat (just-connected, no tick yet)
+        // is rendered as "(none yet)" instead of an awkward "0s ago".
+        std::wstring heartbeatPhrase;
+        if (sup.lastHeartbeatUtc.empty()) {
+            heartbeatPhrase = L" | Last heartbeat: (none yet)";
+        } else {
+            const auto relative = ::MasterControlShell::Presentation::formatRelativeUtcTime(sup.lastHeartbeatUtc);
+            heartbeatPhrase = relative.empty()
+                ? (L" | Last heartbeat (UTC): " + sup.lastHeartbeatUtc)
+                : (L" | Last heartbeat: " + relative);
+        }
+        statusLine = L"Mode: " + (sup.mode.empty() ? std::wstring(L"autonomous_supervisor") : sup.mode)
+                   + L" | Status: connected" + heartbeatPhrase;
+    } else if (state == L"pending_connection" || state == L"config_generated") {
+        dotTone = L"warn";
+        headline = std::wstring(providerDisplayLabel(provider))
+            + L" supervisor pending connection";
+        statusLine = L"Status: " + state
+                   + (sup.expiresAtUtc.empty()
+                        ? std::wstring(L"")
+                        : (L" | Expires (UTC): " + sup.expiresAtUtc))
+                   + L". Move the saved config to the LAN client and import it.";
+    } else if (state == L"error") {
+        dotTone = L"crit";
+        headline = std::wstring(providerDisplayLabel(provider))
+            + L" supervisor error";
+        statusLine = sup.lastErrorMessage.empty()
+            ? std::wstring(L"Status: error.")
+            : (L"Error: " + sup.lastErrorMessage);
+    } else if (state == L"revoked") {
+        dotTone = L"warn";
+        headline = std::wstring(providerDisplayLabel(provider))
+            + L" supervisor revoked";
+        statusLine = L"Status: revoked. Select a provider and Generate Config to assign a new supervisor.";
+    } else if (state == L"disconnected") {
+        dotTone = L"warn";
+        headline = std::wstring(providerDisplayLabel(provider))
+            + L" supervisor disconnected";
+        statusLine = L"Status: disconnected. The remote client has not heartbeated recently.";
+    } else {
+        // off / unknown
+        headline = L"No supervisor assigned.";
+        statusLine = L"Status: off. Pick exactly one provider above and click Generate Config & Save.";
+    }
+    SupervisorHeadlineText().Text(winrt::hstring(headline));
+    SupervisorStatusText().Text(winrt::hstring(statusLine));
+
+    // v0.9.79: assignment / config / expiry / heartbeat detail line.
+    // Operator-facing debug info: visible when there's an active
+    // assignment, hidden when state=off so the unconfigured card
+    // doesn't show empty placeholder fields.
+    // v0.9.94: expiresAtUtc now renders via formatFutureUtcTime
+    // ('Expires: in 2h 14m') alongside the raw UTC stamp; same shape
+    // as the v0.9.90 heartbeat reformat but in the future direction.
+    if (!sup.assignmentId.empty()) {
+        std::wostringstream detail;
+        detail << L"Assignment: " << sup.assignmentId;
+        if (!sup.configId.empty()) {
+            detail << L"\nConfig: " << sup.configId;
+        }
+        // v0.9.96: "Issued: X ago" so the operator can see assignment
+        // age at a glance. Useful for deciding whether to rotate a long-
+        // running config. issuedAtUtc lives on the snapshot via /api/
+        // supervisor/status -> ShellSnapshot.supervisorStatus.issuedAtUtc.
+        if (!sup.issuedAtUtc.empty()) {
+            const auto issuedRelative = ::MasterControlShell::Presentation::formatRelativeUtcTime(sup.issuedAtUtc);
+            if (issuedRelative.empty()) {
+                detail << L"\nIssued (UTC): " << sup.issuedAtUtc;
+            } else {
+                detail << L"\nIssued: " << issuedRelative;
+            }
+        }
+        if (!sup.expiresAtUtc.empty()) {
+            const auto expiryRelative = ::MasterControlShell::Presentation::formatFutureUtcTime(sup.expiresAtUtc);
+            if (expiryRelative.empty()) {
+                detail << L"\nExpires (UTC): " << sup.expiresAtUtc;
+            } else {
+                detail << L"\nExpires: " << expiryRelative
+                       << L" (" << sup.expiresAtUtc << L")";
+            }
+        }
+        if (!sup.lastHeartbeatUtc.empty()) {
+            const auto heartbeatRelative = ::MasterControlShell::Presentation::formatRelativeUtcTime(sup.lastHeartbeatUtc);
+            if (heartbeatRelative.empty()) {
+                detail << L"\nLast heartbeat (UTC): " << sup.lastHeartbeatUtc;
+            } else {
+                detail << L"\nLast heartbeat: " << heartbeatRelative;
+            }
+        } else if (state == L"connected") {
+            detail << L"\nLast heartbeat: (none yet)";
+        }
+        if (!sup.clientId.empty()) {
+            detail << L"\nClient: " << sup.clientId;
+        }
+        SupervisorDetailText().Text(winrt::hstring(detail.str()));
+        SupervisorDetailText().Visibility(winrt::Microsoft::UI::Xaml::Visibility::Visible);
+    } else {
+        SupervisorDetailText().Text(L"");
+        SupervisorDetailText().Visibility(winrt::Microsoft::UI::Xaml::Visibility::Collapsed);
+    }
+
+    // Status dot.
+    auto fromHex = [](uint8_t r, uint8_t g, uint8_t b) {
+        return ColorHelper::FromArgb(0xFF, r, g, b);
+    };
+    winrt::Windows::UI::Color color =
+          (std::wstring(dotTone) == L"good")    ? fromHex(0x1c, 0xf2, 0xc1)
+        : (std::wstring(dotTone) == L"warn")    ? fromHex(0xff, 0xaf, 0x3a)
+        : (std::wstring(dotTone) == L"crit")    ? fromHex(0xff, 0x3a, 0x5a)
+        :                                         fromHex(0x8c, 0xb7, 0xc4);
+    SupervisorStatusDot().Background(SolidColorBrush(color));
+
+    // Sync the toggle group to server-side state so the radio reflects
+    // the active assignment. suspendSupervisorToggleHandler_ blocks
+    // the toggle handlers from re-firing during the programmatic set.
+    suspendSupervisorToggleHandler_ = true;
+    SupervisorChatGptToggle().IsOn(provider == L"chatgpt");
+    SupervisorClaudeToggle().IsOn(provider == L"claude");
+    SupervisorGrokToggle().IsOn(provider == L"grok");
+    suspendSupervisorToggleHandler_ = false;
+
+    // Generate is enabled when any provider is selected (or none --
+    // letting the operator switch). Revoke is enabled iff there's a
+    // server-side active assignment.
+    const bool anySelected = SupervisorChatGptToggle().IsOn()
+        || SupervisorClaudeToggle().IsOn()
+        || SupervisorGrokToggle().IsOn();
+    SupervisorGenerateButton().IsEnabled(anySelected && !supervisorBusy_);
+    const bool active = sup.active
+        || state == L"pending_connection"
+        || state == L"config_generated"
+        || state == L"connected"
+        || state == L"disconnected";
+    SupervisorRevokeButton().IsEnabled(active && !supervisorBusy_);
+    lastSupervisorSelection_ = provider;
+}
+
+void OverviewSectionControl::SetSupervisorSelection(const std::wstring& providerId) {
+    suspendSupervisorToggleHandler_ = true;
+    SupervisorChatGptToggle().IsOn(providerId == L"chatgpt");
+    SupervisorClaudeToggle().IsOn(providerId == L"claude");
+    SupervisorGrokToggle().IsOn(providerId == L"grok");
+    suspendSupervisorToggleHandler_ = false;
+    SupervisorGenerateButton().IsEnabled(!providerId.empty() && !supervisorBusy_);
+}
+
+std::wstring OverviewSectionControl::CurrentSupervisorSelection() {
+    if (SupervisorChatGptToggle().IsOn()) return L"chatgpt";
+    if (SupervisorClaudeToggle().IsOn())  return L"claude";
+    if (SupervisorGrokToggle().IsOn())    return L"grok";
+    return std::wstring{};
+}
+
+void OverviewSectionControl::SupervisorChatGptToggle_Toggled(
+        Windows::Foundation::IInspectable const&,
+        Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    if (suspendSupervisorToggleHandler_) return;
+    const bool on = SupervisorChatGptToggle().IsOn();
+    if (on) {
+        SetSupervisorSelection(L"chatgpt");
+    } else if (CurrentSupervisorSelection().empty()) {
+        SupervisorGenerateButton().IsEnabled(false);
+    }
+}
+
+void OverviewSectionControl::SupervisorClaudeToggle_Toggled(
+        Windows::Foundation::IInspectable const&,
+        Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    if (suspendSupervisorToggleHandler_) return;
+    const bool on = SupervisorClaudeToggle().IsOn();
+    if (on) {
+        SetSupervisorSelection(L"claude");
+    } else if (CurrentSupervisorSelection().empty()) {
+        SupervisorGenerateButton().IsEnabled(false);
+    }
+}
+
+void OverviewSectionControl::SupervisorGrokToggle_Toggled(
+        Windows::Foundation::IInspectable const&,
+        Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    if (suspendSupervisorToggleHandler_) return;
+    const bool on = SupervisorGrokToggle().IsOn();
+    if (on) {
+        SetSupervisorSelection(L"grok");
+    } else if (CurrentSupervisorSelection().empty()) {
+        SupervisorGenerateButton().IsEnabled(false);
+    }
+}
+
+void OverviewSectionControl::SupervisorGenerateButton_Click(
+        Windows::Foundation::IInspectable const&,
+        Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    const auto provider = CurrentSupervisorSelection();
+    if (provider.empty() || supervisorBusy_) return;
+    auto ignored = GenerateSupervisorConfigAsync(provider);
+    (void)ignored;
+}
+
+void OverviewSectionControl::SupervisorRevokeButton_Click(
+        Windows::Foundation::IInspectable const&,
+        Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    if (supervisorBusy_) return;
+    auto ignored = RevokeSupervisorAsync();
+    (void)ignored;
+}
+
+winrt::Windows::Foundation::IAsyncAction
+OverviewSectionControl::GenerateSupervisorConfigAsync(std::wstring providerId) {
+    if (!runtime_) co_return;
+    auto runtime = runtime_;
+
+    // Mark busy so toggles + buttons go inert while the round-trip is
+    // outstanding. Re-enable on every exit path through a small RAII.
+    supervisorBusy_ = true;
+    SupervisorGenerateButton().IsEnabled(false);
+    SupervisorRevokeButton().IsEnabled(false);
+    SupervisorStatusText().Text(L"Generating supervisor configuration...");
+
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+    auto issue = runtime->GenerateSupervisorConfig(providerId);
+    co_await uiThread;
+
+    if (!issue.ok) {
+        SupervisorStatusText().Text(winrt::hstring(
+            std::wstring(L"Error: ")
+            + (issue.errorMessage.empty()
+                ? std::wstring(L"unknown failure from /api/supervisor/config/generate.")
+                : issue.errorMessage)));
+        supervisorBusy_ = false;
+        SupervisorGenerateButton().IsEnabled(true);
+        co_return;
+    }
+
+    // Save dialog. The IFileSaveDialog Show() call blocks the UI
+    // thread, but a save dialog is intrinsically modal so this matches
+    // the operator's expectation.
+    std::wstring chosenPath;
+    const std::wstring suggested = issue.fileName.empty()
+        ? (std::wstring(L"mcos-supervisor-") + providerId + L".config.json")
+        : issue.fileName;
+    const bool picked = showSupervisorSaveDialog(suggested, chosenPath);
+    if (!picked) {
+        SupervisorStatusText().Text(
+            L"Configuration generated; save cancelled. Click Generate Config & Save to retry.");
+        supervisorBusy_ = false;
+        // Keep the assignment in pending state on the server side; the
+        // operator can re-pick the same provider and regenerate.
+        SupervisorGenerateButton().IsEnabled(true);
+        SupervisorRevokeButton().IsEnabled(true);
+        co_return;
+    }
+
+    if (!writeUtf8FileNoBom(chosenPath, issue.configJson)) {
+        SupervisorStatusText().Text(winrt::hstring(
+            std::wstring(L"Error writing configuration to: ") + chosenPath));
+        supervisorBusy_ = false;
+        SupervisorGenerateButton().IsEnabled(true);
+        SupervisorRevokeButton().IsEnabled(true);
+        co_return;
+    }
+
+    SupervisorStatusText().Text(winrt::hstring(
+        std::wstring(L"Configuration saved to: ") + chosenPath
+        + L"\nMove this file to the LAN machine running "
+        + providerDisplayLabel(providerId)
+        + L" and import it into that client. Status: pending connection."));
+    supervisorBusy_ = false;
+    // Keep generate enabled so the operator can re-issue if they
+    // changed their mind; revoke too so they can drop it.
+    SupervisorGenerateButton().IsEnabled(true);
+    SupervisorRevokeButton().IsEnabled(true);
+}
+
+winrt::Windows::Foundation::IAsyncAction
+OverviewSectionControl::RevokeSupervisorAsync() {
+    if (!runtime_) co_return;
+    auto runtime = runtime_;
+    supervisorBusy_ = true;
+    SupervisorGenerateButton().IsEnabled(false);
+    SupervisorRevokeButton().IsEnabled(false);
+    SupervisorStatusText().Text(L"Revoking supervisor assignment...");
+
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+    std::wstring err;
+    const bool ok = runtime->RevokeSupervisor(L"Operator clicked Revoke Active.", err);
+    co_await uiThread;
+
+    supervisorBusy_ = false;
+    if (!ok) {
+        SupervisorStatusText().Text(winrt::hstring(
+            std::wstring(L"Error revoking: ")
+            + (err.empty() ? std::wstring(L"unknown failure.") : err)));
+        SupervisorGenerateButton().IsEnabled(true);
+        SupervisorRevokeButton().IsEnabled(true);
+        co_return;
+    }
+    // Clear local UI state -- next snapshot tick will refresh from
+    // /api/supervisor/status with state=off.
+    suspendSupervisorToggleHandler_ = true;
+    SupervisorChatGptToggle().IsOn(false);
+    SupervisorClaudeToggle().IsOn(false);
+    SupervisorGrokToggle().IsOn(false);
+    suspendSupervisorToggleHandler_ = false;
+    SupervisorStatusText().Text(L"Supervisor revoked. Pick a provider and Generate Config to reassign.");
+    SupervisorGenerateButton().IsEnabled(false);
+    SupervisorRevokeButton().IsEnabled(false);
+}
+
+void OverviewSectionControl::ReRunSelfTestsButton_Click(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    auto ignored = ReRunSelfTestsAsync();
+    (void)ignored;
 }
 
 void OverviewSectionControl::ExportErrorsButton_Click(

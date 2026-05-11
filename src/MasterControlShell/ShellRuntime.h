@@ -151,6 +151,33 @@ struct ShellActivityStreamResult final {
     std::wstring errorMessage;
 };
 
+// v0.9.75: visible self-test snapshot. ShellRuntime fetches GET
+// /api/self-tests on every snapshot tick and parses the JSON body
+// into this shape. The Overview surface renders it as a dedicated
+// card (see OverviewSectionControl::ApplySelfTestCard) so the
+// operator sees the live pass / fail breakdown -- not just the
+// error rows that the existing v0.8.7 Error Reporting card already
+// surfaces.
+struct ShellSelfTestResult final {
+    std::wstring name;
+    std::wstring category;
+    bool ok = false;
+    std::wstring message;
+    int durationMs = 0;
+    std::wstring ranAtUtc;
+};
+struct ShellSelfTestSnapshot final {
+    bool available = false;
+    bool pending = true;       // true until the first sweep finishes
+    std::wstring startedAtUtc;
+    std::wstring finishedAtUtc;
+    int totalCount = 0;
+    int passedCount = 0;
+    int failedCount = 0;
+    std::vector<ShellSelfTestResult> results;
+    std::wstring fetchError;   // non-empty when the HTTP fetch itself failed
+};
+
 // Auto-Connect AI Model — the shell hands the runtime just the credentials
 // and optional role targets. Everything else (route id, display name, base
 // url, model discovery, dpapi encryption, assignment fan-out) is automated.
@@ -435,6 +462,32 @@ struct ShellSnapshot final {
     // card. Capped at 50 entries; harvested from /api/activity by
     // ShellRuntime::CaptureSnapshot.
     std::vector<ShellErrorEvent> errorEvents;
+    // v0.9.75: visible self-test card on the Overview surface. Populated
+    // by ShellRuntime::CaptureSnapshot via GET /api/self-tests on
+    // every tick so the per-probe pass/fail roster updates in real time.
+    ShellSelfTestSnapshot selfTests;
+    // v0.9.76: Supervisor Agent Assignment Wizard status snapshot.
+    // Populated by ShellRuntime::CaptureSnapshot via GET /api/supervisor/status
+    // on every tick so the Supervisor Agent card on the Overview surface
+    // mirrors the running supervisor's lifecycle. activeProviderId is
+    // empty when no supervisor is assigned (state == "off"); otherwise
+    // it carries one of "chatgpt" / "claude" / "grok" -- the
+    // single-selection wizard contract.
+    struct SupervisorStatusFields {
+        std::wstring activeProviderId;
+        std::wstring providerDisplayName;
+        std::wstring mode;
+        std::wstring state;
+        std::wstring assignmentId;
+        std::wstring configId;
+        std::wstring clientId;
+        std::wstring issuedAtUtc;
+        std::wstring expiresAtUtc;
+        std::wstring connectedAtUtc;
+        std::wstring lastHeartbeatUtc;
+        std::wstring lastErrorMessage;
+        bool active = false;
+    } supervisorStatus;
     std::vector<ShellAppleRemoteHost> appleRemoteHosts;
     std::vector<ShellAppleOperationRecord> appleOperations;
     std::vector<ShellNavigationPointer> navigationPointers;
@@ -491,6 +544,27 @@ public:
     // register <-> unregister and returns the new state.
     [[nodiscard]] ShellClaudePluginStatus FetchClaudePluginStatus() const;
     [[nodiscard]] ShellClaudePluginStatus ToggleClaudePlugin() const;
+    // v0.9.75: re-run the boot self-test sweep on demand. POSTs
+    // /api/self-tests/run and returns the freshly-computed snapshot.
+    [[nodiscard]] ShellSelfTestSnapshot RunSelfTestsNow() const;
+
+    // v0.9.76: Supervisor Agent Assignment Wizard surface. The Shell's
+    // OverviewSectionControl drives the popup, single-toggle group, and
+    // FileSavePicker; these helpers post to /api/supervisor/* and unpack
+    // the response into Shell-side wstrings without dragging WinHTTP /
+    // JSON parsing into the section control.
+    struct ShellSupervisorIssueResult {
+        bool ok = false;
+        std::wstring errorMessage;
+        std::wstring providerId;
+        std::wstring assignmentId;
+        std::wstring configId;
+        std::wstring fileName;       // suggested default for the FileSavePicker
+        std::wstring configJson;     // exact body to write through the picker
+        std::wstring expiresAtUtc;
+    };
+    [[nodiscard]] ShellSupervisorIssueResult GenerateSupervisorConfig(const std::wstring& providerId) const;
+    [[nodiscard]] bool RevokeSupervisor(const std::wstring& reason, std::wstring& errorOut) const;
 
     // Live activity stream: poll the service's ActivityEventRing for events
     // strictly newer than `sinceId`. Pass an empty string on first call to

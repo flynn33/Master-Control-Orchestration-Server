@@ -95,6 +95,30 @@ private:
 
     HWND windowHandle_ = nullptr;
     bool windowInitialized_ = false;
+    // v0.9.76: WinUI-safe tray-icon plumbing. The v0.9.72 attempt to
+    // subclass MainWindow's WndProc via SetWindowLongPtrW(GWLP_WNDPROC,...)
+    // crashed the shell on launch (verified via crash dumps) -- WinUI 3
+    // does not allow replacing the main window's WndProc. The supported
+    // pattern instead routes the tray callback through a NON-XAML
+    // message-only HWND, and uses AppWindow.Closing to intercept the
+    // close button at the WinUI compositor level.
+    //   trayMessageHwnd_     -- HWND_MESSAGE-parented stub window owning
+    //                           the tray callback WndProc.
+    //   trayClassRegistered_ -- guards the RegisterClassExW call so we
+    //                           don't double-register on warm restarts.
+    //   trayInstalled_       -- guards Shell_NotifyIcon NIM_ADD/NIM_DELETE.
+    //   appWindowClosingToken_ -- revoker for the Closing event handler.
+    void InstallTrayIcon();
+    void RemoveTrayIcon();
+    void EnsureTrayHostWindow();
+    void HookAppWindowClosingForTray();
+    static LRESULT CALLBACK TrayHostWndProc(HWND hwnd, UINT msg,
+                                            WPARAM wParam, LPARAM lParam);
+    HWND trayMessageHwnd_ = nullptr;
+    bool trayClassRegistered_ = false;
+    bool trayInstalled_ = false;
+    bool exitRequested_ = false;
+    winrt::event_token appWindowClosingToken_{};
     ::MasterControlShell::ShellRuntime runtime_{};
     ::MasterControlShell::ShellSnapshot currentSnapshot_{};
     std::wstring currentDestination_ = L"overview";

@@ -372,6 +372,53 @@
         "Performance/operational notes",
         "Risk report"
       ]
+    },
+    {
+      "id": "PHASE-14",
+      "label": "Comprehensive diagnostics module with persistent store and operator export",
+      "file": "handoff/realignment/PHASE-14-comprehensive-diagnostics.md",
+      "objective": "Replace per-component scattered logging with a single Diagnostics Service that owns an in-memory ring + SQLite persistent store, receives every error/warning/event from every MCOS subsystem (including the existing boot self-test snapshot), exposes HTTP/MCP queries, and surfaces in the WinUI Shell + browser dashboard with native Markdown/JSON export through a Save-As file picker.",
+      "readFirst": [
+        "include/MasterControl/MasterControlDiagnostics.h",
+        "src/MasterControlApp/MasterControlRuntime.cpp",
+        "src/MasterControlShell/ExportsSectionControl.xaml.cpp",
+        ".claude-plugin/mcos-control/mcp-servers/mcos-bridge/server.py",
+        "resources/web/app.js"
+      ],
+      "deliverables": [
+        "DiagnosticsTypes.h (severity enum, record struct, query, export format)",
+        "DiagnosticsStore.h + SqliteDiagnosticsStore",
+        "DiagnosticsService (singleton owning ring + store)",
+        "appendEvent / appendTelemetry shim routing into the service",
+        "HTTP routes: /api/diagnostics/events, /api/diagnostics/summary, /api/diagnostics/self-test, /api/diagnostics/export?format=md|json, /api/diagnostics/clear",
+        "mcos-bridge MCP tools: mcos_diagnostics_summary / _query / _self_test / _export_markdown / _export_json / _clear",
+        "WinUI Shell DiagnosticsSectionControl with FileSavePicker-driven Export Markdown + Export JSON buttons",
+        "Browser dashboard Diagnostics tab + Export buttons (Blob download)",
+        "Self-test snapshot persisted on every boot",
+        "Tests for store CRUD, query filters, ring eviction, export rendering, HTTP routes",
+        "PHASE-14 completion report"
+      ],
+      "acceptanceCriteria": [
+        "Stop+restart preserves the events table with session_id intact",
+        "Boot self-test snapshot lands in the store and is queryable",
+        "All current appendEvent call sites also appear in the central store",
+        "GET /api/diagnostics/export?format=markdown returns rendered text/markdown",
+        "Claude Code can call mcos_diagnostics_export_markdown via the MCP plugin and receive the rendered doc",
+        "Operator clicks Export Markdown in the shell, native Windows file picker opens, file is written to the chosen path, status TextBlock shows the full path",
+        "Operator clicks Export JSON in the browser, browser download dialog appears with the suggested filename",
+        "If SQLite DB is unavailable, DiagnosticsService::report returns ok=false with a reason; runtime continues; summary() includes storeUnavailable; no fake-success state",
+        "scripts/check-mastercontrol-forsetti.ps1 passes after changes",
+        "ctest passes with new tests"
+      ],
+      "validation": [
+        "cmake --preset debug",
+        "cmake --build --preset debug",
+        "ctest --preset debug --output-on-failure",
+        "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\check-mastercontrol-forsetti.ps1",
+        "manual: curl localhost:7300/api/diagnostics/summary",
+        "manual: shell Export Markdown round-trip"
+      ],
+      "approvalGate": "Required before MCOS source edits per CLAUDE.md Required execution behavior §6. Operator authorizes by replying 'PHASE-14 approved' (optionally naming a starting slice A-E)."
     }
   ]
 }

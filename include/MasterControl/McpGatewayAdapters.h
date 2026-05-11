@@ -26,6 +26,7 @@
 #include "MasterControl/MasterControlModels.h"
 
 #include <atomic>
+#include <chrono>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -128,6 +129,15 @@ private:
     // both already declared `mutable`.
     std::vector<McpToolDescriptor> refreshToolCatalogLocked() const;
 
+    // v0.9.6: explicit cache invalidation hook. Operator pool changes
+    // (POST /api/pools, POST /api/pools/{id}/{remove,scale,drain})
+    // bump this so the next LAN-client tools/list returns the
+    // up-to-date catalog instead of waiting for the 30s TTL to
+    // expire. Pre-v0.9.6 the TTL was the only revalidation path,
+    // which meant operators registering a new pool waited up to 30s
+    // before LAN clients could discover its tools.
+    void InvalidateToolCatalog() override;
+
     mutable std::mutex mutex_;
     McpGatewayConfiguration configuration_;
     GatewayStatus status_;
@@ -143,7 +153,19 @@ private:
     // PHASE-12 follow-up (v0.6.10): cached tools catalog, refreshed on
     // every tools/list. Used by tools/call to resolve a tool name to the
     // pool that hosts it. serverName == poolId (worker pool name).
+    //
+    // v0.9.5: gained a TTL (toolCatalogCacheValidUntil_) so a burst of
+    // LAN-client tools/list requests doesn't fan out 5 stdio
+    // round-trips per call. Pre-v0.9.5 every tools/list call did a
+    // full refresh; with five supervised pools that was up to 5x
+    // (lock + write + poll-read) on every request, even when the
+    // catalog hadn't changed. The cache TTL is short enough
+    // (kToolCatalogCacheTtlSeconds, default 30s) that operator-driven
+    // pool upserts surface within a window operators expect, and
+    // schema changes from a child server (which require a full
+    // refresh anyway) are still visible after at most one TTL.
     mutable std::vector<McpToolDescriptor> toolCatalogCache_;
+    mutable std::chrono::steady_clock::time_point toolCatalogCacheValidUntil_{};
     // monotonic JSON-RPC id counter used when the gateway speaks to its
     // own pool children (out-of-band from the LAN-client request stream)
     mutable uint64_t bridgeRequestIdCounter_ = 1;

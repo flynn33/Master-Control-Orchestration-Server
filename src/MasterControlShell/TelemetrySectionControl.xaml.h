@@ -90,6 +90,13 @@ private:
     void DetachTileToDesktop(const std::wstring& tileName);
     void ReattachTile(const std::wstring& tileName);
 
+    // v0.9.76: rebuild the MCP server + Sub-agent card grids imperatively
+    // from the live snapshot. Same shape as RuntimeSectionControl's
+    // versions; both delegate to the shared renderEndpointStatCardGrid()
+    // template in EndpointStatCardGrid.h. Called from ApplySnapshot.
+    void PopulateMcpServerCards(const ::MasterControlShell::ShellSnapshot& snapshot);
+    void PopulateSubAgentCards(const ::MasterControlShell::ShellSnapshot& snapshot);
+
     // Path to the persisted layout JSON.
     std::wstring LayoutFilePath();
 

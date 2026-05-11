@@ -122,6 +122,7 @@
     <ClInclude Include="CommandLogicUnitSectionControl.xaml.h">
       <DependentUpon>CommandLogicUnitSectionControl.xaml</DependentUpon>
     </ClInclude>
+    <ClInclude Include="EndpointStatCardGrid.h" />
     <ClInclude Include="ExportsSectionControl.xaml.h">
       <DependentUpon>ExportsSectionControl.xaml</DependentUpon>
     </ClInclude>

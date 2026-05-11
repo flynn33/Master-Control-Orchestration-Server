@@ -335,6 +335,14 @@ public:
     virtual std::vector<McpToolDescriptor> ListTools() const = 0;
     virtual std::string GatewayMcpUrl() const = 0;
     virtual std::string AdapterType() const = 0;
+
+    // v0.9.6: explicit cache invalidation hook. The runtime calls this
+    // after operator pool changes (POST /api/pools, POST /api/pools/
+    // {id}/{remove,scale,drain}) so the next LAN-client tools/list
+    // returns the up-to-date catalog instead of the cached snapshot.
+    // The default implementation is a no-op so adapters that don't
+    // cache (FakeMcpGatewayAdapter) inherit safe behavior.
+    virtual void InvalidateToolCatalog() {}
 };
 
 class IAdminApiService {

@@ -15,6 +15,7 @@
 #include "ImportsSectionControl.xaml.h"
 #include "../../include/MasterControl/DeploymentLogPaths.h"
 #include "microsoft.ui.xaml.window.h"
+#include <shellapi.h>
 #include "OverviewSectionControl.xaml.h"
 #include "RuntimeSectionControl.xaml.h"
 #include "ShellFormatting.h"
@@ -492,6 +493,264 @@ MainWindow::MainWindow() {
     writeShellLog(L"MainWindow ctor: InitializeComponent finished.");
 }
 
+// v0.9.72: tray icon plumbing. The shell's main window subclasses its
+// own WindowProc to (a) intercept WM_CLOSE and hide-to-tray instead of
+// terminating the process, (b) handle the WM_APP+1 callback messages
+// the tray icon delivers (left-click to restore, right-click to show
+// the popup menu). The popup commands map to: show window, stop the
+// MasterControlProgram service, restart it, exit the shell. Service
+// control shells out to net.exe with runas elevation since the shell
+// itself runs unelevated; net.exe handles the SCM round-trip.
+namespace {
+constexpr UINT kMcosTrayCallbackMsg = WM_APP + 1;
+constexpr UINT_PTR kMcosTrayIconId  = 1;
+constexpr UINT kMcosTrayCmdShow      = 1001;
+constexpr UINT kMcosTrayCmdStopSvc   = 1002;
+constexpr UINT kMcosTrayCmdRestartSvc = 1003;
+constexpr UINT kMcosTrayCmdExitShell = 1004;
+// v0.9.79: tray menu entry to open the browser dashboard at the
+// running service's URL. Useful when the operator is remoted into
+// the host and the shell window is already minimized.
+constexpr UINT kMcosTrayCmdOpenBrowser = 1005;
+
+void mcosTrayShowWindow(HWND hwnd) {
+    ShowWindow(hwnd, SW_SHOW);
+    if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+    SetForegroundWindow(hwnd);
+}
+
+void mcosRunElevated(LPCWSTR cmdLine) {
+    // ShellExecuteW with verb "runas" prompts the operator for UAC
+    // elevation. cmd.exe /c is required because the && operator
+    // otherwise gets parsed at the parent's command-line level.
+    SHELLEXECUTEINFOW info{};
+    info.cbSize = sizeof(info);
+    info.lpVerb = L"runas";
+    info.lpFile = L"cmd.exe";
+    std::wstring args = std::wstring(L"/c ") + cmdLine;
+    info.lpParameters = args.c_str();
+    info.nShow = SW_HIDE;
+    info.fMask = SEE_MASK_NOCLOSEPROCESS;
+    ShellExecuteExW(&info);
+    if (info.hProcess) {
+        WaitForSingleObject(info.hProcess, 30000);
+        CloseHandle(info.hProcess);
+    }
+}
+} // namespace
+
+// v0.9.76: WinUI-safe tray-icon WndProc. Lives on a dedicated
+// HWND_MESSAGE window (NOT the WinUI 3 main window, which cannot have
+// its WndProc replaced -- see ConfigureWindow comment block on the
+// v0.9.72 crash). The MainWindow* is stashed via GWLP_USERDATA so the
+// callback can route Show/Hide/exit commands back to the right shell
+// instance even when multiple shells are launched.
+LRESULT CALLBACK MainWindow::TrayHostWndProc(HWND hwnd, UINT msg,
+                                              WPARAM wParam, LPARAM lParam) {
+    auto* self = reinterpret_cast<MainWindow*>(
+        GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (msg == kMcosTrayCallbackMsg && self != nullptr && self->windowHandle_ != nullptr) {
+        const UINT trayMsg = LOWORD(lParam);
+        if (trayMsg == WM_LBUTTONDBLCLK || trayMsg == WM_LBUTTONUP) {
+            mcosTrayShowWindow(self->windowHandle_);
+            return 0;
+        }
+        if (trayMsg == WM_RBUTTONUP || trayMsg == WM_CONTEXTMENU) {
+            HMENU menu = CreatePopupMenu();
+            if (!menu) return 0;
+            AppendMenuW(menu, MF_STRING, kMcosTrayCmdShow,        L"Show MCOS Shell");
+            AppendMenuW(menu, MF_STRING, kMcosTrayCmdOpenBrowser, L"Open Browser Dashboard");
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(menu, MF_STRING, kMcosTrayCmdStopSvc,     L"Stop Server");
+            AppendMenuW(menu, MF_STRING, kMcosTrayCmdRestartSvc,  L"Restart Server");
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(menu, MF_STRING, kMcosTrayCmdExitShell,   L"Close MCOS Shell");
+            POINT pt{};
+            GetCursorPos(&pt);
+            // The hidden message-only window must be the foreground
+            // window for the popup to auto-dismiss on click-elsewhere.
+            // SetForegroundWindow on a HWND_MESSAGE window works for
+            // this purpose without flashing taskbar entries.
+            SetForegroundWindow(hwnd);
+            const UINT cmd = TrackPopupMenu(menu,
+                TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
+                pt.x, pt.y, 0, hwnd, nullptr);
+            DestroyMenu(menu);
+            switch (cmd) {
+                case kMcosTrayCmdShow:
+                    mcosTrayShowWindow(self->windowHandle_);
+                    break;
+                case kMcosTrayCmdOpenBrowser:
+                    // v0.9.82: open the dashboard URL in the operator's
+                    // default browser. Uses the live snapshot's
+                    // dashboardUrl (which already substitutes wildcard
+                    // binds with the LAN-routable IP via ShellRuntime).
+                    // Falls back to 127.0.0.1:browserPort when the
+                    // snapshot isn't populated yet, and finally to the
+                    // hardcoded default port if browserPort is 0.
+                    // Uses ShellExecuteW with verb "open" so the
+                    // default browser resolves automatically.
+                    {
+                        std::wstring url = self->currentSnapshot_.dashboardUrl;
+                        if (url.empty()) {
+                            const auto port = self->currentSnapshot_.browserPort
+                                ? self->currentSnapshot_.browserPort
+                                : static_cast<uint16_t>(7300);
+                            url = L"http://127.0.0.1:" + std::to_wstring(port) + L"/";
+                        }
+                        ::ShellExecuteW(nullptr, L"open",
+                            url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                    }
+                    break;
+                case kMcosTrayCmdStopSvc:
+                    mcosRunElevated(L"net stop MasterControlProgram");
+                    break;
+                case kMcosTrayCmdRestartSvc:
+                    mcosRunElevated(
+                        L"net stop MasterControlProgram && net start MasterControlProgram");
+                    break;
+                case kMcosTrayCmdExitShell:
+                    self->exitRequested_ = true;
+                    self->RemoveTrayIcon();
+                    // Closing the main window terminates the WinUI
+                    // dispatcher loop. The Closing handler observes
+                    // exitRequested_ and lets the close proceed.
+                    if (self->windowHandle_) {
+                        ::SendMessageW(self->windowHandle_, WM_CLOSE, 0, 0);
+                    }
+                    break;
+                default:
+                    break;
+            }
+            return 0;
+        }
+        return 0;
+    }
+    if (msg == WM_DESTROY && self != nullptr) {
+        self->RemoveTrayIcon();
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+void MainWindow::EnsureTrayHostWindow() {
+    if (trayMessageHwnd_ != nullptr) return;
+    HMODULE module = GetModuleHandleW(nullptr);
+
+    // Register the host class once per process. ATOM is harmless to
+    // re-register with the same fields, but RegisterClassExW returns 0
+    // on collision so we guard it.
+    if (!trayClassRegistered_) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = &MainWindow::TrayHostWndProc;
+        wc.hInstance = module;
+        wc.lpszClassName = L"MCOSTrayHostWindow";
+        if (RegisterClassExW(&wc) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
+            trayClassRegistered_ = true;
+        } else {
+            writeShellLog(L"Tray host RegisterClassExW failed.");
+            return;
+        }
+    }
+
+    // HWND_MESSAGE-parented window: invisible, no taskbar entry, only
+    // exists to receive Shell_NotifyIcon callback messages and command
+    // dispatches from the popup menu. WinUI 3 keeps full control of
+    // the visible main window's message pump; this stub never
+    // contends with it.
+    trayMessageHwnd_ = CreateWindowExW(
+        0,
+        L"MCOSTrayHostWindow",
+        L"MCOSTrayHost",
+        0,
+        0, 0, 0, 0,
+        HWND_MESSAGE,
+        nullptr,
+        module,
+        nullptr);
+    if (trayMessageHwnd_ == nullptr) {
+        writeShellLog(L"CreateWindowExW(HWND_MESSAGE) failed for tray host.");
+        return;
+    }
+    SetWindowLongPtrW(trayMessageHwnd_, GWLP_USERDATA,
+                      reinterpret_cast<LONG_PTR>(this));
+    writeShellLog(L"Tray host message-only window created.");
+}
+
+void MainWindow::HookAppWindowClosingForTray() {
+    // AppWindow.Closing is dispatched through WinUI's message loop and
+    // gives us a Cancel slot. Setting Cancel=true and Hide()ing the
+    // app window achieves hide-to-tray without ever touching the WinUI
+    // WndProc directly. The user picks "Close MCOS Shell" from the
+    // tray menu to truly exit, which sets exitRequested_ before this
+    // handler runs again.
+    if (windowHandle_ == nullptr) return;
+    try {
+        const auto windowId = Microsoft::UI::GetWindowIdFromWindow(windowHandle_);
+        const auto appWindow = Microsoft::UI::Windowing::AppWindow::GetFromWindowId(windowId);
+        if (!appWindow) return;
+        appWindowClosingToken_ = appWindow.Closing(
+            [this, appWindow](Microsoft::UI::Windowing::AppWindow const&,
+                              Microsoft::UI::Windowing::AppWindowClosingEventArgs const& args) {
+                if (this->exitRequested_) {
+                    this->RemoveTrayIcon();
+                    if (this->trayMessageHwnd_) {
+                        DestroyWindow(this->trayMessageHwnd_);
+                        this->trayMessageHwnd_ = nullptr;
+                    }
+                    return;  // let WinUI close
+                }
+                args.Cancel(true);
+                appWindow.Hide();
+                writeShellLog(L"AppWindow Closing intercepted: hidden to tray.");
+            });
+        writeShellLog(L"AppWindow.Closing handler hooked for tray-on-close.");
+    } catch (const winrt::hresult_error& error) {
+        writeShellLog(L"AppWindow.Closing hook failed: " + std::wstring(error.message().c_str()));
+    }
+}
+
+void MainWindow::InstallTrayIcon() {
+    if (trayInstalled_) return;
+    EnsureTrayHostWindow();
+    if (trayMessageHwnd_ == nullptr) return;
+    NOTIFYICONDATAW nid{};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = trayMessageHwnd_;
+    nid.uID = static_cast<UINT>(kMcosTrayIconId);
+    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    nid.uCallbackMessage = kMcosTrayCallbackMsg;
+    // Pull the desktop icon out of the shell exe -- index 0 is the
+    // first RT_GROUP_ICON resource which the .rc points at the same
+    // .ico the start-menu / taskbar use.
+    wchar_t exePath[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exePath, ARRAYSIZE(exePath));
+    nid.hIcon = ExtractIconW(GetModuleHandleW(nullptr), exePath, 0);
+    if (!nid.hIcon) {
+        nid.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    }
+    wcsncpy_s(nid.szTip, ARRAYSIZE(nid.szTip),
+              L"Master Control Orchestration Server",
+              _TRUNCATE);
+    if (Shell_NotifyIconW(NIM_ADD, &nid)) {
+        trayInstalled_ = true;
+        writeShellLog(L"Tray icon installed.");
+    } else {
+        writeShellLog(L"Shell_NotifyIconW(NIM_ADD) failed.");
+    }
+}
+
+void MainWindow::RemoveTrayIcon() {
+    if (!trayInstalled_ || trayMessageHwnd_ == nullptr) return;
+    NOTIFYICONDATAW nid{};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = trayMessageHwnd_;
+    nid.uID = static_cast<UINT>(kMcosTrayIconId);
+    Shell_NotifyIconW(NIM_DELETE, &nid);
+    trayInstalled_ = false;
+    writeShellLog(L"Tray icon removed.");
+}
+
 void MainWindow::RootGrid_Loaded(IInspectable const&, RoutedEventArgs const&) {
     if (windowInitialized_) {
         return;
@@ -800,6 +1059,23 @@ void MainWindow::ConfigureWindow() {
     if (windowHandle_ != nullptr) {
     setWindowSize(windowHandle_, 1680, 980);
     centerWindow(windowHandle_);
+    // v0.9.76: WinUI-safe tray icon. The v0.9.72 attempt that subclassed
+    // the WinUI 3 main window's WndProc via SetWindowLongPtrW(GWLP_WNDPROC,...)
+    // crashed the shell on launch (EXCEPTION_ACCESS_VIOLATION before
+    // first frame, verified by minidump analysis). WinUI 3 does not
+    // allow that. The supported pattern -- now implemented -- routes
+    // the Shell_NotifyIcon callback through a NON-XAML message-only
+    // HWND owned by TrayHostWndProc, and intercepts the close button
+    // through AppWindow.Closing (Cancel=true + Hide). The XAML
+    // compositor's WndProc is never touched.
+    //
+    // Order matters: the AppWindow.Closing hook must be registered
+    // before the user can possibly click the close button (which
+    // includes during the very first dispatcher tick of the Loaded
+    // event). Tray icon install also runs here so the user sees the
+    // icon as soon as the shell paints its first frame.
+    HookAppWindowClosingForTray();
+    InstallTrayIcon();
 }
 }
 
@@ -1616,6 +1892,29 @@ void MainWindow::ApplySubAgentFooter(const ::MasterControlShell::ShellSnapshot& 
     auto grid = SubAgentFooterGrid();
     grid.Children().Clear();
     grid.ColumnDefinitions().Clear();
+
+    // v0.10.10: operator scoped the cross-tab SUB-AGENT GRID footer to
+    // the Telemetry and Runtime decks only. The footer is hidden on
+    // Overview, Imports, Exports, Security, CLU, Settings, and the
+    // Setup Wizard since none of those decks need a per-endpoint
+    // sub-agent view. Telemetry and Runtime keep the footer because
+    // their in-section MCP / Sub-Agent panels already use the same
+    // tile-grid shape -- the footer there is a quick-reference repeat,
+    // not a duplicate surface.
+    const bool footerAllowed =
+        (currentDestination_ == kTelemetryDestination) ||
+        (currentDestination_ == kRuntimeDestination);
+    try {
+        SubAgentFooterHeadline().Visibility(footerAllowed
+            ? Visibility::Visible
+            : Visibility::Collapsed);
+        grid.Visibility(footerAllowed
+            ? Visibility::Visible
+            : Visibility::Collapsed);
+    } catch (const winrt::hresult_error&) {}
+    if (!footerAllowed) {
+        return;
+    }
 
     if (snapshot.subAgentRuntimeStats.empty()) {
         try {
