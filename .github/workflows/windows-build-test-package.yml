@@ -86,12 +86,36 @@ jobs:
       - name: Bootstrap vcpkg and install dependencies
         shell: pwsh
         run: |
-          vcpkg install nlohmann-json:x64-windows
+          # vcpkg.json at the repo root puts vcpkg in manifest mode, where
+          # `vcpkg install <port>` is rejected with "In manifest mode, vcpkg
+          # install does not support individual package arguments." The
+          # manifest already lists nlohmann-json (and is the source of truth
+          # for any future deps), so the manifest-mode form is the right
+          # invocation here. The CMake preset's vcpkg toolchain file would
+          # also auto-install at configure time; running it explicitly first
+          # keeps the early-fail-loudly property when vcpkg.json is malformed.
+          vcpkg install --triplet x64-windows
 
       - name: Check repository version metadata
         shell: pwsh
         run: |
           pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/Sync-RepositoryVersionBadges.ps1 -CheckOnly
+
+      - name: Propagate VCPKG_ROOT for the CMake preset
+        shell: pwsh
+        run: |
+          # CMakeLists.txt:14-20 throws "VCPKG_ROOT is not set in the current
+          # environment" because CMakePresets.json references
+          # $env{VCPKG_ROOT}. github-hosted windows runners pre-install
+          # vcpkg at $env:VCPKG_INSTALLATION_ROOT (documented at
+          # https://github.com/actions/runner-images); copy it into
+          # VCPKG_ROOT for every subsequent step in this job.
+          if (-not $env:VCPKG_INSTALLATION_ROOT) {
+            Write-Error "VCPKG_INSTALLATION_ROOT is not set on this runner; cannot derive VCPKG_ROOT."
+            exit 1
+          }
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "VCPKG_ROOT will be: $env:VCPKG_INSTALLATION_ROOT"
 
       - name: Configure (Release)
         shell: pwsh
