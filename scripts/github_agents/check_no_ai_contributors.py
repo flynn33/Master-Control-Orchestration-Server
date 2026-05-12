@@ -217,6 +217,16 @@ def inspect_commit(commit: dict) -> list[str]:
         # Skip markdown blockquote / inline-quote-only lines.
         if normalized.startswith(">"):
             continue
+        # Skip test-result / mapping lines. Authorship metadata never uses
+        # arrow syntax; lines like "LEGIT ATTR: Generated with Claude Code
+        # -> BLOCKED (correct)" are smoke-test output documenting what the
+        # guard catches, not actual attribution.
+        if "->" in normalized:
+            continue
+        # Skip markdown table rows (multiple columns separated by `|`).
+        # Real attribution lines don't use table syntax.
+        if normalized.count("|") >= 2:
+            continue
 
         match = BODY_LINE_REGEX.search(normalized)
         if not match:
