@@ -193,15 +193,43 @@ def inspect_commit(commit: dict) -> list[str]:
     # patterns like "Generated with Claude Code" historically slipped past the
     # trailer-only check. Trailer matches above already cover Co-Authored-By
     # style; this pass adds prose / body-line coverage.
+    #
+    # Documentation-vs-attribution heuristic: skip matches that are inside a
+    # fenced code block, or where the matched substring is inside a quote
+    # (`"..."`, `'...'`, or `` `...` ``) -- those are documentation tokens
+    # describing the pattern, not actual authorship attribution. This
+    # prevents false-positives on commit messages that describe what the
+    # guard catches (a real situation in this repo's commit history).
+    in_code_fence = False
     for line in commit["message"].splitlines():
         normalized = line.strip()
         if not normalized:
             continue
-        # Don't double-report a trailer line
+        # Track fenced code blocks; skip everything inside them.
+        if normalized.startswith("```"):
+            in_code_fence = not in_code_fence
+            continue
+        if in_code_fence:
+            continue
+        # Don't double-report a trailer line.
         if normalized.lower().startswith(TRAILER_PREFIXES):
             continue
-        if BODY_LINE_REGEX.search(normalized):
-            findings.append(f"commit body line matched AI authorship pattern: {normalized}")
+        # Skip markdown blockquote / inline-quote-only lines.
+        if normalized.startswith(">"):
+            continue
+
+        match = BODY_LINE_REGEX.search(normalized)
+        if not match:
+            continue
+
+        # If the matched substring is inside quote characters, treat as
+        # documentation. Look at the 4 chars before the match start; if any
+        # of `"`, `'`, `` ` `` appear, assume the pattern is quoted text.
+        prefix_window = normalized[max(0, match.start() - 4):match.start()]
+        if any(q in prefix_window for q in ('"', "'", "`")):
+            continue
+
+        findings.append(f"commit body line matched AI authorship pattern: {normalized}")
 
     return findings
 
