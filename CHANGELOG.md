@@ -13,6 +13,70 @@ The release-management and doc-sync GitHub agents that previously generated part
 - Telemetry log rotation (size / age / count). v0.10.5 throttling defers the disk-fill horizon from weeks to many months but does not bound it.
 - Expand-on-click for tile-grid endpoint detail (host:port + active-client list on hover/expand).
 - Per-pass self-test rows in the persistent Diagnostics log (behind an opt-in flag).
+- PHASE-13 Win2D / Direct2D high-rate visual surfaces in the WinUI Shell (per-pool sparklines, Tron grid HLSL, activity stream SwapChainPanel).
+- Onboarding profile `governanceBundleUrl` platform-awareness (currently hardcoded to `windows` in `MasterControlRuntime.cpp`; should reflect the requesting client's target platform).
+- Source-code tombstone removal of `GatewayType::MCPJungle` enum value and `mcpjungle.exe` reference in `MasterControlBootstrapper/main.cpp` supervised-gateway child list (kept for back-compat deserialization in v0.10.x; removable at the next major bump).
+
+## [0.10.14] - 2026-05-11
+
+### Summary
+
+Audit remediation. Grok-authored repository audit (`AUDIT-FINDINGS-2026-05-11`) confirmed the runtime, contracts, and architecture are sound; flagged three classes of surface-level defects (hardcoded developer paths, retired-gateway documentation, fragile test build). v0.10.14 ships fixes for all three.
+
+### Fixed
+
+- **`.mcp.json` portability.** Replaced absolute `G:\Claude\...` developer paths with relative paths (`.remember/memory.jsonl`, `.`, `.claude/mcp-state/mcos-orchestration.sqlite`). Replaced hardcoded `C:\Program Files\nodejs\node.exe` + `npx-cli.js` invocations with bare `npx`, so the manifest works on any clone in any directory. PATH env entries kept as a sane fallback. The `Orchastration` misspelling existed only inside the absolute paths and is gone with them.
+- **`scribe.list_release_reports` portability** (`src/MasterControlBaselineToolsWorker/main.cpp`). No longer hardcodes `G:\Claude\Master-Control-Orchastration-Server\...`. Derives `handoffDir` from `GetModuleFileNameW(nullptr)`, probes `<exe-dir>\handoff\realignment` and `<exe-dir>\..\handoff\realignment`, returns a structured "not available" JSON when neither resolves.
+- **`scripts/.../register-pools.ps1` portability.** `$projectRoot` derived from `(Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path` instead of a hardcoded `G:\Claude\...` literal.
+- **Tests build robustness** (`tests/CMakeLists.txt`). `MasterControlOrchestrationServerTests` target now declares `target_include_directories(... PRIVATE ${CMAKE_SOURCE_DIR}/src/MasterControlApp ${CMAKE_SOURCE_DIR}/include)`. The relative `../src/MasterControlApp/SupervisorAssignmentService.h` include in the test source becomes a clean `SupervisorAssignmentService.h` include.
+
+### Changed
+
+- **`.claude-plugin/mcos-control/` documentation.** Retired all live MCPJungle references. README smoke-test output rewritten to match the live `/api/health/summary.gateway` shape. `mcos-installer.md` Step 2 rewritten around `NativeHttpSysGatewayAdapter` + `listenPort` + `mcpPath`. `mcos-troubleshooter.md` Chain C rewritten to key on `GET /api/health/summary.gateway` and the v0.10.13 `/api/supervisor/reachability-check`. `commands/activity.md` example telemetry SOURCE field updated from `McpJungleGatewayAdapter` to `NativeHttpSysGatewayAdapter`.
+
+### Notes
+
+- `.mcp.json` contract changed shape (path types) but stays operational; no breaking public-API change. Patch bump (0.10.13 → 0.10.14) per semver.
+- Live state on the commit's reference host (v0.10.14): `/api/version` = `0.10.14`, `/api/self-tests` = 39/39 passed, `/api/health/summary` = gateway running with 97 advertised tools and 31/31 healthy worker pools, MCP `initialize` JSON-RPC against `http://192.168.1.7:8080/mcp` returns `serverInfo.name = "MCOS Native Gateway"`, `protocolVersion = "2025-03-26"`.
+
+## [0.10.13] - 2026-05-11
+
+### Summary
+
+Server-side reachability self-check + "Verify Endpoints" button on the Supervisor card. Driven by a second ChatGPT supervisor-candidate connection-test report that returned `Connection refused` on all seven probed LAN endpoints — diagnostic finding: every refusal carried POSIX `errno 111` with sub-millisecond response time, the signature of a cloud Linux runtime that cannot route to RFC-1918 private addresses, NOT an MCOS bind failure.
+
+### Added
+
+- **`GET /api/supervisor/reachability-check`.** Probes loopback + LAN-IP variants of `/api/health`, `/.well-known/mcos.json`, `/api/supervisor/status`, and the gateway `mcpPath` via the existing `sendJsonRequest` WinHTTP helper. Returns per-probe `ok` / `statusCode` / `errorMessage` / `interpretation` plus an aggregate `allReachable` + LAN-routable interpretation block.
+- **`EndpointProbeResult` + `probeEndpoint` helpers** in the route layer. `probeEndpoint` distinguishes "no HTTP response at all" (listener missing) from "any HTTP response" (listener alive even if status is 4xx/5xx) so a `405` on `/mcp` (correct for GET) doesn't read as a failure.
+- **"Verify Endpoints" button** on the WinUI Shell Overview Supervisor card next to "Generate Config" and "Revoke Active". Calls `/api/supervisor/reachability-check` and renders the per-probe roster in a `Consolas`-font `TextBlock` so the result is copy-paste-friendly for bug-report attachments.
+
+### Notes
+
+- Operators with cloud-hosted supervisor candidates (cloud ChatGPT runtime) still need a LAN tunnel (Tailscale, ngrok, Cloudflare Tunnel) to publish the MCOS endpoint. The reachability check now produces an unambiguous server-side verdict so the cloud-routing-vs-MCOS-bind distinction is never misread again.
+
+## [0.10.12] - 2026-05-11
+
+### Summary
+
+Operator-directed eight-item punch list across the WinUI Shell and supervisor surface. Direct AI plugin slots for ChatGPT and Grok land alongside the existing Claude Code Control toggle, gated by mutual exclusion. Supervisor config emission learns the LAN-routable URL contract. Overview deck APIS & SERVICES card grows an MCP gateway URL line.
+
+### Added
+
+- **ChatGPT Control + Grok Control toggles** on the Overview deck, mirroring the existing Claude Code Control toggle. ChatGPT writes a connector-config JSON to `%USERPROFILE%\Documents\MCOS\DirectAIControl\chatgpt-mcos-control.json`; Grok writes `grok-mcos-control.json`. Both files carry the LAN-routable MCP gateway URL + discovery + health endpoints for the operator to import into the corresponding desktop client.
+- **Mutual exclusion across all three Direct AI plugin slots.** Turning on Claude / ChatGPT / Grok forcibly revokes the other two. Backend enforces single-active state; UI reflects via snapshot-driven IsOn updates with the suspendToggleHandler pattern.
+- **Backend `DirectAIPluginState` + four routes** (`/api/chatgpt-plugin/{status,toggle}`, `/api/grok-plugin/{status,toggle}`). Same shape as `/api/claude-plugin/*`. Per-provider transport-error / activeUserResolved / registered fields.
+- **`mcpGatewayStatus.mcpUrl` capture in the WinUI Shell's `/api/dashboard` parser.** New `snapshot.mcpGatewayUrl` + `snapshot.mcpGatewayState` fields drive the new MCP Gateway line on the APIS & SERVICES card.
+- **MCP Gateway URL line on the Overview APIS & SERVICES card.** Renders the gateway URL after wildcard-bind substitution, with the gateway state in parentheses.
+
+### Changed
+
+- **`server.mcpEndpoint` in generated supervisor configs and onboarding profiles** uses the LAN-routable gateway URL (`http://<lanIp>:<cfg.mcpGateway.listenPort><cfg.mcpGateway.mcpPath>`) instead of the loopback / admin-port placeholder. Pre-v0.10.12 cloud supervisors saw `127.0.0.1:7300/mcp` (wrong host, wrong port, wrong path) and failed with connection-refused on every probe.
+- **Reachability note on the Supervisor card** explicitly documents that ChatGPT cloud runtimes cannot reach RFC-1918 LAN IPs; operator-side fix is a LAN tunnel (Tailscale / ngrok / Cloudflare Tunnel / similar).
+
+### Notes
+
+- The mutual-exclusion logic for Direct AI plugins is enforced at the backend; the shell renders server-side state on every snapshot tick. Race-prevention guards (`busy` flags + `suspendToggleHandler` flags) keep the UI honest while round-trips are in flight.
 
 ## [0.10.11] - 2026-05-11
 

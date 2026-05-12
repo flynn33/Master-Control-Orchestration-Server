@@ -1,3 +1,5 @@
+> **historical — pre-PHASE-06.** This proof captures the retired external Node.js sub-agent fleet on fixed ports 7201-7207. Current model is supervised worker pools via `WorkerSupervisor` + `LeaseRouter` (see PHASE-06 in `handoff/realignment/manifest.json`).
+
 # 09 - Sub-Agent Roster (Build 48)
 
 Runtime: `http://127.0.0.1:7300/`. Saved artifacts: `G:/Claude/mcos_proof_dashboard_subagents.json`, `G:/Claude/mcos_proof_subagent_endpoint.json`.

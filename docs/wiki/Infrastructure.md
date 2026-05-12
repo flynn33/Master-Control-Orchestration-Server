@@ -3,7 +3,7 @@
 ![targets](https://img.shields.io/badge/targets-Win11%20%2F%20Server%202022-00f6ff?style=flat-square)
 ![install size](https://img.shields.io/badge/install%20size-~44%20MB-00aacc?style=flat-square)
 ![scope](https://img.shields.io/badge/scope-single%20host-031018?style=flat-square)
-![ports](https://img.shields.io/badge/ports-7300%2F7301-5a00e8?style=flat-square)
+![ports](https://img.shields.io/badge/ports-7300%2F7301%2F8080-5a00e8?style=flat-square)
 ![persistence](https://img.shields.io/badge/persistence-ProgramData-1cf2c1?style=flat-square)
 
 > **The product is single-host by design.**
@@ -27,7 +27,7 @@ flowchart LR
             Shell[WinUI shell<br/>MasterControlShell.exe]:::faint
             Browser[Browser dashboard<br/>vanilla JS @ :7300]:::accent
             Data[(ProgramData<br/>config + logs)]:::accent
-            SubAgents[(Sub-Agents<br/>:7201-7207)]:::accent
+            Gateway[NativeHttpSysGatewayAdapter<br/>:8080/mcp]:::accent
         end
         AgentA[/AI agent A/]:::good
         AgentB[/AI agent B/]:::good
@@ -38,11 +38,9 @@ flowchart LR
     Shell --> Service
     Browser --> Service
     Service --> Data
-    Service -.catalog.-> SubAgents
-    AgentA -- "X-MCOS-Client-Id: alpha" --> Service
-    AgentB -- "X-MCOS-Client-Id: bravo" --> Service
-    AgentA -- direct MCP --> SubAgents
-    AgentB -- direct MCP --> SubAgents
+    Service --- Gateway
+    AgentA -- MCP --> Gateway
+    AgentB -- MCP --> Gateway
 ```
 
 The **service host** is the only long-lived process on the host. The shell, browser, and agents are all clients of the service.
@@ -64,11 +62,11 @@ The **service host** is the only long-lived process on the host. The shell, brow
 | Resource | Minimum | Recommended |
 | --- | --- | --- |
 | CPU | 2 cores @ 2.0 GHz | 4 cores @ 3.0 GHz |
-| RAM | 2 GB free | 4 GB free (8 with sub-agent fleet) |
+| RAM | 2 GB free | 4 GB free (8+ with managed worker pools) |
 | Disk | 250 MB | 1 GB (logs, exports) |
 | Network | 100 Mbps LAN | 1 Gbps LAN |
 
-The service itself is light. Sub-agent fleet adds ~540 MB RSS combined.
+The service itself is light. Worker pool memory footprint depends on the number and kind of supervised instances.
 
 ---
 
@@ -82,23 +80,14 @@ flowchart LR
 
     Service[Service host]:::accent --> P1[TCP :7300<br/>HTTP admin + browser]:::good
     Service --> P2[UDP :7301<br/>LAN beacon broadcast]:::good
-    Service -. spawns .-> SA[Sub-agent fleet]
-    SA --> P3[TCP :7201..:7207<br/>MCP/SSE]:::good
-    Reserved[reserved :7208..:7299<br/>user-defined sub-agents]:::warn
+    Service --> P3[TCP :8080<br/>MCP gateway]:::good
 ```
 
 | Port | Purpose | Default | Bind |
 | --- | --- | --- | --- |
 | `7300/tcp` | HTTP admin + dashboard + client API | `7300` | `bindAddress` (default `0.0.0.0`) |
 | `7301/udp` | LAN beacon broadcast | `7301` | `0.0.0.0` |
-| `7201/tcp` | SENTINEL | `7201` | `127.0.0.1` |
-| `7202/tcp` | ARCHITECT | `7202` | `127.0.0.1` |
-| `7203/tcp` | FORGE | `7203` | `127.0.0.1` |
-| `7204/tcp` | SCRIBE | `7204` | `127.0.0.1` |
-| `7205/tcp` | RECON | `7205` | `127.0.0.1` |
-| `7206/tcp` | NEXUS | `7206` | `127.0.0.1` |
-| `7207/tcp` | WATCHTOWER | `7207` | `127.0.0.1` |
-| `7208–7299` | Reserved for user-defined sub-agents | — | — |
+| `8080/tcp` | MCP gateway (`NativeHttpSysGatewayAdapter`) | `8080` | `bindAddress` (default `0.0.0.0`) |
 
 ### Firewall rules (Windows Defender)
 
@@ -276,7 +265,7 @@ For the LAN client control plane use case, a single host is the right answer. AI
 > No. The service host depends on Windows-native APIs (Win32, XAML Islands). A future hardening track could explore Windows Server Core compat or a containerized headless service, but it's not on the roadmap.
 
 > **Q: Can MCOS run alongside other services on the same host?**
-> Yes. It's a well-behaved Windows service. Watch port collisions on `7300/7301` and the sub-agent range `7201–7207`.
+> Yes. It's a well-behaved Windows service. Watch port collisions on `7300/tcp` (admin API + browser surface), `7301/udp` (LAN beacon), and `8080/tcp` (MCP gateway).
 
 > **Q: Why `0.0.0.0` as the default `bindAddress`?**
 > Trusted-LAN posture. Operators on tight networks should override to a specific LAN IP via `app-configuration.json` — the bundle resolver respects `preferredBindAddress` regardless.

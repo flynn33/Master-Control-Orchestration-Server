@@ -7,6 +7,12 @@
 - Supersedes (in part): ADR-001 §3 (per-client `X-MCOS-Client-Id` as the AI-client connection model) and ADR-001 §6 (the catalog read surface as the AI-client tool path)
 - Related: [docs/implementation/MCOS-REALIGNMENT-MASTER.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/MCOS-REALIGNMENT-MASTER.md), [docs/implementation/MCP-GATEWAY-DISCOVERY-CONTRACT.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/MCP-GATEWAY-DISCOVERY-CONTRACT.md), [docs/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/CLU-GOVERNANCE-BUNDLE-CONTRACT.md), [handoff/realignment/manifest.json](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/manifest.json)
 
+## Status update (v0.9.0)
+
+MCPJungle was retired at v0.9.0. The shipping substrate is now `NativeHttpSysGatewayAdapter` (in-process HTTP.sys) behind `IMcpGateway`. The decision-point text below (which named MCPJungle as the v0.6.x default and reserved PHASE-11 to evaluate replacement) is preserved as historical record; ADR-003 captures the v0.9.0 substrate decision.
+
+---
+
 ### Context
 
 ADR-001 corrected MCOS away from embedded provider execution and toward a LAN client control plane. Its provider-removal program (`ProviderIntegrationModule`, vendor modules, `Provider*` / `AutoConnect*` data, `/api/providers/*`, outbound CLI transports) has been delivered in the runtime and modules. Static inspection of `src/MasterControlApp/MasterControlRuntime.cpp` and `src/MasterControlModules/MasterControlModules.cpp` finds zero `Provider*` / `AutoConnect*` / `/api/providers` references; residual references survive only in the WinUI shell (`MainWindow.xaml.cpp`, `ShellRuntime.cpp` lines 1487-1504, 2391, 2405) which is in deferred-cleanup state, and in historical artifacts (`CHANGELOG.md`, `VERSION.json`, `docs/wiki/Versions.md`, `plans/`). That ground is held.
@@ -29,7 +35,7 @@ Specific consequences locked by this decision:
 
 3. **Autoscaled clones are never exposed as separate public tools.** When a managed worker pool scales out, new instances live behind a stable logical pool endpoint registered with the gateway. Clients see one logical tool namespace per pool, never per instance.
 
-4. **LAN discovery is DNS-SD/mDNS first.** MCOS advertises three service types on the local link: `_mcos._tcp.local`, `_mcos-mcp._tcp.local`, `_mcos-onboarding._tcp.local`. TXT fields carry `product=MCOS`, `role=mcp-gateway`, `gateway=mcpjungle|native`, `mcp_path`, `config_path`, `governance_path`, `protovers`, `auth=none`, `trust=lan`, `clu=true`, `forsetti=true`. A normalized discovery document is served at `/.well-known/mcos.json` and mirrored by `/api/discovery`. A UDP JSON beacon remains as a fallback.
+4. **LAN discovery is DNS-SD/mDNS first.** MCOS advertises three service types on the local link: `_mcos._tcp.local`, `_mcos-mcp._tcp.local`, `_mcos-onboarding._tcp.local`. TXT fields carry `product=MCOS`, `role=mcp-gateway`, `gateway=native` (legacy `gateway=mcpjungle` retired v0.9.0), `mcp_path`, `config_path`, `governance_path`, `protovers`, `auth=none`, `trust=lan`, `clu=true`, `forsetti=true`. A normalized discovery document is served at `/.well-known/mcos.json` and mirrored by `/api/discovery`. A UDP JSON beacon remains as a fallback.
 
 5. **Onboarding profiles per client type.** MCOS generates configuration tailored to each known AI client at `/api/onboarding/{clientType}` for `claude-code`, `codex`, `grok`, `chatgpt`, and `generic`. Every profile points at the single gateway MCP URL, declares `authRequired=false`, links to the governance bundle for the requesting platform, and includes config snippets, manual instructions, and verification steps. ChatGPT is documented as a connector-edge case where local LAN connectivity is constrained. The existing `/api/platform-services/config/{platform}` endpoint is the precursor and will be subsumed.
 

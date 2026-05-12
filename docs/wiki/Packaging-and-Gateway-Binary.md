@@ -1,5 +1,7 @@
 # Packaging and Gateway Binary
 
+> **Note (post-v0.9.0):** The pre-v0.9.0 framing of this page stated that the MSI deliberately omits the gateway and operators must install MCPJungle separately. That is no longer true. The in-process `NativeHttpSysGatewayAdapter` ships inside `MasterControlServiceHost.exe` since v0.9.0. The installer-process history below is preserved for traceability.
+
 PHASE-10 baseline (ADR-002 §10, §11).
 
 ## What the MSI installs
@@ -20,15 +22,13 @@ PHASE-10 baseline (ADR-002 §10, §11).
 | Microsoft VC++ x64 runtime DLLs | Bundled from `Resolve-MasterControlToolchain.ps1`'s `VcRuntimeDirectory`. |
 | Microsoft Windows App SDK runtime DLLs | Bundled with the WinUI shell payload. |
 
-## What the MSI does NOT install
+## Gateway substrate
 
-The MSI deliberately does **not** ship the MCP Gateway substrate (MCPJungle, or any future native gateway binary). ADR-002 §11 (vendoring rules) and PHASE-02 (supervised-mock fallback) drive this:
+The MCP gateway is `NativeHttpSysGatewayAdapter`, an in-process HTTP.sys listener built into `MasterControlServiceHost.exe`. No external gateway binary is required, operator-installed, supervised, or supported. MCPJungle is not installed by the MSI and is not used at runtime.
 
-- **MCPJungle is operator-installed.** Operators download MCPJungle separately and configure its path in `mcos.json` under `mcpGateway.binaryPath`. MCOS supervises it as a child process via Job Objects (PHASE-06 pattern).
-- **No gateway binary is bundled.** Even if redistribution were licensable, bundling would force MCOS releases to track MCPJungle releases and would create a new vendoring boundary that the manifest forbids.
-- **Honest fallback when not configured.** When `mcpGateway.binaryPath` is absent or the file does not exist, the runtime enters "supervised-mock mode" (PHASE-02): the gateway adapter returns `state=configured`, `health=unhealthy`, message="No gateway binary configured." The dashboard renders this honestly. No fake live infrastructure (ADR-002 §9).
+The `mcpGateway.type` field in `mcos.json` is retained for back-compat deserialization only; the runtime always activates the native adapter regardless of its value.
 
-If a native gateway is ever built (PHASE-11 evaluation), it would be a first-party MCOS binary and would ship in the MSI. That decision is deferred to PHASE-11.
+The gateway binds at `http://<lan-ip>:8080/mcp` by default (configurable via `mcpGateway.listenPort` and `mcpGateway.mcpPath`). The bootstrapper registers the HTTP.sys URL ACL (`netsh http add urlacl url=http://+:8080/ user=Everyone`) at install time so the adapter can bind without elevation in console mode.
 
 ## Post-install smoke test
 
@@ -72,7 +72,6 @@ Uninstall removes binaries, web assets, manifests, runtime DLLs, registry hooks,
 
 - `mcos.json` and any operator-edited configuration under `%ProgramData%\Master Control Orchestration Server\` (preserved across upgrades).
 - Windows Firewall rules (see the Firewall doc for cleanup).
-- The MCPJungle binary if you installed it separately.
 
 ## Versioning
 

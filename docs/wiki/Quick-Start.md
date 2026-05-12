@@ -17,7 +17,6 @@ This page is the shortest path. For deeper guides, follow the cross-references i
 | Windows 11 or Windows Server 2022 | The product is a Windows-native C++20 application |
 | Administrative privileges | The MSI runs `perMachine`, registers a Windows service, creates firewall rules, and registers an HTTP.sys URL ACL |
 | At least one LAN client machine | To verify Bonjour-style discovery works end-to-end |
-| (Optional) An MCPJungle binary | Only required if you choose `mcpGateway.type=mcpjungle`. The native HTTP.sys substrate (`type=native`, recommended for fresh installs) needs no external binary. See [Gateway §Substrate selection](Gateway) |
 
 ---
 
@@ -57,17 +56,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterContro
 The MSI lands at:
 
 ```
-<REPO>\dist\packages\release\MasterControlOrchestrationServer-v0.7.0-win-x64\MasterControlOrchestrationServer-v0.7.0-win-x64.msi
+<REPO>\dist\packages\release\MasterControlOrchestrationServer-v0.10.14-win-x64\MasterControlOrchestrationServer-v0.10.14-win-x64.msi
 ```
 
-(Substitute the current version from `VERSION.json` for any later release.)
+(Substitute the version from `VERSION.json` for the exact current value.)
 
 ---
 
 ### 2. Run the installer
 
 ```powershell
-msiexec /i "<REPO>\dist\packages\release\MasterControlOrchestrationServer-v0.7.0-win-x64\MasterControlOrchestrationServer-v0.7.0-win-x64.msi"
+msiexec /i "<REPO>\dist\packages\release\MasterControlOrchestrationServer-v0.10.14-win-x64\MasterControlOrchestrationServer-v0.10.14-win-x64.msi"
 ```
 
 If you are reinstalling the same version on top of itself and notice files are not being replaced, force the file copies:
@@ -161,17 +160,12 @@ You should see `mcos-<instance>` advertised. If you do not:
 
 ---
 
-### 6. Pick a gateway substrate
+### 6. Enable the gateway
 
-Both substrates ship as of v0.6.9 / v0.7.0. The default for fresh installs is `mcpjungle` (the conservative path inherited from v0.6.x); fresh deployments are encouraged to switch to `native`.
+The MCP gateway substrate is `NativeHttpSysGatewayAdapter` (in-process HTTP.sys), built into `MasterControlServiceHost.exe`. No external binary is required. `mcpGateway.type` is retained for back-compat deserialization only; the runtime always uses the native adapter as of v0.9.0.
 
 ```powershell
 $cfg = Invoke-RestMethod http://localhost:7300/api/config
-
-# Pick one:
-$cfg.mcpGateway.type = 'native'      # in-process Windows-native HTTP.sys, no external binary
-# $cfg.mcpGateway.type = 'mcpjungle' # supervised external binary (default; needs MCPJungle install)
-
 $cfg.mcpGateway.enabled = $true
 
 Invoke-RestMethod http://localhost:7300/api/config -Method Post `
@@ -183,9 +177,7 @@ Invoke-RestMethod http://localhost:7300/api/gateway/start -Method Post
 (Invoke-RestMethod http://localhost:7300/api/discovery).gateway | ConvertTo-Json -Depth 4
 ```
 
-Expected: `state=running`, `type=native` (or `mcpjungle`).
-
-If you picked `mcpjungle` and have not yet installed the binary, the gateway will run in v0.6.7's honest-503 listener mode (returns structured JSON 503 to LAN clients) until you complete [Gateway §How to install MCPJungle](Gateway).
+Expected: `state=running`, `type=native`.
 
 ---
 
@@ -243,6 +235,6 @@ Ctrl+C to stop the console-mode runtime; the Windows service keeps running.
 
 - **Onboard your first AI client** → [Onboarding](Onboarding)
 - **Tune ports, instance name, advertising** → [Architecture](Architecture#configuration) or **Settings** in the WinUI shell
-- **Set up the gateway substrate** → [Gateway](Gateway) and [Packaging and Gateway Binary](Packaging-and-Gateway-Binary)
+- **Gateway details and packaging** → [Gateway](Gateway) and [Packaging and Gateway Binary](Packaging-and-Gateway-Binary)
 - **Roll out to additional hosts** → [Operations](Operations)
 - **Diagnose problems** → [Troubleshooting](Troubleshooting)

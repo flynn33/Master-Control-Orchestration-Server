@@ -188,6 +188,8 @@ Details: `plans/PROOF-OF-WORKING/08-starter-workflows.md`.
 
 ## Feature 9 — Sub-agent roster (bonus) — ✅ VERIFIED
 
+<!-- historical — pre-PHASE-06; fixed ports 7201-7207 and providerAssignmentTargets reflect the retired external Node.js fleet. Current model: supervised worker pools via WorkerSupervisor + LeaseRouter. See PHASE-06 in handoff/realignment/manifest.json. -->
+
 All 6 contract bullets pass. Evidence:
 - `/api/dashboard` publishes 7 sub-agent endpoints (ids: sentinel, architect, forge, scribe, recon, nexus, watchtower) on ports 7201–7207.
 - `docs/wiki/Sub-Agents.md` lists the same 7 with matching ports and detailed role descriptions.

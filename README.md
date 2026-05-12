@@ -1,6 +1,6 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.10.11-00f6ff?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.10.14-00f6ff?style=flat-square)
 ![released](https://img.shields.io/badge/released-2026--05--11-031018?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%E2%80%A2%20Server%202022-0a1018?style=flat-square)
 ![toolchain](https://img.shields.io/badge/toolchain-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20CMake-00aacc?style=flat-square)
@@ -80,13 +80,13 @@ Multiple AI coding clients on the same trusted LAN need to share an MCP server a
 3. **Sticky-session lease routing with same-type scale-out.** The lease router preserves stateful sessions on their original instance, fans new stateless sessions across the least-loaded ready instances, and triggers same-type spawns under saturation.
 4. **Honest telemetry.** Every numeric metric uses a `-1.0` "unavailable" sentinel rather than fabricating values. The dashboard renders unreported metrics as `unavailable`, not `0%`.
 5. **CLU/Forsetti governance.** Per-platform governance bundles distributed via HTTP. Operator approval queue for high-impact actions.
-6. **Reversible by construction.** Every gateway-related decision sits behind the `IMcpGateway` adapter. The MCPJungle substrate is supervised, not vendored; it can be replaced without breaking client contracts.
+6. **Reversible by construction.** Every gateway-related decision sits behind the `IMcpGateway` adapter. That substrate-agnostic interface meant the v0.6-v0.8 supervised MCPJungle binary could be retired cleanly at v0.9.0 in favour of the in-process `NativeHttpSysGatewayAdapter` without breaking any client contract.
 
 ---
 
-## v0.10.11 — LAN MCP Gateway, Supervisor Wizard, tile-grid shell
+## v0.10.14 — LAN MCP Gateway, Supervisor Wizard, Direct AI plugin slots, audit remediation
 
-The current release line, spanning v0.9.4 through v0.10.11 since the v0.7.0 production-milestone baseline.
+The current release line, spanning v0.9.4 through v0.10.14 since the v0.7.0 production-milestone baseline.
 
 **Native HTTP.sys is the only shipping gateway substrate.** MCPJungle support was retired in v0.9.0 per operator directive. `cfg.mcpGateway.type` is kept in the JSON schema for backward-compatible deserialization, but the runtime always uses the native HTTP.sys adapter. No external binary to supervise.
 
@@ -157,7 +157,7 @@ ctest --test-dir build/release -C Release --output-on-failure --timeout 300
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release -SkipBuild
 
 # 2. Install (interactive UI)
-msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.10.11-win-x64\MasterControlOrchestrationServer-v0.10.11-win-x64.msi"
+msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.10.14-win-x64\MasterControlOrchestrationServer-v0.10.14-win-x64.msi"
 
 # 3. Verify (after install)
 & "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output
@@ -204,7 +204,7 @@ The same toggle is on the WinUI desktop shell's **Overview** page. Either surfac
 
 | Surface | What it does | Where |
 |---|---|---|
-| **AI-client gateway** | One advertised MCP URL; auth=none, trust=lan | `IMcpGateway` + `McpJungleGatewayAdapter` (supervised binary) **or** `NativeHttpSysGatewayAdapter` (in-process HTTP.sys) |
+| **AI-client gateway** | One advertised MCP URL; auth=none, trust=lan | `IMcpGateway` + `NativeHttpSysGatewayAdapter` (in-process HTTP.sys, v0.9.0+; MCPJungle substrate retired in the same release) |
 | **Stdio bridge** | Forwards `tools/call` JSON-RPC from gateway to supervised pool children via stdin/stdout | `IWorkerSupervisor::sendStdioJsonRpc` (PHASE-12 follow-up, v0.6.10) |
 | **LAN discovery** | DNS-SD + UDP beacon + `/.well-known/mcos.json` | `DiscoveryService` + `BeaconService` |
 | **Onboarding profiles** | Per-client-type config + manual instructions | `OnboardingProfileService` + `/api/onboarding/{type}` |

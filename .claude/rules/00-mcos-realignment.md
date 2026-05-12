@@ -16,8 +16,9 @@ MCOS must be redesigned as a Windows-native LAN MCP Gateway host.
 - MCOS advertises one LAN MCP Gateway.
 - Clients consume MCOS-generated onboarding/configuration profiles.
 - MCP servers and sub-agents are supervised worker pools behind stable logical endpoints.
-- MCPJungle is the preferred initial gateway substrate through an adapter.
+- The current and only shipping gateway substrate is the in-process `NativeHttpSysGatewayAdapter` behind `IMcpGateway` (v0.9.0+). MCPJungle was retired at v0.9.0; the historical `McpJungleGatewayAdapter` was removed.
 - MCOS owns discovery, governance, telemetry, worker supervision, autoscaling, dashboarding, and Windows packaging.
+- Direct AI plugin slots (Claude Code, ChatGPT, Grok) on the Overview deck are mutually exclusive: turning one on revokes the other two (v0.10.12+).
 
 ## Required language in docs
 

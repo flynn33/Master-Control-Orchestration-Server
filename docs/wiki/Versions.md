@@ -16,17 +16,17 @@
 
 | Field | Value |
 | --- | --- |
-| **Version** | `v0.10.11` |
+| **Version** | `v0.10.14` |
 | **Released** | `2026-05-11` |
-| **Theme** | LAN MCP Gateway + Supervisor Wizard + footer-style tile-grid shell |
-| **Tag** | [`v0.10.11`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.10.11) |
-| **Gateway substrate** | `native` (in-process Windows HTTP.sys) — only shipping substrate as of v0.9.0. MCPJungle retired per operator directive. |
-| **Live state on reference host** | 26 MCP servers (25 reachable), 7 sub-agents (7 reachable), 97 advertised tools, 39/39 boot self-tests pass |
-| **Next** | v1.0.0+ candidates: CLU Phase 2/3 (`enforceAction` wiring), PHASE-14 DiagnosticsSectionControl with FileSavePicker, telemetry log rotation, tile-grid expand-on-click |
+| **Theme** | LAN MCP Gateway + Supervisor Wizard + Direct AI plugin slots + audit remediation |
+| **Tag** | [`v0.10.14`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.10.14) |
+| **Gateway substrate** | `native` (in-process Windows HTTP.sys) — only shipping substrate as of v0.9.0. MCPJungle retired per operator directive. `cfg.mcpGateway.type` is retained for back-compat deserialization only; runtime always uses the native adapter. |
+| **Live state on reference host** | 31/31 supervised worker pools healthy, 97 advertised gateway tools, 39/39 boot self-tests pass |
+| **Next** | v1.0.0+ candidates: CLU Phase 2/3 (`enforceAction` wiring), PHASE-14 DiagnosticsSectionControl with FileSavePicker, telemetry log rotation, PHASE-13 Win2D shell rendering |
 
-### What v0.10.11 represents
+### What v0.10.14 represents
 
-Aggregate release line spanning v0.9.4 through v0.10.11 (80+ patch releases) on top of the v0.7.0 production-milestone baseline. The architecture established at v0.7.0 is unchanged — every phase from PHASE-00 through PHASE-12 follow-up remains delivered. v0.9.x and v0.10.x iterate on top of the locked architecture across three themes: (1) gateway-substrate simplification (MCPJungle dropped, native HTTP.sys becomes the only path), (2) Supervisor Agent Assignment Wizard (operator picks one supervisor model and MCOS issues a LAN-routable config the client uses to bind), (3) WinUI Shell tile-grid realignment (Telemetry, Runtime, and the cross-tab footer all render the same per-endpoint tile shape).
+Aggregate release line spanning v0.9.4 through v0.10.14 on top of the v0.7.0 production-milestone baseline. The architecture established at v0.7.0 is unchanged — every phase from PHASE-00 through PHASE-12 remains delivered. v0.9.x and v0.10.x iterate on top of the locked architecture across four themes: (1) gateway-substrate simplification (MCPJungle dropped at v0.9.0, native HTTP.sys becomes the only path), (2) Supervisor Agent Assignment Wizard (v0.9.76+ — operator picks one supervisor model and MCOS issues a LAN-routable config the client uses to bind), (3) WinUI Shell tile-grid realignment (Telemetry, Runtime, and the cross-tab footer all render the same per-endpoint tile shape), (4) Direct AI plugin slots for Claude Code / ChatGPT / Grok with mutual exclusion (v0.10.12+) plus reachability self-check (v0.10.13) and audit remediation (v0.10.14: `.mcp.json` portability, scribe handoffDir derivation, register-pools.ps1 `$projectRoot` derivation, tests/CMakeLists.txt include path fix, and retired-MCPJungle doc scrubbing).
 
 ```mermaid
 gantt
@@ -264,15 +264,15 @@ flowchart LR
     classDef good fill:#031a14,stroke:#1cf2c1,color:#a8efe0;
     classDef warn fill:#1a0f00,stroke:#FFA500,color:#FFE6BF;
 
-    Old[v0.6.x install] --> MSI[Run v0.7.0 MSI<br/>MajorUpgrade reaps the old version]:::accent
+    Old[v0.6.x install] --> MSI[Run v0.7.0+ MSI<br/>MajorUpgrade reaps the old version]:::accent
     MSI --> URL[Bootstrapper installs URL ACL<br/>http://+:8080/ user=Everyone]:::accent
     MSI --> Pools[Pools persisted from v0.6.8+<br/>survive the upgrade]:::good
-    Pools --> Substrate[Decide: keep mcpjungle<br/>or switch to native]:::accent
-    Substrate --> Native[Set mcpGateway.type='native']:::good
-    Substrate --> Jungle[Keep mcpGateway.type='mcpjungle']:::good
+    Pools --> Native[Native HTTP.sys substrate<br/>auto-selected (v0.9.0+)]:::good
 ```
 
-> ⚠️ Pool definitions persist across MajorUpgrade since v0.6.8 (`AppConfiguration.pools`). Operators who upgrade from v0.6.0..v0.6.7 to v0.7.0 still need to re-register their pools, since pre-v0.6.8 installs did not write them to disk. Pools registered at v0.6.8 or later survive the v0.7.0 upgrade automatically.
+> ⚠️ Pool definitions persist across MajorUpgrade since v0.6.8 (`AppConfiguration.pools`). Operators who upgrade from v0.6.0..v0.6.7 to v0.7.0+ still need to re-register their pools, since pre-v0.6.8 installs did not write them to disk. Pools registered at v0.6.8 or later survive the upgrade automatically.
+
+> ⚠️ Substrate choice removed: as of v0.9.0 the native HTTP.sys adapter is the only substrate. Any prior `mcpGateway.type = "mcpjungle"` value in a persisted config is now ignored at runtime; the field is retained only for back-compat JSON deserialization.
 
 > ⚠️ Same-version VERSIONINFO note: when reinstalling the same v0.7.0 MSI on top of itself, default Windows Installer file-replacement rules treat the binaries as already-current. To force replacement, use `msiexec /i <msi> REINSTALL=ALL REINSTALLMODE=amus`.
 
@@ -386,7 +386,7 @@ gh release create v0.x.y \
 > No. v0.4.x and earlier are provider-era. The schemas and routes are incompatible.
 
 > **Q: Which gateway substrate should I pick?**
-> Default to `mcpGateway.type = "native"` for fresh installs. The native HTTP.sys substrate is in-process, has no external binary to manage, and the bootstrapper has already registered the URL ACL during install. Keep `"mcpjungle"` if you have an existing MCPJungle deployment, want to track an upstream that may add features faster than MCOS does, or you specifically want the supervised-binary architecture.
+> There is only one substrate as of v0.9.0: the in-process native HTTP.sys adapter. It has no external binary to manage, and the bootstrapper has already registered the URL ACL during install. The `cfg.mcpGateway.type` field is retained in the JSON schema for back-compat deserialization only; the runtime always uses the native adapter regardless of value. The `McpJungleGatewayAdapter` source files were removed at v0.9.0.
 
 > **Q: Why not `v1.0.0`?**
 > `v1.0.0` is reserved for the hardening track (bearer tokens / mTLS) or a header rename — anything that breaks the trusted-LAN posture documented in ADR-001. Until that lands, `v0.x` signals "additive change against a stable architecture." v0.7.0's "production milestone" framing is about completing the realignment program, not about graduating from `v0.x` to `v1.0.0`.

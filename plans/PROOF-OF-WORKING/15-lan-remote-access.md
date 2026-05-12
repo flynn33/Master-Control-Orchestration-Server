@@ -1,3 +1,5 @@
+> **STATUS: superseded.** This proof-of-working note predates the v0.9.0 realignment. The live equivalent in current builds is the `/api/health/summary` endpoint (returns gateway state + pool counts) and the `/api/supervisor/reachability-check` endpoint (server-side LAN probe across loopback + LAN IP, added v0.10.13). For current LAN-remote-access validation, see those routes plus the WinUI Shell's "Verify Endpoints" button on the Supervisor card.
+
 # 15 - LAN Remote Access
 
 **Build:** Master Control Orchestration Server build 48

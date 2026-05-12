@@ -1,7 +1,7 @@
 ## Master Control Orchestration Server - Project Overview
 
 ### What It Is
-Forsetti-compliant Windows orchestration server for MCP services, AI coding agents, provider routing, CLU governance, imports, exports, and operator control.
+Forsetti-compliant Windows orchestration server for MCP services, LAN AI-client onboarding, CLU governance, imports, exports, and operator control.
 The product ships as a Windows service, a WinUI 3 desktop shell, and a browser-based admin surface backed by the same local runtime.
 
 ### Core Objective
@@ -19,7 +19,7 @@ The product ships as a Windows service, a WinUI 3 desktop shell, and a browser-b
 ### Major Functional Areas
 - Forsetti module architecture with manifest-driven composition
 - CLU governance and policy enforcement
-- provider routing for Codex, Claude Code, and xAI
+- LAN AI client onboarding (Claude Code, Codex, ChatGPT, Grok, and generic MCP clients) — MCOS publishes a per-client onboarding profile at `/api/onboarding/{clientType}` carrying the gateway URL + governance bundle URL; clients import it and connect via the LAN MCP gateway.
 - custom MCP server authoring and custom sub-agent authoring
 - Windows, macOS, and iOS gateway/governance lanes
 - Apple remote-host readiness, execution, signing, notarization, export, install, and history flows
@@ -30,7 +30,7 @@ The product ships as a Windows service, a WinUI 3 desktop shell, and a browser-b
 - the Command Logic Unit, or CLU, is a first-class Forsetti service module rather than a UI-only concept
 - module manifest: `src/MasterControlModules/Resources/ForsettiManifests/CommandLogicUnitModule.json`
 - module ID: `com.mastercontrol.command-logic-unit`
-- CLU is responsible for governance posture, rule evaluation, provider responsibility routing, and platform-specific governance execution
+- CLU is responsible for governance posture, rule evaluation, governance bundle distribution, and platform-specific governance execution
 - CLU is also the operator-facing coordination lane for guided setup, Apple governance operations, and model-to-role assignment
 - the WinUI shell and browser surface both read CLU state from the runtime instead of reimplementing governance logic on their own
 
