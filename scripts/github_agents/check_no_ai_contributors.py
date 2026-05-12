@@ -201,8 +201,20 @@ def inspect_commit(commit: dict) -> list[str]:
     # prevents false-positives on commit messages that describe what the
     # guard catches (a real situation in this repo's commit history).
     in_code_fence = False
+    # Track cumulative quote-char counts across lines so we can detect when
+    # the current line sits inside a multi-line quoted region. When a quote
+    # char's running count is odd at the START of a line, the line opens
+    # inside an "open" quote from prior lines and any AI-pattern match on
+    # this line is treated as quoted documentation.
+    cumulative_quote_count = {'"': 0, "'": 0, '`': 0}
     for line in commit["message"].splitlines():
         normalized = line.strip()
+        # Snapshot the running counts BEFORE updating with this line; any
+        # quote-context check applies to "what was open coming into this line".
+        prior_quotes_open = {q: (n % 2 == 1) for q, n in cumulative_quote_count.items()}
+        # Update the cumulative counts with this line's quote chars.
+        for q in cumulative_quote_count:
+            cumulative_quote_count[q] += normalized.count(q)
         if not normalized:
             continue
         # Track fenced code blocks; skip everything inside them.
@@ -240,25 +252,21 @@ def inspect_commit(commit: dict) -> list[str]:
             flags=re.IGNORECASE,
         ):
             continue
+        # Multi-line quoted region: if we entered this line with an open
+        # quote from a prior line, the entire line counts as quoted text.
+        if any(prior_quotes_open.values()):
+            continue
 
         match = BODY_LINE_REGEX.search(normalized)
         if not match:
             continue
 
-        # If the matched substring is inside quote characters, treat as
-        # documentation. Use a balanced-quote check: count quote chars
-        # before the match; if any of `"`, `'`, `` ` `` has an odd count
-        # before the match (i.e., is currently "open"), AND the same quote
-        # char appears later on the line (closing it), the match sits
-        # inside a quoted region. This handles long-form prose like
-        #   bypass: 'BLOCKED Generated with Claude Code' (1 space) ...
-        # where the opening quote is far before the match.
+        # If the matched substring is inside an open quote on THIS line,
+        # treat as documentation. Count quote chars before the match
+        # position; if any has an odd count before the match, the match
+        # sits inside a quoted region opened on this line.
         prefix = normalized[:match.start()]
-        suffix = normalized[match.end():]
-        if any(
-            prefix.count(q) % 2 == 1 and q in suffix
-            for q in ('"', "'", "`")
-        ):
+        if any(prefix.count(q) % 2 == 1 for q in ('"', "'", "`")):
             continue
 
         findings.append(f"commit body line matched AI authorship pattern: {normalized}")
