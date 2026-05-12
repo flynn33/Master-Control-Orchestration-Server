@@ -246,10 +246,19 @@ def inspect_commit(commit: dict) -> list[str]:
             continue
 
         # If the matched substring is inside quote characters, treat as
-        # documentation. Look at the 4 chars before the match start; if any
-        # of `"`, `'`, `` ` `` appear, assume the pattern is quoted text.
-        prefix_window = normalized[max(0, match.start() - 4):match.start()]
-        if any(q in prefix_window for q in ('"', "'", "`")):
+        # documentation. Use a balanced-quote check: count quote chars
+        # before the match; if any of `"`, `'`, `` ` `` has an odd count
+        # before the match (i.e., is currently "open"), AND the same quote
+        # char appears later on the line (closing it), the match sits
+        # inside a quoted region. This handles long-form prose like
+        #   bypass: 'BLOCKED Generated with Claude Code' (1 space) ...
+        # where the opening quote is far before the match.
+        prefix = normalized[:match.start()]
+        suffix = normalized[match.end():]
+        if any(
+            prefix.count(q) % 2 == 1 and q in suffix
+            for q in ('"', "'", "`")
+        ):
             continue
 
         findings.append(f"commit body line matched AI authorship pattern: {normalized}")
