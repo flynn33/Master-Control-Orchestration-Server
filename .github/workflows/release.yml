@@ -22,7 +22,10 @@ concurrency:
 
 jobs:
   verify-and-publish:
-    runs-on: windows-latest
+    # Match the windows-product-gate runner so the same-SHA verification
+    # consumes artifacts built on the same image. VS2026 / v145 toolset is
+    # required by MasterControlShell.vcxproj.
+    runs-on: windows-2025-vs2026
     steps:
       - name: Check out repository at the tag
         uses: actions/checkout@v4

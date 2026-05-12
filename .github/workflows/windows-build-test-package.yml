@@ -24,7 +24,13 @@ concurrency:
 
 jobs:
   windows-product-gate:
-    runs-on: windows-latest
+    # MasterControlShell.vcxproj is pinned to Platform Toolset v145 (Visual
+    # Studio 18 / VS2026), which is not available on `windows-latest` (= VS2022
+    # / v143). Per the GitHub runner-image roll-out for May 2026, the
+    # `windows-2025` label redirects to `windows-2025-vs2026` and ships the
+    # v145 toolset preinstalled. If that label is renamed in the future, also
+    # update release.yml's runner.
+    runs-on: windows-2025-vs2026
     env:
       PACKAGE_ROOT: dist/packages/release
 
