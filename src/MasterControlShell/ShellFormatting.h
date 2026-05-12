@@ -32,6 +32,32 @@ inline std::wstring resolveDisplayBindAddress(const std::wstring& bindAddress,
     return bindAddress;
 }
 
+// v0.10.12: substitute the LAN-routable primary IP into an MCP gateway
+// URL whose host segment is a wildcard. Mirrors the substituteWildcardHostInUrl
+// helper in the C++ runtime that powers /api/health/summary's mcpUrl. We
+// don't try to URL-parse — the runtime emits a stable shape (scheme://host:port/path),
+// so a straight strchr is enough. Empty input returns empty. Non-wildcard
+// hosts are returned unchanged.
+inline std::wstring substituteWildcardInGatewayUrl(const std::wstring& rawUrl,
+                                                   const std::wstring& lanIp) {
+    if (rawUrl.empty()) return rawUrl;
+    const auto schemeEnd = rawUrl.find(L"://");
+    if (schemeEnd == std::wstring::npos) return rawUrl;
+    const auto hostStart = schemeEnd + 3;
+    auto hostEnd = rawUrl.find_first_of(L":/?", hostStart);
+    if (hostEnd == std::wstring::npos) hostEnd = rawUrl.size();
+    const auto host = rawUrl.substr(hostStart, hostEnd - hostStart);
+    const bool wildcard = host.empty()
+        || host == L"0.0.0.0"
+        || host == L"::"
+        || host == L"[::]"
+        || host == L"::0"
+        || host == L"[::0]";
+    if (!wildcard) return rawUrl;
+    const std::wstring replacement = lanIp.empty() ? std::wstring(L"127.0.0.1") : lanIp;
+    return rawUrl.substr(0, hostStart) + replacement + rawUrl.substr(hostEnd);
+}
+
 inline bool isWildcardBindAddress(const std::wstring& bindAddress) {
     return bindAddress.empty()
         || bindAddress == L"0.0.0.0"
@@ -143,6 +169,37 @@ inline std::wstring formatFutureUtcTime(const std::wstring& isoStampUtc) {
     const int64_t hours = (deltaSeconds % 86400) / 3600;
     if (hours == 0) return L"in " + std::to_wstring(days) + L"d";
     return L"in " + std::to_wstring(days) + L"d " + std::to_wstring(hours) + L"h";
+}
+
+// v0.10.12: ISO-UTC -> host-local HH:MM:SS converter for the activity-stream
+// "Live Command Stream" log. Pre-v0.10.12 the renderer just substr'd the
+// ISO stamp's "HH:MM:SS" segment, which surfaced UTC-time rows alongside the
+// title-bar's GetLocalTime clock and produced an apparent offset (5h on a
+// CST host) that operators read as "the live log is displaying a different
+// time from the server time". Returns empty string on parse failure so the
+// caller can fall back to the raw stamp segment.
+inline std::wstring formatLocalClockFromIsoUtc(const std::wstring& isoStampUtc) {
+    if (isoStampUtc.size() < 19 || isoStampUtc[10] != L'T') return std::wstring{};
+    std::tm tm{};
+    std::wistringstream in(isoStampUtc);
+    in >> std::get_time(&tm, L"%Y-%m-%dT%H:%M:%S");
+    if (in.fail()) return std::wstring{};
+#if defined(_WIN32)
+    const auto stampTime = _mkgmtime(&tm);
+#else
+    const auto stampTime = timegm(&tm);
+#endif
+    if (stampTime == static_cast<std::time_t>(-1)) return std::wstring{};
+    std::tm local{};
+#if defined(_WIN32)
+    if (localtime_s(&local, &stampTime) != 0) return std::wstring{};
+#else
+    if (localtime_r(&stampTime, &local) == nullptr) return std::wstring{};
+#endif
+    wchar_t buffer[16]{};
+    swprintf_s(buffer, L"%02d:%02d:%02d",
+               local.tm_hour, local.tm_min, local.tm_sec);
+    return std::wstring(buffer);
 }
 
 inline std::wstring formatPercent(const double value) {

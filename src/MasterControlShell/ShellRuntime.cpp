@@ -1666,6 +1666,25 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                     telemetryText = telemetryStream.str();
                 }
 
+                // v0.10.12: capture mcpGatewayStatus.mcpUrl so the Overview
+                // APIs & Services card can render the actual MCP gateway
+                // URL alongside the bind address. The raw URL carries the
+                // configured listenHost (typically wildcard 0.0.0.0); the
+                // presentation layer substitutes primaryIpAddress for the
+                // wildcard before rendering. mcpUrlRaw is preferred when
+                // present because /api/dashboard pre-substituted only the
+                // legacy `mcpUrl` field in v0.9 -- mcpUrlRaw is the
+                // authoritative wildcard string from v0.10.x onward.
+                if (dashboardJson->HasKey(L"mcpGatewayStatus")) {
+                    const auto gw = dashboardJson->GetNamedObject(L"mcpGatewayStatus", JsonObject());
+                    auto rawUrl = jsonStringOr(gw, L"mcpUrlRaw", "");
+                    if (rawUrl.empty()) {
+                        rawUrl = jsonStringOr(gw, L"mcpUrl", "");
+                    }
+                    snapshot.mcpGatewayUrl = wideFromUtf8(rawUrl);
+                    snapshot.mcpGatewayState = wideFromUtf8(jsonStringOr(gw, L"state", ""));
+                }
+
                 appendJsonArrayRows(
                     dashboardJson->GetNamedArray(L"endpoints", JsonArray()),
                     endpointRow,
@@ -1993,12 +2012,36 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     std::wostringstream configurationStream;
     configurationStream << L"Instance name: " << wideFromUtf8(instanceName) << L'\n'
                         << L"Browser port: " << browserPort << L'\n'
-                        << L"Beacon port: " << beaconPort << L'\n'
-                        << L"Bind address: " << wideFromUtf8(bindAddress);
+                        << L"Beacon port: " << beaconPort << L'\n';
+    // Bind address line: lead with the auto-detected LAN-reachable IP so the
+    // operator sees the address an actual client connects to. This matches
+    // the APIS & SERVICES (OverviewSectionControl::ApplyApisAndServicesCard),
+    // Security (SecuritySectionControl), Telemetry (TelemetrySectionControl),
+    // and browser Gateway panel (resources/web/app.js renderGatewayPanel)
+    // surfaces, all of which already route through resolveDisplayBindAddress
+    // / resolveDisplayUrl. The pre-fix shape ("Bind address: 0.0.0.0 (...)")
+    // led with the wildcard sentinel and read to operators as "auto-detect
+    // is not binding the host IP" -- but the runtime IS auto-detecting, the
+    // socket IS binding the host IP via the wildcard, and the discovery doc
+    // / health summary / gateway URL all already advertise the resolved IP.
+    // The wildcard sentinel is preserved as a secondary "socket bound to ..."
+    // detail so operators who care about the literal listen value still see it.
     if (isWildcardBind(bindAddress)) {
-        configurationStream << L" (all interfaces; LAN clients reach this server at "
-                            << formatLanReachable(ipAddress, browserPort)
-                            << L")";
+        const std::wstring socketLiteral = wideFromUtf8(
+            bindAddress.empty() ? std::string("0.0.0.0") : bindAddress);
+        if (ipAddress.empty()) {
+            configurationStream << L"Bind address: " << socketLiteral
+                                << L"  (auto-detection pending; socket bound to all interfaces)";
+        } else {
+            configurationStream << L"Bind address: " << ipAddress
+                                << L"  (auto-detected; socket bound to "
+                                << socketLiteral
+                                << L" / all interfaces; LAN clients reach this server at "
+                                << formatLanReachable(ipAddress, browserPort)
+                                << L")";
+        }
+    } else {
+        configurationStream << L"Bind address: " << wideFromUtf8(bindAddress);
     }
     configurationStream << L'\n'
                         // v0.6.8: surface the operator-set preferred LAN
@@ -2914,6 +2957,154 @@ ShellClaudePluginStatus ShellRuntime::ToggleClaudePlugin() const {
         return s;
     }
     return parseClaudePluginResponse(response->body, errorMessage);
+}
+
+// ---------------------------------------------------------------------------
+// v0.10.12: ChatGPT / Grok Direct AI Plugin Connection toggles.
+//
+// Same shape as FetchClaudePluginStatus / ToggleClaudePlugin but the
+// route layer drops a JSON connector config to
+// <USERPROFILE>\Documents\MCOS\DirectAIControl instead of a junction
+// under ~/.claude/plugins. The Shell renders the registered/transport-
+// error/last-error fields identically across all three provider cards
+// so the operator sees a consistent toggle UX.
+// ---------------------------------------------------------------------------
+namespace {
+
+ShellDirectAIPluginStatus parseDirectAIPluginResponse(const std::wstring& providerId,
+                                                      const std::string& body,
+                                                      const std::wstring& fallbackTransportError) {
+    ShellDirectAIPluginStatus s;
+    s.providerId = providerId;
+    const auto json = parseJsonObject(body);
+    if (!json.has_value()) {
+        s.transportError = fallbackTransportError.empty()
+            ? L"Admin API returned an unreadable response."
+            : fallbackTransportError;
+        return s;
+    }
+    s.reachable = true;
+    s.registered = jsonBoolOr(*json, L"registered", false);
+    s.activeUserResolved = jsonBoolOr(*json, L"activeUserResolved", false);
+    s.userName = wideFromUtf8(jsonStringOr(*json, L"userName", ""));
+    s.profileDir = wideFromUtf8(jsonStringOr(*json, L"profileDir", ""));
+    s.target = wideFromUtf8(jsonStringOr(*json, L"target", ""));
+    s.lastError = wideFromUtf8(jsonStringOr(*json, L"lastError", ""));
+    return s;
+}
+
+std::wstring directAIRouteFor(const std::wstring& providerId, const std::wstring& tail) {
+    // The route layer accepts chatgpt and grok; everything else returns
+    // 404 (not handled). We still hit the URL so the operator gets a
+    // clear transport error.
+    return L"/api/" + providerId + L"-plugin/" + tail;
+}
+
+} // namespace
+
+ShellDirectAIPluginStatus ShellRuntime::FetchDirectAIPluginStatus(const std::wstring& providerId) const {
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    std::wstring errorMessage;
+    const auto response = httpRequest(
+        host, port, L"GET", directAIRouteFor(providerId, L"status"),
+        {}, {}, errorMessage);
+    if (!response.has_value()) {
+        ShellDirectAIPluginStatus s;
+        s.providerId = providerId;
+        s.transportError = errorMessage.empty()
+            ? L"Unable to reach the admin API."
+            : errorMessage;
+        return s;
+    }
+    return parseDirectAIPluginResponse(providerId, response->body, errorMessage);
+}
+
+ShellDirectAIPluginStatus ShellRuntime::ToggleDirectAIPlugin(const std::wstring& providerId) const {
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    std::wstring errorMessage;
+    const auto response = httpRequest(
+        host, port, L"POST", directAIRouteFor(providerId, L"toggle"),
+        std::string("{}"), {}, errorMessage);
+    if (!response.has_value()) {
+        ShellDirectAIPluginStatus s;
+        s.providerId = providerId;
+        s.transportError = errorMessage.empty()
+            ? L"Unable to reach the admin API."
+            : errorMessage;
+        return s;
+    }
+    return parseDirectAIPluginResponse(providerId, response->body, errorMessage);
+}
+
+// ---------------------------------------------------------------------------
+// v0.10.13: server-side reachability self-check.
+//
+// Hits GET /api/supervisor/reachability-check; the route handler probes
+// loopback and LAN-IP variants of every URL the supervisor wizard would
+// stamp into a config and reports back per-probe pass/fail with HTTP
+// status + a short interpretation. The Shell renders the response as a
+// single formatted block in SupervisorReachabilityText so the operator
+// has a printable, copy-pasteable verdict to attach to bug reports.
+// ---------------------------------------------------------------------------
+ShellRuntime::ShellSupervisorReachabilityResult ShellRuntime::CheckSupervisorReachability() const {
+    ShellSupervisorReachabilityResult out;
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    std::wstring errorMessage;
+    const auto response = httpRequest(
+        host, port, L"GET", L"/api/supervisor/reachability-check",
+        {}, {}, errorMessage);
+    if (!response.has_value()) {
+        out.ok = false;
+        out.transportError = errorMessage.empty()
+            ? std::wstring(L"Unable to reach the admin API.")
+            : errorMessage;
+        return out;
+    }
+    const auto parsed = parseJsonObject(response->body);
+    if (!parsed.has_value()) {
+        out.ok = false;
+        out.transportError = L"Admin API returned an unreadable response.";
+        return out;
+    }
+    out.ok = true;
+    out.allReachable = jsonBoolOr(*parsed, L"allReachable", false);
+
+    std::wostringstream summary;
+    summary << L"Server-side reachability check (v0.10.13)\n";
+    summary << L"  Resolved LAN IP: " << wideFromUtf8(jsonStringOr(*parsed, L"resolvedLanIp", "")) << L'\n';
+    summary << L"  Admin port:   " << static_cast<int>(jsonNumberOr(*parsed, L"adminPort")) << L'\n';
+    summary << L"  Gateway port: " << static_cast<int>(jsonNumberOr(*parsed, L"gatewayPort")) << L'\n';
+    summary << L"  Generated:    " << wideFromUtf8(jsonStringOr(*parsed, L"generatedAtUtc", "")) << L"\n\n";
+
+    // Per-probe roster.
+    if (parsed->HasKey(L"probes")) {
+        const auto probes = parsed->GetNamedArray(L"probes", JsonArray());
+        summary << L"Per-probe results:\n";
+        for (const auto& v : probes) {
+            if (v.ValueType() != JsonValueType::Object) continue;
+            const auto obj = v.GetObject();
+            const auto ok = jsonBoolOr(obj, L"ok", false);
+            const auto url = wideFromUtf8(jsonStringOr(obj, L"url", ""));
+            const auto method = wideFromUtf8(jsonStringOr(obj, L"method", ""));
+            const auto statusCode = static_cast<int>(jsonNumberOr(obj, L"statusCode"));
+            const auto err = wideFromUtf8(jsonStringOr(obj, L"errorMessage", ""));
+            summary << (ok ? L"  [OK] " : L"  [FAIL] ")
+                    << method << L" " << url << L"\n";
+            if (statusCode > 0) {
+                summary << L"      HTTP " << statusCode << L"\n";
+            }
+            if (!err.empty()) {
+                summary << L"      Error: " << err << L"\n";
+            }
+        }
+        summary << L"\n";
+    }
+    summary << L"Interpretation: "
+            << wideFromUtf8(jsonStringOr(*parsed, L"interpretation", ""))
+            << L"\n";
+
+    out.bodyText = summary.str();
+    return out;
 }
 
 // v0.9.76: Supervisor Agent Assignment Wizard helpers.

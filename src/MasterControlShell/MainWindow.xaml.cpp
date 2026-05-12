@@ -2255,10 +2255,21 @@ IAsyncAction MainWindow::PollActivityStreamAsync() {
         for (const auto& event : result.events) {
             // Compose a compact single-line representation:
             //   HH:MM:SS  <kind>  <method> <target> -> <status>  <latency>ms
-            std::wstring timestamp = event.timestampUtc;
-            // Trim to HH:MM:SS if the timestamp is an ISO string
-            if (timestamp.size() >= 19 && timestamp[10] == L'T') {
-                timestamp = timestamp.substr(11, 8);
+            //
+            // v0.10.12: convert the ISO UTC timestamp to host-local
+            // HH:MM:SS so the activity log matches the title-bar's
+            // GetLocalTime clock. Pre-v0.10.12 the renderer surfaced
+            // raw UTC HH:MM:SS, which produced an apparent offset
+            // (the operator reported "the live log is displaying a
+            // different time from the server time" on a CST host).
+            // The conversion helper falls back to the raw substring
+            // if parsing fails so we never display nothing.
+            std::wstring timestamp = ::MasterControlShell::Presentation::formatLocalClockFromIsoUtc(event.timestampUtc);
+            if (timestamp.empty()) {
+                timestamp = event.timestampUtc;
+                if (timestamp.size() >= 19 && timestamp[10] == L'T') {
+                    timestamp = timestamp.substr(11, 8);
+                }
             }
 
             std::wostringstream line;

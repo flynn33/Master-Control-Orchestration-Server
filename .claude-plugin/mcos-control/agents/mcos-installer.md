@@ -1,6 +1,6 @@
 ---
 name: mcos-installer
-description: Use to bring a fresh MCOS instance up to working state — register pools, configure the gateway substrate, set the instance label, walk the operator through MCPJungle install, validate LAN advertising. Triggers on phrases like "set up MCOS", "configure a fresh install", "get this working on the LAN", "register my first pool".
+description: Use to bring a fresh MCOS instance up to working state — register pools, configure the gateway, set the instance label, validate LAN advertising. Triggers on phrases like "set up MCOS", "configure a fresh install", "get this working on the LAN", "register my first pool".
 tools: Bash, Read, Grep, Glob
 ---
 
@@ -29,13 +29,11 @@ If the operator has port conflicts, also set `browserPort` and/or `beaconPort`. 
 
 ### Step 2 — MCP gateway substrate
 
-Inspect `mcos_gateway_status`. If it reports `state: configured, supervised: false`, the gateway is in supervised-mock mode (no MCPJungle binary). Three paths:
+The native gateway is built into `MasterControlServiceHost.exe` — no separate install required.
 
-**A. Operator already has MCPJungle**: get the absolute path, set `mcpGateway.binaryPath` and `mcpGateway.enabled=true` via `mcos_config_update`, then `mcos_gateway_start`. Verify with `mcos_gateway_health`.
+Inspect `mcos_gateway_status`. The gateway type is `"native"` and the adapter is `NativeHttpSysGatewayAdapter`, listening on `cfg.mcpGateway.listenPort` (default 8080) at `cfg.mcpGateway.mcpPath` (default `/mcp`).
 
-**B. Operator wants to install MCPJungle**: walk them through the [Gateway](https://github.com/flynn33/Master-Control-Orchestration-Server/wiki/Gateway) install steps. Once the binary is in place, return to path A.
-
-**C. Operator just wants to test without MCPJungle**: leave the supervised-mock state. Note that the gateway will report `health=unknown` and tools list will be empty — that's honest, by design.
+If `mcos_gateway_status` reports `state` other than `running`, call `mcos_gateway_start`, then verify with `mcos_gateway_health`. If health still fails, hand off to mcos-troubleshooter (Chain C).
 
 ### Step 3 — Worker pools
 
@@ -86,7 +84,7 @@ When the whole ladder is done:
 ```
 SETUP COMPLETE
 - instanceId: <name>
-- gateway: <state> (<adapter type>, <binary path or supervised-mock>)
+- gateway: <state> (native, NativeHttpSysGatewayAdapter, <listenPort>/<mcpPath>)
 - pools: <N pools registered, <M> ready instances>
 - firewall: <4/4 rules in place | needs manual>
 - discovery: <verified from <host> | local only>
@@ -96,6 +94,6 @@ SETUP COMPLETE
 ## Don't
 
 - Don't auto-apply default values for things the operator should choose (instanceId, ports, pool definitions).
-- Don't proceed past step 2 if the gateway can't reach a real binary AND the operator wanted real MCP traffic.
+- Don't proceed past step 2 if the gateway reports a state other than `running` — resolve it first.
 - Don't register pools without checking the binary path exists on disk (use `Bash` with `Test-Path`).
 - Don't skip the verification step. The whole point is to leave the operator with a known-good state.

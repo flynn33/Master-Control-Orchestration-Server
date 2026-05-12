@@ -1,21 +1,19 @@
 {
   "mcpServers": {
     "memory": {
-      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "command": "npx",
       "args": [
-        "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js",
         "-y",
         "@modelcontextprotocol/server-memory"
       ],
       "env": {
-        "MEMORY_FILE_PATH": "G:\\Claude\\Master-Control-Orchastration-Server\\master-control-dashboard-main\\.remember\\memory.jsonl",
+        "MEMORY_FILE_PATH": ".remember/memory.jsonl",
         "PATH": "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows"
       }
     },
     "sequential-thinking": {
-      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "command": "npx",
       "args": [
-        "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js",
         "-y",
         "@modelcontextprotocol/server-sequential-thinking"
       ],
@@ -24,24 +22,22 @@
       }
     },
     "filesystem": {
-      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "command": "npx",
       "args": [
-        "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js",
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "G:\\Claude\\Master-Control-Orchastration-Server\\master-control-dashboard-main"
+        "."
       ],
       "env": {
         "PATH": "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows"
       }
     },
     "sqlite": {
-      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "command": "npx",
       "args": [
-        "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js",
         "-y",
         "mcp-server-sqlite-npx",
-        "G:\\Claude\\Master-Control-Orchastration-Server\\master-control-dashboard-main\\.claude\\mcp-state\\mcos-orchestration.sqlite"
+        ".claude/mcp-state/mcos-orchestration.sqlite"
       ],
       "env": {
         "PATH": "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows"

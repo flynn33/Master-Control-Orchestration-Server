@@ -110,7 +110,11 @@
             <!-- Claude Code Control toggle. The
                  ToggleSwitch fires Toggled on every state change including
                  programmatic ones, so the .cpp handler suspends the runtime
-                 toggle call while a snapshot-driven IsOn update is pending. -->
+                 toggle call while a snapshot-driven IsOn update is pending.
+                 v0.10.12: mutual-exclusion banner. Claude, ChatGPT, and Grok
+                 control toggles share one logical slot; only one provider's
+                 plugin can be active at a time. Turning on any one of the
+                 three forcibly revokes the other two. -->
             <Border Style="{StaticResource ShellCardStyle}">
                 <StackPanel Spacing="10">
                     <TextBlock Text="CLAUDE CODE CONTROL" Style="{StaticResource ShellEyebrowTextStyle}" />
@@ -119,7 +123,7 @@
                         Style="{StaticResource ShellBodyTextStyle}"
                         Foreground="{StaticResource ShellTextMutedBrush}"
                         TextWrapping="WrapWholeWords"
-                        Text="Toggle on to register the bundled mcos-control plugin into Claude Code for the current Windows user. The runtime drops a directory junction at %USERPROFILE%\.claude\plugins\mcos-control pointing at the bundled plugin source. Restart Claude Code afterwards. Toggle off removes only the junction." />
+                        Text="Toggle on to register the bundled mcos-control plugin into Claude Code for the current Windows user. The runtime drops a directory junction at %USERPROFILE%\.claude\plugins\mcos-control pointing at the bundled plugin source. Restart Claude Code afterwards. Toggle off removes only the junction. Only one of Claude / ChatGPT / Grok control toggles can be active at a time -- turning this on revokes the other two." />
                     <ToggleSwitch x:Name="ClaudePluginToggle"
                                   Header="Connect Claude Code to this server"
                                   OnContent="Connected"
@@ -130,6 +134,69 @@
                                TextWrapping="WrapWholeWords"
                                Text="Checking plugin registration state..." />
                     <TextBlock x:Name="ClaudePluginDetailText"
+                               Style="{StaticResource ShellDataTextStyle}"
+                               Foreground="{StaticResource ShellTextMutedBrush}"
+                               TextWrapping="WrapWholeWords" />
+                </StackPanel>
+            </Border>
+
+            <!-- v0.10.12: ChatGPT Control toggle. Mutually exclusive with
+                 the Claude Code Control above and the Grok Control below.
+                 Backend writes a JSON connector config to
+                 %USERPROFILE%\Documents\MCOS\DirectAIControl\chatgpt-mcos-control.json
+                 carrying the LAN-routable MCP gateway URL + discovery
+                 endpoint + health endpoint for an operator to import
+                 into ChatGPT desktop's custom-connector UI. -->
+            <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="CHATGPT CONTROL" Style="{StaticResource ShellEyebrowTextStyle}" />
+                    <TextBlock Text="Direct AI Plugin Connection" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock
+                        Style="{StaticResource ShellBodyTextStyle}"
+                        Foreground="{StaticResource ShellTextMutedBrush}"
+                        TextWrapping="WrapWholeWords"
+                        Text="Toggle on to drop the MCOS direct-AI connector config for ChatGPT at %USERPROFILE%\Documents\MCOS\DirectAIControl\chatgpt-mcos-control.json. Move that file to the ChatGPT desktop install or copy server.mcpEndpoint into ChatGPT's Custom Connector / Custom MCP setup. Toggle off removes the file. Mutually exclusive with Claude Code Control and Grok Control -- turning this on revokes the other two." />
+                    <ToggleSwitch x:Name="ChatGptPluginToggle"
+                                  Header="Connect ChatGPT to this server"
+                                  OnContent="Connected"
+                                  OffContent="Disconnected"
+                                  Toggled="ChatGptPluginToggle_Toggled" />
+                    <TextBlock x:Name="ChatGptPluginStatusText"
+                               Style="{StaticResource ShellDataTextStyle}"
+                               TextWrapping="WrapWholeWords"
+                               Text="Checking ChatGPT connector registration state..." />
+                    <TextBlock x:Name="ChatGptPluginDetailText"
+                               Style="{StaticResource ShellDataTextStyle}"
+                               Foreground="{StaticResource ShellTextMutedBrush}"
+                               TextWrapping="WrapWholeWords" />
+                </StackPanel>
+            </Border>
+
+            <!-- v0.10.12: Grok Control toggle. Same connector-config-drop
+                 pattern as ChatGPT Control above, but writes to
+                 grok-mcos-control.json. Grok desktop's MCP support is
+                 evolving so the instructions block in the connector file
+                 documents the import path; the toggle is operator-facing
+                 state, not a guaranteed plugin install. -->
+            <Border Style="{StaticResource ShellCardStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock Text="GROK CONTROL" Style="{StaticResource ShellEyebrowTextStyle}" />
+                    <TextBlock Text="Direct AI Plugin Connection" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock
+                        Style="{StaticResource ShellBodyTextStyle}"
+                        Foreground="{StaticResource ShellTextMutedBrush}"
+                        TextWrapping="WrapWholeWords"
+                        Text="Toggle on to drop the MCOS direct-AI connector config for Grok at %USERPROFILE%\Documents\MCOS\DirectAIControl\grok-mcos-control.json. Grok's desktop MCP connector UI is still evolving; the file documents the LAN-routable MCP gateway URL for the operator to import wherever Grok exposes it. Mutually exclusive with Claude Code Control and ChatGPT Control -- turning this on revokes the other two." />
+                    <ToggleSwitch x:Name="GrokPluginToggle"
+                                  Header="Connect Grok to this server"
+                                  OnContent="Connected"
+                                  OffContent="Disconnected"
+                                  Toggled="GrokPluginToggle_Toggled" />
+                    <TextBlock x:Name="GrokPluginStatusText"
+                               Style="{StaticResource ShellDataTextStyle}"
+                               TextWrapping="WrapWholeWords"
+                               Text="Checking Grok connector registration state..." />
+                    <TextBlock x:Name="GrokPluginDetailText"
                                Style="{StaticResource ShellDataTextStyle}"
                                Foreground="{StaticResource ShellTextMutedBrush}"
                                TextWrapping="WrapWholeWords" />
@@ -238,6 +305,22 @@
                                Style="{StaticResource ShellLabelTextStyle}"
                                TextWrapping="Wrap"
                                Text="Choose one AI model to supervise coding agents and make project decisions through MCOS. Generate Config will save a provider-specific JSON to the location you choose; move it to the LAN client running that model and import it there." />
+                    <!-- v0.10.12: explicit transport-reachability note. ChatGPT
+                         cloud runtimes cannot reach 192.168.x LAN addresses
+                         by design; the operator-side fix is a LAN tunnel
+                         (Tailscale / ngrok / Cloudflare Tunnel / similar)
+                         that publishes a routable URL on top of MCOS's
+                         LAN endpoint. v0.10.8 fixed the server-side
+                         config emission; this line documents the
+                         operator-side network requirement so the
+                         apparent 'connection_refused' from a cloud
+                         supervisor isn't misread as an MCOS bug. -->
+                    <Border Background="#10FF8C42" BorderBrush="#33FF8C42" BorderThickness="1" CornerRadius="0" Padding="10,8">
+                        <TextBlock Style="{StaticResource ShellLabelTextStyle}"
+                                   Foreground="{StaticResource ShellTextMutedBrush}"
+                                   TextWrapping="Wrap"
+                                   Text="Reachability note: ChatGPT cloud runtimes cannot reach LAN IPs (192.168.x / 10.x / 172.16-31.x) directly. If the supervisor client runs in the cloud, expose this MCOS host through a LAN tunnel (Tailscale, ngrok, Cloudflare Tunnel, similar) and use that tunnel URL when importing the config. Native LAN supervisors (Claude Code on this host, ChatGPT/Grok desktop on the same LAN) connect directly to the LAN endpoint without a tunnel." />
+                    </Border>
                     <StackPanel Spacing="6">
                         <Grid ColumnSpacing="14">
                             <Grid.ColumnDefinitions>
@@ -302,7 +385,30 @@
                                 IsEnabled="False"
                                 Click="SupervisorRevokeButton_Click"
                                 Style="{StaticResource ShellCommandButtonStyle}" />
+                        <!-- v0.10.13: Verify Endpoints button. Calls
+                             /api/supervisor/reachability-check, which
+                             probes MCOS's own loopback + LAN-IP URLs
+                             from inside the runtime and reports per-
+                             probe pass/fail. Gives the operator a
+                             definitive server-side answer when a
+                             remote supervisor reports "connection
+                             refused" against the LAN IP. -->
+                        <Button x:Name="SupervisorVerifyEndpointsButton"
+                                Content="Verify Endpoints"
+                                Click="SupervisorVerifyEndpointsButton_Click"
+                                Style="{StaticResource ShellCommandButtonStyle}" />
                     </StackPanel>
+                    <!-- v0.10.13: reachability self-check results panel.
+                         Populated by VerifyEndpointsAsync; default
+                         "press Verify..." text is replaced with the
+                         per-probe roster once a probe completes. -->
+                    <TextBlock x:Name="SupervisorReachabilityText"
+                               Style="{StaticResource ShellDataTextStyle}"
+                               Foreground="{StaticResource ShellTextMutedBrush}"
+                               FontFamily="Consolas, Cascadia Mono, Courier New"
+                               TextWrapping="Wrap"
+                               Visibility="Collapsed"
+                               Text="" />
                     <TextBlock x:Name="SupervisorStatusText"
                                Style="{StaticResource ShellLabelTextStyle}"
                                Foreground="{StaticResource ShellTextMutedBrush}"

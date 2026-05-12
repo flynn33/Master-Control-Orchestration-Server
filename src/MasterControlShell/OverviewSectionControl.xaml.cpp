@@ -31,7 +31,11 @@ OverviewSectionControl::OverviewSectionControl() {
 
 void OverviewSectionControl::AttachRuntime(::MasterControlShell::ShellRuntime* runtime) {
     runtime_ = runtime;
-    auto ignored = RefreshClaudePluginAsync();
+    // v0.10.12: refresh all three Direct AI Plugin Connection slots
+    // (claude + chatgpt + grok) on attach so the operator sees the
+    // current mutually-exclusive state immediately instead of after
+    // the first snapshot tick.
+    auto ignored = RefreshAllPluginSlotsAsync();
     (void)ignored;
 }
 
@@ -73,6 +77,18 @@ void OverviewSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnap
     // the in-progress state.
     if (runtime_ != nullptr && !claudePluginBusy_) {
         auto ignored = RefreshClaudePluginAsync();
+        (void)ignored;
+    }
+    // v0.10.12: same snapshot-tick refresh for the ChatGPT + Grok
+    // Direct AI Plugin Connection toggles. Skipped when the
+    // corresponding slot has a toggle in flight so we don't clobber
+    // the request's busy headline before the response lands.
+    if (runtime_ != nullptr && !chatGptPluginBusy_) {
+        auto ignored = RefreshDirectAIPluginAsync(L"chatgpt");
+        (void)ignored;
+    }
+    if (runtime_ != nullptr && !grokPluginBusy_) {
+        auto ignored = RefreshDirectAIPluginAsync(L"grok");
         (void)ignored;
     }
 }
@@ -196,6 +212,155 @@ void OverviewSectionControl::ClaudePluginToggle_Toggled(
     (void)ignored;
 }
 
+// ---------------------------------------------------------------------------
+// v0.10.12: ChatGPT / Grok Direct AI Plugin Connection toggle plumbing.
+//
+// Each provider has its own ToggleSwitch + status TextBlock + detail
+// TextBlock. The Toggled handler kicks off ToggleDirectAIPluginAsync,
+// which posts /api/<providerId>-plugin/toggle and -- because the
+// backend revokes the other two slots when one is turned on -- always
+// fires RefreshAllPluginSlotsAsync afterwards so every card reflects
+// the new mutually-exclusive state within one round-trip.
+//
+// suspend*ToggleHandler_ guards programmatic IsOn updates (from the
+// snapshot/refresh path) from re-entering the toggle handler.
+// ---------------------------------------------------------------------------
+
+void OverviewSectionControl::RenderDirectAIPluginStatus(
+    const std::wstring& providerId,
+    const ::MasterControlShell::ShellDirectAIPluginStatus& status) {
+    std::wstring headline;
+    std::wstring detail;
+    bool toggleEnabled = (runtime_ != nullptr);
+    bool toggleOn = status.registered;
+    bool busy = (providerId == L"chatgpt") ? chatGptPluginBusy_ : grokPluginBusy_;
+
+    if (busy) {
+        headline = L"Working…";
+    } else if (!status.transportError.empty()) {
+        headline = L"Cannot reach the local admin API.";
+        detail = status.transportError
+            + L"  Make sure the Master Control Orchestration Server is running.";
+        toggleEnabled = false;
+    } else if (!status.reachable) {
+        headline = L"Plugin status surface unavailable.";
+        detail = L"The runtime returned an unreadable response. The installed version may be older than 0.10.12.";
+        toggleEnabled = false;
+    } else if (!status.activeUserResolved) {
+        headline = L"No interactive Windows user resolved.";
+        detail = status.lastError.empty()
+            ? L"Sign in to Windows on this host first."
+            : status.lastError;
+        toggleEnabled = false;
+    } else if (status.registered) {
+        headline = L"Connected as " + status.userName + L".";
+        detail = L"Connector config: " + status.target;
+    } else {
+        headline = L"Disconnected (" + status.userName + L").";
+        detail = L"Toggle on to drop the connector config at " + status.target + L".";
+        if (!status.lastError.empty()) {
+            detail += L"  Last error: " + status.lastError;
+        }
+    }
+
+    if (providerId == L"chatgpt") {
+        suspendChatGptPluginToggleHandler_ = true;
+        ChatGptPluginToggle().IsEnabled(toggleEnabled);
+        ChatGptPluginToggle().IsOn(toggleOn);
+        suspendChatGptPluginToggleHandler_ = false;
+        ChatGptPluginStatusText().Text(winrt::hstring(headline));
+        ChatGptPluginDetailText().Text(winrt::hstring(detail));
+    } else if (providerId == L"grok") {
+        suspendGrokPluginToggleHandler_ = true;
+        GrokPluginToggle().IsEnabled(toggleEnabled);
+        GrokPluginToggle().IsOn(toggleOn);
+        suspendGrokPluginToggleHandler_ = false;
+        GrokPluginStatusText().Text(winrt::hstring(headline));
+        GrokPluginDetailText().Text(winrt::hstring(detail));
+    }
+}
+
+winrt::Windows::Foundation::IAsyncAction
+OverviewSectionControl::RefreshDirectAIPluginAsync(std::wstring providerId) {
+    if (runtime_ == nullptr) {
+        ::MasterControlShell::ShellDirectAIPluginStatus s;
+        s.providerId = providerId;
+        s.transportError = L"Shell runtime is not attached yet.";
+        RenderDirectAIPluginStatus(providerId, s);
+        co_return;
+    }
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+    const auto status = runtime_->FetchDirectAIPluginStatus(providerId);
+    co_await uiThread;
+    // If a toggle landed since we kicked off the fetch, leave the
+    // busy headline up; the toggle path will rerender on completion.
+    const bool busy = (providerId == L"chatgpt") ? chatGptPluginBusy_ : grokPluginBusy_;
+    if (!busy) {
+        RenderDirectAIPluginStatus(providerId, status);
+    }
+}
+
+winrt::Windows::Foundation::IAsyncAction
+OverviewSectionControl::RefreshAllPluginSlotsAsync() {
+    // The backend's mutual-exclusion enforcement means a successful
+    // toggle on any of the three slots can flip the other two off.
+    // Pull all three fresh so the UI never drifts from server-side
+    // state. Claude refresh runs first because its render path also
+    // hits Win32 plugin-junction APIs that take a few ms.
+    co_await RefreshClaudePluginAsync();
+    co_await RefreshDirectAIPluginAsync(L"chatgpt");
+    co_await RefreshDirectAIPluginAsync(L"grok");
+}
+
+winrt::Windows::Foundation::IAsyncAction
+OverviewSectionControl::ToggleDirectAIPluginAsync(std::wstring providerId, bool requestedOn) {
+    if (runtime_ == nullptr) co_return;
+    const bool chatgpt = (providerId == L"chatgpt");
+    bool& busy = chatgpt ? chatGptPluginBusy_ : grokPluginBusy_;
+    if (busy) co_return;
+    busy = true;
+    {
+        ::MasterControlShell::ShellDirectAIPluginStatus pending;
+        pending.providerId = providerId;
+        pending.reachable = true;
+        pending.activeUserResolved = true;
+        pending.registered = requestedOn;
+        RenderDirectAIPluginStatus(providerId, pending);
+    }
+
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+    auto status = runtime_->ToggleDirectAIPlugin(providerId);
+    co_await uiThread;
+    busy = false;
+    RenderDirectAIPluginStatus(providerId, status);
+    // Mutual exclusion: refresh siblings so their toggles reflect the
+    // backend's revoke side-effect.
+    co_await RefreshClaudePluginAsync();
+    co_await RefreshDirectAIPluginAsync(chatgpt ? std::wstring(L"grok") : std::wstring(L"chatgpt"));
+}
+
+void OverviewSectionControl::ChatGptPluginToggle_Toggled(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    if (suspendChatGptPluginToggleHandler_) return;
+    if (runtime_ == nullptr) return;
+    const bool requestedOn = ChatGptPluginToggle().IsOn();
+    auto ignored = ToggleDirectAIPluginAsync(L"chatgpt", requestedOn);
+    (void)ignored;
+}
+
+void OverviewSectionControl::GrokPluginToggle_Toggled(
+    Windows::Foundation::IInspectable const&,
+    Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    if (suspendGrokPluginToggleHandler_) return;
+    if (runtime_ == nullptr) return;
+    const bool requestedOn = GrokPluginToggle().IsOn();
+    auto ignored = ToggleDirectAIPluginAsync(L"grok", requestedOn);
+    (void)ignored;
+}
+
 // =====================================================================
 // v0.8.7: Overview status grid + Error Reporting frame
 // =====================================================================
@@ -286,7 +451,11 @@ void OverviewSectionControl::ApplyApisAndServicesCard(const ::MasterControlShell
     std::wostringstream out;
     // v0.9.76: route the bind-address render through resolveDisplayBindAddress
     // so wildcard binds (0.0.0.0 / ::) surface the LAN-routable primary IP.
-    // Operator can still see the raw configured value on the trailing line.
+    // v0.10.12: refresh the operator-facing label so it reads as a result of
+    // auto-detection rather than a confusing "configured 0.0.0.0" parenthetical.
+    // The card now spells out four operationally relevant lines so the
+    // operator can confirm at a glance that MCOS bound to its host IP and
+    // is publishing a reachable MCP gateway URL.
     const auto resolvedBind = ::MasterControlShell::Presentation::resolveDisplayBindAddress(
         snapshot.bindAddress, snapshot.primaryIpAddress);
     out << L"Service: " << serviceStateLabelOverview(snapshot.serviceState) << L'\n'
@@ -297,9 +466,19 @@ void OverviewSectionControl::ApplyApisAndServicesCard(const ::MasterControlShell
         << L"Bind: " << resolvedBind
         << L":" << snapshot.browserPort;
     if (::MasterControlShell::Presentation::isWildcardBindAddress(snapshot.bindAddress)) {
-        out << L"  (configured "
-            << (snapshot.bindAddress.empty() ? std::wstring(L"0.0.0.0") : snapshot.bindAddress)
-            << L")";
+        out << L"  (auto-detected; binding all interfaces)";
+    }
+    // v0.10.12: explicit MCP gateway URL line. Pre-v0.10.12 the operator had
+    // to cross-reference the discovery doc or supervisor config to confirm
+    // the gateway was reachable on the LAN IP. Now the URL shows directly
+    // beneath the bind line on the Overview card.
+    if (!snapshot.mcpGatewayUrl.empty()) {
+        const auto gatewayUrl = ::MasterControlShell::Presentation::substituteWildcardInGatewayUrl(
+            snapshot.mcpGatewayUrl, snapshot.primaryIpAddress);
+        out << L"\nMCP Gateway: " << gatewayUrl;
+        if (!snapshot.mcpGatewayState.empty()) {
+            out << L"  (" << snapshot.mcpGatewayState << L")";
+        }
     }
     ApiServicesText().Text(winrt::hstring(out.str()));
 }
@@ -918,6 +1097,44 @@ void OverviewSectionControl::SupervisorRevokeButton_Click(
     if (supervisorBusy_) return;
     auto ignored = RevokeSupervisorAsync();
     (void)ignored;
+}
+
+void OverviewSectionControl::SupervisorVerifyEndpointsButton_Click(
+        Windows::Foundation::IInspectable const&,
+        Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    // v0.10.13: probe MCOS's own URLs from inside the runtime and
+    // render the per-probe roster. Doesn't gate on supervisorBusy_
+    // because the reachability check is read-only and orthogonal to
+    // the assignment lifecycle.
+    auto ignored = VerifySupervisorEndpointsAsync();
+    (void)ignored;
+}
+
+winrt::Windows::Foundation::IAsyncAction
+OverviewSectionControl::VerifySupervisorEndpointsAsync() {
+    if (!runtime_) co_return;
+    auto runtime = runtime_;
+    SupervisorVerifyEndpointsButton().IsEnabled(false);
+    SupervisorReachabilityText().Visibility(
+        winrt::Microsoft::UI::Xaml::Visibility::Visible);
+    SupervisorReachabilityText().Text(
+        L"Probing server-side reachability of every URL the supervisor wizard would issue...");
+
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+    const auto check = runtime->CheckSupervisorReachability();
+    co_await uiThread;
+
+    SupervisorVerifyEndpointsButton().IsEnabled(true);
+    if (!check.ok) {
+        SupervisorReachabilityText().Text(winrt::hstring(
+            std::wstring(L"Reachability check failed: ")
+            + (check.transportError.empty()
+                ? std::wstring(L"unknown transport error.")
+                : check.transportError)));
+        co_return;
+    }
+    SupervisorReachabilityText().Text(winrt::hstring(check.bodyText));
 }
 
 winrt::Windows::Foundation::IAsyncAction

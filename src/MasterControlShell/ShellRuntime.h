@@ -320,6 +320,24 @@ struct ShellClaudePluginStatus final {
     std::wstring transportError; // network / parse error reaching the API
 };
 
+// v0.10.12: ChatGPT / Grok "Direct AI Plugin Connection" status surfaced
+// from /api/chatgpt-plugin/status and /api/grok-plugin/status. Same
+// shape as ShellClaudePluginStatus but the registered=true state means
+// a connector JSON file is present at
+// <USERPROFILE>\Documents\MCOS\DirectAIControl\<providerId>-mcos-control.json
+// instead of a directory junction.
+struct ShellDirectAIPluginStatus final {
+    bool reachable = false;
+    bool registered = false;
+    bool activeUserResolved = false;
+    std::wstring providerId;
+    std::wstring userName;
+    std::wstring profileDir;
+    std::wstring target;
+    std::wstring lastError;
+    std::wstring transportError;
+};
+
 struct ShellInstallerPackageSpec final {
     ShellInstallerKind kind = ShellInstallerKind::Exe;
     std::wstring source;
@@ -443,6 +461,16 @@ struct ShellSnapshot final {
     std::wstring telemetryCapturedAtUtc;
     std::wstring instanceName;
     std::wstring bindAddress;
+    // v0.10.12: native MCP gateway URL captured from /api/dashboard
+    // mcpGatewayStatus.mcpUrl. Raw value carries the configured bind
+    // (typically wildcard "http://0.0.0.0:8080/mcp"); display surfaces
+    // substitute the wildcard for snapshot.primaryIpAddress so the
+    // Overview "APIs & Services + Gateway" card shows an address
+    // external clients can actually reach. Empty when the service
+    // hasn't surfaced a gateway status block yet (boot or
+    // disabled-gateway configuration).
+    std::wstring mcpGatewayUrl;
+    std::wstring mcpGatewayState;
     std::wstring overviewText;
     std::wstring telemetryText;
     std::wstring environmentText;
@@ -544,6 +572,23 @@ public:
     // register <-> unregister and returns the new state.
     [[nodiscard]] ShellClaudePluginStatus FetchClaudePluginStatus() const;
     [[nodiscard]] ShellClaudePluginStatus ToggleClaudePlugin() const;
+    // v0.10.12: ChatGPT / Grok Direct AI Plugin Connection toggles.
+    // providerId is "chatgpt" or "grok"; any other value hits the
+    // generic provider fallback on the route side. Both Fetch and
+    // Toggle hit the /api/<providerId>-plugin/<status|toggle> route
+    // and parse the JSON shape returned by directAIPluginStatusJson.
+    [[nodiscard]] ShellDirectAIPluginStatus FetchDirectAIPluginStatus(const std::wstring& providerId) const;
+    [[nodiscard]] ShellDirectAIPluginStatus ToggleDirectAIPlugin(const std::wstring& providerId) const;
+    // v0.10.13: GET /api/supervisor/reachability-check. Returns the
+    // raw response body so the caller can render the per-probe roster
+    // verbatim, plus a small parsed-summary tuple for the headline.
+    struct ShellSupervisorReachabilityResult {
+        bool ok = false;
+        bool allReachable = false;
+        std::wstring transportError;
+        std::wstring bodyText; // pretty-printable summary built from parsed JSON
+    };
+    [[nodiscard]] ShellSupervisorReachabilityResult CheckSupervisorReachability() const;
     // v0.9.75: re-run the boot self-test sweep on demand. POSTs
     // /api/self-tests/run and returns the freshly-computed snapshot.
     [[nodiscard]] ShellSelfTestSnapshot RunSelfTestsNow() const;
