@@ -8,21 +8,83 @@ from common import ROOT, git_output
 
 
 ALLOWED_BOT_NAMES = {"github-actions[bot]", "dependabot[bot]", "renovate[bot]"}
+
+# AI vendor / model / tool name patterns. Matched word-bounded, case-insensitive.
+# Audited 2026-05-12 for completeness against then-current AI coding tools.
 AI_PATTERNS = (
+    # Anthropic
+    r"\bclaude\b",
+    r"\banthropic\b",
+    # OpenAI
     r"\bchatgpt\b",
     r"\bcodex\b",
-    r"\bclaude\b",
-    r"\bcopilot\b",
-    r"\bgemini\b",
-    r"\bgrok\b",
     r"\bopenai\b",
-    r"\banthropic\b",
+    # Google
+    r"\bgemini\b",
+    r"\bbard\b",
+    # GitHub / Microsoft
+    r"\bcopilot\b",
+    # xAI
+    r"\bgrok\b",
+    r"\bx\.ai\b",
+    # Other major AI vendors
     r"\bdeepseek\b",
     r"\bperplexity\b",
-    r"\bx\.ai\b",
+    r"\bmistral\b",
+    r"\bmeta-ai\b",
+    r"\bllama\b",
+    # AI-coding-tool brands
+    r"\bcursor\b",
+    r"\btabnine\b",
+    r"\bcodewhisperer\b",
+    r"\bamazon\s*q\b",
+    r"\bcontinue\.dev\b",
+    r"\bsourcegraph\s*cody\b",
+    r"\bcody\b",
+    r"\bwindsurf\b",
+    r"\baider\b",
+    r"\bphind\b",
+    # Generic AI authorship tokens
+    r"\bllm\b",
+    r"\bai-generated\b",
+    r"\bai-authored\b",
+    r"\bgenerated\s+with\s+ai\b",
+    r"\bgenerated\s+by\s+ai\b",
+    r"\bauthored\s+by\s+ai\b",
+    r"\bwritten\s+by\s+ai\b",
+    # Robot/AI emoji often used as authorship marker (escaped Unicode codepoints)
+    "\U0001F916",  # robot face emoji
+    "\U0001F9E0",  # brain emoji
 )
 AI_REGEX = re.compile("|".join(AI_PATTERNS), re.IGNORECASE)
-TRAILER_PREFIXES = ("co-authored-by:", "contributed-by:", "pair-programmed-by:")
+
+# Trailer prefixes scanned for AI vendor identities. Includes signed-off-by
+# (added 2026-05-12) because AI-tool commit signers historically leak through
+# the SoB trailer when DCO sign-off is enforced upstream.
+TRAILER_PREFIXES = (
+    "co-authored-by:",
+    "contributed-by:",
+    "pair-programmed-by:",
+    "signed-off-by:",
+    "written-by:",
+    "authored-by:",
+    "generated-by:",
+    "assisted-by:",
+)
+
+# Body-line patterns scanned across the entire commit message (NOT only
+# trailer-prefixed lines). Catches free-form attribution in commit prose like
+# "Generated with Claude Code", a 🤖 emoji on its own line, etc.
+BODY_LINE_AI_PATTERNS = (
+    r"generated\s+with\s+\w+",
+    r"generated\s+by\s+\w+",
+    r"\bvia\s+(claude\s+code|cursor|copilot|chatgpt|codex|grok)\b",
+    r"\bauthored\s+by\s+(claude|chatgpt|codex|grok|copilot|cursor)\b",
+    r"powered\s+by\s+(claude|gpt|chatgpt|anthropic|openai|gemini)",
+    "\U0001F916",  # robot emoji anywhere in the body
+)
+BODY_LINE_REGEX = re.compile("|".join(BODY_LINE_AI_PATTERNS), re.IGNORECASE)
+
 ZERO_SHA = "0" * 40
 
 
@@ -125,6 +187,21 @@ def inspect_commit(commit: dict) -> list[str]:
     for trailer in trailers(commit["message"]):
         if AI_REGEX.search(trailer):
             findings.append(f"commit trailer matched AI contributor rule: {trailer}")
+
+    # v0.10.14 alignment: scan the entire commit body for free-form AI
+    # attribution that's NOT in a recognised trailer line. The audit found
+    # patterns like "Generated with Claude Code" historically slipped past the
+    # trailer-only check. Trailer matches above already cover Co-Authored-By
+    # style; this pass adds prose / body-line coverage.
+    for line in commit["message"].splitlines():
+        normalized = line.strip()
+        if not normalized:
+            continue
+        # Don't double-report a trailer line
+        if normalized.lower().startswith(TRAILER_PREFIXES):
+            continue
+        if BODY_LINE_REGEX.search(normalized):
+            findings.append(f"commit body line matched AI authorship pattern: {normalized}")
 
     return findings
 

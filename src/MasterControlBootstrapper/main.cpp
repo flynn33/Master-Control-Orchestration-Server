@@ -1704,10 +1704,13 @@ bool removeUrlAcl(const InstallationState& state) {
 // service process gracefully), then this function force-kills any
 // remaining shell / launcher / supervised-child holdouts.
 void forceKillLingeringMcosProcesses() {
+    // The retired-substrate binary was removed from this kill list at v0.10.14
+    // alignment. The substrate adapter source files were removed at v0.9.0;
+    // MCOS no longer spawns that child. Pre-v0.9.0 installs that left a stray
+    // process behind are an operator-side cleanup concern.
     constexpr const wchar_t* kProcessNames[] = {
         L"MasterControlShell.exe",
-        L"MasterControlOrchestrationServer.exe",  // launcher
-        L"mcpjungle.exe"                          // supervised gateway child
+        L"MasterControlOrchestrationServer.exe"  // launcher
     };
     for (const auto* name : kProcessNames) {
         // /T = also kill child processes (Job Object containment makes

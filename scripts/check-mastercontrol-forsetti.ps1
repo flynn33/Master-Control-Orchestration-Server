@@ -221,6 +221,63 @@ if (-not (Test-Path $runtimePath)) {
     Assert-Contains $runtime '/mcp/gateway/' "MasterControlRuntime.cpp must expose platform-specific gateway routes."
     Assert-Contains $runtime '/mcp/governance/' "MasterControlRuntime.cpp must expose platform-specific governance MCP routes."
     Assert-NotContains $runtime 'AllowAllEntitlementProvider' "MasterControlRuntime.cpp must not bypass Forsetti entitlement gating with AllowAllEntitlementProvider."
+
+    # v0.10.14 alignment: gateway / governance / direct-AI invariants
+
+    # CLU governance bundles: dynamic dispatch at /api/governance/bundles/{windows|macos|ios}.
+    # Asserting against the dispatcher prefix + the documenting comment that
+    # lists all three platforms so this stays accurate as the dispatcher is
+    # refactored.
+    Assert-Contains $runtime 'startsWith\(request\.path,\s*"/api/governance/bundles/"\)' "MasterControlRuntime.cpp must wire the dynamic /api/governance/bundles/{platform} dispatcher."
+    Assert-Contains $runtime '/api/governance/bundles/\{windows\|macos\|ios\}' "MasterControlRuntime.cpp must document the dispatcher's accepted platforms (Windows/macOS/iOS)."
+
+    # Native HTTP.sys gateway adapter is the only shipping substrate (v0.9.0+).
+    Assert-Contains $runtime 'NativeHttpSysGatewayAdapter' "MasterControlRuntime.cpp must reference the NativeHttpSysGatewayAdapter (v0.9.0+ shipping substrate)."
+
+    # Direct AI plugin slots (v0.10.12+): mutually exclusive Claude / ChatGPT / Grok routes.
+    Assert-Contains $runtime '/api/claude-plugin/' "MasterControlRuntime.cpp must wire the Claude Code direct-AI plugin route."
+    Assert-Contains $runtime '/api/chatgpt-plugin/' "MasterControlRuntime.cpp must wire the ChatGPT direct-AI plugin route (v0.10.12+)."
+    Assert-Contains $runtime '/api/grok-plugin/' "MasterControlRuntime.cpp must wire the Grok direct-AI plugin route (v0.10.12+)."
+
+    # v0.10.13 supervisor reachability self-check.
+    Assert-Contains $runtime '/api/supervisor/reachability-check' "MasterControlRuntime.cpp must wire the supervisor reachability self-check route (v0.10.13+)."
+
+    # LAN-trust posture: onboarding profiles must declare authRequired=false (C++
+    # field setter on the OnboardingProfile struct) and trust=lan (txt + JSON
+    # forms in discovery / DNS-SD advertising).
+    Assert-Contains $runtime 'profile\.authRequired\s*=\s*false' "MasterControlRuntime.cpp must set OnboardingProfile.authRequired = false (LAN-trust posture; ADR-002 §1)."
+    Assert-Contains $runtime '"trust"\s*,\s*"lan"|"trust":\s*"lan"|txt\["trust"\]\s*=\s*"lan"' "MasterControlRuntime.cpp must declare trust=lan in DNS-SD TXT and / or discovery JSON (LAN-trust posture)."
+}
+
+# v0.10.14 alignment: source-tree retirement checks for MCPJungle.
+# MCPJungle was retired at v0.9.0; no production code path may still
+# spawn an external mcpjungle.exe child. The GatewayType::MCPJungle enum
+# value is allowed only as a back-compat deserialization tombstone in
+# MasterControlModels.cpp / .h (so existing on-disk configs still parse).
+$bootstrapperMainPath = Join-Path $repoRoot "src\MasterControlBaselineToolsWorker\main.cpp"
+$bootstrapperEntryPath = Join-Path $repoRoot "src\MasterControlBootstrapper\main.cpp"
+foreach ($p in @($bootstrapperMainPath, $bootstrapperEntryPath)) {
+    if (Test-Path $p) {
+        $c = Get-Content $p -Raw
+        Assert-NotContains $c 'mcpjungle\.exe' "MCPJungle binary reference must not survive in $($p.Replace($repoRoot + '\', ''))."
+    }
+}
+
+# v0.10.14 alignment: vendored Forsetti directory integrity check.
+# The vendored Forsetti tree is read-only per .claude/rules/20-forsetti-clu-governance.md.
+# Local check against the working tree using git status -s on the vendored path.
+# This catches accidental modifications before they reach CI.
+try {
+    $forsettiVendorDirty = & git status --porcelain -- "Forsetti-Framework-Windows-main/" 2>$null
+    if ($LASTEXITCODE -eq 0 -and $forsettiVendorDirty) {
+        # Filter out untracked files (??) — only fail on tracked modifications.
+        $tracked = $forsettiVendorDirty | Where-Object { $_ -notmatch '^\?\?' }
+        if ($tracked) {
+            $violations += "Vendored Forsetti directory has tracked modifications (read-only per rule 20-forsetti-clu-governance.md): $(($tracked | ForEach-Object { $_.Trim() }) -join '; ')"
+        }
+    }
+} catch {
+    # git not available in this shell — skip silently; CI will catch it.
 }
 
 if (-not (Test-Path $cluManifestPath)) {
