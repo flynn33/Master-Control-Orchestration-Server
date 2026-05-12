@@ -167,6 +167,27 @@ jobs:
         run: |
           ctest --test-dir build/release -C Release --output-on-failure --timeout 300
 
+      - name: Install WiX 5 toolset for MSI authoring
+        shell: pwsh
+        run: |
+          # installer/Build-Msi.ps1 invokes the WiX 5 global tool plus the
+          # WixToolset.UI and WixToolset.Util extensions. These are not
+          # pre-installed on the github-hosted windows-2025-vs2026 runner;
+          # without them the Package script falls back to zip-only output
+          # and the smoke step fails because the MSI/EXE staging tree
+          # isn't replicated into the bundle directory. Install once here.
+          dotnet tool install --global wix --version 5.0.2 2>&1 | Out-Host
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) { throw "dotnet tool install wix failed (exit $LASTEXITCODE)" }
+          # Add the dotnet global tool path to GITHUB_PATH so subsequent
+          # steps (Package) can resolve `wix` via Get-Command.
+          $toolPath = Join-Path $env:USERPROFILE ".dotnet\tools"
+          "$toolPath" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          $env:Path = "$toolPath;$env:Path"
+          wix --version | Out-Host
+          wix extension add --global WixToolset.UI.wixext/5.0.2 2>&1 | Out-Host
+          wix extension add --global WixToolset.Util.wixext/5.0.2 2>&1 | Out-Host
+          wix extension list --global | Out-Host
+
       - name: Package
         shell: pwsh
         run: |
