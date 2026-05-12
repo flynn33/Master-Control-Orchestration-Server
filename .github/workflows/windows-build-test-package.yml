@@ -117,6 +117,41 @@ jobs:
           "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "VCPKG_ROOT will be: $env:VCPKG_INSTALLATION_ROOT"
 
+      - name: Discover vstest.console.exe for the Forsetti test runner
+        shell: pwsh
+        run: |
+          # CMakeLists.txt's find_program for MASTERCONTROL_VSTEST_CONSOLE
+          # checks a small set of well-known prefixes (VS2022 Community/
+          # BuildTools, VS18 Community/BuildTools). The github-hosted
+          # windows-2025-vs2026 runner installs VS Enterprise at a different
+          # prefix; vswhere is the documented discovery path. Find the
+          # latest install with the test-window component, locate
+          # vstest.console.exe under its CommonExtensions tree, and export
+          # the path so cmake configure picks it up before the test target
+          # is built. Without this, the Forsetti tests fail with "Unable to
+          # locate vstest.console.exe" at ctest time.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            Write-Warning "vswhere.exe not found at $vswhere; skipping vstest.console.exe discovery."
+            return
+          }
+          $vsRoot = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsRoot) {
+            Write-Warning "vswhere did not resolve a VS install; skipping vstest.console.exe discovery."
+            return
+          }
+          $candidates = @(
+            (Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe'),
+            (Join-Path $vsRoot 'Common7\IDE\Extensions\TestPlatform\vstest.console.exe')
+          )
+          $found = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $found) {
+            Write-Warning "vstest.console.exe not found under $vsRoot; cmake will warn at configure time."
+            return
+          }
+          Write-Host "MASTERCONTROL_VSTEST_CONSOLE will be: $found"
+          "MASTERCONTROL_VSTEST_CONSOLE=$found" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Configure (Release)
         shell: pwsh
         run: |
