@@ -227,6 +227,19 @@ def inspect_commit(commit: dict) -> list[str]:
         # Real attribution lines don't use table syntax.
         if normalized.count("|") >= 2:
             continue
+        # Skip lines that look like aligned test-result output. Real
+        # authorship attribution never uses this format; it only appears in
+        # smoke-test prose documenting what the guard catches. Match
+        # requires the line to start with a status marker followed by 2+
+        # whitespace chars and more content (the alignment gap). A single
+        # space after the marker is more likely prose ("blocked the
+        # malicious request") and stays subject to the body-scan.
+        if re.match(
+            r"^(PASS|FAIL|OK|BLOCKED|WARN|SKIP|ERROR|ALLOW|DENY)\s{2,}\S",
+            normalized,
+            flags=re.IGNORECASE,
+        ):
+            continue
 
         match = BODY_LINE_REGEX.search(normalized)
         if not match:
