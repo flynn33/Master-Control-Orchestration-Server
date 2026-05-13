@@ -67,6 +67,20 @@ inline bool isWildcardBindAddress(const std::wstring& bindAddress) {
         || bindAddress == L"[::0]";
 }
 
+// std::string overload — same canonical wildcard set, for callers that
+// hold a UTF-8 narrow string (e.g., ShellRuntime::CaptureSnapshot, where
+// bindAddress comes out of JSON parsing as std::string before being
+// converted to wstring for the snapshot). Both overloads MUST agree on
+// the wildcard set; if either grows a new sentinel, the other must too.
+inline bool isWildcardBindAddress(const std::string& bindAddress) {
+    return bindAddress.empty()
+        || bindAddress == "0.0.0.0"
+        || bindAddress == "::"
+        || bindAddress == "[::]"
+        || bindAddress == "::0"
+        || bindAddress == "[::0]";
+}
+
 // v0.9.90: relative-time formatter. Parses an ISO-8601 UTC stamp (e.g.
 // "2026-05-11T00:57:59Z") into a system_clock time_point, computes now
 // - that, and renders the duration in operator-friendly buckets:

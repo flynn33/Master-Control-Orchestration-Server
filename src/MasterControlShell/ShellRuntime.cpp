@@ -7,6 +7,7 @@
 #include "MasterControl/MasterControlDiagnostics.h"
 #include "SnapshotCollectionMerge.h"
 #include "ShellRuntime.h"
+#include "ShellFormatting.h"
 
 #include <ShlObj.h>
 #include <mutex>
@@ -1995,9 +1996,11 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     // "Preferred bind (advertised)" line: when the operator has not
     // pinned a preferred bind, surface the auto-detected primary IP
     // verbatim instead of the bare "(auto-detected)" placeholder.
-    auto isWildcardBind = [](const std::string& v) {
-        return v.empty() || v == "0.0.0.0" || v == "::" || v == "[::]";
-    };
+    // Wildcard-bind detection routes through the shell-wide helper so the
+    // canonical wildcard set (empty, 0.0.0.0, ::, [::], ::0, [::0]) stays in
+    // one place; the prior local lambda was missing ::0 / [::0] which made
+    // those bind values render as "operator-pinned" instead of leading with
+    // the resolved LAN IP. See ShellFormatting.h::isWildcardBindAddress.
     auto formatLanReachable = [&](const std::wstring& ip, uint16_t port) -> std::wstring {
         if (ip.empty()) {
             return L"(LAN IP not yet resolved)";
@@ -2026,7 +2029,7 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     // / health summary / gateway URL all already advertise the resolved IP.
     // The wildcard sentinel is preserved as a secondary "socket bound to ..."
     // detail so operators who care about the literal listen value still see it.
-    if (isWildcardBind(bindAddress)) {
+    if (::MasterControlShell::Presentation::isWildcardBindAddress(bindAddress)) {
         const std::wstring socketLiteral = wideFromUtf8(
             bindAddress.empty() ? std::string("0.0.0.0") : bindAddress);
         if (ipAddress.empty()) {
