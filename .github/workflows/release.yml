@@ -5,7 +5,7 @@ name: Release
 #   1. A version tag (vX.Y.Z) was pushed.
 #   2. The same-SHA `Windows Build, Test, and Package` workflow succeeded.
 # This workflow MUST NOT be made `workflow_dispatch`-able. Manual dispatch
-# would let an operator publish a release without a passing build.
+# would let a maintainer publish a release without a passing build.
 # FORBIDDEN-CONTRACT §6.2 greps for the bypass pattern in this file.
 on:
   push:

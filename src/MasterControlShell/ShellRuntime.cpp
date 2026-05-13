@@ -472,7 +472,7 @@ std::optional<HttpResponse> httpRequest(const std::string& host,
     // baseline, and Forsetti module catalog finish hydrating. Pre-v0.7.1
     // the 10s ceiling clipped Settings Apply silently: the shell's GET to
     // pull current config dropped, the merge-then-POST never ran, and the
-    // operator saw the bind-address narrative stay stale even though no
+    // maintainer saw the bind-address narrative stay stale even though no
     // error surfaced. Values still tuned for "fail fast on dead, patient
     // on slow-but-alive". The pre-warm path in the runtime knocks the
     // typical first-call delay down further, but a generous receive
@@ -1711,7 +1711,7 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                 // v0.7.6: parse subAgentRuntimeStats and surface them to
                 // the Sub-Agents card grid on the Runtime section. Includes
                 // reachability + endpoint + active-client roster per
-                // sub-agent so the operator sees real graphics, not just
+                // sub-agent so the maintainer sees real graphics, not just
                 // "unavailable" placeholders.
                 snapshot.subAgentRuntimeStats.clear();
                 for (const auto& value : dashboardJson->GetNamedArray(L"subAgentRuntimeStats", JsonArray())) {
@@ -1948,7 +1948,7 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
         governanceDocumentRows.push_back(L"No CLU documents are available.");
     }
     if (governanceActionRows.empty()) {
-        governanceActionRows.push_back(L"No immediate operator actions are recommended.");
+        governanceActionRows.push_back(L"No immediate maintainer actions are recommended.");
     }
     if (appleRemoteHostRows.empty()) {
         appleRemoteHostRows.push_back(L"No Apple remote hosts are registered yet.");
@@ -1987,19 +1987,19 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     // v0.7.7: render the bind address as both the configured value AND the
     // LAN-reachable form. Pre-v0.7.7 the line read "Bind address: 0.0.0.0",
     // which is technically the configured wildcard value but tells the
-    // operator nothing about what LAN clients actually connect to. When
+    // maintainer nothing about what LAN clients actually connect to. When
     // bindAddress is a wildcard (0.0.0.0, ::, or empty), append the
-    // resolved primary LAN IP + browser port so the operator can read off
+    // resolved primary LAN IP + browser port so the maintainer can read off
     // the real reachable address from this single line. When bindAddress
     // is an explicit IP, the wildcard branch is skipped and the line shows
     // the configured value verbatim. Same treatment for the
-    // "Preferred bind (advertised)" line: when the operator has not
+    // "Preferred bind (advertised)" line: when the maintainer has not
     // pinned a preferred bind, surface the auto-detected primary IP
     // verbatim instead of the bare "(auto-detected)" placeholder.
     // Wildcard-bind detection routes through the shell-wide helper so the
     // canonical wildcard set (empty, 0.0.0.0, ::, [::], ::0, [::0]) stays in
     // one place; the prior local lambda was missing ::0 / [::0] which made
-    // those bind values render as "operator-pinned" instead of leading with
+    // those bind values render as "maintainer-pinned" instead of leading with
     // the resolved LAN IP. See ShellFormatting.h::isWildcardBindAddress.
     auto formatLanReachable = [&](const std::wstring& ip, uint16_t port) -> std::wstring {
         if (ip.empty()) {
@@ -2017,18 +2017,18 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                         << L"Browser port: " << browserPort << L'\n'
                         << L"Beacon port: " << beaconPort << L'\n';
     // Bind address line: lead with the auto-detected LAN-reachable IP so the
-    // operator sees the address an actual client connects to. This matches
+    // maintainer sees the address an actual client connects to. This matches
     // the APIS & SERVICES (OverviewSectionControl::ApplyApisAndServicesCard),
     // Security (SecuritySectionControl), Telemetry (TelemetrySectionControl),
     // and browser Gateway panel (resources/web/app.js renderGatewayPanel)
     // surfaces, all of which already route through resolveDisplayBindAddress
     // / resolveDisplayUrl. The pre-fix shape ("Bind address: 0.0.0.0 (...)")
-    // led with the wildcard sentinel and read to operators as "auto-detect
+    // led with the wildcard sentinel and read to maintainers as "auto-detect
     // is not binding the host IP" -- but the runtime IS auto-detecting, the
     // socket IS binding the host IP via the wildcard, and the discovery doc
     // / health summary / gateway URL all already advertise the resolved IP.
     // The wildcard sentinel is preserved as a secondary "socket bound to ..."
-    // detail so operators who care about the literal listen value still see it.
+    // detail so maintainers who care about the literal listen value still see it.
     if (::MasterControlShell::Presentation::isWildcardBindAddress(bindAddress)) {
         const std::wstring socketLiteral = wideFromUtf8(
             bindAddress.empty() ? std::string("0.0.0.0") : bindAddress);
@@ -2047,11 +2047,11 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
         configurationStream << L"Bind address: " << wideFromUtf8(bindAddress);
     }
     configurationStream << L'\n'
-                        // v0.6.8: surface the operator-set preferred LAN
+                        // v0.6.8: surface the maintainer-set preferred LAN
                         // IP. Discovery doc + DNS-SD records use this when
                         // it's non-empty (v0.6.4 advertise side, v0.6.6
                         // dashboard telemetry side); shell should display
-                        // it so operators can confirm what LAN clients see.
+                        // it so maintainers can confirm what LAN clients see.
                         // v0.7.7: when no preferred bind is pinned, show
                         // the auto-detected primary IP rather than the
                         // bare "(auto-detected)" placeholder.
@@ -2624,10 +2624,10 @@ ShellOperationResult ShellRuntime::UpdateHostSettings(const ShellHostSettings& s
     configuration->SetNamedValue(L"beaconPort", JsonValue::CreateNumberValue(settings.beaconPort));
     configuration->SetNamedValue(L"beaconEnabled", JsonValue::CreateBooleanValue(settings.beaconEnabled));
 
-    // v0.9.3: also push the operator's bind-address pick into
+    // v0.9.3: also push the maintainer's bind-address pick into
     // activeProfile.preferredBindAddress. The discovery doc URL builder
     // gives preferredBindAddress higher priority than bindAddress -- so
-    // pre-v0.9.3 the operator's "Bind Address" change updated only
+    // pre-v0.9.3 the maintainer's "Bind Address" change updated only
     // bindAddress and was silently overridden by the auto-detected
     // preferredBindAddress in every advertised URL. Writing both fields
     // keeps them in lockstep. Empty / "0.0.0.0" entry blanks
@@ -2833,7 +2833,7 @@ static ShellRuntime::ShellCliDependencyInstallResult postDependencyInstall(
 // fresh machine npm itself may not be on PATH. Detect that case from the
 // first install attempt's finalState and detail, install Node.js LTS via
 // winget, and retry the original install. This lets the Install button
-// work on a clean Windows install without the operator knowing or caring
+// work on a clean Windows install without the maintainer knowing or caring
 // that npm is a prerequisite.
 ShellRuntime::ShellCliDependencyInstallResult ShellRuntime::InstallCliDependency(
     const std::wstring& bridge) const {
@@ -2889,7 +2889,7 @@ ShellRuntime::ShellCliDependencyInstallResult ShellRuntime::InstallCliDependency
         result = postDependencyInstall(host, port, dependencyId);
         result.bridge = bridge;
         if (result.succeeded && !result.summary.empty()) {
-            // Prepend a note so the operator sees Node.js was installed as
+            // Prepend a note so the maintainer sees Node.js was installed as
             // part of this action, not behind their back.
             result.summary = L"Installed Node.js first, then " + result.summary;
         }
@@ -2970,7 +2970,7 @@ ShellClaudePluginStatus ShellRuntime::ToggleClaudePlugin() const {
 // <USERPROFILE>\Documents\MCOS\DirectAIControl instead of a junction
 // under ~/.claude/plugins. The Shell renders the registered/transport-
 // error/last-error fields identically across all three provider cards
-// so the operator sees a consistent toggle UX.
+// so the maintainer sees a consistent toggle UX.
 // ---------------------------------------------------------------------------
 namespace {
 
@@ -2998,7 +2998,7 @@ ShellDirectAIPluginStatus parseDirectAIPluginResponse(const std::wstring& provid
 
 std::wstring directAIRouteFor(const std::wstring& providerId, const std::wstring& tail) {
     // The route layer accepts chatgpt and grok; everything else returns
-    // 404 (not handled). We still hit the URL so the operator gets a
+    // 404 (not handled). We still hit the URL so the maintainer gets a
     // clear transport error.
     return L"/api/" + providerId + L"-plugin/" + tail;
 }
@@ -3046,7 +3046,7 @@ ShellDirectAIPluginStatus ShellRuntime::ToggleDirectAIPlugin(const std::wstring&
 // loopback and LAN-IP variants of every URL the supervisor wizard would
 // stamp into a config and reports back per-probe pass/fail with HTTP
 // status + a short interpretation. The Shell renders the response as a
-// single formatted block in SupervisorReachabilityText so the operator
+// single formatted block in SupervisorReachabilityText so the maintainer
 // has a printable, copy-pasteable verdict to attach to bug reports.
 // ---------------------------------------------------------------------------
 ShellRuntime::ShellSupervisorReachabilityResult ShellRuntime::CheckSupervisorReachability() const {
@@ -3114,10 +3114,10 @@ ShellRuntime::ShellSupervisorReachabilityResult ShellRuntime::CheckSupervisorRea
 // GenerateSupervisorConfig posts to /api/supervisor/config/generate with
 // the requested providerId; on 200 the response carries the freshly-
 // issued config JSON which the OverviewSectionControl then writes to
-// the operator-chosen path through FileSavePicker. The config-id is
+// the maintainer-chosen path through FileSavePicker. The config-id is
 // minted server-side; the Shell never invents or persists tokens
 // itself. RevokeSupervisor posts to /api/supervisor/assignment/revoke
-// with the optional operator reason and reports a wstring error on
+// with the optional maintainer reason and reports a wstring error on
 // transport failure.
 //
 // Body construction uses the WinRT Windows::Data::Json types because
@@ -3198,7 +3198,7 @@ bool ShellRuntime::RevokeSupervisor(const std::wstring& reason,
     if (reason.empty()) {
         body = "{}";
     } else {
-        // Minimal JSON-string escape: backslash + double-quote. Operator
+        // Minimal JSON-string escape: backslash + double-quote. Maintainer
         // input flows through here so quote-handling matters.
         std::string escaped;
         escaped.reserve(reason.size());

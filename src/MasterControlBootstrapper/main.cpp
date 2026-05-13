@@ -892,7 +892,7 @@ void writeBootstrapperActionLog(const std::wstring& mode,
             });
 
         // Desktop-local log files are only written on FAILURE so a
-        // successful install does not litter the operator's Desktop with
+        // successful install does not litter the maintainer's Desktop with
         // success receipts. Every run still lands in the persistent log
         // tree under %PUBLIC%\Documents\...\logs\installer regardless of
         // outcome. Override with MASTERCONTROL_BOOTSTRAPPER_LOG_DIR when a
@@ -1128,7 +1128,7 @@ InstallationState buildInstallationState(const std::filesystem::path& installDir
     state.beaconEnabled = configuration.beaconEnabled;
     // The gateway and mDNS rules cover the LAN-discovery surface MCOS always
     // exposes when the runtime is up. Both default to advertised so an
-    // operator-installed MCOS reaches the LAN out of the box.
+    // maintainer-installed MCOS reaches the LAN out of the box.
     state.gatewayAdvertised = true;
     state.mDnsAdvertised = true;
     state.serviceManaged = options.manageService;
@@ -1536,16 +1536,16 @@ void removeFirewallRules() {
     runNetshCommand(L"delete rule name=\"" + std::wstring(kBeaconRuleName) + L"\"");
     runNetshCommand(L"delete rule name=\"" + std::wstring(kGatewayRuleName) + L"\"");
     runNetshCommand(L"delete rule name=\"" + std::wstring(kMDnsRuleName) + L"\"");
-    // v0.7.5: also delete the shorter operator-created rule names from
+    // v0.7.5: also delete the shorter maintainer-created rule names from
     // docs/wiki/Windows-Firewall-LAN-Mode.md's PowerShell snippet. These
     // are not authored by the bootstrapper but are nominally MCOS-tied
     // and stranded post-uninstall. Names match the documented rules
     // verbatim.
-    runNetshCommand(L"delete rule name=\"MCOS - Operator Surface (LAN)\"");
+    runNetshCommand(L"delete rule name=\"MCOS - Maintainer Surface (LAN)\"");
     runNetshCommand(L"delete rule name=\"MCOS - MCP Gateway (LAN)\"");
     runNetshCommand(L"delete rule name=\"MCOS - Discovery Beacon (LAN)\"");
     runNetshCommand(L"delete rule name=\"MCOS - DNS-SD / mDNS (LAN)\"");
-    // Catch-all PowerShell sweep for any MCOS-prefixed rules an operator
+    // Catch-all PowerShell sweep for any MCOS-prefixed rules a maintainer
     // may have created with a slightly different name. Best-effort; we
     // ignore PowerShell's exit code because failure here doesn't strand
     // anything else.
@@ -1621,7 +1621,7 @@ bool configureFirewallRules(const InstallationState& state) {
 // the native gateway substrate (mcpGateway.type="native") can bind
 // http://+:<port>/ without admin rights at runtime. The Windows service
 // itself runs as LocalSystem (which already has the binding privilege),
-// but operators who run MasterControlServiceHost --console as a regular
+// but maintainers who run MasterControlServiceHost --console as a regular
 // user need the ACL or the Start() call returns ERROR_ACCESS_DENIED.
 //
 // The "Everyone" SDDL keyword (S-1-1-0) reserves the URL prefix to all
@@ -1643,7 +1643,7 @@ bool configureUrlAcl(const InstallationState& state) {
         (void)runProcess(deleteCmd, {}, CREATE_NO_WINDOW);
     }
     // Add the new reservation. Failure here is logged but not fatal: the
-    // LocalSystem service path still binds, console-mode operators can
+    // LocalSystem service path still binds, console-mode maintainers can
     // re-run the bootstrapper or run the netsh command themselves.
     const std::wstring addCmd = L"netsh.exe http add urlacl url=" + urlPrefix
                                 + L" user=Everyone";
@@ -1707,7 +1707,7 @@ void forceKillLingeringMcosProcesses() {
     // The retired-substrate binary was removed from this kill list at v0.10.14
     // alignment. The substrate adapter source files were removed at v0.9.0;
     // MCOS no longer spawns that child. Pre-v0.9.0 installs that left a stray
-    // process behind are an operator-side cleanup concern.
+    // process behind are a maintainer-side cleanup concern.
     constexpr const wchar_t* kProcessNames[] = {
         L"MasterControlShell.exe",
         L"MasterControlOrchestrationServer.exe"  // launcher
@@ -1730,7 +1730,7 @@ void forceKillLingeringMcosProcesses() {
 // target. Using std::filesystem::remove on a directory that's a reparse
 // point removes the link without recursing through it. If the path is not
 // a reparse point (some unusual install left a real directory there), we
-// fall back to remove_all so the operator's later install can recreate
+// fall back to remove_all so the maintainer's later install can recreate
 // the junction cleanly.
 void removeClaudePluginJunctions() {
     const auto userProfilesRoot = tryKnownFolder(FOLDERID_UserProfiles);
@@ -1761,7 +1761,7 @@ void removeClaudePluginJunctions() {
             // removes the link only, leaving the target alone.
             (void)RemoveDirectoryW(pluginPath.wstring().c_str());
         } else {
-            // Operator manually copied the plugin source into the path
+            // Maintainer manually copied the plugin source into the path
             // instead of letting the runtime junction it. Walk and remove.
             std::filesystem::remove_all(pluginPath, error);
             error.clear();
@@ -1773,9 +1773,9 @@ void removeClaudePluginJunctions() {
 // the persisted config (mcos.json), exports, state, and work directories
 // at %ProgramData%\MasterControlOrchestrationServer\ plus the legacy
 // %ProgramData%\MasterControlProgram\ tree from pre-v0.2 installs that
-// some operators still have around. Always runs on uninstall regardless
-// of options.purgeData -- the operator asked for "fully removes the
-// MCOS" and stale config + state files are exactly what the operator
+// some maintainers still have around. Always runs on uninstall regardless
+// of options.purgeData -- the maintainer asked for "fully removes the
+// MCOS" and stale config + state files are exactly what the maintainer
 // reported.
 void removeRuntimeDataDirectory() {
     const auto programData = tryKnownFolder(FOLDERID_ProgramData);
@@ -1795,7 +1795,7 @@ void removeRuntimeDataDirectory() {
     }
 }
 
-// Tear down the operator-visible log tree under %PUBLIC%\Documents\
+// Tear down the maintainer-visible log tree under %PUBLIC%\Documents\
 // Master Control Orchestration Server\. The runtime + bootstrapper write
 // installer-history.jsonl, runtime logs, shell logs, and per-session
 // folders here. None of it is tracked by the MSI; pre-v0.7.5 it was
@@ -2879,7 +2879,7 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
     //   2. Stop + unregister the Windows service.
     //   3. Tear down firewall rules.
     //   4. Tear down the HTTP.sys URL ACL.
-    //   5. Remove operator-visible shortcuts.
+    //   5. Remove maintainer-visible shortcuts.
     //   6. Walk every user profile and delete the Claude Code plugin
     //      junction (the link, not the target). This must happen BEFORE
     //      install-directory removal because the junction's target IS the
@@ -2904,7 +2904,7 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
     // direct kill of MasterControlServiceHost.exe poisoned the SCM state.
     bool serviceUninstallSucceeded = true;
     if (options.manageService && !uninstallService()) {
-        // v0.7.5: do NOT bail on service-uninstall failure. The operator's
+        // v0.7.5: do NOT bail on service-uninstall failure. The maintainer's
         // stated requirement is that uninstall fully removes MCOS;
         // returning early here meant a wedged service stranded the
         // entire cleanup chain (firewall rules, URL ACL, runtime data
@@ -2950,7 +2950,7 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
     std::filesystem::remove(installStatePath(installDirectory), error);
 
     // v0.7.5: always purge the runtime data tree during uninstall (not
-    // gated on options.purgeData). The operator's stated requirement is
+    // gated on options.purgeData). The maintainer's stated requirement is
     // that uninstall fully removes MCOS; leaving config / exports / state
     // around is what they reported as broken.
     //
@@ -3015,7 +3015,7 @@ bool uninstallApplication(const std::filesystem::path& installDirectory,
     // uninstall record into installer-history.jsonl, latest-session.json,
     // and a per-session folder. Running it after the log write means
     // the on-disk record of THIS particular uninstall is also wiped --
-    // acceptable trade-off for the operator's "fully removes" promise;
+    // acceptable trade-off for the maintainer's "fully removes" promise;
     // the action log goes to stdout via JSON for any caller that wants
     // a post-mortem record.
     removePublicLogTree();

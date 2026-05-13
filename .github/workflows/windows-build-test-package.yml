@@ -3,7 +3,7 @@ name: Windows Build, Test, and Package
 # PHASE-10 release-gate hard rule (ADR-002 §10):
 # This workflow is the same-SHA product gate. It MUST stay triggered by
 # `push` and `pull_request` only. DO NOT add `workflow_dispatch` here —
-# manual dispatch would let an operator bypass a failing CI run by re-running
+# manual dispatch would let a maintainer bypass a failing CI run by re-running
 # from a clean state. The release workflow (.github/workflows/release.yml)
 # explicitly verifies that this workflow succeeded on the same SHA before
 # any artifact ships. FORBIDDEN-CONTRACT §6.2 greps for the bypass pattern.

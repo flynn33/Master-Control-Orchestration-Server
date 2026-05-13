@@ -233,8 +233,8 @@ Details: `plans/PROOF-OF-WORKING/10-ui-automation.md`.
 capabilities have on-disk evidence backing the claim. No feature is
 claimed as "working" without a receipt. Contract drafting errors
 (Feature 7 palette) were corrected explicitly rather than fudged.
-Operator-context issues (Feature 6 unelevated probe) were resolved by
-running the supported operator path.
+Maintainer-context issues (Feature 6 unelevated probe) were resolved by
+running the supported maintainer path.
 
 The raw `mcos_proof_*.json` / `mcos_proof_*.txt` files on the local
 machine are reproducible evidence — any future probe can re-run the

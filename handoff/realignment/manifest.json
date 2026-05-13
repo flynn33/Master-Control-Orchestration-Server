@@ -379,7 +379,7 @@
       "label": "Native HTTP.sys MCP Gateway substrate (replaces MCPJungle)",
       "file": "handoff/realignment/PHASE-12-native-http-sys-gateway.md",
       "status": "shipped at v0.9.0; McpJungleGatewayAdapter retired in the same release",
-      "objective": "Replace the supervised MCPJungle child process with a Windows-native MCP Gateway implemented inside MCOS in C++ on top of HTTP.sys. Operators get a usable gateway out of the box with no external binary to install.",
+      "objective": "Replace the supervised MCPJungle child process with a Windows-native MCP Gateway implemented inside MCOS in C++ on top of HTTP.sys. Maintainers get a usable gateway out of the box with no external binary to install.",
       "readFirst": [
         "src/MasterControlApp/McpGatewayAdapters.cpp",
         "include/MasterControl/McpGatewayAdapters.h",
@@ -434,18 +434,18 @@
       "acceptanceCriteria": [
         "All converted surfaces render at vsync-locked 60Hz",
         "XAML re-layout no longer triggered by per-snapshot data updates on those surfaces",
-        "Operator-perceived shell sluggishness eliminated for live visuals",
+        "Maintainer-perceived shell sluggishness eliminated for live visuals",
         "Multi-DPI displays render the Tron grid sharply"
       ],
       "validation": [
         "Frame-time profiler trace under WPR/ETW",
-        "Operator visual confirmation across primary + secondary monitors",
+        "Maintainer visual confirmation across primary + secondary monitors",
         "ctest snapshot tests for non-Win2D regressions"
       ]
     },
     {
       "id": "PHASE-14",
-      "label": "Comprehensive diagnostics module with persistent store and operator export",
+      "label": "Comprehensive diagnostics module with persistent store and maintainer export",
       "file": "handoff/realignment/PHASE-14-comprehensive-diagnostics.md",
       "objective": "Replace per-component scattered logging with a single Diagnostics Service that owns an in-memory ring + SQLite persistent store, receives every error/warning/event from every MCOS subsystem (including the existing boot self-test snapshot), exposes HTTP/MCP queries, and surfaces in the WinUI Shell + browser dashboard with native Markdown/JSON export through a Save-As file picker.",
       "readFirst": [
@@ -474,8 +474,8 @@
         "All current appendEvent call sites also appear in the central store",
         "GET /api/diagnostics/export?format=markdown returns rendered text/markdown",
         "Claude Code can call mcos_diagnostics_export_markdown via the MCP plugin and receive the rendered doc",
-        "Operator clicks Export Markdown in the shell, native Windows file picker opens, file is written to the chosen path, status TextBlock shows the full path",
-        "Operator clicks Export JSON in the browser, browser download dialog appears with the suggested filename",
+        "Maintainer clicks Export Markdown in the shell, native Windows file picker opens, file is written to the chosen path, status TextBlock shows the full path",
+        "Maintainer clicks Export JSON in the browser, browser download dialog appears with the suggested filename",
         "If SQLite DB is unavailable, DiagnosticsService::report returns ok=false with a reason; runtime continues; summary() includes storeUnavailable; no fake-success state",
         "scripts/check-mastercontrol-forsetti.ps1 passes after changes",
         "ctest passes with new tests"
@@ -488,7 +488,7 @@
         "manual: curl localhost:7300/api/diagnostics/summary",
         "manual: shell Export Markdown round-trip"
       ],
-      "approvalGate": "Required before MCOS source edits per CLAUDE.md Required execution behavior §6. Operator authorizes by replying 'PHASE-14 approved' (optionally naming a starting slice A-E)."
+      "approvalGate": "Required before MCOS source edits per CLAUDE.md Required execution behavior §6. Maintainer authorizes by replying 'PHASE-14 approved' (optionally naming a starting slice A-E)."
     }
   ]
 }

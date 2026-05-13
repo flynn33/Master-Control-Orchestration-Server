@@ -27,7 +27,7 @@ curl.exe -X POST http://127.0.0.1:8080/mcp `
 |---|---|
 | Listener | `0.0.0.0:cfg.mcpGateway.listenPort` (default `8080`) |
 | MCP path | `cfg.mcpGateway.mcpPath` (default `/mcp`) |
-| URL ACL | auto-installed by the bootstrapper at MSI install (`netsh http add urlacl url=http://+:8080/ user=Everyone`) so console-mode operators bind without elevation |
+| URL ACL | auto-installed by the bootstrapper at MSI install (`netsh http add urlacl url=http://+:8080/ user=Everyone`) so console-mode maintainers bind without elevation |
 | `tools/list` source | aggregated by walking each pool's first Ready instance via the v0.6.10 stdio bridge |
 | `tools/call` forwarding | lease router selects an instance, supervisor's `sendStdioJsonRpc` writes to child stdin and reads stdout |
 | Status reporting | `GET /api/dashboard.mcpGatewayStatus` and `GET /.well-known/mcos.json.gateway` carry `mcpUrl`, `healthUrl`, `state` |
@@ -60,7 +60,7 @@ If the reservation is missing, re-run the bootstrapper's install action or apply
 netsh http add urlacl url=http://+:8080/ user=Everyone
 ```
 
-(LocalSystem service-mode does not require the ACL — Windows grants the binding privilege automatically. The ACL is for console-mode operators running `MasterControlServiceHost.exe --console` as a regular user.)
+(LocalSystem service-mode does not require the ACL — Windows grants the binding privilege automatically. The ACL is for console-mode maintainers running `MasterControlServiceHost.exe --console` as a regular user.)
 
 ### 2. Verify the gateway is running
 
@@ -302,7 +302,7 @@ This rule is enforced by FORBIDDEN-CONTRACT §2.2: registering autoscaled clones
 
 ## 6. HTTP routes (admin surface)
 
-Routes the operator surface exposes for the gateway. All return JSON.
+Routes the maintainer surface exposes for the gateway. All return JSON.
 
 | Method | Route | Returns |
 |---|---|---|
@@ -376,7 +376,7 @@ The native HTTP.sys adapter is the sole gateway substrate as of v0.9.0. No secon
 
 1. Implement the new adapter behind `IMcpGateway`.
 2. Add a new `GatewayType` enum value; leave the default as `native`.
-3. Operator opts in via `cfg.mcpGateway.type`; runtime selects the adapter by enum value.
+3. Maintainer opts in via `cfg.mcpGateway.type`; runtime selects the adapter by enum value.
 4. Soak test both adapters against identical traffic before flipping the default.
 5. Retire the old adapter only after at least one full release-gate cycle on the new one.
 
@@ -388,7 +388,7 @@ The `IMcpGateway` interface is the contract that survives across any swap. New m
 
 - **Decision** → [ADR-003 — MCP Gateway Substrate Decision](ADR-003-mcp-gateway-substrate-decision)
 - **Worker pool integration** → [Worker Pools](Worker-Pools)
-- **Operator gateway panel** → [Dashboard](Dashboard) §Gateway
+- **Maintainer gateway panel** → [Dashboard](Dashboard) §Gateway
 - **MCP gateway URL discovery** → [LAN Discovery](LAN-Discovery)
 - **Client onboarding profiles** → `/api/onboarding/{clientType}` (claude-code, codex, chatgpt, grok, generic)
 - **Native gateway evaluation** → [docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md)
@@ -398,4 +398,4 @@ The `IMcpGateway` interface is the contract that survives across any swap. New m
 
 ## History (retired v0.9.0)
 
-Prior to v0.9.0, the gateway substrate was `McpJungleGatewayAdapter`: MCOS supervised an external MCPJungle binary as a Job Object child process. Operators downloaded the MCPJungle binary separately and configured its path in `mcos.json`. The adapter spawned it under `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for atomic reaping on MCOS exit. `cfg.mcpGateway.type = "mcpjungle"` was the factory default. At v0.9.0, per operator directive, `McpJungleGatewayAdapter` source files were removed and replaced by `NativeHttpSysGatewayAdapter`. The MCPJungle binary is no longer required, downloaded, supervised, or supported.
+Prior to v0.9.0, the gateway substrate was `McpJungleGatewayAdapter`: MCOS supervised an external MCPJungle binary as a Job Object child process. Maintainers downloaded the MCPJungle binary separately and configured its path in `mcos.json`. The adapter spawned it under `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for atomic reaping on MCOS exit. `cfg.mcpGateway.type = "mcpjungle"` was the factory default. At v0.9.0, per maintainer directive, `McpJungleGatewayAdapter` source files were removed and replaced by `NativeHttpSysGatewayAdapter`. The MCPJungle binary is no longer required, downloaded, supervised, or supported.

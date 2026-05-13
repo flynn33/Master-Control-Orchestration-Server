@@ -20,13 +20,13 @@
 | **Released** | `2026-05-11` |
 | **Theme** | LAN MCP Gateway + Supervisor Wizard + Direct AI plugin slots + audit remediation |
 | **Tag** | [`v0.10.14`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.10.14) |
-| **Gateway substrate** | `native` (in-process Windows HTTP.sys) — only shipping substrate as of v0.9.0. MCPJungle retired per operator directive. `cfg.mcpGateway.type` is retained for back-compat deserialization only; runtime always uses the native adapter. |
+| **Gateway substrate** | `native` (in-process Windows HTTP.sys) — only shipping substrate as of v0.9.0. MCPJungle retired per maintainer directive. `cfg.mcpGateway.type` is retained for back-compat deserialization only; runtime always uses the native adapter. |
 | **Live state on reference host** | 31/31 supervised worker pools healthy, 97 advertised gateway tools, 39/39 boot self-tests pass |
 | **Next** | v1.0.0+ candidates: CLU Phase 2/3 (`enforceAction` wiring), PHASE-14 DiagnosticsSectionControl with FileSavePicker, telemetry log rotation, PHASE-13 Win2D shell rendering |
 
 ### What v0.10.14 represents
 
-Aggregate release line spanning v0.9.4 through v0.10.14 on top of the v0.7.0 production-milestone baseline. The architecture established at v0.7.0 is unchanged — every phase from PHASE-00 through PHASE-12 remains delivered. v0.9.x and v0.10.x iterate on top of the locked architecture across four themes: (1) gateway-substrate simplification (MCPJungle dropped at v0.9.0, native HTTP.sys becomes the only path), (2) Supervisor Agent Assignment Wizard (v0.9.76+ — operator picks one supervisor model and MCOS issues a LAN-routable config the client uses to bind), (3) WinUI Shell tile-grid realignment (Telemetry, Runtime, and the cross-tab footer all render the same per-endpoint tile shape), (4) Direct AI plugin slots for Claude Code / ChatGPT / Grok with mutual exclusion (v0.10.12+) plus reachability self-check (v0.10.13) and audit remediation (v0.10.14: `.mcp.json` portability, scribe handoffDir derivation, register-pools.ps1 `$projectRoot` derivation, tests/CMakeLists.txt include path fix, and retired-MCPJungle doc scrubbing).
+Aggregate release line spanning v0.9.4 through v0.10.14 on top of the v0.7.0 production-milestone baseline. The architecture established at v0.7.0 is unchanged — every phase from PHASE-00 through PHASE-12 remains delivered. v0.9.x and v0.10.x iterate on top of the locked architecture across four themes: (1) gateway-substrate simplification (MCPJungle dropped at v0.9.0, native HTTP.sys becomes the only path), (2) Supervisor Agent Assignment Wizard (v0.9.76+ — maintainer picks one supervisor model and MCOS issues a LAN-routable config the client uses to bind), (3) WinUI Shell tile-grid realignment (Telemetry, Runtime, and the cross-tab footer all render the same per-endpoint tile shape), (4) Direct AI plugin slots for Claude Code / ChatGPT / Grok with mutual exclusion (v0.10.12+) plus reachability self-check (v0.10.13) and audit remediation (v0.10.14: `.mcp.json` portability, scribe handoffDir derivation, register-pools.ps1 `$projectRoot` derivation, tests/CMakeLists.txt include path fix, and retired-MCPJungle doc scrubbing).
 
 ```mermaid
 gantt
@@ -67,13 +67,13 @@ gantt
 
 ### Highlights across v0.6.x → v0.7.0
 
-- **`IMcpGateway` with three concrete adapters** — `McpJungleGatewayAdapter` (supervised external binary, the original v0.6.x substrate), `NativeHttpSysGatewayAdapter` (Windows-native HTTP.sys, in-process, no external binary), `FakeMcpGatewayAdapter` (test harness). Operators select via `mcpGateway.type`.
+- **`IMcpGateway` with three concrete adapters** — `McpJungleGatewayAdapter` (supervised external binary, the original v0.6.x substrate), `NativeHttpSysGatewayAdapter` (Windows-native HTTP.sys, in-process, no external binary), `FakeMcpGatewayAdapter` (test harness). Maintainers select via `mcpGateway.type`.
 - **Stdio bridge** (v0.6.10) — `IWorkerSupervisor::sendStdioJsonRpc(instanceId, request, timeoutMs)` writes a `\n`-terminated JSON-RPC envelope to a supervised child's stdin, polls stdout via `PeekNamedPipe` + deadline-based `ReadFile`, parses newline-delimited JSON, matches by `id`. Per-instance mutex serializes concurrent calls. Native gateway uses this to forward `tools/call` end-to-end.
 - **DNS-SD + UDP beacon advertising** — three Bonjour service types (`_mcos._tcp.local`, `_mcos-mcp._tcp.local`, `_mcos-onboarding._tcp.local`) plus the legacy beacon, all carrying the canonical `DiscoveryDocument` (PHASE-03).
 - **Per-client-type onboarding profiles** — `claude-code`, `codex`, `grok`, `chatgpt`, `generic-mcp`. Manual setup is first-class (PHASE-04).
 - **Per-platform governance bundles** — `windows`, `macos`, `ios`. sha256 checksums; Forsetti version + agentic coding version stamped in (PHASE-05).
 - **Managed Endpoint Pools + Worker Supervisor** — 7-state lifecycle, Job Object containment, supervised process trees with redirected stdin/stdout (PHASE-06 + v0.6.10).
-- **Pool persistence** (v0.6.8) — pool definitions survive service restart and MSI MajorUpgrade. Through v0.6.7 the operator lost their pools every restart; `AppConfiguration` now mirrors `WorkerSupervisor::pools_` to disk and the runtime hydrates at boot.
+- **Pool persistence** (v0.6.8) — pool definitions survive service restart and MSI MajorUpgrade. Through v0.6.7 the maintainer lost their pools every restart; `AppConfiguration` now mirrors `WorkerSupervisor::pools_` to disk and the runtime hydrates at boot.
 - **Lease Router with sticky-session + autoscaling** — four-step selection (sticky → least-loaded → scale-out → fail honestly). No hot-migration of stateful streams (PHASE-07).
 - **Per-instance CPU/RAM telemetry** (v0.6.5) — `GetProcessTimes` (FILETIME deltas) + `GetProcessMemoryInfo` (working set MB) sampled per supervised child; first sample establishes baseline, subsequent samples produce real percentages.
 - **Telemetry Aggregator with `-1.0` honest-unavailable sentinel** — events ring (1024 cap), client presence roster, gateway traffic snapshot (PHASE-08).
@@ -83,7 +83,7 @@ gantt
 - **PHASE-12 MVP** (v0.6.9) — `NativeHttpSysGatewayAdapter` ships alongside `McpJungleGatewayAdapter`. Full HTTP.sys lifecycle (`HttpInitialize` → `HttpCreateServerSession` → `HttpCreateUrlGroup` → `HttpAddUrlToUrlGroup` → `HttpCreateRequestQueue` → `HttpSetUrlGroupProperty(BindingProperty)`); MCP `initialize` and `tools/list` end-to-end; `tools/call` returned an honest "stdio bridge pending" error pending v0.6.10.
 - **PHASE-12 follow-up** (v0.6.10) — stdio bridge implementation, real `tools/list` aggregation across pools (with `serverName=poolId` attribution and qualified `{poolId}__{toolName}` advertisement), real `tools/call` forwarding via lease-router-selected instance, bootstrapper-installed URL ACL via `netsh http add urlacl url=http://+:<port>/ user=Everyone`. Plus correctness fixes shaken loose during smoke-test: HTTP.sys body extraction now drains via `HttpReceiveRequestEntityBody` after `HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY` (the v0.6.9 path missed bodies from PowerShell `Invoke-RestMethod` and chunked-TE clients), and `nlohmann::json{nullptr}` was producing `[null]` arrays in JSON-RPC error envelopes (replaced with explicit null-scalar construction).
 - **Claude Code Control toggle** (v0.6.1 / 0.6.3) — one-click directory-junction install of the bundled `mcos-control` plugin under `%USERPROFILE%\.claude\plugins\`. Toggle switch on the Overview deck of both browser dashboard and WinUI shell.
-- **Operator-set advertised IP** (v0.6.4) — `activeProfile.preferredBindAddress` is the primary source for the advertised LAN IP. On dual-stack hosts, the runtime no longer surfaces an IPv6 ULA when the operator pinned IPv4.
+- **Maintainer-set advertised IP** (v0.6.4) — `activeProfile.preferredBindAddress` is the primary source for the advertised LAN IP. On dual-stack hosts, the runtime no longer surfaces an IPv6 ULA when the maintainer pinned IPv4.
 - **Windows release gate closed** — vswhere-driven toolchain, version-stamping before configure, no `workflow_dispatch` bypass on the gating workflows, MSI rebuilt clean (PHASE-10).
 
 ### What v0.5.0 ships
@@ -104,7 +104,7 @@ flowchart LR
     Added --> A3[schemaVersion-1.0 config bundle]
     Added --> A4[X-MCOS-Client-Id middleware]
     Added --> A5[CLU expansion to 15 action kinds]
-    Added --> A6[Operator approval queue]
+    Added --> A6[Maintainer approval queue]
     Added --> A7[Browser dashboard pivot]
     Added --> A8[Forsetti-aligned governance profile]
 ```
@@ -131,7 +131,7 @@ flowchart LR
     Edit[Edit VERSION.json<br/>+ CHANGELOG.md]:::accent --> Commit[git commit]:::accent
     Commit --> Tag[git tag v0.x.y]:::accent
     Tag --> Push[git push --follow-tags]:::accent
-    Push --> Release[Create GitHub Release<br/>(operator, hand-authored)]:::good
+    Push --> Release[Create GitHub Release<br/>(maintainer, hand-authored)]:::good
     Release --> Artifacts[Attach MSI + ZIP from<br/>Package-MasterControlOrchestrationServer.ps1]:::good
 ```
 
@@ -241,7 +241,7 @@ flowchart TD
     Verify --> Register[Register LAN clients fresh<br/>(no auto-migration of Providers)]:::accent
 ```
 
-> ⚠️ Provider records do **not** auto-migrate to LAN clients. The model changed shape — providers were vendor-keyed catalog entries; LAN clients are operator-named identities. Re-register your AI agents as LAN clients post-upgrade.
+> ⚠️ Provider records do **not** auto-migrate to LAN clients. The model changed shape — providers were vendor-keyed catalog entries; LAN clients are maintainer-named identities. Re-register your AI agents as LAN clients post-upgrade.
 
 > ⚠️ Auto-Connect flows (`/api/providers/auto-connect`) are **gone**. Replace with the bundle handoff flow described in [Remote Client](Remote-Client).
 
@@ -270,7 +270,7 @@ flowchart LR
     Pools --> Native[Native HTTP.sys substrate<br/>auto-selected (v0.9.0+)]:::good
 ```
 
-> ⚠️ Pool definitions persist across MajorUpgrade since v0.6.8 (`AppConfiguration.pools`). Operators who upgrade from v0.6.0..v0.6.7 to v0.7.0+ still need to re-register their pools, since pre-v0.6.8 installs did not write them to disk. Pools registered at v0.6.8 or later survive the upgrade automatically.
+> ⚠️ Pool definitions persist across MajorUpgrade since v0.6.8 (`AppConfiguration.pools`). Maintainers who upgrade from v0.6.0..v0.6.7 to v0.7.0+ still need to re-register their pools, since pre-v0.6.8 installs did not write them to disk. Pools registered at v0.6.8 or later survive the upgrade automatically.
 
 > ⚠️ Substrate choice removed: as of v0.9.0 the native HTTP.sys adapter is the only substrate. Any prior `mcpGateway.type = "mcpjungle"` value in a persisted config is now ignored at runtime; the field is retained only for back-compat JSON deserialization.
 
@@ -322,13 +322,13 @@ Reasons:
 
 - The AI Contributor Guard (`scripts/github_agents/check_no_ai_contributors.py`) blocks AI-attributed commits — but the release agent ran as `github-actions[bot]`, which is allowlisted. The chain (AI commit → bot bump → bot release) was a documentation-bypass.
 - v0.5.0 ships hand-authored documentation. Letting an agent regenerate the wiki on every push would steamroll the hand authorship.
-- Real release decisions (patch vs minor vs major) require operator judgment that the agent's commit-message-parser couldn't reliably make.
+- Real release decisions (patch vs minor vs major) require maintainer judgment that the agent's commit-message-parser couldn't reliably make.
 
 The retired agent's source is gone; the AI Contributor Guard remains. See [Automation](Automation) for the current workflow set.
 
 ---
 
-## 8. Versioning workflow — operator runbook
+## 8. Versioning workflow — maintainer runbook
 
 ```bash
 # 1. Decide the bump
@@ -368,7 +368,7 @@ gh release create v0.x.y \
 
 ---
 
-## 9. Common operator FAQ
+## 9. Common maintainer FAQ
 
 > **Q: Where is the canonical version number?**
 > [`VERSION.json`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/VERSION.json) at the repo root. The badge in `README.md` and `Home.md` should match.

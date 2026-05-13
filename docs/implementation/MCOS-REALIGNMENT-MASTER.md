@@ -16,7 +16,7 @@ MCOS is a Windows-native LAN MCP Gateway host. It does not execute ChatGPT, Code
 | Lease Router | Assign client sessions/requests to worker instances behind stable logical endpoints. |
 | Autoscaler | Add or remove worker instances based on utilization and queue pressure. |
 | Telemetry Aggregator | Collect host, gateway, client, worker, and activity telemetry. |
-| Dashboard | Tron-style real-time operator display. |
+| Dashboard | Tron-style real-time maintainer display. |
 
 ## Gateway-first topology
 
@@ -40,7 +40,7 @@ AI-client gateway access has no application-layer authentication. Security is en
 
 - trusted LAN boundary
 - Windows Firewall scoping
-- operator-controlled LAN mode enablement
+- maintainer-controlled LAN mode enablement
 - subnet/interface policy
 - strict host/origin validation where compatible with clients
 - CLU/Forsetti governance for mutating operations

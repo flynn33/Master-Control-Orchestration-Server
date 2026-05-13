@@ -1,7 +1,7 @@
 ## Master Control Orchestration Server - Project Overview
 
 ### What It Is
-Forsetti-compliant Windows orchestration server for MCP services, LAN AI-client onboarding, CLU governance, imports, exports, and operator control.
+Forsetti-compliant Windows orchestration server for MCP services, LAN AI-client onboarding, CLU governance, imports, exports, and maintainer control.
 The product ships as a Windows service, a WinUI 3 desktop shell, and a browser-based admin surface backed by the same local runtime.
 
 ### Core Objective
@@ -31,7 +31,7 @@ The product ships as a Windows service, a WinUI 3 desktop shell, and a browser-b
 - module manifest: `src/MasterControlModules/Resources/ForsettiManifests/CommandLogicUnitModule.json`
 - module ID: `com.mastercontrol.command-logic-unit`
 - CLU is responsible for governance posture, rule evaluation, governance bundle distribution, and platform-specific governance execution
-- CLU is also the operator-facing coordination lane for guided setup, Apple governance operations, and model-to-role assignment
+- CLU is also the maintainer-facing coordination lane for guided setup, Apple governance operations, and model-to-role assignment
 - the WinUI shell and browser surface both read CLU state from the runtime instead of reimplementing governance logic on their own
 
 ### Current Build State
@@ -42,5 +42,5 @@ The product ships as a Windows service, a WinUI 3 desktop shell, and a browser-b
 
 ### Current Focus
 - remove naming and packaging drift so product identity, docs, and release artifacts align
-- keep guided setup as the primary operator path
+- keep guided setup as the primary maintainer path
 - preserve deployment stability while polishing the end-user install and operations experience

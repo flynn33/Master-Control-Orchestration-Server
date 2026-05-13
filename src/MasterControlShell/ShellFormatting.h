@@ -17,7 +17,7 @@ inline std::wstring boolLabel(const bool value) {
 // bindAddress is a wildcard (0.0.0.0 / :: / [::]) or empty, render
 // the LAN-routable primary IP instead so every Shell card surfaces an
 // address an actual client can connect to. Editor fields (Settings
-// surface, Setup Wizard) stay on the raw stored value so operator
+// surface, Setup Wizard) stay on the raw stored value so maintainer
 // edits round-trip; display-only cards route through this helper.
 inline std::wstring resolveDisplayBindAddress(const std::wstring& bindAddress,
                                               const std::wstring& lanIp) {
@@ -83,7 +83,7 @@ inline bool isWildcardBindAddress(const std::string& bindAddress) {
 
 // v0.9.90: relative-time formatter. Parses an ISO-8601 UTC stamp (e.g.
 // "2026-05-11T00:57:59Z") into a system_clock time_point, computes now
-// - that, and renders the duration in operator-friendly buckets:
+// - that, and renders the duration in maintainer-friendly buckets:
 //
 //   <60s        -> "Xs ago"
 //   <60m        -> "Xm Ys ago" (or "Xm ago" when seconds == 0)
@@ -111,7 +111,7 @@ inline std::wstring formatRelativeUtcTime(const std::wstring& isoStampUtc) {
     if (deltaSeconds < 0) {
         // Timestamp is in the future (clock skew or freshly-stamped
         // value the parser rounded down). Treat as "just now" instead
-        // of "-3s ago" which looks wrong to the operator.
+        // of "-3s ago" which looks wrong to the maintainer.
         return std::wstring(L"just now");
     }
     if (deltaSeconds < 60) {
@@ -159,7 +159,7 @@ inline std::wstring formatFutureUtcTime(const std::wstring& isoStampUtc) {
         std::chrono::system_clock::now());
     const auto deltaSeconds = static_cast<int64_t>(stampTime - nowTime);
     if (deltaSeconds <= 0) {
-        // Past timestamp — surface as 'expired X ago' so the operator
+        // Past timestamp — surface as 'expired X ago' so the maintainer
         // sees the timestamp is no longer ahead of now.
         const auto since = formatRelativeUtcTime(isoStampUtc);
         return since.empty() ? std::wstring(L"expired") : (L"expired " + since);
@@ -189,7 +189,7 @@ inline std::wstring formatFutureUtcTime(const std::wstring& isoStampUtc) {
 // "Live Command Stream" log. Pre-v0.10.12 the renderer just substr'd the
 // ISO stamp's "HH:MM:SS" segment, which surfaced UTC-time rows alongside the
 // title-bar's GetLocalTime clock and produced an apparent offset (5h on a
-// CST host) that operators read as "the live log is displaying a different
+// CST host) that maintainers read as "the live log is displaying a different
 // time from the server time". Returns empty string on parse failure so the
 // caller can fall back to the raw stamp segment.
 inline std::wstring formatLocalClockFromIsoUtc(const std::wstring& isoStampUtc) {

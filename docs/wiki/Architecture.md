@@ -9,9 +9,9 @@
 
 Canonical map of how MCOS is structured. When in doubt, the source files referenced here are ground truth — every assertion on this page points to a real header, route, or test.
 
-The architecture target is the **gateway-first MCP host** declared in [ADR-002](ADR-002-gateway-first-mcp-realignment). The substrate question was settled by [ADR-003](ADR-003-mcp-gateway-substrate-decision): MCPJungle was retired at v0.9.0; the sole current gateway substrate is the in-process `NativeHttpSysGatewayAdapter` on top of HTTP.sys. The original [ADR-001 LAN client identity model](ADR-001-lan-client-control-plane) survives as the operator surface that coexists with the AI-client gateway surface. v0.10.14 is the current target — phases PHASE-00 through PHASE-12 are delivered; PHASE-13 (Win2D shell rendering) and PHASE-14 (comprehensive diagnostics) are scheduled.
+The architecture target is the **gateway-first MCP host** declared in [ADR-002](ADR-002-gateway-first-mcp-realignment). The substrate question was settled by [ADR-003](ADR-003-mcp-gateway-substrate-decision): MCPJungle was retired at v0.9.0; the sole current gateway substrate is the in-process `NativeHttpSysGatewayAdapter` on top of HTTP.sys. The original [ADR-001 LAN client identity model](ADR-001-lan-client-control-plane) survives as the maintainer surface that coexists with the AI-client gateway surface. v0.10.14 is the current target — phases PHASE-00 through PHASE-12 are delivered; PHASE-13 (Win2D shell rendering) and PHASE-14 (comprehensive diagnostics) are scheduled.
 
-Three operator-deck features are part of the WinUI Shell Overview surface: **direct AI plugin slots** (v0.10.12+) let the operator activate exactly one of Claude Code, ChatGPT, or Grok as the connected client — the selections are mutually exclusive and MCOS issues the appropriate connector config on activation; the **Supervisor Wizard** (v0.9.76+) lets the operator pick a supervisor model (Claude/ChatGPT/Grok) and export a model-specific JSON config for LAN import; and the **reachability self-check** (v0.10.13) exposes `GET /api/supervisor/reachability-check`, which probes MCOS's own loopback and LAN-IP variants and reports results to the shell.
+Three maintainer-deck features are part of the WinUI Shell Overview surface: **direct AI plugin slots** (v0.10.12+) let the maintainer activate exactly one of Claude Code, ChatGPT, or Grok as the connected client — the selections are mutually exclusive and MCOS issues the appropriate connector config on activation; the **Supervisor Wizard** (v0.9.76+) lets the maintainer pick a supervisor model (Claude/ChatGPT/Grok) and export a model-specific JSON config for LAN import; and the **reachability self-check** (v0.10.13) exposes `GET /api/supervisor/reachability-check`, which probes MCOS's own loopback and LAN-IP variants and reports results to the shell.
 
 ---
 
@@ -29,23 +29,23 @@ flowchart LR
         AC1[Claude Code, Codex,<br/>Grok, ChatGPT, generic MCP]
     end
 
-    subgraph Operator[Operator]
+    subgraph Maintainer[Maintainer]
         OP1[Browser dashboard<br/>+ WinUI shell]
     end
 
     subgraph Host[Master Control Orchestration Server <br/>single Windows service]
         AIClientSurface[AI-client surface<br/>auth=none, trust=lan]:::accent
-        OperatorSurface[Operator surface<br/>LAN-trusted with privilege gates]:::accent
+        MaintainerSurface[Maintainer surface<br/>LAN-trusted with privilege gates]:::accent
     end
 
     AIClients -->|"MCP Gateway URL<br/>(advertised via DNS-SD)"| AIClientSurface
-    Operator -->|"Admin API + dashboard<br/>(per-client privilege gates)"| OperatorSurface
+    Maintainer -->|"Admin API + dashboard<br/>(per-client privilege gates)"| MaintainerSurface
 
     AIClientSurface -.-> AIClientSurface_Note[/no app-layer auth /<br/>trust at network layer/]:::sub
-    OperatorSurface -.-> OperatorSurface_Note[/X-MCOS-Client-Id middleware /<br/>nine-flag privilege model/]:::sub
+    MaintainerSurface -.-> MaintainerSurface_Note[/X-MCOS-Client-Id middleware /<br/>nine-flag privilege model/]:::sub
 ```
 
-The AI-client surface is gateway-first (PHASE-02 onward). The operator surface preserves the ADR-001 LAN client identity model with `X-MCOS-Client-Id` and per-client privileges. Network firewall scoping (`Profile=Private,Domain`) is the load-bearing trust control on both surfaces.
+The AI-client surface is gateway-first (PHASE-02 onward). The maintainer surface preserves the ADR-001 LAN client identity model with `X-MCOS-Client-Id` and per-client privileges. Network firewall scoping (`Profile=Private,Domain`) is the load-bearing trust control on both surfaces.
 
 ---
 
@@ -64,7 +64,7 @@ flowchart TB
         Other[/Generic MCP on host C/]:::client
     end
 
-    subgraph Surfaces[Operator surfaces on the host]
+    subgraph Surfaces[Maintainer surfaces on the host]
         Browser[Browser dashboard<br/>resources/web/]:::accent
         Shell[WinUI 3 shell<br/>src/MasterControlShell/]:::accent
     end
@@ -120,7 +120,7 @@ flowchart TB
 
 ## 3. The eleven required terms
 
-ADR-002 §1 fixes the vocabulary. Use these terms exactly throughout the codebase, the docs, and operator communication:
+ADR-002 §1 fixes the vocabulary. Use these terms exactly throughout the codebase, the docs, and maintainer communication:
 
 | Term | Meaning | Lives in |
 |---|---|---|
@@ -228,7 +228,7 @@ The seven states from PHASE-06.
 ```mermaid
 stateDiagram-v2
     [*] --> Configured: pool registered
-    Configured --> Starting: scale-up trigger or operator action
+    Configured --> Starting: scale-up trigger or maintainer action
     Starting --> Ready: probe says healthy
     Starting --> Failed: spawn / probe failure
     Ready --> Busy: lease acquired
@@ -317,7 +317,7 @@ gantt
     PHASE-14 Comprehensive diagnostics     :scheduled, p14, after p13, 1d
 ```
 
-Each phase ended with a written completion report. PHASE-12 (native HTTP.sys gateway, v0.9.0) is complete. PHASE-13 (Win2D shell rendering) and PHASE-14 (comprehensive diagnostics, operator-approved) are scheduled for post-v0.10.x delivery. See [Versions](Versions) for the full timeline + commit SHAs.
+Each phase ended with a written completion report. PHASE-12 (native HTTP.sys gateway, v0.9.0) is complete. PHASE-13 (Win2D shell rendering) and PHASE-14 (comprehensive diagnostics, maintainer-approved) are scheduled for post-v0.10.x delivery. See [Versions](Versions) for the full timeline + commit SHAs.
 
 ---
 
@@ -338,7 +338,7 @@ Each phase ended with a written completion report. PHASE-12 (native HTTP.sys gat
 | `scripts/` | Build, package, sync, compliance, deployment scripts |
 | `Forsetti-Framework-Windows-main/` | Vendored Forsetti framework — sealed by ADR-002 §11 |
 | `tests/` | C++ tests (`MasterControlOrchestrationServerTests.cpp`) |
-| `docs/wiki/` | Operator-facing documentation (mirror of the GitHub wiki) |
+| `docs/wiki/` | Maintainer-facing documentation (mirror of the GitHub wiki) |
 | `docs/implementation/` | Internal architecture, schemas, drift inventory, FORBIDDEN-CONTRACT |
 | `handoff/realignment/` | Phase manifests + phase files + completion reports |
 
@@ -370,7 +370,7 @@ The same pipeline runs in CI via `.github/workflows/windows-build-test-package.y
 
 ## 11. Configuration
 
-`mcos.json` lives at `%ProgramData%\Master Control Orchestration Server\mcos.json` after install. Operators edit it directly or via the WinUI Settings panel. Key fields:
+`mcos.json` lives at `%ProgramData%\Master Control Orchestration Server\mcos.json` after install. Maintainers edit it directly or via the WinUI Settings panel. Key fields:
 
 ```json
 {
@@ -416,4 +416,4 @@ Default values come from `buildDefaultConfiguration()` in `src/MasterControlApp/
 - **Telemetry surface** → [Telemetry and Activity](Telemetry-and-Activity)
 - **HTTP routes** → [API Reference](API-Reference)
 - **Dashboard tour** → [Dashboard](Dashboard)
-- **Operator surface (ADR-001)** → [LAN Clients](LAN-Clients), [Privileges](Privileges), [Client Config Bundle](Client-Config-Bundle)
+- **Maintainer surface (ADR-001)** → [LAN Clients](LAN-Clients), [Privileges](Privileges), [Client Config Bundle](Client-Config-Bundle)

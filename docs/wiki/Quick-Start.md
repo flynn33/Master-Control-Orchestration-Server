@@ -87,8 +87,8 @@ The MSI:
 
 - Installs to `C:\Program Files\Master Control Orchestration Server\` (default; changeable in the dialog)
 - Registers `MasterControlServiceHost.exe` as a Windows service
-- Creates four inbound Windows Firewall rules on `Profile=Private,Domain` (operator can opt out)
-- Creates Start Menu and Desktop shortcuts (both pre-checked; operator can opt out)
+- Creates four inbound Windows Firewall rules on `Profile=Private,Domain` (maintainer can opt out)
+- Creates Start Menu and Desktop shortcuts (both pre-checked; maintainer can opt out)
 - Writes `mcos.json` configuration to `%ProgramData%\Master Control Orchestration Server\`
 
 ---
@@ -111,7 +111,7 @@ Five checkboxes on the **Setup Options** dialog:
 | Firewall | Four `New-NetFirewallRule` entries created on Private + Domain profiles. See the rule table in [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) |
 | URL ACL | `netsh http add urlacl url=http://+:8080/ user=Everyone` registered automatically by the bootstrapper, so the native HTTP.sys gateway can bind without elevation in console mode |
 | Start Menu shortcut | Shortcut at `Start Menu → Master Control Orchestration Server → Master Control Orchestration Server` |
-| Desktop shortcut | Shortcut on every operator's desktop |
+| Desktop shortcut | Shortcut on every maintainer's desktop |
 | Launch on exit | Opens the WinUI shell when the installer finishes |
 
 ---
@@ -130,7 +130,7 @@ Or, if you prefer the browser surface:
 http://localhost:7300/
 ```
 
-The browser dashboard has eleven destinations and is the realignment-canonical operator UI. See [Dashboard](Dashboard) for the tour.
+The browser dashboard has eleven destinations and is the realignment-canonical maintainer UI. See [Dashboard](Dashboard) for the tour.
 
 ---
 

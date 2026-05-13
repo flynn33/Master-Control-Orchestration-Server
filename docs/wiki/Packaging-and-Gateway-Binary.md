@@ -1,6 +1,6 @@
 # Packaging and Gateway Binary
 
-> **Note (post-v0.9.0):** The pre-v0.9.0 framing of this page stated that the MSI deliberately omits the gateway and operators must install MCPJungle separately. That is no longer true. The in-process `NativeHttpSysGatewayAdapter` ships inside `MasterControlServiceHost.exe` since v0.9.0. The installer-process history below is preserved for traceability.
+> **Note (post-v0.9.0):** The pre-v0.9.0 framing of this page stated that the MSI deliberately omits the gateway and maintainers must install MCPJungle separately. That is no longer true. The in-process `NativeHttpSysGatewayAdapter` ships inside `MasterControlServiceHost.exe` since v0.9.0. The installer-process history below is preserved for traceability.
 
 PHASE-10 baseline (ADR-002 §10, §11).
 
@@ -16,7 +16,7 @@ PHASE-10 baseline (ADR-002 §10, §11).
 | `MasterControlShell.exe` | The WinUI 3 desktop shell. |
 | `share/MasterControlOrchestrationServer/web/` | Browser dashboard (`index.html`, `app.js`, `styles.css`, icons). |
 | `share/MasterControlOrchestrationServer/ForsettiManifests/` | Vendored Forsetti manifest files. |
-| `share/claude-plugins/mcos-control/` | The Claude Code plugin source (bridge MCP server, sub-agents, slash commands, skill, README). Operator registers with `Register-McosControlPlugin.ps1` after install. See [Claude Code Plugin](Claude-Code-Plugin). |
+| `share/claude-plugins/mcos-control/` | The Claude Code plugin source (bridge MCP server, sub-agents, slash commands, skill, README). Maintainer registers with `Register-McosControlPlugin.ps1` after install. See [Claude Code Plugin](Claude-Code-Plugin). |
 | `Register-McosControlPlugin.ps1` | Helper script at the install root that copies (or junctions, with `-Symlink`) the plugin into `%USERPROFILE%\.claude\plugins\mcos-control`. Idempotent; `-Unregister` removes it. |
 | `resources/clu/governance-profile.json` | CLU governance profile (consumed at runtime by the governance bundle service). |
 | Microsoft VC++ x64 runtime DLLs | Bundled from `Resolve-MasterControlToolchain.ps1`'s `VcRuntimeDirectory`. |
@@ -24,7 +24,7 @@ PHASE-10 baseline (ADR-002 §10, §11).
 
 ## Gateway substrate
 
-The MCP gateway is `NativeHttpSysGatewayAdapter`, an in-process HTTP.sys listener built into `MasterControlServiceHost.exe`. No external gateway binary is required, operator-installed, supervised, or supported. MCPJungle is not installed by the MSI and is not used at runtime.
+The MCP gateway is `NativeHttpSysGatewayAdapter`, an in-process HTTP.sys listener built into `MasterControlServiceHost.exe`. No external gateway binary is required, maintainer-installed, supervised, or supported. MCPJungle is not installed by the MSI and is not used at runtime.
 
 The `mcpGateway.type` field in `mcos.json` is retained for back-compat deserialization only; the runtime always activates the native adapter regardless of its value.
 
@@ -56,7 +56,7 @@ Look for the line:
 Master Control Orchestration Server listening at http://<host>:<admin-port>
 ```
 
-Hit `/api/health` (operator surface) and `/api/gateway/status` (gateway surface). Ctrl+C to stop. The runtime reaps any supervised worker tree atomically via `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` on shutdown.
+Hit `/api/health` (maintainer surface) and `/api/gateway/status` (gateway surface). Ctrl+C to stop. The runtime reaps any supervised worker tree atomically via `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` on shutdown.
 
 ## Firewall scoping
 
@@ -70,7 +70,7 @@ msiexec /uninstall <productCode>
 
 Uninstall removes binaries, web assets, manifests, runtime DLLs, registry hooks, and the start menu entries. It does **not** remove:
 
-- `mcos.json` and any operator-edited configuration under `%ProgramData%\Master Control Orchestration Server\` (preserved across upgrades).
+- `mcos.json` and any maintainer-edited configuration under `%ProgramData%\Master Control Orchestration Server\` (preserved across upgrades).
 - Windows Firewall rules (see the Firewall doc for cleanup).
 
 ## Versioning
