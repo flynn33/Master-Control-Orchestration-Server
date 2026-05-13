@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 
 from common import ROOT, git_output
@@ -149,7 +150,18 @@ def commits_for_event(args: argparse.Namespace) -> list[str]:
     if args.event_name == "pull_request" and args.pr_base and args.pr_head:
         return collect_range_commits(f"{args.pr_base}..{args.pr_head}")
     if args.before and args.before != ZERO_SHA and args.after:
-        return collect_range_commits(f"{args.before}..{args.after}")
+        # Force-push leaves the prior tip unreachable from any ref; the
+        # BEFORE..AFTER walk then fails with `git rev-list` exit 128. Fall
+        # back to scanning commits reachable from AFTER but not from any
+        # remote ref -- mirrors the strategy commits_for_hook uses for
+        # branch-create pushes (where remote_sha is the zero SHA).
+        try:
+            return collect_range_commits(f"{args.before}..{args.after}")
+        except subprocess.CalledProcessError:
+            output = git_output(
+                ["rev-list", "--reverse", args.after, "--not", "--remotes"]
+            )
+            return [line.strip() for line in output.splitlines() if line.strip()]
     if args.after:
         return [args.after]
     return [git_output(["rev-parse", "HEAD"])]
