@@ -468,9 +468,8 @@ std::vector<RuntimeEndpoint> buildDefaultSeededEndpointsForHost(std::string host
     // is the muted body line. Reachability dot will paint red until a
     // real worker process binds to the listed port.
     // v0.10.0: Docker Control MCP and Playwright MCP removed at operator
-    // direction. MCOS hard rule .claude/rules/10-windows-native-cpp.md
-    // already classed Docker as development-only, not the Windows
-    // production path. The container surface now lives outside the MCOS
+    // direction. The Windows-native MCOS hard rule already classed
+    // Docker as development-only, not the Windows production path. The container surface now lives outside the MCOS
     // baseline; operators who need container automation register a
     // pool template explicitly. Playwright was a vendor-specific
     // browser-automation seed that overlapped with chrome-devtools and
