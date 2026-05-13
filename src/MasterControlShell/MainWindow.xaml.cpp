@@ -1889,10 +1889,6 @@ void MainWindow::ApplySubAgentFooter(const ::MasterControlShell::ShellSnapshot& 
     using winrt::Windows::UI::Color;
     using winrt::Windows::UI::ColorHelper;
 
-    auto grid = SubAgentFooterGrid();
-    grid.Children().Clear();
-    grid.ColumnDefinitions().Clear();
-
     // SUB-AGENT GRID footer disabled on every deck.
     // Operator-reported regression: the v0.10.10 build kept this
     // persistent footer visible on Telemetry + Runtime so it could
@@ -1908,17 +1904,49 @@ void MainWindow::ApplySubAgentFooter(const ::MasterControlShell::ShellSnapshot& 
     // Forcing footerAllowed=false leaves the in-section panels as the
     // sole sub-agent surface on every deck.
     const bool footerAllowed = false;
-    try {
-        SubAgentFooterHeadline().Visibility(footerAllowed
-            ? Visibility::Visible
-            : Visibility::Collapsed);
-        grid.Visibility(footerAllowed
-            ? Visibility::Visible
-            : Visibility::Collapsed);
-    } catch (const winrt::hresult_error&) {}
+
+    // headlineCtrl / gridCtrl name the UI controls; the rendering
+    // branch below declares a local std::wstring named `headline`
+    // for the summary text, so the control reference uses a distinct
+    // identifier here to avoid a C4456 shadow.
+    auto headlineCtrl = SubAgentFooterHeadline();
+    auto gridCtrl     = SubAgentFooterGrid();
+
     if (!footerAllowed) {
+        // Idempotent permanent-disable path. ApplySubAgentFooter is
+        // called on every snapshot tick (~1 Hz). Once both surfaces
+        // are Collapsed, subsequent ticks return immediately without
+        // touching the UI tree -- the pre-fix code unconditionally
+        // called grid.Children().Clear() + ColumnDefinitions().Clear()
+        // every tick even though the result was immediately discarded
+        // by the Visibility::Collapsed assignment.
+        try {
+            if (headlineCtrl.Visibility() == Visibility::Collapsed &&
+                gridCtrl.Visibility() == Visibility::Collapsed) {
+                return;
+            }
+            headlineCtrl.Visibility(Visibility::Collapsed);
+            gridCtrl.Visibility(Visibility::Collapsed);
+            gridCtrl.Children().Clear();
+            gridCtrl.ColumnDefinitions().Clear();
+        } catch (const winrt::hresult_error&) {}
         return;
     }
+
+    // Footer-allowed branch. Currently unreachable per the
+    // footerAllowed constant above, retained so re-enabling the
+    // footer in the future is a one-line constant flip rather than a
+    // re-implementation. The Clear() calls live here -- inside the
+    // rendering path -- because they exist to wipe the previous
+    // tick's column/cell layout before this tick's ColumnDefinitions
+    // + card Borders are appended.
+    auto grid = gridCtrl;
+    grid.Children().Clear();
+    grid.ColumnDefinitions().Clear();
+    try {
+        headlineCtrl.Visibility(Visibility::Visible);
+        grid.Visibility(Visibility::Visible);
+    } catch (const winrt::hresult_error&) {}
 
     if (snapshot.subAgentRuntimeStats.empty()) {
         try {
