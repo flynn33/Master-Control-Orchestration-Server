@@ -6,10 +6,9 @@
 // includes them in the right order; doing it here too defends against any
 // future TU-level include-order regression.
 //
-// v0.9.1 removed the WinHTTP-based health probe (it lived inside the now-
-// deleted McpJungleGatewayAdapter::probeOverHttp). The native gateway
-// uses HTTP.sys to listen and an in-process state check for Probe(), so
-// winhttp.h / winhttp.lib are no longer needed.
+// The native gateway uses HTTP.sys to listen and an in-process state
+// check for Probe(), so winhttp.h / winhttp.lib are not needed in
+// this TU.
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -111,18 +110,6 @@ std::string composeHealthUrl(const McpGatewayConfiguration& configuration) {
 }
 
 } // namespace
-
-// ---------------------------------------------------------------------------
-// McpJungleGatewayAdapter — REMOVED in v0.9.1
-// ---------------------------------------------------------------------------
-// Pre-v0.9.0 the production adapter supervised an external MCPJungle binary
-// over its HTTP API. v0.9.0 retired that substrate in favor of the
-// native HTTP.sys implementation below; the McpJungle implementation
-// remained in-tree as inert dead code for one release cycle. v0.9.1
-// deletes it. The runtime continues to accept the legacy
-// mcpGateway.type='mcpjungle' value in persisted configs and transparently
-// resolves to NativeHttpSysGatewayAdapter at construction time.
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // FakeMcpGatewayAdapter
@@ -298,8 +285,8 @@ std::vector<std::string> FakeMcpGatewayAdapter::registeredServerNames() const {
 //
 // Windows-native MCP gateway built on HTTP.sys (Win32 kernel-mode HTTP
 // server). Replaces the v0.6.7 honest-503 listener with a real
-// implementation. Selected via mcpGateway.type = "native". The MCPJungle
-// adapter remains available for operators with existing MCPJungle
+// implementation. Selected via mcpGateway.type = "native". The native HTTP.sys gateway
+// adapter remains available for operators with existing native HTTP.sys gateway
 // deployments.
 //
 // MVP scope (v0.6.9):

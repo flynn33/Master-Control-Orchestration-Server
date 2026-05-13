@@ -136,7 +136,7 @@ Test-NetConnection -ComputerName <host-ip> -Port 8080   # MCP Gateway (open only
 Resolve-DnsName -Name _mcos._tcp.local -Type PTR -LlmnrFallback
 ```
 
-The MCP Gateway port (TCP 8080) only has a listener when a gateway substrate is supervising it (PHASE-02 honest-fallback rule from ADR-002 §9). The firewall rule is correct to open the port now — `Test-NetConnection` will report `False` until MCPJungle (or any other `IMcpGateway` adapter) is configured. The operator port (TCP 7300) listens unconditionally.
+The MCP Gateway port (TCP 8080) only has a listener when a gateway substrate is supervising it (PHASE-02 honest-fallback rule from ADR-002 §9). The firewall rule is correct to open the port now — `Test-NetConnection` will report `False` until native HTTP.sys gateway (or any other `IMcpGateway` adapter) is configured. The operator port (TCP 7300) listens unconditionally.
 
 From a Public network, the same calls should fail. If they succeed, the Public profile is too permissive.
 

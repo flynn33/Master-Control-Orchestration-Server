@@ -12,7 +12,7 @@
     "gatewayType": {
       "type": "string",
       "enum": [
-        "mcpjungle",
+        "native HTTP.sys gateway",
         "native"
       ]
     },

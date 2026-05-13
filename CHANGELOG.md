@@ -15,7 +15,7 @@ The release-management and doc-sync GitHub agents that previously generated part
 - Per-pass self-test rows in the persistent Diagnostics log (behind an opt-in flag).
 - PHASE-13 Win2D / Direct2D high-rate visual surfaces in the WinUI Shell (per-pool sparklines, Tron grid HLSL, activity stream SwapChainPanel).
 - Onboarding profile `governanceBundleUrl` platform-awareness (currently hardcoded to `windows` in `MasterControlRuntime.cpp`; should reflect the requesting client's target platform).
-- Source-code tombstone removal of `GatewayType::MCPJungle` enum value and `mcpjungle.exe` reference in `MasterControlBootstrapper/main.cpp` supervised-gateway child list (kept for back-compat deserialization in v0.10.x; removable at the next major bump).
+- Source-code tombstone removal of `GatewayType::native HTTP.sys gateway` enum value and `native HTTP.sys gateway.exe` reference in `MasterControlBootstrapper/main.cpp` supervised-gateway child list (kept for back-compat deserialization in v0.10.x; removable at the next major bump).
 
 ## [0.10.14] - 2026-05-11
 
@@ -32,7 +32,7 @@ Audit remediation. Grok-authored repository audit (`AUDIT-FINDINGS-2026-05-11`) 
 
 ### Changed
 
-- **`.claude-plugin/mcos-control/` documentation.** Retired all live MCPJungle references. README smoke-test output rewritten to match the live `/api/health/summary.gateway` shape. `mcos-installer.md` Step 2 rewritten around `NativeHttpSysGatewayAdapter` + `listenPort` + `mcpPath`. `mcos-troubleshooter.md` Chain C rewritten to key on `GET /api/health/summary.gateway` and the v0.10.13 `/api/supervisor/reachability-check`. `commands/activity.md` example telemetry SOURCE field updated from `McpJungleGatewayAdapter` to `NativeHttpSysGatewayAdapter`.
+- **`.claude-plugin/mcos-control/` documentation.** Retired all legacy gateway references. README smoke-test output rewritten to match the live `/api/health/summary.gateway` shape. `mcos-installer.md` Step 2 rewritten around `NativeHttpSysGatewayAdapter` + `listenPort` + `mcpPath`. `mcos-troubleshooter.md` Chain C rewritten to key on `GET /api/health/summary.gateway` and the v0.10.13 `/api/supervisor/reachability-check`. `commands/activity.md` example telemetry SOURCE field corrected to `NativeHttpSysGatewayAdapter`.
 
 ### Notes
 
@@ -86,7 +86,7 @@ Aggregate entry covering the 80+ patch releases between v0.9.3 (last committed b
 
 ### Added
 
-- **Native HTTP.sys MCP gateway is now the only substrate.** MCPJungle support was dropped in v0.9.0 per maintainer directive. `cfg.mcpGateway.type` is retained for back-compat JSON deserialization only; the runtime always uses the native HTTP.sys adapter on `0.0.0.0:cfg.mcpGateway.listenPort` (default 8080) at `cfg.mcpGateway.mcpPath` (default `/mcp`).
+- **Native HTTP.sys MCP gateway is now the only substrate.** native HTTP.sys gateway support was dropped in v0.9.0 per maintainer directive. `cfg.mcpGateway.type` is retained for back-compat JSON deserialization only; the runtime always uses the native HTTP.sys adapter on `0.0.0.0:cfg.mcpGateway.listenPort` (default 8080) at `cfg.mcpGateway.mcpPath` (default `/mcp`).
 - **Supervisor Agent Assignment Wizard.** Full backend + WinUI Shell + browser dashboard surface for selecting one supervisor model (chatgpt / claude / grok). Lifecycle: `off → config_generated → pending_connection → connected → disconnected | revoked`. 120-second heartbeat watchdog flips Connected → Disconnected. Persistence at `<dataDirectory>/supervisor-assignment.json` survives service restart.
 - **Persistent Diagnostics log.** Supervisor lifecycle + boot self-test failures + per-boot self-test summaries dual-emit to `<PUBLIC>\Documents\Master Control Orchestration Server\logs\<component>\events.jsonl`.
 - **Boot self-test count grew to 39 probes** (was ~30 at v0.9.3). New probes include `diagnostics.log_writable` (v0.10.3), `gateway.tool_count_nonzero` (v0.10.4), supervisor lifecycle probes, and pool readiness probes.
@@ -103,7 +103,7 @@ Aggregate entry covering the 80+ patch releases between v0.9.3 (last committed b
 
 ### Removed
 
-- **MCPJungle gateway substrate** (v0.9.0). The `GatewayType::Mcpjungle` enum value is retained only so existing on-disk configs deserialize; the runtime always falls through to the native HTTP.sys adapter. `gatewayConfig.binaryPath`, `gatewayConfig.databasePath`, and the MCPJungle supervised-binary management code path are gone.
+- **native gateway substrate** (v0.9.0). The `GatewayType::native HTTP.sys gateway` enum value is retained only so existing on-disk configs deserialize; the runtime always falls through to the native HTTP.sys adapter. `gatewayConfig.binaryPath`, `gatewayConfig.databasePath`, and the native HTTP.sys gateway supervised-binary management code path are gone.
 - **Overview deck `MCP SERVERS` and `SUB-AGENTS` summary cards** (v0.10.10). The 2x2 status grid shrinks to 1x2 — `APIS & SERVICES` + `SECURITY STANCE` remain. The MCP / sub-agent decks live on Runtime and Telemetry as tile grids.
 - **Runtime deck `Runtime Endpoints` ListView** (v0.10.11). The flat `name | host:port | status` list that mixed MCP servers, sub-agents, and gateways into one column conflicted with the tile-grid directive. The dedicated MCP Servers and Sub-Agents tile-grid panels above carry the same data in the correct visual form.
 
@@ -128,7 +128,7 @@ The 0.7.0 minor bump under the manifest's `minor-on-architecture-change` policy 
 
 #### Verified at this milestone
 
-- Both gateway substrates ship and are maintainer-selectable via `mcpGateway.type`. `mcpjungle` supervises an external MCPJungle binary (Job Object child); `native` binds Windows-native HTTP.sys directly inside `MasterControlServiceHost.exe` with the v0.6.10 stdio bridge forwarding `tools/list` and `tools/call` to supervised pool children. Both satisfy `IMcpGateway` exactly.
+- Both gateway substrates ship and are maintainer-selectable via `mcpGateway.type`. `native HTTP.sys gateway` supervises an external gateway binary (Job Object child); `native` binds Windows-native HTTP.sys directly inside `MasterControlServiceHost.exe` with the v0.6.10 stdio bridge forwarding `tools/list` and `tools/call` to supervised pool children. Both satisfy `IMcpGateway` exactly.
 - Bootstrapper `install` action runs `netsh http add urlacl url=http://+:8080/ user=Everyone` so console-mode maintainers bind the native gateway port without `ERROR_ACCESS_DENIED`. `uninstall` reverses it best-effort.
 - All four CTest suites (`ForsettiCoreTests`, `ForsettiPlatformTests`, `ForsettiArchitectureTests`, `MasterControlOrchestrationServerTests`) pass green at the 0.7.0 commit.
 - End-to-end host smoke-test: MSI installs cleanly, service starts, native gateway binds and responds to MCP `initialize` with `serverInfo.version=0.7.0`, `tools/list` returns honest empty array (no pools registered), URL ACL confirmed via `netsh http show urlacl`.
@@ -137,7 +137,7 @@ The 0.7.0 minor bump under the manifest's `minor-on-architecture-change` policy 
 
 - `VERSION.json` history entry summarizes the architectural-completion milestone and explicitly defers PHASE-13 visual polish to v0.7.x point releases.
 - `README.md` rewritten: stale per-version sections (v0.6.0..v0.6.4) replaced with v0.7.0 milestone block, mermaid diagram updated to show both substrates, broken `Architecture-Decisions/` and `Operations/` wiki paths corrected to flat `docs/wiki/`.
-- Wiki refresh: `Home.md`, `Versions.md`, `Architecture.md`, `Gateway.md`, `Quick-Start.md`, and `ADR-003-mcp-gateway-substrate-decision.md` all updated for v0.7.0 reality. ADR-003 receives a "Status update" section explaining that PHASE-12 was authored and shipped voluntarily (maintainer-experience trigger #4) and the native substrate is now a maintainer-selectable peer of the supervised MCPJungle path.
+- Wiki refresh: `Home.md`, `Versions.md`, `Architecture.md`, `Gateway.md`, `Quick-Start.md`, and `ADR-003-mcp-gateway-substrate-decision.md` all updated for v0.7.0 reality. ADR-003 receives a "Status update" section explaining that PHASE-12 was authored and shipped voluntarily (maintainer-experience trigger #4) and the native substrate is now a maintainer-selectable peer of the gateway adapter path.
 
 #### Notes
 
@@ -176,11 +176,11 @@ The 0.7.0 minor bump under the manifest's `minor-on-architecture-change` policy 
 
 #### Added
 
-- **`NativeHttpSysGatewayAdapter`** alongside `McpJungleGatewayAdapter` and `FakeMcpGatewayAdapter`. Implements `IMcpGateway` exactly — PHASE-03 through PHASE-11 surfaces don't see the substrate change.
+- **`NativeHttpSysGatewayAdapter`** alongside `FakeMcpGatewayAdapter`. Implements `IMcpGateway` exactly — PHASE-03 through PHASE-11 surfaces don't see the substrate change.
 - **HTTP.sys lifecycle** — `HttpInitialize` / `HttpCreateServerSession` / `HttpCreateUrlGroup` / `HttpAddUrlToUrlGroup` with `http://+:PORT/` prefix / `HttpCreateRequestQueue` / `HttpSetUrlGroupProperty(BindingProperty)`. Teardown reverses cleanly. `ERROR_ACCESS_DENIED` on `HttpAddUrlToUrlGroup` surfaces with maintainer guidance ("Run as service or `netsh http add urlacl url=http://+:8080/ user=Everyone`").
 - **MCP Streamable-HTTP request loop** — `HttpReceiveHttpRequest` with `HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY` pulls body inline up to 16 KB; `ERROR_MORE_DATA` grows the buffer; `ERROR_OPERATION_ABORTED` breaks the loop on shutdown. Routes `/health` to a structured adapter-state JSON, `/mcp[/{poolId}]` to `handleMcpRequest`, everything else to a 404 with structured-JSON error.
 - **MCP protocol surface** — `initialize` returns `serverInfo` + tools-capability advertisement; `tools/list` aggregates registered `McpServerRegistration` tools (returns empty array in MVP, full aggregation lands in v0.6.10); `tools/call` returns -32601 with explicit pointer at v0.6.10 stdio bridge.
-- **Adapter selection at construction time** based on `mcpGateway.type`. `GatewayType::Native` → `NativeHttpSysGatewayAdapter`, `GatewayType::MCPJungle` (default) → `McpJungleGatewayAdapter`. Maintainers switch substrates by POSTing to `/api/config` and restarting the service.
+- **Adapter selection at construction time** based on `mcpGateway.type`. `GatewayType::Native` → `NativeHttpSysGatewayAdapter`. Maintainers switch substrates by POSTing to `/api/config` and restarting the service.
 
 #### Build
 
@@ -208,8 +208,8 @@ The 0.7.0 minor bump under the manifest's `minor-on-architecture-change` policy 
 
 #### Added
 
-- **`McpJungleGatewayAdapter` honest-503 listener**. When the adapter is in `Disabled` or supervised-mock mode (no MCPJungle binary configured, the default state), the adapter binds the configured listen port (default 8080) with a tiny accept loop that returns a structured HTTP 503 "Service Unavailable" JSON to every request. LAN AI clients pointing at the advertised gateway URL get a useful error with maintainer guidance instead of connection refused.
-- **Lifecycle** — listener releases the port the moment a real MCPJungle binary is about to be spawned, and re-binds it after `Stop()` so the gateway port stays answerable across the entire adapter lifecycle. Replaced wholesale by PHASE-12's native HTTP.sys gateway when active.
+- **`NativeHttpSysGatewayAdapter` honest-503 listener**. When the adapter is in `Disabled` or supervised-mock mode (no gateway binary configured, the default state), the adapter binds the configured listen port (default 8080) with a tiny accept loop that returns a structured HTTP 503 "Service Unavailable" JSON to every request. LAN AI clients pointing at the advertised gateway URL get a useful error with maintainer guidance instead of connection refused.
+- **Lifecycle** — listener releases the port the moment a real gateway binary is about to be spawned, and re-binds it after `Stop()` so the gateway port stays answerable across the entire adapter lifecycle. Replaced wholesale by PHASE-12's native HTTP.sys gateway when active.
 
 #### Fixed
 
@@ -260,7 +260,7 @@ The realignment program declared in ADR-002 lands in twelve named phases. The pr
 
 - **PHASE-00** — `ADR-002` (gateway-first realignment), drift inventory, removal map, `FORBIDDEN-CONTRACT-GREP-LIST.md` with eight contract groups.
 - **PHASE-01** — provider-era residual cleanup. `ExternalClient` model replaces `Provider*`; deletion/quarantine of execution routes; tests updated.
-- **PHASE-02** — `IMcpGateway` interface, `McpJungleGatewayAdapter` (supervised external binary), `FakeMcpGatewayAdapter` (test). Supervised-mock fallback when no binary is configured (honest "configured, not running" state per ADR-002 §9).
+- **PHASE-02** — `IMcpGateway` interface, `NativeHttpSysGatewayAdapter` (supervised external binary), `FakeMcpGatewayAdapter` (test). Supervised-mock fallback when no binary is configured (honest "configured, not running" state per ADR-002 §9).
 - **PHASE-03** — DNS-SD / mDNS LAN discovery via Win32 `DnsServiceRegister`. Three Bonjour service types (`_mcos._tcp.local`, `_mcos-mcp._tcp.local`, `_mcos-onboarding._tcp.local`) plus the legacy beacon, all carrying the canonical `DiscoveryDocument`. `/.well-known/mcos.json`, `/api/discovery`.
 - **PHASE-04** — onboarding profile service. Per-client-type profiles (`claude-code`, `codex`, `grok`, `chatgpt`, `generic-mcp`) at `/api/onboarding/{clientType}`. Manual setup is first-class.
 - **PHASE-05** — governance bundle service. Per-platform bundles (`windows`, `macos`, `ios`) at `/api/governance/bundles/{platform}` with sha256 checksums. Forsetti version + agentic coding version stamped in.
@@ -269,7 +269,7 @@ The realignment program declared in ADR-002 lands in twelve named phases. The pr
 - **PHASE-08** — telemetry aggregator with `-1.0` honest-unavailable sentinel. Events ring (1024 cap), client presence roster, gateway traffic snapshot. Activity event taxonomy.
 - **PHASE-09** — Tron dashboard realigned to gateway-first. Eleven destinations covering every layer; `formatMetric()` honesty helper enforced by FORBIDDEN-CONTRACT §8.1.
 - **PHASE-10** — Windows release gate closed. vswhere-driven toolchain, version-stamping before configure, no `workflow_dispatch` bypass on the gating workflows, MSI rebuilt clean.
-- **PHASE-11** — native gateway evaluation memo + `ADR-003` recording the decision to keep MCPJungle for the v0.6.x line and defer a native HTTP.sys gateway to a conditional future PHASE-12 with five named operational triggers.
+- **PHASE-11** — native gateway evaluation memo + `ADR-003` recording the decision to keep native HTTP.sys gateway for the v0.6.x line and defer a native HTTP.sys gateway to a conditional future PHASE-12 with five named operational triggers.
 
 #### Notes
 

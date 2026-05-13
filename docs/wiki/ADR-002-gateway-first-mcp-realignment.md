@@ -9,7 +9,7 @@
 
 ## Status update (v0.9.0)
 
-MCPJungle was retired at v0.9.0. The shipping substrate is now `NativeHttpSysGatewayAdapter` (in-process HTTP.sys) behind `IMcpGateway`. The decision-point text below (which named MCPJungle as the v0.6.x default and reserved PHASE-11 to evaluate replacement) is preserved as historical record; ADR-003 captures the v0.9.0 substrate decision.
+native HTTP.sys gateway was retired at v0.9.0. The shipping substrate is now `NativeHttpSysGatewayAdapter` (in-process HTTP.sys) behind `IMcpGateway`. The decision-point text below (which named native HTTP.sys gateway as the v0.6.x default and reserved PHASE-11 to evaluate replacement) is preserved as historical record; ADR-003 captures the v0.9.0 substrate decision.
 
 ---
 
@@ -31,11 +31,11 @@ Specific consequences locked by this decision:
 
 1. **Two surfaces, one trust model.** The existing admin/maintainer API (`/api/clients/*`, `/api/runtime/*`, `/api/forsetti/*`, `/api/clu/approvals`, browser dashboard) keeps the LAN-trusted/`X-MCOS-Client-Id` model from ADR-001 §3 — maintainers are identified for activity attribution and privileged mutation. The new AI-client surface (the MCP Gateway URL) carries `auth=none`, `trust=lan`, and no app-layer client identity. Trust on the AI-client surface is enforced by the trusted LAN boundary, Windows Firewall scoping, maintainer-controlled LAN-mode enablement, subnet/interface policy, and host/origin validation where compatible. The admin port and the gateway port are logically distinct services.
 
-2. **One MCP Gateway URL.** MCOS advertises exactly one MCP endpoint to AI clients. The first gateway substrate is **MCPJungle**, supervised by MCOS as a Windows child process and wrapped behind a replaceable C++ adapter `IMcpGateway` / `McpJungleGatewayAdapter`. PHASE-11 evaluates whether to keep MCPJungle or replace it with a native gateway built on HTTP.sys/WinHTTP; the adapter exists so that decision does not break clients.
+2. **One MCP Gateway URL.** MCOS advertises exactly one MCP endpoint to AI clients. The first gateway substrate is **native HTTP.sys gateway**, supervised by MCOS as a Windows child process and wrapped behind a replaceable C++ adapter `IMcpGateway` / `NativeHttpSysGatewayAdapter`. PHASE-11 evaluates whether to keep native HTTP.sys gateway or replace it with a native gateway built on HTTP.sys/WinHTTP; the adapter exists so that decision does not break clients.
 
 3. **Autoscaled clones are never exposed as separate public tools.** When a managed worker pool scales out, new instances live behind a stable logical pool endpoint registered with the gateway. Clients see one logical tool namespace per pool, never per instance.
 
-4. **LAN discovery is DNS-SD/mDNS first.** MCOS advertises three service types on the local link: `_mcos._tcp.local`, `_mcos-mcp._tcp.local`, `_mcos-onboarding._tcp.local`. TXT fields carry `product=MCOS`, `role=mcp-gateway`, `gateway=native` (legacy `gateway=mcpjungle` retired v0.9.0), `mcp_path`, `config_path`, `governance_path`, `protovers`, `auth=none`, `trust=lan`, `clu=true`, `forsetti=true`. A normalized discovery document is served at `/.well-known/mcos.json` and mirrored by `/api/discovery`. A UDP JSON beacon remains as a fallback.
+4. **LAN discovery is DNS-SD/mDNS first.** MCOS advertises three service types on the local link: `_mcos._tcp.local`, `_mcos-mcp._tcp.local`, `_mcos-onboarding._tcp.local`. TXT fields carry `product=MCOS`, `role=mcp-gateway`, `gateway=native` (legacy `gateway=native HTTP.sys gateway` retired v0.9.0), `mcp_path`, `config_path`, `governance_path`, `protovers`, `auth=none`, `trust=lan`, `clu=true`, `forsetti=true`. A normalized discovery document is served at `/.well-known/mcos.json` and mirrored by `/api/discovery`. A UDP JSON beacon remains as a fallback.
 
 5. **Onboarding profiles per client type.** MCOS generates configuration tailored to each known AI client at `/api/onboarding/{clientType}` for `claude-code`, `codex`, `grok`, `chatgpt`, and `generic`. Every profile points at the single gateway MCP URL, declares `authRequired=false`, links to the governance bundle for the requesting platform, and includes config snippets, manual instructions, and verification steps. ChatGPT is documented as a connector-edge case where local LAN connectivity is constrained. The existing `/api/platform-services/config/{platform}` endpoint is the precursor and will be subsumed.
 
@@ -47,7 +47,7 @@ Specific consequences locked by this decision:
 
 9. **Telemetry is honest.** Host telemetry uses PDH (CPU/disk/network/process counters) and DXGI (GPU memory where available). Activity uses ETW/TraceLogging where appropriate. Worker telemetry comes from the supervised process tree (CPU/memory/I/O) plus pool metrics (active leases, queue depth, inflight calls). Per-AI-client CPU/GPU/disk telemetry exists only when the client supplies it via heartbeat or sidecar; otherwise the dashboard shows an honest "unavailable" state. No fake utilization, no fake live infrastructure, no placeholder success states.
 
-10. **Windows-native first.** Service hosting via Windows SCM patterns. HTTP front door via HTTP.sys (or a clearly justified transitional layer). Outbound HTTP via WinHTTP. LAN discovery via Win32 DNS-SD APIs (`DnsServiceRegister`, `DnsServiceBrowse`); Bonjour/mDNSResponder is a deliberate fallback only. No Java or interpreted runtime in core MCOS. Python is permitted for test tooling only. MCPJungle is a supervised external child process behind the C++ adapter. Docker is a development/testing option, not the required production path.
+10. **Windows-native first.** Service hosting via Windows SCM patterns. HTTP front door via HTTP.sys (or a clearly justified transitional layer). Outbound HTTP via WinHTTP. LAN discovery via Win32 DNS-SD APIs (`DnsServiceRegister`, `DnsServiceBrowse`); Bonjour/mDNSResponder is a deliberate fallback only. No Java or interpreted runtime in core MCOS. Python is permitted for test tooling only. native HTTP.sys gateway is a supervised external child process behind the C++ adapter. Docker is a development/testing option, not the required production path.
 
 11. **Forsetti vendoring is unchanged.** No edits to `Forsetti-Framework-Windows-main/`. Module manifest boundaries are preserved. `scripts/check-mastercontrol-forsetti.ps1` is updated when architecture changes invalidate its assumptions, not before.
 
@@ -68,11 +68,11 @@ Specific consequences locked by this decision:
 
 ### Consequences
 
-Positive. AI clients consume MCOS through the same shape they consume any modern MCP gateway: one URL, aggregated tools, no proprietary auth header. The MCPJungle adapter lets MCOS adopt a working substrate quickly and replace it later. Worker supervision via Job Objects prevents orphaned process trees. Autoscaling becomes possible without breaking client-visible tool namespaces. Telemetry honesty closes the gap between dashboard visuals and reality. The trust split (maintainer vs AI-client) keeps the privilege model where it is useful (maintainers) and removes it where it gets in the way (AI clients).
+Positive. AI clients consume MCOS through the same shape they consume any modern MCP gateway: one URL, aggregated tools, no proprietary auth header. The native HTTP.sys adapter lets MCOS adopt a working substrate quickly and replace it later. Worker supervision via Job Objects prevents orphaned process trees. Autoscaling becomes possible without breaking client-visible tool namespaces. Telemetry honesty closes the gap between dashboard visuals and reality. The trust split (maintainer vs AI-client) keeps the privilege model where it is useful (maintainers) and removes it where it gets in the way (AI clients).
 
 Negative. The repo grows new subsystems (gateway adapter, discovery service, onboarding service, governance bundle service, supervisor, lease router, autoscaler, telemetry aggregator, dashboard reskin, CI hardening). PHASE-09 reskins the dashboard, which means the current Tron UI loses panels that centered on the old per-client/X-MCOS-Client-Id model. The shell's `ProvidersSectionControl` deferred cleanup must finally land in a later phase. The trusted-LAN assumption is even more load-bearing than under ADR-001, because the AI-client gateway carries no app-layer auth at all.
 
-Neutral. MCPJungle is a supervised external dependency for the duration of PHASE-02 through PHASE-10. PHASE-11 makes the keep-or-replace call based on operational evidence. Either outcome stays inside the `IMcpGateway` adapter; no client contract changes either way.
+Neutral. native HTTP.sys gateway is a supervised external dependency for the duration of PHASE-02 through PHASE-10. PHASE-11 makes the keep-or-replace call based on operational evidence. Either outcome stays inside the `IMcpGateway` adapter; no client contract changes either way.
 
 ### References
 

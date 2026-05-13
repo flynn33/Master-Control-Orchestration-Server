@@ -52,7 +52,7 @@ flowchart LR
     LANClients -.->|on demand| Governance
 ```
 
-The architecture target is the **gateway-first MCP host** declared in [ADR-002](docs/wiki/ADR-002-gateway-first-mcp-realignment.md) and locked at the substrate level by [ADR-003](docs/wiki/ADR-003-mcp-gateway-substrate-decision.md). As of v0.9.0 the only shipping substrate is the in-process Windows-native HTTP.sys adapter — MCPJungle was retired per maintainer directive. `cfg.mcpGateway.type` is retained for back-compat JSON deserialization only; the runtime always uses the native HTTP.sys adapter on `0.0.0.0:cfg.mcpGateway.listenPort` (default `8080`) at `cfg.mcpGateway.mcpPath` (default `/mcp`). The original [ADR-001 LAN client identity model](docs/wiki/ADR-001-lan-client-control-plane.md) survives as the maintainer surface that coexists with the AI-client gateway surface.
+The architecture target is the **gateway-first MCP host** declared in [ADR-002](docs/wiki/ADR-002-gateway-first-mcp-realignment.md) and locked at the substrate level by [ADR-003](docs/wiki/ADR-003-mcp-gateway-substrate-decision.md). As of v0.9.0 the only shipping substrate is the in-process Windows-native HTTP.sys adapter — native HTTP.sys gateway was retired per maintainer directive. `cfg.mcpGateway.type` is retained for back-compat JSON deserialization only; the runtime always uses the native HTTP.sys adapter on `0.0.0.0:cfg.mcpGateway.listenPort` (default `8080`) at `cfg.mcpGateway.mcpPath` (default `/mcp`). The original [ADR-001 LAN client identity model](docs/wiki/ADR-001-lan-client-control-plane.md) survives as the maintainer surface that coexists with the AI-client gateway surface.
 
 ---
 
@@ -80,7 +80,7 @@ Multiple AI coding clients on the same trusted LAN need to share an MCP server a
 3. **Sticky-session lease routing with same-type scale-out.** The lease router preserves stateful sessions on their original instance, fans new stateless sessions across the least-loaded ready instances, and triggers same-type spawns under saturation.
 4. **Honest telemetry.** Every numeric metric uses a `-1.0` "unavailable" sentinel rather than fabricating values. The dashboard renders unreported metrics as `unavailable`, not `0%`.
 5. **CLU/Forsetti governance.** Per-platform governance bundles distributed via HTTP. Maintainer approval queue for high-impact actions.
-6. **Reversible by construction.** Every gateway-related decision sits behind the `IMcpGateway` adapter. That substrate-agnostic interface meant the v0.6-v0.8 supervised MCPJungle binary could be retired cleanly at v0.9.0 in favour of the in-process `NativeHttpSysGatewayAdapter` without breaking any client contract.
+6. **Reversible by construction.** Every gateway-related decision sits behind the `IMcpGateway` adapter. That substrate-agnostic interface meant the v0.6-v0.8 gateway adapter binary could be retired cleanly at v0.9.0 in favour of the in-process `NativeHttpSysGatewayAdapter` without breaking any client contract.
 
 ---
 
@@ -88,7 +88,7 @@ Multiple AI coding clients on the same trusted LAN need to share an MCP server a
 
 The current release line, spanning v0.9.4 through v0.10.14 since the v0.7.0 production-milestone baseline.
 
-**Native HTTP.sys is the only shipping gateway substrate.** MCPJungle support was retired in v0.9.0 per maintainer directive. `cfg.mcpGateway.type` is kept in the JSON schema for backward-compatible deserialization, but the runtime always uses the native HTTP.sys adapter. No external binary to supervise.
+**Native HTTP.sys is the only shipping gateway substrate.** native HTTP.sys gateway support was retired in v0.9.0 per maintainer directive. `cfg.mcpGateway.type` is kept in the JSON schema for backward-compatible deserialization, but the runtime always uses the native HTTP.sys adapter. No external binary to supervise.
 
 | Field | Value |
 |---|---|
@@ -114,7 +114,7 @@ Each v0.6.x point release is hand-authored — the [`VERSION.json`](VERSION.json
 | Version | Theme |
 |---|---|
 | `v0.6.10` | PHASE-12 follow-up complete: stdio bridge end-to-end, native gateway forwards `tools/call` to supervised children, bootstrapper URL ACL. |
-| `v0.6.9` | PHASE-12 MVP: `NativeHttpSysGatewayAdapter` ships alongside the MCPJungle adapter; HTTP.sys lifecycle + MCP `initialize` + `tools/list`. |
+| `v0.6.9` | PHASE-12 MVP: `NativeHttpSysGatewayAdapter` ships alongside the native HTTP.sys adapter; HTTP.sys lifecycle + MCP `initialize` + `tools/list`. |
 | `v0.6.8` | Pool persistence (maintainer no longer loses pools on every restart), per-instance browser sparkline charts, telemetry events ring producer, PHASE-12 + PHASE-13 plan files. |
 | `v0.6.7` | Honest-503 listener on the gateway port so LAN clients see structured JSON instead of TCP RST in supervised-mock mode. |
 | `v0.6.5..v0.6.6` | Per-instance CPU/RAM telemetry sampling backend (`GetProcessTimes` + `GetProcessMemoryInfo` with first-sample baseline), MSI uninstall stale-shortcut fix, settings Apply gate fix, `preferredBindAddress` propagation. |
@@ -126,7 +126,7 @@ Each v0.6.x point release is hand-authored — the [`VERSION.json`](VERSION.json
 |---|---|---|
 | PHASE-00 | Repo baseline + ADR-002 | v0.6.0 |
 | PHASE-01 | Provider-era residual cleanup | v0.6.0 |
-| PHASE-02 | `IMcpGateway` + `McpJungleGatewayAdapter` + supervised-mock fallback | v0.6.0 |
+| PHASE-02 | `IMcpGateway` + `NativeHttpSysGatewayAdapter` + supervised-mock fallback | v0.6.0 |
 | PHASE-03 | DNS-SD + UDP beacon + discovery document | v0.6.0 |
 | PHASE-04 | Onboarding profiles per client type | v0.6.0 |
 | PHASE-05 | CLU/Forsetti governance bundles per platform | v0.6.0 |
@@ -204,7 +204,7 @@ The same toggle is on the WinUI desktop shell's **Overview** page. Either surfac
 
 | Surface | What it does | Where |
 |---|---|---|
-| **AI-client gateway** | One advertised MCP URL; auth=none, trust=lan | `IMcpGateway` + `NativeHttpSysGatewayAdapter` (in-process HTTP.sys, v0.9.0+; MCPJungle substrate retired in the same release) |
+| **AI-client gateway** | One advertised MCP URL; auth=none, trust=lan | `IMcpGateway` + `NativeHttpSysGatewayAdapter` (in-process HTTP.sys, v0.9.0+; native HTTP.sys gateway substrate retired in the same release) |
 | **Stdio bridge** | Forwards `tools/call` JSON-RPC from gateway to supervised pool children via stdin/stdout | `IWorkerSupervisor::sendStdioJsonRpc` (PHASE-12 follow-up, v0.6.10) |
 | **LAN discovery** | DNS-SD + UDP beacon + `/.well-known/mcos.json` | `DiscoveryService` + `BeaconService` |
 | **Onboarding profiles** | Per-client-type config + manual instructions | `OnboardingProfileService` + `/api/onboarding/{type}` |

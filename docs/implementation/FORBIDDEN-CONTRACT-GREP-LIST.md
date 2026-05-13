@@ -129,10 +129,10 @@ Expected: zero matches across `src/` and `resources/web`. PHASE-01 removed all o
 
 ## Group 2 — Gateway abstraction integrity (forbidden by ADR-002 §2, §3)
 
-### 2.1 Direct MCPJungle coupling outside the adapter
+### 2.1 Direct native HTTP.sys gateway coupling outside the adapter
 
 ```bash
-git grep -nE 'mcpjungle|MCPJungle|McpJungle' \
+git grep -nE 'native HTTP.sys gateway|native HTTP.sys gateway|native HTTP.sys gateway' \
   -- src/MasterControlApp src/MasterControlServiceHost src/MasterControlBootstrapper tests resources/web include \
   ':!src/MasterControlApp/McpGatewayAdapters.cpp' \
   ':!include/MasterControl/McpGatewayAdapters.h' \
@@ -142,7 +142,7 @@ git grep -nE 'mcpjungle|MCPJungle|McpJungle' \
   ':!docs/**'
 ```
 
-Expected: zero matches as of PHASE-02. The substring is allowed inside the adapter (`include/MasterControl/McpGatewayAdapters.h`, `src/MasterControlApp/McpGatewayAdapters.cpp`), the enum string tables (`src/MasterControlApp/MasterControlModels.cpp`), default-config seeding (`MasterControlDefaults.cpp`), and the `GatewayType::MCPJungle` declaration. Anywhere else is a coupling regression.
+Expected: zero matches as of PHASE-02. The substring is allowed inside the adapter (`include/MasterControl/McpGatewayAdapters.h`, `src/MasterControlApp/McpGatewayAdapters.cpp`), the enum string tables (`src/MasterControlApp/MasterControlModels.cpp`), default-config seeding (`MasterControlDefaults.cpp`), and the `GatewayType::native HTTP.sys gateway` declaration. Anywhere else is a coupling regression.
 
 ### 2.1a Worker process tree containment (PHASE-06, ADR-002 §7)
 
@@ -154,7 +154,7 @@ git grep -nE 'CreateProcessW' -- src/MasterControlApp src/MasterControlServiceHo
   ':!src/MasterControlApp/McpGatewayAdapters.cpp'
 ```
 
-Expected: zero matches outside the two known supervised-process-tree call sites (`WorkerSupervisor::startInstanceLocked` in `MasterControlRuntime.cpp` and `McpJungleGatewayAdapter::Start` in `McpGatewayAdapters.cpp`). Both already pair `CreateProcessW` with `AssignProcessToJobObject` and `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
+Expected: zero matches outside the two known supervised-process-tree call sites (`WorkerSupervisor::startInstanceLocked` in `MasterControlRuntime.cpp` and `NativeHttpSysGatewayAdapter::Start` in `McpGatewayAdapters.cpp`). Both already pair `CreateProcessW` with `AssignProcessToJobObject` and `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
 
 ### 2.2 Autoscaled clones registered as separate public MCP tools
 
@@ -341,7 +341,7 @@ Expected matches:
 
 These two pre-existing sites are flagged with `// PHASE-10 known-issue:` source comments and are listed in `handoff/realignment/PHASE-10-completion-report.md` deferred work. Any **new** match outside these two lines is a regression.
 
-`WorkerSupervisor` and `McpJungleGatewayAdapter` legitimately wait without timeout for their long-running supervised processes — Job Object containment (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) owns the kill path, and they don't appear in this grep because they don't call `WaitForSingleObject` on supervised children.
+`WorkerSupervisor` and `NativeHttpSysGatewayAdapter` legitimately wait without timeout for their long-running supervised processes — Job Object containment (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) owns the kill path, and they don't appear in this grep because they don't call `WaitForSingleObject` on supervised children.
 
 ### 6.5 Version stamping before configure (PHASE-10)
 

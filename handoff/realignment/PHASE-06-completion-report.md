@@ -26,7 +26,7 @@ The new admin surface (`/api/pools` plus per-pool action routes) lets operators 
 | [src/MasterControlApp/MasterControlRuntime.cpp](../../src/MasterControlApp/MasterControlRuntime.cpp) | New `WorkerSupervisor` class (anonymous namespace) implementing the lifecycle state machine, Job Object child supervision, and supervised-mock fallback. Constructed at boot. Wired into runtime `shutdown()` so child trees are reaped before service teardown. New routes: `GET /api/pools`, `GET /api/pools/{poolId}`, `POST /api/pools` (upsert), `POST /api/pools/{poolId}/{remove\|scale\|drain}`. `(std::max)(...)` parenthesization used to bypass the `Windows.h` `max()` macro collision in this TU. |
 | [tests/MasterControlOrchestrationServerTests.cpp](../../tests/MasterControlOrchestrationServerTests.cpp) | 5 new tests pinning the public model contract: `testEndpointPoolKindEnumRoundTrip`, `testEndpointInstanceStateAllSevenLifecycleStates`, `testManagedEndpointPoolJsonRequiredFields`, `testEndpointInstanceJsonShape`, `testManagedPoolEmptyByDefault`. |
 | [docs/implementation/ARCHITECTURE-DRIFT-INVENTORY.md](../../docs/implementation/ARCHITECTURE-DRIFT-INVENTORY.md) | Section E rows for the model / lifecycle / supervision / admin-surface flipped to "done"; lease routing / autoscaling rows remain pending PHASE-07. |
-| [docs/implementation/FORBIDDEN-CONTRACT-GREP-LIST.md](../../docs/implementation/FORBIDDEN-CONTRACT-GREP-LIST.md) | New section 2.1a — worker process tree containment grep. `CreateProcessW` outside the two supervised call sites (`WorkerSupervisor::startInstanceLocked` and `McpJungleGatewayAdapter::Start`) is a regression. |
+| [docs/implementation/FORBIDDEN-CONTRACT-GREP-LIST.md](../../docs/implementation/FORBIDDEN-CONTRACT-GREP-LIST.md) | New section 2.1a — worker process tree containment grep. `CreateProcessW` outside the two supervised call sites (`WorkerSupervisor::startInstanceLocked` and `NativeHttpSysGatewayAdapter::Start`) is a regression. |
 
 Total: 7 files changed, +709 / -7 lines.
 
@@ -72,7 +72,7 @@ The pre-existing 38 tests continue to pass.
 
 ## Risks and blockers
 
-1. **Real binary spawning is unverified end-to-end.** The supervisor's `CreateProcessW` path is exercised by static review and matches the (working) MCPJungle adapter pattern, but no MCP backend was actually spawned in this dev environment. PHASE-10 (release gate) is the right place to add a smoke test that pools can spawn a trivial worker (e.g., `cmd /c timeout /t 60`) and report `Ready`.
+1. **Real binary spawning is unverified end-to-end.** The supervisor's `CreateProcessW` path is exercised by static review and matches the (working) native HTTP.sys adapter pattern, but no MCP backend was actually spawned in this dev environment. PHASE-10 (release gate) is the right place to add a smoke test that pools can spawn a trivial worker (e.g., `cmd /c timeout /t 60`) and report `Ready`.
 2. **No lease router yet.** Pool instances are spawned but not selected by request routing. PHASE-07 wires `EndpointLease` and `LeaseRouter` against `WorkerSupervisor::listPools()`.
 3. **Telemetry is a placeholder.** `WorkerTelemetry::cpuPercent` and `memoryMbytes` default to `-1.0` (unavailable). PHASE-08 introduces real per-instance telemetry via PDH-derived process counters.
 4. **No persistence across restarts.** Pool registrations are in-memory only. Operators who configure pools today need to re-upsert after every restart; persistence lands in a future phase (PHASE-08 / PHASE-09 may add disk backing).

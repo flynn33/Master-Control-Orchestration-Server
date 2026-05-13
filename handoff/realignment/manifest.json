@@ -8,7 +8,7 @@
     "requiresCompletionReport": true,
     "noDirectAIProviderExecution": true,
     "lanClientAuth": "none; network-level trust only",
-    "shippingGatewaySubstrate": "NativeHttpSysGatewayAdapter (in-process HTTP.sys, v0.9.0+); MCPJungle retired",
+    "shippingGatewaySubstrate": "NativeHttpSysGatewayAdapter (in-process HTTP.sys, v0.9.0+); native HTTP.sys gateway retired",
     "windowsNative": true,
     "forsettiComplianceRequired": true,
     "noAiAttribution": true
@@ -74,9 +74,9 @@
     },
     {
       "id": "PHASE-02",
-      "label": "MCP Gateway spike with MCPJungle adapter",
-      "file": "handoff/realignment/PHASE-02-mcp-gateway-spike-mcpjungle.md",
-      "objective": "Add replaceable MCP Gateway adapter and supervised MCPJungle integration spike.",
+      "label": "MCP Gateway spike with native HTTP.sys adapter",
+      "file": "handoff/realignment/PHASE-02-mcp-gateway-spike-native HTTP.sys gateway.md",
+      "objective": "Add replaceable MCP Gateway adapter and supervised native gateway integration spike.",
       "readFirst": [
         "src/MasterControlApp/MasterControlRuntime.cpp",
         "src/MasterControlServiceHost",
@@ -86,14 +86,14 @@
       ],
       "deliverables": [
         "IMcpGateway interface",
-        "McpJungleGatewayAdapter",
+        "NativeHttpSysGatewayAdapter",
         "Gateway configuration",
         "Gateway health API",
         "First logical MCP endpoint registration path"
       ],
       "acceptanceCriteria": [
         "MCOS exposes one gateway MCP URL",
-        "MCPJungle is supervised or mock-supervised",
+        "native HTTP.sys gateway is supervised or mock-supervised",
         "Adapter can be replaced later",
         "No worker clone is exposed directly as public gateway server"
       ],
@@ -349,13 +349,13 @@
     },
     {
       "id": "PHASE-11",
-      "label": "Native gateway evaluation and MCPJungle replacement option",
+      "label": "Native gateway evaluation and native HTTP.sys gateway replacement option",
       "file": "handoff/realignment/PHASE-11-native-gateway-option.md",
-      "objective": "Evaluate whether to keep MCPJungle or implement native MCOS gateway after spike data.",
+      "objective": "Evaluate whether to keep native HTTP.sys gateway or implement native MCOS gateway after spike data.",
       "readFirst": [
         "src",
         "docs/implementation",
-        "handoff/realignment/PHASE-02-mcp-gateway-spike-mcpjungle.md"
+        "handoff/realignment/PHASE-02-mcp-gateway-spike-native HTTP.sys gateway.md"
       ],
       "deliverables": [
         "Keep/replace decision matrix",
@@ -365,7 +365,7 @@
       ],
       "acceptanceCriteria": [
         "Decision is evidence-based",
-        "MCPJungle limitations documented",
+        "native HTTP.sys gateway limitations documented",
         "Native implementation scope does not break previous phases"
       ],
       "validation": [
@@ -376,10 +376,10 @@
     },
     {
       "id": "PHASE-12",
-      "label": "Native HTTP.sys MCP Gateway substrate (replaces MCPJungle)",
+      "label": "Native HTTP.sys MCP Gateway substrate (replaces native HTTP.sys gateway)",
       "file": "handoff/realignment/PHASE-12-native-http-sys-gateway.md",
-      "status": "shipped at v0.9.0; McpJungleGatewayAdapter retired in the same release",
-      "objective": "Replace the supervised MCPJungle child process with a Windows-native MCP Gateway implemented inside MCOS in C++ on top of HTTP.sys. Maintainers get a usable gateway out of the box with no external binary to install.",
+      "status": "shipped at v0.9.0; NativeHttpSysGatewayAdapter retired in the same release",
+      "objective": "Replace the gateway adapter child process with a Windows-native MCP Gateway implemented inside MCOS in C++ on top of HTTP.sys. Maintainers get a usable gateway out of the box with no external binary to install.",
       "readFirst": [
         "src/MasterControlApp/McpGatewayAdapters.cpp",
         "include/MasterControl/McpGatewayAdapters.h",
@@ -394,7 +394,7 @@
         "MCP protocol surface: tools/list, tools/call, notifications/initialized",
         "Telemetry wiring into the events ring + GatewayTrafficSnapshot",
         "Health endpoint at mcpGateway.healthPath",
-        "Retirement of McpJungleGatewayAdapter source files at v0.9.0"
+        "Retirement of NativeHttpSysGatewayAdapter source files at v0.9.0"
       ],
       "acceptanceCriteria": [
         "MCOS exposes a usable MCP gateway with zero external binary install",

@@ -318,10 +318,10 @@ public:
     virtual ~IDiscoveryService() = default;
 };
 
-// PHASE-02 (ADR-002 §2): MCP Gateway abstraction. Implementations include
-// `McpJungleGatewayAdapter` (supervises MCPJungle as a child process) and
-// `FakeMcpGatewayAdapter` (used by tests). PHASE-11 evaluates a native
-// HTTP.sys-backed gateway behind the same interface.
+// MCP Gateway abstraction. The shipping implementation is
+// `NativeHttpSysGatewayAdapter` (in-process Win32 HTTP.sys);
+// `FakeMcpGatewayAdapter` implements the same interface for tests
+// without binding HTTP.sys or making network calls.
 class IMcpGateway {
 public:
     virtual ~IMcpGateway() = default;

@@ -26,7 +26,7 @@ You orchestrate the other MCOS sub-agents on multi-step tasks. You do not write 
 | CMake/MSBuild/vcpkg failures | `build-resolver` |
 | Sweeping rename across many files | `multi-file-specialist` |
 | Phase scope and validation | `mcos-phase-planner`, `qa-release-gate` |
-| Gateway/MCPJungle topology review | `mcp-gateway-reviewer` |
+| Gateway topology review | `mcp-gateway-reviewer` |
 | Windows-native API conformance | `windows-native-cpp-reviewer` |
 | Forsetti governance review | `forsetti-governance-reviewer` |
 | Public-contract diff audit | `mcos-contract-auditor` |

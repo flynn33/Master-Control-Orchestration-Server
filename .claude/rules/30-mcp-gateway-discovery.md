@@ -11,7 +11,7 @@ Current implementation (v0.9.0+):
 - Register MCOS stable logical endpoints into the in-process gateway router.
 - Let MCOS route stable logical endpoints to supervised worker pools.
 
-Historical note: prior to v0.9.0 the gateway substrate was MCPJungle supervised as an external child process via `McpJungleGatewayAdapter`. That path was retired when the native HTTP.sys adapter replaced it. Any new gateway adapter must implement `IMcpGateway` and be wired through `cfg.mcpGateway.type` so the topology below stays single-endpoint to clients.
+Any new gateway adapter must implement `IMcpGateway` and be wired through `cfg.mcpGateway.type` so the topology below stays single-endpoint to clients.
 
 ## Do not expose autoscaled clones directly
 
@@ -42,7 +42,7 @@ Suggested TXT fields:
 
 - `product=MCOS`
 - `role=mcp-gateway`
-- `gateway=native` (legacy `gateway=mcpjungle` retired v0.9.0)
+- `gateway=native`
 - `mcp_path=/mcp`
 - `config_path=/api/onboarding`
 - `governance_path=/api/governance/bundles`

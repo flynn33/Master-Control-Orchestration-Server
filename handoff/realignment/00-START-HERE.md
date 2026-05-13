@@ -30,7 +30,7 @@ Implement PHASE-01 only ...
 
 - PHASE-00 — Repository baseline and ADR lock
 - PHASE-01 — Remove provider-era direct AI integration
-- PHASE-02 — MCP Gateway spike with MCPJungle adapter
+- PHASE-02 — MCP Gateway spike with native HTTP.sys adapter
 - PHASE-03 — Bonjour-style LAN discovery and beacon correction
 - PHASE-04 — Model-specific onboarding profiles
 - PHASE-05 — CLU/Forsetti governance bundle distribution
@@ -39,7 +39,7 @@ Implement PHASE-01 only ...
 - PHASE-08 — Real-time telemetry model
 - PHASE-09 — Tron dashboard realignment
 - PHASE-10 — Windows hardening, CI, packaging, and release gate
-- PHASE-11 — Native gateway evaluation and MCPJungle replacement option
+- PHASE-11 — Native gateway evaluation and native HTTP.sys gateway replacement option
 
 ## Completion rule
 

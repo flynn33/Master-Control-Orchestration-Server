@@ -16,6 +16,6 @@ MCOS is a Windows-native C++20 application.
 
 - Do not add Java or interpreted runtime dependencies as core MCOS implementation.
 - Python may be used for test tooling only, not MCOS source implementation.
-- External gateway binaries such as MCPJungle may be supervised as child processes, but MCOS must expose them through a replaceable C++ adapter.
+- The shipping gateway substrate is the in-process Win32 HTTP.sys adapter (`NativeHttpSysGatewayAdapter`) behind `IMcpGateway`. Any future substrate must implement the same interface so the topology stays single-endpoint to clients.
 - Docker may be a development/testing option, not the required Windows production path.
 

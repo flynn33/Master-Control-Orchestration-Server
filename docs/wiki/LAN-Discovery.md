@@ -130,7 +130,7 @@ Each registration carries the same TXT records:
 ```
 product=MCOS
 role=mcp-gateway
-gateway=mcpjungle
+gateway=native HTTP.sys gateway
 mcp_path=/mcp
 config_path=/api/onboarding
 governance_path=/api/governance/bundles

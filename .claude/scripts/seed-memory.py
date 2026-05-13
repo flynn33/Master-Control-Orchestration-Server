@@ -78,8 +78,8 @@ def main():
                  notes="Provider-era removal already mostly done (ADR-001); only WinUI shell had residual references. ~1100 lines net deletion.")
     upsert_phase(state, "PHASE-02", "complete", "86695c3",
                  "handoff/realignment/PHASE-02-completion-report.md",
-                 deferred=["MCPJungle binary not bundled (operator-installed)"],
-                 notes="IMcpGateway + McpJungleGatewayAdapter + supervised-mock fallback. Gateway HTTP routes.")
+                 deferred=[],
+                 notes="IMcpGateway + supervised-mock fallback. Gateway HTTP routes.")
     upsert_phase(state, "PHASE-03", "complete", "6f37cf0",
                  "handoff/realignment/PHASE-03-completion-report.md",
                  deferred=[],
@@ -146,9 +146,6 @@ def main():
         ("Install-use-uninstall round-trip on clean VM",
          "Gold-standard installer smoke. Needs Windows Sandbox / fresh-VM runner with admin privileges.",
          ["phase-10", "deferred", "installer", "smoke"]),
-        ("MCPJungle end-to-end gateway exercise",
-         "Real MCPJungle binary integration test. Operator-installed per ADR-002 §11; supervised-mock fallback handles its absence honestly.",
-         ["phase-02", "phase-10", "deferred", "gateway", "mcpjungle"]),
         ("Pool CRUD UI in dashboard",
          "Pools panel exposes scale-to-min and drain inline; full create/edit/remove via UI lands when explicitly scoped.",
          ["phase-09", "deferred", "dashboard", "pools"]),
@@ -171,7 +168,7 @@ def main():
          "Trust enforced at the network/firewall layer, not the application layer. Operator surface is logically separate.",
          ["adr-002", "invariant", "auth"]),
         ("ADR-002 §3 — gateway-first topology",
-         "AI client -> MCOS advertised MCP Gateway -> MCPJungle -> MCOS logical pool -> LeaseRouter -> backend instance. Autoscaled clones NOT exposed as separate public tools.",
+         "AI client -> MCOS advertised MCP Gateway -> NativeHttpSysGatewayAdapter -> MCOS logical pool -> LeaseRouter -> backend instance. Autoscaled clones NOT exposed as separate public tools.",
          ["adr-002", "invariant", "gateway"]),
         ("ADR-002 §8 — sticky-session integrity (no hot-migration)",
          "LeaseRouter step 1 returns active lease verbatim, never re-binding to a different instance. FORBIDDEN-CONTRACT §2.4 enforces.",
@@ -227,7 +224,7 @@ def main():
          "ADR-001 §1 + ADR-002 §1. Sections 1.1-1.7 in FORBIDDEN-CONTRACT-GREP-LIST.md. Includes provider modules, services, transports, routes, data types, governance kinds.",
          ["contract", "group-1", "provider-era"]),
         ("Group 2 — Gateway abstraction integrity",
-         "ADR-002 §2,§3. No direct MCPJungle coupling outside the adapter; no autoscaled-clone registration as separate tools; no hot-migration; sticky-session integrity (§2.4); worker process tree containment (§2.1a).",
+         "ADR-002 §2,§3. No autoscaled-clone registration as separate tools; no hot-migration; sticky-session integrity (§2.4); worker process tree containment (§2.1a).",
          ["contract", "group-2", "gateway"]),
         ("Group 3 — Trust model integrity",
          "ADR-002 §1. No app-layer auth on AI-client gateway; no bearer/session token requirements; operator-surface auth must not regress to 'anyone can mutate'.",

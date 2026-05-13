@@ -1,6 +1,6 @@
 # Packaging and Gateway Binary
 
-> **Note (post-v0.9.0):** The pre-v0.9.0 framing of this page stated that the MSI deliberately omits the gateway and maintainers must install MCPJungle separately. That is no longer true. The in-process `NativeHttpSysGatewayAdapter` ships inside `MasterControlServiceHost.exe` since v0.9.0. The installer-process history below is preserved for traceability.
+> **Note (post-v0.9.0):** The pre-v0.9.0 framing of this page stated that the MSI deliberately omits the gateway and maintainers must install native HTTP.sys gateway separately. That is no longer true. The in-process `NativeHttpSysGatewayAdapter` ships inside `MasterControlServiceHost.exe` since v0.9.0. The installer-process history below is preserved for traceability.
 
 PHASE-10 baseline (ADR-002 §10, §11).
 
@@ -24,7 +24,7 @@ PHASE-10 baseline (ADR-002 §10, §11).
 
 ## Gateway substrate
 
-The MCP gateway is `NativeHttpSysGatewayAdapter`, an in-process HTTP.sys listener built into `MasterControlServiceHost.exe`. No external gateway binary is required, maintainer-installed, supervised, or supported. MCPJungle is not installed by the MSI and is not used at runtime.
+The MCP gateway is `NativeHttpSysGatewayAdapter`, an in-process HTTP.sys listener built into `MasterControlServiceHost.exe`. No external gateway binary is required, maintainer-installed, supervised, or supported. native HTTP.sys gateway is not installed by the MSI and is not used at runtime.
 
 The `mcpGateway.type` field in `mcos.json` is retained for back-compat deserialization only; the runtime always activates the native adapter regardless of its value.
 

@@ -148,7 +148,6 @@ std::string to_string(GovernanceDecisionOutcome value) {
 
 std::string to_string(GatewayType value) {
     return enumToString(value, {
-        { GatewayType::MCPJungle, "mcpjungle" },
         { GatewayType::Native, "native" }
     });
 }
@@ -335,7 +334,6 @@ GovernanceDecisionOutcome governanceDecisionOutcomeFromString(const std::string&
 
 GatewayType gatewayTypeFromString(const std::string& value) {
     return enumFromString<GatewayType>(value, {
-        { GatewayType::MCPJungle, "mcpjungle" },
         { GatewayType::Native, "native" }
     });
 }

@@ -7,7 +7,7 @@
 LAN MCP Gateway + Supervisor Wizard + tile-grid shell. Aggregate release line spanning v0.9.4 through v0.10.11 since the v0.7.0 production-milestone baseline.
 
 ## Highlights
-- MCPJungle substrate retired in v0.9.0; native HTTP.sys is the only shipping gateway (`0.0.0.0:cfg.mcpGateway.listenPort` at `cfg.mcpGateway.mcpPath`, defaults `8080:/mcp`).
+- native HTTP.sys gateway substrate retired in v0.9.0; native HTTP.sys is the only shipping gateway (`0.0.0.0:cfg.mcpGateway.listenPort` at `cfg.mcpGateway.mcpPath`, defaults `8080:/mcp`).
 - Supervisor Agent Assignment Wizard: operator picks one of `chatgpt` / `claude` / `grok`. Lifecycle off → config_generated → pending_connection → connected → disconnected | revoked. Heartbeat watchdog flips Connected → Disconnected after 120s.
 - WinUI Shell tile-grid renderer (`buildFooterStyleTile<StatT>`) used by Telemetry MCP / Sub-Agent panels (v0.10.6 → v0.10.7), Runtime MCP / Sub-Agent panels (v0.10.9), and the cross-tab SUB-AGENT GRID footer. 7-column grid wraps to additional rows automatically.
 - Cross-tab SUB-AGENT GRID footer scoped to Telemetry + Runtime (v0.10.10). Overview MCP / Sub-Agent summary cards removed.

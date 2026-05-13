@@ -1588,7 +1588,7 @@ bool configureFirewallRules(const InstallationState& state) {
     // PHASE-03 / ADR-002: the MCP gateway is the AI-client-facing surface.
     // Always open it on the LAN profile so external AI clients can reach
     // the advertised endpoint. The supervised gateway substrate (PHASE-02
-    // / ADR-003) listens on this port; whether the listener is MCPJungle
+    // / ADR-003) listens on this port; whether the listener is native HTTP.sys gateway
     // or a future native gateway is invisible to the firewall rule.
     if (state.gatewayAdvertised && state.gatewayPort > 0) {
         success = runNetshCommand(

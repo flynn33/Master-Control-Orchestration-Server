@@ -304,7 +304,7 @@ A single `GatewayTrafficSnapshot` struct in the aggregator. `incrementGatewayReq
 
 ```json
 {
-  "gatewayType": "mcpjungle",
+  "gatewayType": "native HTTP.sys gateway",
   "gatewayState": "running",
   "gatewayHealth": "healthy",
   "mcpUrl": "http://0.0.0.0:8080/mcp",

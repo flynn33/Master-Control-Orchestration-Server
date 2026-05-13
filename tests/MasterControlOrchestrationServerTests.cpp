@@ -285,15 +285,12 @@ bool testLanClientConfigBundleShape() {
 // deterministically.
 
 bool testGatewayConfigurationDefaults() {
-    // v0.9.0: defaults flipped. type=Native (was MCPJungle), enabled=true
-    // (was false). MCPJungle support is dropped per the operator
-    // directive; the runtime auto-starts the native gateway at boot.
     const auto configuration = MasterControl::buildDefaultConfiguration();
     bool ok = true;
     ok &= expect(configuration.mcpGateway.type == MasterControl::GatewayType::Native,
-                 "Default gateway type is Native (v0.9.0; MCPJungle dropped).");
+                 "Default gateway type is Native.");
     ok &= expect(configuration.mcpGateway.enabled == true,
-                 "Default gateway is enabled (v0.9.0; auto-starts at boot).");
+                 "Default gateway is enabled (auto-starts at boot).");
     ok &= expect(configuration.mcpGateway.listenPort == 8080,
                  "Default gateway port is 8080 (distinct from admin 7300).");
     ok &= expect(configuration.mcpGateway.mcpPath == "/mcp",
@@ -301,7 +298,7 @@ bool testGatewayConfigurationDefaults() {
     ok &= expect(configuration.mcpGateway.healthPath == "/health",
                  "Default gateway health path is /health.");
     ok &= expect(configuration.mcpGateway.mode == "lan-trusted",
-                 "Default gateway mode is lan-trusted (per ADR-002 §1).");
+                 "Default gateway mode is lan-trusted.");
     return ok;
 }
 
@@ -467,12 +464,12 @@ bool testFakeGatewayMcpUrlComposition() {
 }
 
 bool testRealAdapterDisabledByDefault() {
-    // v0.9.1: McpJungleGatewayAdapter has been deleted. The native
-    // HTTP.sys substrate is now the sole production adapter. The contract
-    // under test here is that constructing a NativeHttpSysGatewayAdapter
-    // with enabled=false leaves it in Disabled state and refuses to bind
-    // HTTP.sys when Start() is invoked (so test runs do not need admin
-    // privileges to exercise the disabled-state branch).
+    // The native HTTP.sys substrate is the sole production adapter.
+    // The contract under test here is that constructing a
+    // NativeHttpSysGatewayAdapter with enabled=false leaves it in
+    // Disabled state and refuses to bind HTTP.sys when Start() is
+    // invoked (so test runs do not need admin privileges to
+    // exercise the disabled-state branch).
     MasterControl::McpGatewayConfiguration configuration;
     configuration.enabled = false;
     MasterControl::NativeHttpSysGatewayAdapter adapter(configuration);
@@ -527,13 +524,8 @@ bool testGatewayEnumRoundTrips() {
     bool ok = true;
 
     using MasterControl::GatewayType;
-    // v0.9.1: GatewayType::MCPJungle stays serializable so persisted
-    // mcpGateway.type='mcpjungle' values from v0.8.x configs still
-    // deserialize without rejection (the runtime then resolves them to
-    // the native substrate transparently). The enum value is no longer
-    // a real adapter selector.
-    ok &= expect(MasterControl::to_string(GatewayType::MCPJungle) == "mcpjungle",
-                 "GatewayType serializes mcpjungle (legacy enum kept for back-compat).");
+    ok &= expect(MasterControl::to_string(GatewayType::Native) == "native",
+                 "GatewayType serializes native.");
     ok &= expect(MasterControl::gatewayTypeFromString("native") == GatewayType::Native,
                  "GatewayType deserializes native.");
 
@@ -1122,7 +1114,7 @@ bool testDiscoveryDocumentJsonRoundTrip() {
     original.version = "0.5.0";
     original.instanceId = "mcos-test-id-001";
     original.instanceName = "Test MCOS";
-    original.gateway.type = "mcpjungle";
+    original.gateway.type = "native";
     original.gateway.mcpUrl = "http://192.168.1.10:8080/mcp";
     original.gateway.healthUrl = "http://192.168.1.10:8080/health";
     original.gateway.state = "running";
@@ -1180,7 +1172,7 @@ bool testWellKnownDocumentMatchesSchemaRequiredFields() {
     MasterControl::DiscoveryDocument doc;
     doc.instanceId = "mcos-test";
     doc.version = "0.5.0";
-    doc.gateway.type = "mcpjungle";
+    doc.gateway.type = "native";
     doc.gateway.mcpUrl = "http://127.0.0.1:8080/mcp";
     doc.capabilities = { "mcp-gateway" };
 
@@ -1222,7 +1214,7 @@ bool testInstanceIdGeneration() {
 
 bool testGatewayConfigJsonRoundTrip() {
     MasterControl::McpGatewayConfiguration original;
-    original.type = MasterControl::GatewayType::MCPJungle;
+    original.type = MasterControl::GatewayType::Native;
     original.enabled = true;
     original.listenHost = "0.0.0.0";
     original.listenPort = 9090;
@@ -1232,7 +1224,7 @@ bool testGatewayConfigJsonRoundTrip() {
 
     nlohmann::json serialized = original;
     bool ok = true;
-    ok &= expect(serialized["type"].get<std::string>() == "mcpjungle",
+    ok &= expect(serialized["type"].get<std::string>() == "native",
                  "Gateway config serializes type as a slug.");
     ok &= expect(serialized["listenPort"].get<uint16_t>() == 9090,
                  "Gateway config preserves listenPort.");
@@ -1904,9 +1896,6 @@ int main() {
     ok &= testFakeGatewayProbeUsesScriptedHealth();
     ok &= testFakeGatewayMcpUrlComposition();
     ok &= testRealAdapterDisabledByDefault();
-    // v0.9.1: testRealAdapterSupervisedMockWhenBinaryMissing was specific
-    // to the deleted McpJungleGatewayAdapter (supervised-mock binary
-    // path). NativeHttpSysGatewayAdapter has no equivalent state.
     ok &= testRealAdapterRegistrationSurvivesAcrossStartStop();
     ok &= testGatewayEnumRoundTrips();
     ok &= testGatewayConfigJsonRoundTrip();

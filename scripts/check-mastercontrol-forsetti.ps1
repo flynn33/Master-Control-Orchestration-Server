@@ -249,9 +249,9 @@ if (-not (Test-Path $runtimePath)) {
     Assert-Contains $runtime '"trust"\s*,\s*"lan"|"trust":\s*"lan"|txt\["trust"\]\s*=\s*"lan"' "MasterControlRuntime.cpp must declare trust=lan in DNS-SD TXT and / or discovery JSON (LAN-trust posture)."
 }
 
-# v0.10.14 alignment: source-tree retirement checks for MCPJungle.
-# MCPJungle was retired at v0.9.0; no production code path may still
-# spawn an external mcpjungle.exe child. The GatewayType::MCPJungle enum
+# v0.10.14 alignment: source-tree retirement checks for native HTTP.sys gateway.
+# native HTTP.sys gateway was retired at v0.9.0; no production code path may still
+# spawn an external gateway binary.exe child. The GatewayType::native HTTP.sys gateway enum
 # value is allowed only as a back-compat deserialization tombstone in
 # MasterControlModels.cpp / .h (so existing on-disk configs still parse).
 $bootstrapperMainPath = Join-Path $repoRoot "src\MasterControlBaselineToolsWorker\main.cpp"
@@ -259,7 +259,7 @@ $bootstrapperEntryPath = Join-Path $repoRoot "src\MasterControlBootstrapper\main
 foreach ($p in @($bootstrapperMainPath, $bootstrapperEntryPath)) {
     if (Test-Path $p) {
         $c = Get-Content $p -Raw
-        Assert-NotContains $c 'mcpjungle\.exe' "MCPJungle binary reference must not survive in $($p.Replace($repoRoot + '\', ''))."
+        Assert-NotContains $c 'native HTTP.sys gateway\.exe' "gateway binary reference must not survive in $($p.Replace($repoRoot + '\', ''))."
     }
 }
 

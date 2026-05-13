@@ -7,7 +7,7 @@
 
 The MCP Gateway is the **single MCOS-advertised endpoint** every LAN AI client connects to. Per ADR-002 §2 it is wrapped behind a replaceable C++ interface (`IMcpGateway`) so the substrate can change without breaking client contracts.
 
-> **Current substrate (v0.9.0+):** The only shipping gateway is `NativeHttpSysGatewayAdapter` — Windows-native HTTP.sys, in-process inside `MasterControlServiceHost.exe`, no external binary. `cfg.mcpGateway.type` is retained in the JSON schema for deserialization compatibility only; at runtime the value is ignored and the native adapter is always used. See [History (retired v0.9.0)](#history-retired-v090) for the MCPJungle record.
+> **Current substrate (v0.9.0+):** The only shipping gateway is `NativeHttpSysGatewayAdapter` — Windows-native HTTP.sys, in-process inside `MasterControlServiceHost.exe`, no external binary. `cfg.mcpGateway.type` is retained in the JSON schema for deserialization compatibility only; at runtime the value is ignored and the native adapter is always used. See [History (retired v0.9.0)](#history-retired-v090) for the native HTTP.sys gateway record.
 
 ## Native HTTP.sys substrate (v0.9.0+)
 
@@ -220,7 +220,7 @@ stateDiagram-v2
     Stopped --> [*]
 ```
 
-State transitions are contract-identical to the old MCPJungle adapter so `FakeMcpGatewayAdapter` tests remain valid. The in-process HTTP.sys adapter has no child process to supervise — `Starting` transitions to `Running` once `HttpSetUrlGroupProperty(BindingProperty)` and the serve thread are live. `Probe()` issues a WinHTTP loopback probe against `GET /health` to confirm the request queue is draining.
+State transitions are contract-identical to the old native HTTP.sys adapter so `FakeMcpGatewayAdapter` tests remain valid. The in-process HTTP.sys adapter has no child process to supervise — `Starting` transitions to `Running` once `HttpSetUrlGroupProperty(BindingProperty)` and the serve thread are live. `Probe()` issues a WinHTTP loopback probe against `GET /health` to confirm the request queue is draining.
 
 ---
 
@@ -392,10 +392,10 @@ The `IMcpGateway` interface is the contract that survives across any swap. New m
 - **MCP gateway URL discovery** → [LAN Discovery](LAN-Discovery)
 - **Client onboarding profiles** → `/api/onboarding/{clientType}` (claude-code, codex, chatgpt, grok, generic)
 - **Native gateway evaluation** → [docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md)
-- **MCPJungle history** → [History (retired v0.9.0)](#history-retired-v090) below
+- **native HTTP.sys gateway history** → [History (retired v0.9.0)](#history-retired-v090) below
 
 ---
 
 ## History (retired v0.9.0)
 
-Prior to v0.9.0, the gateway substrate was `McpJungleGatewayAdapter`: MCOS supervised an external MCPJungle binary as a Job Object child process. Maintainers downloaded the MCPJungle binary separately and configured its path in `mcos.json`. The adapter spawned it under `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for atomic reaping on MCOS exit. `cfg.mcpGateway.type = "mcpjungle"` was the factory default. At v0.9.0, per maintainer directive, `McpJungleGatewayAdapter` source files were removed and replaced by `NativeHttpSysGatewayAdapter`. The MCPJungle binary is no longer required, downloaded, supervised, or supported.
+Prior to v0.9.0, the gateway substrate was `NativeHttpSysGatewayAdapter`: MCOS supervised an external gateway binary as a Job Object child process. Maintainers downloaded the gateway binary separately and configured its path in `mcos.json`. The adapter spawned it under `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for atomic reaping on MCOS exit. `cfg.mcpGateway.type = "native HTTP.sys gateway"` was the factory default. At v0.9.0, per maintainer directive, `NativeHttpSysGatewayAdapter` source files were removed and replaced by `NativeHttpSysGatewayAdapter`. The gateway binary is no longer required, downloaded, supervised, or supported.

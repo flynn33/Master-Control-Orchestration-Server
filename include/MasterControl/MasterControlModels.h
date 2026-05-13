@@ -100,12 +100,13 @@ enum class GovernanceDecisionOutcome {
     RequiresOperatorApproval
 };
 
-// PHASE-02 (ADR-002 §2): MCP Gateway abstraction. MCOS exposes one
-// MCP endpoint to AI clients; the substrate behind that endpoint is
-// pluggable through IMcpGateway. The first implementation is an
-// MCPJungle adapter; PHASE-11 evaluates a native HTTP.sys gateway.
+// MCP Gateway abstraction. MCOS exposes one MCP endpoint to AI
+// clients; the substrate behind that endpoint is pluggable through
+// IMcpGateway. The shipping implementation is the in-process
+// NativeHttpSysGatewayAdapter (Win32 HTTP.sys). The enum is kept as
+// an open-ended set so a future substrate can be added without
+// changing every call site that checks the gateway type.
 enum class GatewayType {
-    MCPJungle,
     Native
 };
 
@@ -743,7 +744,7 @@ struct BeaconAdvertisement final {
 };
 
 // PHASE-02 / v0.9.0: MCP Gateway configuration consumed by IMcpGateway
-// adapters. v0.9.0 drops MCPJungle support entirely -- the runtime no
+// adapters. v0.9.0 drops native HTTP.sys gateway support entirely -- the runtime no
 // longer supervises an external gateway binary. The native HTTP.sys
 // implementation (NativeHttpSysGatewayAdapter) is the only substrate
 // and starts enabled by default. binaryPath / databasePath stay in
@@ -797,7 +798,7 @@ struct GatewayStatus final {
     std::string message;
     std::string mcpUrl;              // empty until Running
     std::string startedAtUtc;
-    std::string adapterType;         // "mcpjungle" | "native" | "fake"
+    std::string adapterType;         // "native" | "fake"
 };
 
 struct GatewayHealth final {
@@ -1120,7 +1121,7 @@ struct OnboardingProfile final {
 // DNS-SD TXT advertisement carries a flattened subset of these fields.
 // Schema: docs/implementation/schemas/discovery-document.schema.json
 struct DiscoveryGateway final {
-    std::string type;        // "mcpjungle" | "native" | "fake"
+    std::string type;        // "native" | "fake"
     std::string mcpUrl;      // e.g. http://192.168.1.10:8080/mcp
     std::string healthUrl;   // e.g. http://192.168.1.10:8080/health
     std::string state;       // GatewayState slug

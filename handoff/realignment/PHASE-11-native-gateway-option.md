@@ -1,19 +1,19 @@
 ---
 phase: PHASE-11
-label: Native gateway evaluation and MCPJungle replacement option
-objective: Evaluate whether to keep MCPJungle or implement native MCOS gateway after spike data.
+label: Native gateway evaluation and native HTTP.sys gateway replacement option
+objective: Evaluate whether to keep native HTTP.sys gateway or implement native MCOS gateway after spike data.
 ---
 
 
-# PHASE-11 — Native Gateway Evaluation and MCPJungle Replacement Option
+# PHASE-11 — Native Gateway Evaluation and native HTTP.sys gateway Replacement Option
 
 ## Goal
 
-After MCPJungle spike and telemetry, decide whether MCOS should keep MCPJungle or build a native gateway implementation.
+After native HTTP.sys gateway spike and telemetry, decide whether MCOS should keep native HTTP.sys gateway or build a native gateway implementation.
 
 ## Required analysis
 
-- MCPJungle operational fit on Windows.
+- native HTTP.sys gateway operational fit on Windows.
 - Direct-host execution viability.
 - Dependency/package burden.
 - Feature gaps: session affinity, tool groups, auth/no-auth, observability, startup behavior.
@@ -29,7 +29,7 @@ After MCPJungle spike and telemetry, decide whether MCOS should keep MCPJungle o
 
 - `src`
 - `docs/implementation`
-- `handoff/realignment/PHASE-02-mcp-gateway-spike-mcpjungle.md`
+- `handoff/realignment/PHASE-02-mcp-gateway-spike-native HTTP.sys gateway.md`
 
 ## Deliverables
 
@@ -41,7 +41,7 @@ After MCPJungle spike and telemetry, decide whether MCOS should keep MCPJungle o
 ## Acceptance criteria
 
 - Decision is evidence-based
-- MCPJungle limitations documented
+- native HTTP.sys gateway limitations documented
 - Native implementation scope does not break previous phases
 
 ## Validation

@@ -9,7 +9,7 @@ MCOS is a Windows-native LAN MCP Gateway host. It does not execute ChatGPT, Code
 | Service | Responsibility |
 |---|---|
 | LAN Discovery Service | Advertise MCOS via DNS-SD/mDNS and UDP fallback; publish discovery documents. |
-| MCP Gateway Service | Provide one MCP endpoint for clients. Shipping adapter (v0.9.0+): `NativeHttpSysGatewayAdapter` (in-process HTTP.sys). MCPJungle retired. |
+| MCP Gateway Service | Provide one MCP endpoint for clients. Shipping adapter (v0.9.0+): `NativeHttpSysGatewayAdapter` (in-process HTTP.sys). native HTTP.sys gateway retired. |
 | Onboarding Profile Service | Generate model-specific and generic client configuration. |
 | CLU Governance Service | Serve Forsetti governance bundles and evaluate governed decisions. |
 | Worker Supervisor | Spawn, monitor, restart, drain, and terminate MCP/sub-agent workers. |
@@ -30,9 +30,9 @@ Claude Code / Codex / Grok / Generic MCP Client
   -> supervised worker instance
 ```
 
-## MCPJungle (retired v0.9.0)
+## native HTTP.sys gateway (retired v0.9.0)
 
-MCPJungle was the initial gateway substrate from v0.6.x through v0.8.x, supervised as an external child process via `McpJungleGatewayAdapter`. It was retired at v0.9.0 when `NativeHttpSysGatewayAdapter` replaced it. The `IMcpGateway` interface that made the swap a clean delete is still the boundary any future substrate must implement.
+native HTTP.sys gateway was the initial gateway substrate from v0.6.x through v0.8.x, supervised as an external child process via `NativeHttpSysGatewayAdapter`. It was retired at v0.9.0 when `NativeHttpSysGatewayAdapter` replaced it. The `IMcpGateway` interface that made the swap a clean delete is still the boundary any future substrate must implement.
 
 ## LAN trust model
 

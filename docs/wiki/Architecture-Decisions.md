@@ -20,7 +20,7 @@ flowchart TB
     C[ADR-003<br/>MCP Gateway Substrate Decision<br/>Accepted 2026-05-02]:::accepted
 
     A -->|"supersedes in part:<br/>§3 X-MCOS-Client-Id<br/>§6 catalog as AI-client tool path"| B
-    B -->|"locks substrate<br/>Keep MCPJungle for v0.6.x<br/>Defer native HTTP.sys"| C
+    B -->|"locks substrate<br/>Keep native HTTP.sys gateway for v0.6.x<br/>Defer native HTTP.sys"| C
 ```
 
 ADR-002 supersedes part of ADR-001 (the AI-client connection model) but preserves its operator surface verbatim. ADR-003 does not supersede ADR-002 — it locks one decision (substrate choice) that ADR-002 left open.
@@ -92,7 +92,7 @@ flowchart TB
 **Twelve phases delivered (PHASE-00..PHASE-11):**
 - PHASE-00: Repo baseline + ADR-002 itself
 - PHASE-01: Provider-era residual cleanup (WinUI shell)
-- PHASE-02: `IMcpGateway` + `McpJungleGatewayAdapter` + supervised-mock fallback
+- PHASE-02: `IMcpGateway` + `NativeHttpSysGatewayAdapter` + supervised-mock fallback
 - PHASE-03: DNS-SD + UDP beacon + discovery document
 - PHASE-04: Onboarding profiles
 - PHASE-05: CLU governance bundles
@@ -115,10 +115,10 @@ Each phase has a written completion report under `handoff/realignment/`.
 |---|---|
 | **Status** | Accepted |
 | **Date** | 2026-05-02 |
-| **Topic** | Keep MCPJungle for v0.6.x; defer native HTTP.sys gateway |
+| **Topic** | Keep native HTTP.sys gateway for v0.6.x; defer native HTTP.sys gateway |
 
 **The decision:**
-- Keep MCPJungle as the v0.6.x default gateway substrate behind the existing `IMcpGateway` adapter.
+- Keep native HTTP.sys gateway as the v0.6.x default gateway substrate behind the existing `IMcpGateway` adapter.
 - Defer the native HTTP.sys gateway to a conditional future phase (working name PHASE-12) gated on five named operational triggers.
 
 **Five triggers that would activate PHASE-12:**
@@ -130,7 +130,7 @@ flowchart LR
 
     T1[1. Measured throughput cap<br/>under real load]:::trigger
     T2[2. Confirmed session-affinity<br/>break under load]:::trigger
-    T3[3. MCPJungle release-cadence<br/>stall vs MCP spec]:::trigger
+    T3[3. native HTTP.sys gateway release-cadence<br/>stall vs MCP spec]:::trigger
     T4[4. Operator install friction<br/>blocks adoption]:::trigger
     T5[5. ADR-002 §11 vendoring<br/>policy change]:::trigger
 
@@ -145,7 +145,7 @@ flowchart LR
 
 **Why now:** the realignment package's adapter abstraction (ADR-002 §2) makes this decision cheap and reversible. Committing to a 7-18 week native rebuild without measured operational evidence would violate ADR-002 §10's "do not claim runtime behavior unless directly proven" principle. The five triggers are the mechanism by which evidence-once-available revisits the decision.
 
-The full decision matrix, native gateway requirements, migration plan, and MCPJungle operational limitations report live in [`docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md).
+The full decision matrix, native gateway requirements, migration plan, and native HTTP.sys gateway operational limitations report live in [`docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md).
 
 ---
 
