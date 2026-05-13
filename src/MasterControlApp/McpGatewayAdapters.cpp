@@ -54,10 +54,43 @@ std::string ensureLeadingSlash(std::string value) {
     return value;
 }
 
+// Bracket an IPv6 literal per RFC 3986 so that the colons in the
+// address cannot collide with the ":port" separator when the value
+// is concatenated into a URL. Duplicated (intentionally trivially)
+// from MasterControlRuntime.cpp where the same helper centralizes
+// every URL composition. Keeping a copy local to this TU avoids
+// pulling a runtime header into the adapter implementation; the
+// helper is a one-liner.
+//
+// Behaviour:
+//   - empty  -> empty
+//   - "[v6]" -> "[v6]" (already bracketed)
+//   - "1.2.3.4" / "host.local" -> unchanged (no ':')
+//   - "2001:db8::1" -> "[2001:db8::1]"
+std::string bracketIpv6Host(const std::string& host) {
+    if (host.empty()) {
+        return host;
+    }
+    if (host.front() == '[' && host.back() == ']') {
+        return host;
+    }
+    return (host.find(':') != std::string::npos) ? ("[" + host + "]") : host;
+}
+
 std::string composeMcpUrl(const McpGatewayConfiguration& configuration) {
+    // Defensive bracket. Self-heal in FileBackedConfigurationService
+    // brackets on persist, but operator-edited / older-on-disk values
+    // that bypass that path may still carry a raw IPv6 literal in
+    // listenHost. Composing http:// + raw v6 + ":" + port would
+    // produce an unparseable URL on IPv6-only hosts. Bracketing here
+    // makes the operator-facing raw mcpUrl valid regardless of how
+    // listenHost was written.
+    const std::string host = configuration.listenHost.empty()
+        ? std::string("0.0.0.0")
+        : bracketIpv6Host(configuration.listenHost);
     std::ostringstream stream;
     stream << "http://"
-           << (configuration.listenHost.empty() ? std::string("0.0.0.0") : configuration.listenHost)
+           << host
            << ":"
            << configuration.listenPort
            << ensureLeadingSlash(configuration.mcpPath);
@@ -65,9 +98,12 @@ std::string composeMcpUrl(const McpGatewayConfiguration& configuration) {
 }
 
 std::string composeHealthUrl(const McpGatewayConfiguration& configuration) {
+    const std::string host = configuration.listenHost.empty()
+        ? std::string("0.0.0.0")
+        : bracketIpv6Host(configuration.listenHost);
     std::ostringstream stream;
     stream << "http://"
-           << (configuration.listenHost.empty() ? std::string("0.0.0.0") : configuration.listenHost)
+           << host
            << ":"
            << configuration.listenPort
            << ensureLeadingSlash(configuration.healthPath);

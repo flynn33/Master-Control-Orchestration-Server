@@ -311,83 +311,6 @@ NetworkIdentity detectPrimaryNetworkIdentity() {
     return identity;
 }
 
-std::vector<RuntimeEndpoint> buildDefaultSeededEndpointsForHost(std::string host) {
-    if (host.empty()) {
-        host = "127.0.0.1";
-    }
-
-    std::vector<RuntimeEndpoint> endpoints;
-
-    endpoints.push_back(makeEndpoint("platform-gateway", "Platform Gateway", EndpointKind::Gateway, host, 7200, "/health", "Unified orchestration gateway"));
-    endpoints.push_back(makeEndpoint("browser-gateway", "Browser Gateway", EndpointKind::BrowserGateway, host, 7300, "/", "Master Control Orchestration Server browser surface"));
-    endpoints.push_back(makeEndpoint("client-tracker", "Client Tracker", EndpointKind::MCPServer, host, 7120, "/api/clients", "LAN client tracker"));
-    endpoints.push_back(makeEndpoint("metrics", "Metrics", EndpointKind::MCPServer, host, 7121, "/api/metrics", "Host metrics feed"));
-
-    // v0.8.4: minimum baseline MCP server catalog. Operator-specified
-    // 23-server set replacing the v0.7.x placeholder names (repo-search /
-    // docs-search / fs-cache / etc.). Each entry is the host:port the
-    // server WILL listen on once the supervised worker is registered
-    // against it -- the inventory is operator-readable advertisement
-    // even when no listener exists yet, exactly like the sub-agent
-    // catalog. id is kebab-case for stable identifier; displayName is
-    // the human-readable label that lands on the card's title row;
-    // specialization is the category the operator scans by; description
-    // is the muted body line. Reachability dot will paint red until a
-    // real worker process binds to the listed port.
-    // v0.10.0: Docker Control MCP and Playwright MCP removed at operator
-    // direction. MCOS hard rule .claude/rules/10-windows-native-cpp.md
-    // already classed Docker as development-only, not the Windows
-    // production path. The container surface now lives outside the MCOS
-    // baseline; operators who need container automation register a
-    // pool template explicitly. Playwright was a vendor-specific
-    // browser-automation seed that overlapped with chrome-devtools and
-    // generic computer-use; its removal aligns the catalog with the
-    // intended LAN MCP Gateway scope and shrinks the seed set from 23
-    // to 21.
-    struct McpSeed { const char* id; const char* displayName; uint16_t port; const char* specialization; const char* description; };
-    const std::array<McpSeed, 21> baselineMcpCatalog = {{
-        { "filesystem",                 "Filesystem MCP",                 7101, "filesystem",     "Read/write files and directories under operator-allowed roots." },
-        { "memory",                     "Memory MCP",                     7102, "memory",         "Short-term scratch memory shared across MCP-driven sessions." },
-        { "sequential-thinking",        "Sequential Thinking MCP",        7103, "reasoning",      "Step-by-step planning + reasoning trace surface for agent loops." },
-        { "computer-use",               "Computer Use MCP",               7104, "automation",     "Anthropic-style computer-use primitives: screenshot, click, type, scroll." },
-        { "desktop-control",            "Desktop Control MCP",            7105, "automation",     "Higher-level desktop control: window management, focus, app launch." },
-        { "chrome-devtools",            "Chrome DevTools MCP",            7107, "browser",        "Chrome DevTools Protocol surface: DOM, network, console, performance." },
-        { "terminal-shell",             "Terminal / Shell MCP",           7108, "shell",          "Execute shell commands in supervised PowerShell / cmd / bash sessions." },
-        { "local-git",                  "Local Git MCP",                  7109, "vcs",            "Local git operations: status, diff, commit, branch, log, blame." },
-        { "sqlite",                     "SQLite MCP",                     7110, "database",       "Direct SQLite query surface against operator-attached *.sqlite files." },
-        { "local-database",             "Local Database MCP",             7111, "database",       "Generic local DB driver (Postgres / MySQL / SQL Server) over operator-supplied connection strings." },
-        { "file-search",                "File Search MCP",                7113, "filesystem",     "Indexed full-text search across operator-allowed file roots (ripgrep-backed)." },
-        { "code-execution-repl",        "Code Execution / REPL MCP",      7114, "execution",      "Sandboxed Python / Node / PowerShell REPL for ad-hoc code evaluation." },
-        { "local-test-runner",          "Local Test Runner MCP",          7115, "testing",        "Run pytest / jest / ctest / dotnet-test in the operator's repo and stream results." },
-        { "screen-capture-vision",      "Screen Capture / Vision MCP",    7116, "vision",         "Capture screen regions and run vision OCR / object detection locally." },
-        { "keyboard-mouse-control",     "Keyboard & Mouse Control MCP",   7117, "automation",     "Low-level input synthesis (SendInput) for keystrokes, mouse, hotkeys." },
-        { "persistent-context",         "Persistent Context MCP",         7118, "memory",         "Long-term cross-session memory persisted to disk." },
-        { "local-build-tool",           "Local Build Tool MCP",           7119, "build",          "Drive cmake / msbuild / cargo / gradle / npm / dotnet build with structured output." },
-        { "local-indexer",              "Local Indexer MCP",              7122, "indexer",        "Project-wide symbol + reference index (tree-sitter / clangd / pyright)." },
-        { "file-watcher",               "File Watcher MCP",               7123, "filesystem",     "Watch operator-specified paths for create/modify/delete and stream change events." },
-        { "knowledge-graph",            "Knowledge Graph MCP",            7124, "memory",         "Triple-store knowledge graph over operator-imported entities + relations." },
-        { "local-linter",               "Local Linter MCP",               7125, "quality",        "Run eslint / pylint / clang-tidy / ruff against operator-specified files." },
-    }};
-
-    for (const auto& seed : baselineMcpCatalog) {
-        auto endpoint = makeEndpoint(seed.id, seed.displayName, EndpointKind::MCPServer,
-                                     host, seed.port, "/", seed.description);
-        endpoint.specialization = seed.specialization;
-        endpoints.push_back(std::move(endpoint));
-    }
-
-    const std::array<std::pair<const char*, uint16_t>, 7> agents = {{
-        { "sentinel", 7201 }, { "architect", 7202 }, { "forge", 7203 }, { "scribe", 7204 },
-        { "recon", 7205 }, { "nexus", 7206 }, { "watchtower", 7207 }
-    }};
-
-    for (const auto& [name, port] : agents) {
-        endpoints.push_back(makeEndpoint(name, name, EndpointKind::SubAgent, host, port, "/", "Managed orchestration sub-agent"));
-    }
-
-    return endpoints;
-}
-
 RuntimeEndpoint makeEndpoint(const std::string& id,
                              const std::string& displayName,
                              EndpointKind kind,
@@ -519,6 +442,82 @@ std::filesystem::path cluProfileFile;
         workDirectory,
         forsettiInstructionsFile
     };
+}
+
+std::vector<RuntimeEndpoint> buildDefaultSeededEndpointsForHost(std::string host) {
+    if (host.empty()) {
+        host = "127.0.0.1";
+    }
+
+    std::vector<RuntimeEndpoint> endpoints;
+
+    endpoints.push_back(makeEndpoint("platform-gateway", "Platform Gateway", EndpointKind::Gateway, host, 7200, "/health", "Unified orchestration gateway"));
+    endpoints.push_back(makeEndpoint("browser-gateway", "Browser Gateway", EndpointKind::BrowserGateway, host, 7300, "/", "Master Control Orchestration Server browser surface"));
+    endpoints.push_back(makeEndpoint("client-tracker", "Client Tracker", EndpointKind::MCPServer, host, 7120, "/api/clients", "LAN client tracker"));
+    endpoints.push_back(makeEndpoint("metrics", "Metrics", EndpointKind::MCPServer, host, 7121, "/api/metrics", "Host metrics feed"));
+
+    // v0.8.4: minimum baseline MCP server catalog. Operator-specified
+    // 23-server set replacing the v0.7.x placeholder names (repo-search /
+    // docs-search / fs-cache / etc.). Each entry is the host:port the
+    // server WILL listen on once the supervised worker is registered
+    // against it -- the inventory is operator-readable advertisement
+    // even when no listener exists yet, exactly like the sub-agent
+    // catalog. id is kebab-case for stable identifier; displayName is
+    // the human-readable label that lands on the card's title row;
+    // specialization is the category the operator scans by; description
+    // is the muted body line. Reachability dot will paint red until a
+    // real worker process binds to the listed port.
+    // v0.10.0: Docker Control MCP and Playwright MCP removed at operator
+    // direction. The Windows-native MCOS hard rule already classed
+    // Docker as development-only, not the Windows production path. The container surface now lives outside the MCOS
+    // baseline; operators who need container automation register a
+    // pool template explicitly. Playwright was a vendor-specific
+    // browser-automation seed that overlapped with chrome-devtools and
+    // generic computer-use; its removal aligns the catalog with the
+    // intended LAN MCP Gateway scope and shrinks the seed set from 23
+    // to 21.
+    struct McpSeed { const char* id; const char* displayName; uint16_t port; const char* specialization; const char* description; };
+    const std::array<McpSeed, 21> baselineMcpCatalog = {{
+        { "filesystem",                 "Filesystem MCP",                 7101, "filesystem",     "Read/write files and directories under operator-allowed roots." },
+        { "memory",                     "Memory MCP",                     7102, "memory",         "Short-term scratch memory shared across MCP-driven sessions." },
+        { "sequential-thinking",        "Sequential Thinking MCP",        7103, "reasoning",      "Step-by-step planning + reasoning trace surface for agent loops." },
+        { "computer-use",               "Computer Use MCP",               7104, "automation",     "Anthropic-style computer-use primitives: screenshot, click, type, scroll." },
+        { "desktop-control",            "Desktop Control MCP",            7105, "automation",     "Higher-level desktop control: window management, focus, app launch." },
+        { "chrome-devtools",            "Chrome DevTools MCP",            7107, "browser",        "Chrome DevTools Protocol surface: DOM, network, console, performance." },
+        { "terminal-shell",             "Terminal / Shell MCP",           7108, "shell",          "Execute shell commands in supervised PowerShell / cmd / bash sessions." },
+        { "local-git",                  "Local Git MCP",                  7109, "vcs",            "Local git operations: status, diff, commit, branch, log, blame." },
+        { "sqlite",                     "SQLite MCP",                     7110, "database",       "Direct SQLite query surface against operator-attached *.sqlite files." },
+        { "local-database",             "Local Database MCP",             7111, "database",       "Generic local DB driver (Postgres / MySQL / SQL Server) over operator-supplied connection strings." },
+        { "file-search",                "File Search MCP",                7113, "filesystem",     "Indexed full-text search across operator-allowed file roots (ripgrep-backed)." },
+        { "code-execution-repl",        "Code Execution / REPL MCP",      7114, "execution",      "Sandboxed Python / Node / PowerShell REPL for ad-hoc code evaluation." },
+        { "local-test-runner",          "Local Test Runner MCP",          7115, "testing",        "Run pytest / jest / ctest / dotnet-test in the operator's repo and stream results." },
+        { "screen-capture-vision",      "Screen Capture / Vision MCP",    7116, "vision",         "Capture screen regions and run vision OCR / object detection locally." },
+        { "keyboard-mouse-control",     "Keyboard & Mouse Control MCP",   7117, "automation",     "Low-level input synthesis (SendInput) for keystrokes, mouse, hotkeys." },
+        { "persistent-context",         "Persistent Context MCP",         7118, "memory",         "Long-term cross-session memory persisted to disk." },
+        { "local-build-tool",           "Local Build Tool MCP",           7119, "build",          "Drive cmake / msbuild / cargo / gradle / npm / dotnet build with structured output." },
+        { "local-indexer",              "Local Indexer MCP",              7122, "indexer",        "Project-wide symbol + reference index (tree-sitter / clangd / pyright)." },
+        { "file-watcher",               "File Watcher MCP",               7123, "filesystem",     "Watch operator-specified paths for create/modify/delete and stream change events." },
+        { "knowledge-graph",            "Knowledge Graph MCP",            7124, "memory",         "Triple-store knowledge graph over operator-imported entities + relations." },
+        { "local-linter",               "Local Linter MCP",               7125, "quality",        "Run eslint / pylint / clang-tidy / ruff against operator-specified files." },
+    }};
+
+    for (const auto& seed : baselineMcpCatalog) {
+        auto endpoint = makeEndpoint(seed.id, seed.displayName, EndpointKind::MCPServer,
+                                     host, seed.port, "/", seed.description);
+        endpoint.specialization = seed.specialization;
+        endpoints.push_back(std::move(endpoint));
+    }
+
+    const std::array<std::pair<const char*, uint16_t>, 7> agents = {{
+        { "sentinel", 7201 }, { "architect", 7202 }, { "forge", 7203 }, { "scribe", 7204 },
+        { "recon", 7205 }, { "nexus", 7206 }, { "watchtower", 7207 }
+    }};
+
+    for (const auto& [name, port] : agents) {
+        endpoints.push_back(makeEndpoint(name, name, EndpointKind::SubAgent, host, port, "/", "Managed orchestration sub-agent"));
+    }
+
+    return endpoints;
 }
 
 std::vector<RuntimeEndpoint> buildDefaultSeededEndpoints() {

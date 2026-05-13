@@ -1940,6 +1940,151 @@ public:
         if (seeded.size() != sizeBefore) {
             (void)persistLocked();
         }
+
+        // Self-heal partial-POST damage. POST /api/config has
+        // replace-not-merge semantics: a body that omits a top-level key
+        // resets that key to its default. In practice this has wiped
+        // activeProfile.preferredBindAddress / macAddress /
+        // environmentName, the seededEndpoints catalog (21 baseline MCP
+        // servers + 7 sub-agents + 4 infrastructure endpoints), and
+        // seededEndpoints[*].host. Without self-heal, an operator who
+        // sends one partial PATCH (e.g., {"resourceAllocation":...})
+        // ends up with an empty inventory: the dashboard shows only the
+        // 3 governance MCP servers that come from MasterControlModules,
+        // zero sub-agent cards, and zero detected host IP in the
+        // bindable inventory. This block repopulates anything missing
+        // from the live host detection + the in-binary baseline catalog,
+        // persists the recovery so subsequent boots are no-ops, and
+        // never overwrites operator-authored entries (defaults are only
+        // appended when the corresponding id is absent).
+        {
+            bool selfHealed = false;
+            auto& profile = state_->configuration.activeProfile;
+            const auto environment = detectLocalEnvironment();
+
+            // Action #1: ensure activeProfile holds the auto-detected
+            // host identity. Empty fields are repopulated; populated
+            // fields are left alone so an operator who set a specific
+            // bind address keeps it.
+            if (profile.preferredBindAddress.empty() &&
+                !environment.preferredBindAddress.empty()) {
+                profile.preferredBindAddress = environment.preferredBindAddress;
+                selfHealed = true;
+            }
+            if (profile.macAddress.empty() && !environment.macAddress.empty()) {
+                profile.macAddress = environment.macAddress;
+                selfHealed = true;
+            }
+            if (profile.environmentName.empty() && !environment.hostName.empty()) {
+                profile.environmentName = environment.hostName + " - " +
+                                          environment.operatingSystem;
+                selfHealed = true;
+            }
+
+            // Action #1 (continued): replace wildcard 0.0.0.0 in
+            // mcpGateway.listenHost with the detected host IP so the
+            // operator-facing raw URL reads
+            // http://192.168.1.X:8080/mcp instead of
+            // http://0.0.0.0:8080/mcp. SAFE: NativeHttpSysGatewayAdapter
+            // builds the HTTP.sys URL prefix as L"http://+:PORT/"
+            // unconditionally (McpGatewayAdapters.cpp), so listenHost
+            // is a display/configuration field only -- it does not
+            // affect the actual HTTP.sys URL group binding (which is
+            // always all-interfaces via the '+' strong wildcard).
+            //
+            // The top-level AppConfiguration.bindAddress is
+            // INTENTIONALLY left at its operator-set value (default
+            // 0.0.0.0). SimpleHttpServer.run() in this file uses
+            // bindAddress directly via getaddrinfo: when the value is
+            // a specific IPv4 it binds an IPv4-only listener pinned to
+            // that interface, which silently drops loopback
+            // (127.0.0.1) connections. The WinUI Shell and
+            // Deploy-LocalLive.ps1 connect through localhost:7300, so
+            // overwriting bindAddress here would break the operator's
+            // own tooling. Operators who want a pinned admin listener
+            // edit bindAddress through the Settings panel themselves.
+            const std::string& detectedIp = environment.preferredBindAddress;
+            const bool detectedIpUsable = !detectedIp.empty() && detectedIp != "0.0.0.0";
+            // Match the wildcard set used elsewhere in this TU --
+            // substituteWildcardHostInUrl and the bindAddress chain
+            // around line 234 treat "::", "[::]", and "[::0]" as IPv6
+            // wildcards. Leaving any of them unchanged here would
+            // produce inconsistent operator-facing URLs depending on
+            // which composer ran (one path would substitute, the
+            // other would surface the raw wildcard).
+            auto isWildcardOrEmpty = [](const std::string& value) {
+                return value.empty()
+                    || value == "0.0.0.0"
+                    || value == "*"
+                    || value == "::"
+                    || value == "::0"
+                    || value == "[::]"
+                    || value == "[::0]";
+            };
+            if (detectedIpUsable &&
+                isWildcardOrEmpty(state_->configuration.mcpGateway.listenHost)) {
+                // bracketIpv6Host turns a raw IPv6 literal (which
+                // detectLocalEnvironment can return when the host has
+                // no routable IPv4) into the RFC 3986 [literal] form.
+                // composeMcpUrl in McpGatewayAdapters.cpp simply
+                // concatenates "http://" + listenHost + ":" + port,
+                // so a raw IPv6 string here would produce
+                // http://2001:db8::1:8080/mcp -- ambiguous (the last
+                // colon could parse as part of the address or as the
+                // port separator). The helper is a no-op for IPv4 and
+                // for hostnames; only IPv6 literals get the brackets.
+                state_->configuration.mcpGateway.listenHost = bracketIpv6Host(detectedIp);
+                selfHealed = true;
+            }
+
+            // Actions #2 + #3: ensure the seeded catalog contains the
+            // 21-entry MCP server set and the 7-entry sub-agent set.
+            // The check is by id, not by total count, so this is
+            // additive: operator-defined endpoints are never disturbed,
+            // and missing baseline ids are appended back from the
+            // catalog factory.
+            const std::string seedHost = profile.preferredBindAddress.empty()
+                ? std::string("127.0.0.1")
+                : profile.preferredBindAddress;
+            const auto defaults = buildDefaultSeededEndpointsForHost(seedHost);
+
+            std::unordered_set<std::string> presentIds;
+            presentIds.reserve(profile.seededEndpoints.size());
+            for (const auto& ep : profile.seededEndpoints) {
+                presentIds.insert(ep.id);
+            }
+            for (const auto& defaultEp : defaults) {
+                if (presentIds.find(defaultEp.id) == presentIds.end()) {
+                    profile.seededEndpoints.push_back(defaultEp);
+                    selfHealed = true;
+                }
+            }
+
+            // Rebind any existing baseline catalog entry whose host
+            // field has been wiped (separately documented partial-POST
+            // failure mode for seededEndpoints[*].host). Only touches
+            // entries that match a known default id AND have empty
+            // host, so operator-authored hosts (e.g., a remote MCP
+            // server) are left alone.
+            std::unordered_map<std::string, std::string> defaultHostById;
+            defaultHostById.reserve(defaults.size());
+            for (const auto& defaultEp : defaults) {
+                defaultHostById.emplace(defaultEp.id, defaultEp.host);
+            }
+            for (auto& ep : profile.seededEndpoints) {
+                if (ep.host.empty()) {
+                    auto it = defaultHostById.find(ep.id);
+                    if (it != defaultHostById.end() && !it->second.empty()) {
+                        ep.host = it->second;
+                        selfHealed = true;
+                    }
+                }
+            }
+
+            if (selfHealed) {
+                (void)persistLocked();
+            }
+        }
     }
 
     AppConfiguration current() const override {
