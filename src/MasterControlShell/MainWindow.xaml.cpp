@@ -1893,17 +1893,21 @@ void MainWindow::ApplySubAgentFooter(const ::MasterControlShell::ShellSnapshot& 
     grid.Children().Clear();
     grid.ColumnDefinitions().Clear();
 
-    // v0.10.10: operator scoped the cross-tab SUB-AGENT GRID footer to
-    // the Telemetry and Runtime decks only. The footer is hidden on
-    // Overview, Imports, Exports, Security, CLU, Settings, and the
-    // Setup Wizard since none of those decks need a per-endpoint
-    // sub-agent view. Telemetry and Runtime keep the footer because
-    // their in-section MCP / Sub-Agent panels already use the same
-    // tile-grid shape -- the footer there is a quick-reference repeat,
-    // not a duplicate surface.
-    const bool footerAllowed =
-        (currentDestination_ == kTelemetryDestination) ||
-        (currentDestination_ == kRuntimeDestination);
+    // SUB-AGENT GRID footer disabled on every deck.
+    // Operator-reported regression: the v0.10.10 build kept this
+    // persistent footer visible on Telemetry + Runtime so it could
+    // serve as a glanceable summary while the operator scrolled deep
+    // into either page. In practice both decks already render their
+    // own full Sub-Agents card panel (TelemetrySubAgentsCardStack via
+    // TelemetrySectionControl::PopulateSubAgentCards, and the matching
+    // Sub-Agents card grid in RuntimeSectionControl built by
+    // RuntimeSectionControl::PopulateSubAgentCards), so the footer
+    // surfaced the same 7 agents twice in the same scrollable
+    // viewport on both tabs. Operator directive: "sub-agents listed
+    // twice on runtime tab/view, remove the ones on the very bottom."
+    // Forcing footerAllowed=false leaves the in-section panels as the
+    // sole sub-agent surface on every deck.
+    const bool footerAllowed = false;
     try {
         SubAgentFooterHeadline().Visibility(footerAllowed
             ? Visibility::Visible
