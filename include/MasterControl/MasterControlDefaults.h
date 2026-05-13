@@ -39,6 +39,7 @@ struct AppPaths final {
 DiscoveredEnvironment detectLocalEnvironment();
 AppPaths resolveAppPaths();
 std::vector<RuntimeEndpoint> buildDefaultSeededEndpoints();
+std::vector<RuntimeEndpoint> buildDefaultSeededEndpointsForHost(std::string host);
 AppConfiguration buildDefaultConfiguration();
 std::string executableDirectoryUtf8();
 
