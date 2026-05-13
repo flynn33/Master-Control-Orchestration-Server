@@ -2005,12 +2005,35 @@ public:
             // edit bindAddress through the Settings panel themselves.
             const std::string& detectedIp = environment.preferredBindAddress;
             const bool detectedIpUsable = !detectedIp.empty() && detectedIp != "0.0.0.0";
+            // Match the wildcard set used elsewhere in this TU --
+            // substituteWildcardHostInUrl and the bindAddress chain
+            // around line 234 treat "::", "[::]", and "[::0]" as IPv6
+            // wildcards. Leaving any of them unchanged here would
+            // produce inconsistent operator-facing URLs depending on
+            // which composer ran (one path would substitute, the
+            // other would surface the raw wildcard).
             auto isWildcardOrEmpty = [](const std::string& value) {
-                return value.empty() || value == "0.0.0.0" || value == "*";
+                return value.empty()
+                    || value == "0.0.0.0"
+                    || value == "*"
+                    || value == "::"
+                    || value == "::0"
+                    || value == "[::]"
+                    || value == "[::0]";
             };
             if (detectedIpUsable &&
                 isWildcardOrEmpty(state_->configuration.mcpGateway.listenHost)) {
-                state_->configuration.mcpGateway.listenHost = detectedIp;
+                // bracketIpv6Host turns a raw IPv6 literal (which
+                // detectLocalEnvironment can return when the host has
+                // no routable IPv4) into the RFC 3986 [literal] form.
+                // composeMcpUrl in McpGatewayAdapters.cpp simply
+                // concatenates "http://" + listenHost + ":" + port,
+                // so a raw IPv6 string here would produce
+                // http://2001:db8::1:8080/mcp -- ambiguous (the last
+                // colon could parse as part of the address or as the
+                // port separator). The helper is a no-op for IPv4 and
+                // for hostnames; only IPv6 literals get the brackets.
+                state_->configuration.mcpGateway.listenHost = bracketIpv6Host(detectedIp);
                 selfHealed = true;
             }
 
