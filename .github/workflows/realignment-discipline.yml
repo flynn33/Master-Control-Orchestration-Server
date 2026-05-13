@@ -9,10 +9,16 @@ name: Realignment Discipline
 # Rules covered (rule topic -> what this enforces):
 #
 #   MCOS realignment rule
-#     - "No live-looking seeded infrastructure that is not actually
-#       configured" -> no fake telemetry placeholders in source
 #     - "MCPJungle gateway adapter retired v0.9.0" -> reintroducing
 #       the retired adapter class is blocked
+#     (The realignment rule's "no fake telemetry / no live-looking
+#     seeded infrastructure" guidance is not gated by this workflow.
+#     A robust grep for that anti-pattern is intent-sensitive --
+#     hardcoded fake metrics, placeholder strings, and TODO markers
+#     in telemetry code can all look identical to a legitimate
+#     unavailable-sentinel default at the syntax level. Currently
+#     enforced by code review against the honest-unavailable-sentinel
+#     contract documented in the realignment rule.)
 #
 #   Windows-native C++ rule
 #     - "Do not add Java or interpreted runtime dependencies as core
@@ -112,7 +118,16 @@ jobs:
                        src/ include/ 2>/dev/null || true)
           # Exclude purely-comment historical references (the legacy
           # transition note in McpGatewayAdapters.cpp is allowed).
-          filtered=$(echo "$hits" | grep -vE '^[^:]*:[0-9]+:\s*(//|\*)' || true)
+          # The alternation covers every comment-line prefix that
+          # appears in this codebase:
+          #   //         - line comment
+          #   /*  / /**  - block-comment opener (incl. doxygen-style)
+          #   *          - block-comment continuation line
+          # Listing /\* and /\*\* before the bare \* matters: regex
+          # alternation tries left-to-right and would otherwise match
+          # the bare \* on a /\* line at the wrong column, which is
+          # harmless here but keeps the pattern more obviously correct.
+          filtered=$(echo "$hits" | grep -vE '^[^:]*:[0-9]+:\s*(//|/\*\*|/\*|\*)' || true)
           if [ -n "$filtered" ]; then
             echo "::error::McpJungleGatewayAdapter has been reintroduced. The MCOS realignment rule retired this gateway at v0.9.0; the NativeHttpSysGatewayAdapter is the only shipping substrate."
             echo "$filtered"
