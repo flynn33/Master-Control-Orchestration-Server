@@ -1,11 +1,80 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.10.11",
-  "current_tag": "v0.10.11",
+  "current_version": "0.10.14",
+  "current_tag": "v0.10.14",
   "released_at": "2026-05-11",
   "last_release_commit": "pending",
   "history": [
+    {
+      "version": "0.10.14",
+      "tag": "v0.10.14",
+      "released_at": "2026-05-11",
+      "commit": "pending",
+      "summary": "Remediation of a Grok-authored repository audit (AUDIT-FINDINGS-2026-05-11) that flagged three classes of defects. The core runtime, contracts, and architecture passed audit cleanly (43 MCP tools, 5 sub-agents, 12 slash commands, 39/39 self-tests, native HTTP.sys gateway, honest telemetry, CLU/Forsetti governance, 7-state lifecycle, no fake telemetry, no contract violations). The defects ship surface-level: hardcoded developer paths, retired-gateway documentation, and a fragile test build. v0.10.14 remediates all of them. Dispatched build-resolver and documenter sub-agents in parallel per the audit's recommended workflow.",
+      "entries": [
+        "fix(config): .mcp.json portability. Replaced absolute G:\\Claude\\... paths with relative paths (.remember/memory.jsonl, ., .claude/mcp-state/mcos-orchestration.sqlite) and replaced the hardcoded C:\\Program Files\\nodejs\\node.exe + npx-cli.js commands with bare 'npx' so the manifest works on any clean clone in any directory. PATH env entries kept as a sane fallback. The Orchastration misspelling existed only inside the absolute paths and is gone with them.",
+        "fix(worker): src/MasterControlBaselineToolsWorker/main.cpp scribe.list_release_reports no longer hardcodes G:\\Claude\\Master-Control-Orchastration-Server\\... Derives handoffDir from GetModuleFileNameW(nullptr), probes <exe-dir>\\handoff\\realignment and <exe-dir>\\..\\handoff\\realignment, and returns a structured 'not available' JSON when neither resolves. Works on any install location.",
+        "fix(scripts): .claude/mcp-state/register-pools.ps1 derives $projectRoot from (Resolve-Path (Join-Path $PSScriptRoot '..\\..')).Path instead of a hardcoded G:\\Claude\\... literal. Downstream Join-Path calls unchanged.",
+        "fix(tests): tests/CMakeLists.txt now declares target_include_directories(MasterControlOrchestrationServerTests PRIVATE ${CMAKE_SOURCE_DIR}/src/MasterControlApp ${CMAKE_SOURCE_DIR}/include); the relative ../src/MasterControlApp/SupervisorAssignmentService.h include in the test source is replaced with a clean 'SupervisorAssignmentService.h' include. The earlier accident-of-layout build no longer applies.",
+        "fix(docs): .claude-plugin/mcos-control/ retired all MCPJungle references. README smoke-test output rewritten to match the live /api/health/summary.gateway shape. mcos-installer.md Step 2 rewritten around NativeHttpSysGatewayAdapter + listenPort + mcpPath. mcos-troubleshooter.md Chain C rewritten to key on GET /api/health/summary.gateway and the v0.10.13 /api/supervisor/reachability-check. commands/activity.md example telemetry SOURCE field updated from McpJungleGatewayAdapter to NativeHttpSysGatewayAdapter.",
+        "docs(version): bump 0.10.13 -> 0.10.14 (patch -- audit remediation; .mcp.json contract changed shape but stays operational; no breaking public-API change)."
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "A CI / pre-commit check that enforces 'no gateway-enum references outside the gateway adapter code' would prevent future doc drift on the MCPJungle pattern -- audit P2 candidate; not yet shipped.",
+        "Phase 2 of the CLU rebuild and Phase 3 (enforceAction wiring) -- v1.0.0+.",
+        "Per-pass self-test rows in persistent Diagnostics log behind opt-in flag.",
+        "PHASE-14 DiagnosticsSectionControl with FileSavePicker export, pending operator approval gate.",
+        "Telemetry log rotation."
+      ]
+    },
+    {
+      "version": "0.10.13",
+      "tag": "v0.10.13",
+      "released_at": "2026-05-11",
+      "commit": "pending",
+      "summary": "Server-side reachability self-check + Verify Endpoints button on the Supervisor card. Driven by a second ChatGPT supervisor-candidate connection test report (MCOS_Supervisor_Connection_Test_Report_Attempt_2) that returned 'Connection refused' on all seven probed endpoints. Diagnostic finding: every refusal in the report carried POSIX errno 111 with sub-millisecond response time (0.4-1.5ms after the first 19.7ms attempt), which is the signature of a cloud Linux runtime whose own network stack cannot route to RFC-1918 addresses -- NOT an MCOS bind failure. Verified locally: MCOS is listening on 0.0.0.0:7300 and 0.0.0.0:8080, all probes from the host hit 192.168.1.7:7300 return HTTP 200, and the gateway port returns HTTP 405 / 404 for non-/mcp paths (which proves the listener is alive -- a refused TCP connection would return no HTTP status at all). v0.10.13 ships a new GET /api/supervisor/reachability-check that probes MCOS's own loopback + LAN-IP variants from inside the runtime via the existing WinHTTP sendJsonRequest helper, plus a new 'Verify Endpoints' button on the Overview Supervisor card that calls the route and renders the per-probe roster in a copy-paste-ready text panel. Operators can now attach the verbatim server-side verdict to bug reports so the cloud-routing vs MCOS-bind distinction is unambiguous.",
+      "entries": [
+        "feat(supervisor): new GET /api/supervisor/reachability-check route. Probes loopback + LAN-IP variants of /api/health, /.well-known/mcos.json, /api/supervisor/status, and the gateway mcpPath via the existing sendJsonRequest WinHTTP helper. Returns per-probe ok/statusCode/errorMessage/interpretation plus an aggregate allReachable + LAN-routable interpretation block.",
+        "feat(supervisor): added EndpointProbeResult + probeEndpoint helpers in the route layer. probeEndpoint distinguishes 'no HTTP response at all' (listener missing) from 'any HTTP response' (listener alive even if status is 4xx/5xx) so a 405 on /mcp (correct for GET) doesn't read as a failure.",
+        "feat(shell-overview): new 'Verify Endpoints' button on the Supervisor card next to Generate Config and Revoke Active. Calls /api/supervisor/reachability-check and renders the per-probe roster in a Consolas-font TextBlock so the result is copy-paste-friendly.",
+        "feat(shell-runtime): ShellRuntime::CheckSupervisorReachability + ShellSupervisorReachabilityResult parse the response and pre-format the per-probe summary.",
+        "docs(version): bump 0.10.12 -> 0.10.13 (patch -- new public route /api/supervisor/reachability-check and a Verify Endpoints button; no breaking contract changes)."
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "The reachability self-check probes the URLs MCOS itself would emit; it cannot detect a remote-network routing problem (that's by definition outside the host). Operators with cloud supervisor clients still need a LAN tunnel.",
+        "Phase 2 of the CLU rebuild and Phase 3 (enforceAction wiring) -- v1.0.0+.",
+        "Per-pass self-test rows in persistent Diagnostics log behind opt-in flag.",
+        "PHASE-14 DiagnosticsSectionControl with FileSavePicker export, pending operator approval gate.",
+        "Telemetry log rotation."
+      ]
+    },
+    {
+      "version": "0.10.12",
+      "tag": "v0.10.12",
+      "released_at": "2026-05-11",
+      "commit": "pending",
+      "summary": "Operator-driven punch list across the WinUI Shell. Eight action items addressed in one release: (1) MCOS bind / auto-detect verification + clarified Overview wording (the runtime already binds to 0.0.0.0 and auto-detects preferredBindAddress=192.168.1.7; the Overview now reads as 'auto-detected; binding all interfaces' instead of the confusing 'configured 0.0.0.0' parenthetical), (2) Live Command Stream renders host-local HH:MM:SS instead of raw UTC so the activity log matches the title-bar clock, (3) same time fix removes the apparent 5h offset between server time and live log (Action 2 + 3 share one fix), (4) Overview 'APIs & Services + Gateway' card now also shows the resolved MCP Gateway URL (substituted from the wildcard listenHost via the new substituteWildcardInGatewayUrl helper), (5) Supervisor card gains an explicit LAN-tunnel reachability note for cloud ChatGPT runtimes -- v0.10.8 already fixed server-side config emission, this documents the operator-side network requirement, (6) Settings tab Host Controls + Guided Setup Wizards now sit side-by-side in a 2-column Grid so neither frame's buttons are full-width, (7) Guided CLU Actions duplicate card removed from CLU tab -- the six wizard buttons there routed identical workflow tokens to the same actionRequested_ handler that Settings > Guided Setup Wizards already ships, (8) new ChatGPT Control + Grok Control cards on the Overview deck mirror the Claude Code Control pattern, drop provider-specific connector JSON configs to %USERPROFILE%\\Documents\\MCOS\\DirectAIControl, and enforce mutual exclusion across the three slots (turning one on revokes the other two).",
+      "entries": [
+        "feat(shell-overview): new APIs & Services card layout (Action 1+4) -- wildcard bindAddress now renders 'auto-detected; binding all interfaces' instead of 'configured 0.0.0.0'; added 'MCP Gateway: <url>' line driven by snapshot.mcpGatewayUrl + Presentation::substituteWildcardInGatewayUrl so the operator sees the live MCP gateway URL alongside the bind address.",
+        "feat(shell-overview): new ChatGPT Control + Grok Control cards (Action 8) under the existing Claude Code Control card. Each toggles a JSON connector config at %USERPROFILE%\\Documents\\MCOS\\DirectAIControl\\<provider>-mcos-control.json; mutual exclusion across all three Direct AI Plugin Connection slots is enforced by the backend toggle handler.",
+        "feat(shell-overview): Supervisor card gains an explicit reachability note (Action 5) -- cloud ChatGPT cannot reach LAN IPs; the operator-side fix is a LAN tunnel (Tailscale / ngrok / Cloudflare). v0.10.8's server-side mcpEndpoint fix already pointed configs at LAN IPs; this documents why a cloud supervisor still sees connection_refused without a tunnel.",
+        "feat(shell-mainwindow): activity stream (Live Command Stream) timestamps now convert ISO UTC to host-local HH:MM:SS via Presentation::formatLocalClockFromIsoUtc (Actions 2 + 3). Pre-v0.10.12 the renderer substr'd the UTC stamp, producing a 5h apparent offset on a CST host between the title-bar clock and the activity log.",
+        "feat(shell-settings): Host Controls + Guided Setup Wizards live in a side-by-side 2-column Grid (Action 6); each frame is half-width and the inner buttons become naturally narrower. HorizontalAlignment=Stretch on every button keeps both columns visually balanced.",
+        "refactor(shell-clu): removed the duplicate 'Guided CLU Actions' Border + 6 buttons (Action 7). Pre-v0.10.12 those buttons routed new-mcp / new-subagent / new-subagent-group / manage-forsetti-modules / new-apple-host / guided-import tokens to the same MainWindow handler that Settings > Guided Setup Wizards calls; investigation confirmed they did nothing different. Replaced with a small 'CLU Workflow Notes' panel pointing the operator at the Settings tab for creation wizards.",
+        "feat(backend): new HTTP routes /api/chatgpt-plugin/{status,toggle} + /api/grok-plugin/{status,toggle} (Action 8). Backed by new DirectAIPluginState + writeDirectAIPluginConfig + removeDirectAIPluginConfig + composeDirectAIPluginConfigBody helpers. Toggling ON any of the three Direct AI Plugin slots (claude / chatgpt / grok) forcibly revokes the other two through the existing removeClaudePluginJunction + setClaudeMcosPluginEnabled + removeDirectAIPluginConfig calls.",
+        "feat(shell-runtime): new ShellDirectAIPluginStatus struct + ShellRuntime::FetchDirectAIPluginStatus / ToggleDirectAIPlugin methods + ShellSnapshot::mcpGatewayUrl + mcpGatewayState fields populated from /api/dashboard.mcpGatewayStatus. New Presentation::formatLocalClockFromIsoUtc + substituteWildcardInGatewayUrl helpers in ShellFormatting.h.",
+        "docs(version): bump 0.10.11 -> 0.10.12 (patch -- operator-directed UX punch list; one new public backend contract: /api/chatgpt-plugin/* + /api/grok-plugin/*)."
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "ChatGPT desktop and Grok desktop don't natively read from %USERPROFILE%\\Documents\\MCOS\\DirectAIControl -- the connector JSON drop is operator-facing artifact, not a plugin install. For a richer integration we'd need to publish a Custom GPT / Grok Connector through each vendor's connector API. v1.0.0+ candidate.",
+        "Cloud-hosted ChatGPT cannot reach LAN IPs by definition; the supervisor / direct-AI configs now carry LAN URLs (v0.10.8+), but an operator-side LAN tunnel is still required for a cloud runtime to actually connect. Documented on the Supervisor card; not a code fix.",
+        "Phase 2 of the CLU rebuild and Phase 3 (enforceAction wiring) still ship in v1.0.0+.",
+        "Per-pass self-test rows in persistent Diagnostics log behind opt-in flag.",
+        "PHASE-14 DiagnosticsSectionControl with FileSavePicker export, pending operator approval gate.",
+        "Telemetry log rotation still not implemented."
+      ]
+    },
     {
       "version": "0.10.11",
       "tag": "v0.10.11",

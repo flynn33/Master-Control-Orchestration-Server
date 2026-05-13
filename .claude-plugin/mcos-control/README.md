@@ -154,7 +154,7 @@ After install, Claude Code should be able to run:
 MCOS STATUS · mcos-<instance>
 ─────────────────────────────────────────────────────────────
 Service           : ok
-Gateway           : running · healthy · mcpjungle
+Gateway           : native (running) — http://192.168.1.7:8080/mcp
 Advertised URL    : http://0.0.0.0:8080/mcp
 Pools             : 1 pool(s) · 1 ready · 0 active leases
 Connected clients : 0

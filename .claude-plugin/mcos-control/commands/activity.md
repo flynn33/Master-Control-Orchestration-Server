@@ -14,7 +14,7 @@ Surface recent MCOS telemetry events.
 ```
 TIME (ago)        SEVERITY    CATEGORY      SOURCE                 MESSAGE
 12s ago           info        system        runtime                MCOS runtime constructing telemetry aggregator. PHASE-08 baseline event.
-3m ago            warning     gateway       McpJungleGatewayAdapter Probe returned status=degraded (httpCode=503)
+3m ago            warning     gateway       NativeHttpSysGatewayAdapter Probe returned status=degraded (httpCode=503)
 ...
 ```
 

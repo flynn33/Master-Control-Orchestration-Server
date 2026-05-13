@@ -1,16 +1,17 @@
 {
   "project": "Master Control Orchestration Server",
   "program": "MCOS Gateway-First Realignment",
-  "version": "2026-04-30",
+  "version": "2026-05-12",
   "executionPolicy": {
     "onePhaseAtATime": true,
     "requiresFileByFilePlanBeforeEdits": true,
     "requiresCompletionReport": true,
     "noDirectAIProviderExecution": true,
     "lanClientAuth": "none; network-level trust only",
-    "preferredGatewaySubstrate": "MCPJungle through replaceable adapter",
+    "shippingGatewaySubstrate": "NativeHttpSysGatewayAdapter (in-process HTTP.sys, v0.9.0+); MCPJungle retired",
     "windowsNative": true,
-    "forsettiComplianceRequired": true
+    "forsettiComplianceRequired": true,
+    "noAiAttribution": true
   },
   "phases": [
     {
@@ -374,8 +375,77 @@
       ]
     },
     {
+      "id": "PHASE-12",
+      "label": "Native HTTP.sys MCP Gateway substrate (replaces MCPJungle)",
+      "file": "handoff/realignment/PHASE-12-native-http-sys-gateway.md",
+      "status": "shipped at v0.9.0; McpJungleGatewayAdapter retired in the same release",
+      "objective": "Replace the supervised MCPJungle child process with a Windows-native MCP Gateway implemented inside MCOS in C++ on top of HTTP.sys. Maintainers get a usable gateway out of the box with no external binary to install.",
+      "readFirst": [
+        "src/MasterControlApp/McpGatewayAdapters.cpp",
+        "include/MasterControl/McpGatewayAdapters.h",
+        "include/MasterControl/MasterControlContracts.h",
+        "src/MasterControlApp/MasterControlRuntime.cpp"
+      ],
+      "deliverables": [
+        "NativeHttpSysGatewayAdapter implementing IMcpGateway",
+        "HTTP.sys URL Group + Server Session listener bound to mcpGateway.listenHost:listenPort",
+        "Streamable-HTTP MCP transport (JSON-RPC + SSE)",
+        "Path router /mcp and /mcp/{poolId} dispatching through the supervisor lease router",
+        "MCP protocol surface: tools/list, tools/call, notifications/initialized",
+        "Telemetry wiring into the events ring + GatewayTrafficSnapshot",
+        "Health endpoint at mcpGateway.healthPath",
+        "Retirement of McpJungleGatewayAdapter source files at v0.9.0"
+      ],
+      "acceptanceCriteria": [
+        "MCOS exposes a usable MCP gateway with zero external binary install",
+        "MCP initialize handshake succeeds against http://<lan-ip>:8080/mcp returning serverInfo MCOS Native Gateway",
+        "tools/list and tools/call route through the supervisor + lease router",
+        "Self-test probes for the gateway are green at boot",
+        "GET /mcp returns 405 Method Not Allowed (listener alive proof)",
+        "GET /health returns 200 with gateway-state JSON"
+      ],
+      "validation": [
+        "cmake --preset debug",
+        "cmake --build --preset debug",
+        "ctest --preset debug --output-on-failure",
+        "POST http://localhost:8080/mcp jsonrpc:initialize returns MCOS Native Gateway",
+        "/api/health/summary.gateway.state == running"
+      ]
+    },
+    {
+      "id": "PHASE-13",
+      "label": "Win2D / Direct2D rendering in the WinUI Shell",
+      "file": "handoff/realignment/PHASE-13-direct2d-shell-rendering.md",
+      "status": "scheduled (reserved phase-id slot, not yet started); independent of PHASE-12",
+      "objective": "Move high-rate live visual surfaces in the WinUI Shell from XAML automatic Composition rendering to explicit Direct2D / Win2D drawing -- per-instance telemetry charts at 60Hz, the Tron grid backdrop as a procedural shader, and the activity stream as a flowing scrollable log. WinUI 3 + XAML stays the host; PHASE-13 slots Win2D-rendered surfaces inside the existing tree.",
+      "readFirst": [
+        "src/MasterControlShell/MainWindow.xaml.cpp",
+        "src/MasterControlShell/TelemetrySectionControl.xaml.cpp",
+        "src/MasterControlShell/CommandLogicUnitSectionControl.xaml",
+        "resources/web/app.js"
+      ],
+      "deliverables": [
+        "Win2D NuGet integration (Microsoft.Graphics.Win2D)",
+        "CanvasControl per pool card showing CPU + RAM time series at 60Hz",
+        "Procedural Tron grid backdrop via HLSL fragment shader",
+        "SwapChainPanel-based activity stream surface",
+        "Performance budget: under 0.5ms per frame per converted surface"
+      ],
+      "acceptanceCriteria": [
+        "All converted surfaces render at vsync-locked 60Hz",
+        "XAML re-layout no longer triggered by per-snapshot data updates on those surfaces",
+        "Maintainer-perceived shell sluggishness eliminated for live visuals",
+        "Multi-DPI displays render the Tron grid sharply"
+      ],
+      "validation": [
+        "Frame-time profiler trace under WPR/ETW",
+        "Maintainer visual confirmation across primary + secondary monitors",
+        "ctest snapshot tests for non-Win2D regressions"
+      ]
+    },
+    {
       "id": "PHASE-14",
-      "label": "Comprehensive diagnostics module with persistent store and operator export",
+      "label": "Comprehensive diagnostics module with persistent store and maintainer export",
       "file": "handoff/realignment/PHASE-14-comprehensive-diagnostics.md",
       "objective": "Replace per-component scattered logging with a single Diagnostics Service that owns an in-memory ring + SQLite persistent store, receives every error/warning/event from every MCOS subsystem (including the existing boot self-test snapshot), exposes HTTP/MCP queries, and surfaces in the WinUI Shell + browser dashboard with native Markdown/JSON export through a Save-As file picker.",
       "readFirst": [
@@ -404,8 +474,8 @@
         "All current appendEvent call sites also appear in the central store",
         "GET /api/diagnostics/export?format=markdown returns rendered text/markdown",
         "Claude Code can call mcos_diagnostics_export_markdown via the MCP plugin and receive the rendered doc",
-        "Operator clicks Export Markdown in the shell, native Windows file picker opens, file is written to the chosen path, status TextBlock shows the full path",
-        "Operator clicks Export JSON in the browser, browser download dialog appears with the suggested filename",
+        "Maintainer clicks Export Markdown in the shell, native Windows file picker opens, file is written to the chosen path, status TextBlock shows the full path",
+        "Maintainer clicks Export JSON in the browser, browser download dialog appears with the suggested filename",
         "If SQLite DB is unavailable, DiagnosticsService::report returns ok=false with a reason; runtime continues; summary() includes storeUnavailable; no fake-success state",
         "scripts/check-mastercontrol-forsetti.ps1 passes after changes",
         "ctest passes with new tests"
@@ -418,7 +488,7 @@
         "manual: curl localhost:7300/api/diagnostics/summary",
         "manual: shell Export Markdown round-trip"
       ],
-      "approvalGate": "Required before MCOS source edits per CLAUDE.md Required execution behavior §6. Operator authorizes by replying 'PHASE-14 approved' (optionally naming a starting slice A-E)."
+      "approvalGate": "Required before MCOS source edits per CLAUDE.md Required execution behavior §6. Maintainer authorizes by replying 'PHASE-14 approved' (optionally naming a starting slice A-E)."
     }
   ]
 }

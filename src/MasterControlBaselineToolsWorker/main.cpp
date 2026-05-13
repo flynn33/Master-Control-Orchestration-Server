@@ -2809,10 +2809,42 @@ nlohmann::json dispatchToolCall(const std::string& toolName,
     }
     if (gSpecialization == Specialization::AgentScribe) {
         if (toolName == "scribe.list_release_reports") {
-            // Reuse indexListFiles pointed at the handoff dir.
+            // Derive the handoff/realignment path from the running executable's
+            // location so the tool works on any install without hardcoded paths.
+            // The worker binary sits at <install-root>\bin\ (or directly under
+            // <install-root>\); we walk up until we find a parent that contains
+            // the handoff\realignment subdirectory, trying exe-dir itself, then
+            // its parent.  If neither resolves, we return a clear message rather
+            // than a hard failure or a machine-specific absolute path.
+            std::filesystem::path handoffDir;
+            {
+                wchar_t exeBuf[MAX_PATH * 2] = {};
+                DWORD exeLen = ::GetModuleFileNameW(nullptr, exeBuf, ARRAYSIZE(exeBuf));
+                if (exeLen > 0 && exeLen < ARRAYSIZE(exeBuf)) {
+                    std::filesystem::path exePath(std::wstring(exeBuf, exeLen));
+                    std::filesystem::path exeDir = exePath.parent_path();
+                    for (const auto& candidate : { exeDir, exeDir.parent_path() }) {
+                        auto p = candidate / L"handoff" / L"realignment";
+                        std::error_code ec;
+                        if (std::filesystem::is_directory(p, ec) && !ec) {
+                            handoffDir = p;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (handoffDir.empty()) {
+                nlohmann::json notAvail = {
+                    { "note", "Release reports not available in this install. "
+                              "The handoff/realignment directory was not found "
+                              "relative to the worker executable." },
+                    { "files", nlohmann::json::array() }
+                };
+                return makeResult(id, textContent(notAvail.dump(2)));
+            }
+            // Reuse indexListFiles pointed at the resolved handoff dir.
             return makeResult(id, textContent(indexListFiles(
-                "G:\\Claude\\Master-Control-Orchastration-Server\\master-control-dashboard-main\\handoff\\realignment",
-                "v*-release-report.md", 200).dump(2)));
+                handoffDir.string(), "v*-release-report.md", 200).dump(2)));
         }
         if (toolName == "scribe.draft_release_report") {
             const std::string version = arguments.is_object() ? arguments.value("version", std::string("(set version)")) : "(set version)";

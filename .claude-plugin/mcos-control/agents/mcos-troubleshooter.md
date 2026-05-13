@@ -36,11 +36,11 @@ Run the diagnosis chain from the wiki (`Troubleshooting` §LAN discovery) but do
 
 ### Chain C — gateway shows `state=running, health=unknown`
 
-This is the documented supervised-mock fallback (PHASE-02 / ADR-002 §9). It is not a bug.
+The native gateway (`NativeHttpSysGatewayAdapter`) is in-process inside `MasterControlServiceHost.exe`. A `health=unknown` response means the HTTP.sys listener started but the health probe returned an unexpected result.
 
-1. `mcos_config_get` — inspect `mcpGateway.binaryPath`. If empty or the file doesn't exist, MCOS is honestly reporting it has no real gateway.
-2. If operator wants a real gateway: walk through Gateway wiki §How to install MCPJungle.
-3. If operator already configured a binary path but still gets `health=unknown`: `mcos_logs_tail pattern="CreateProcessW|gateway|mcpjungle"` to see what failed at spawn time.
+1. Check `GET /api/health/summary.gateway` — expect `{adapterType: "native", state: "running", toolCount: <N>}`. If `state` is not `running`, call `mcos_gateway_start`.
+2. Run the server-side reachability self-check: `GET /api/supervisor/reachability-check`. This validates that the gateway endpoint is reachable from the host itself.
+3. If health is still `unknown` after the above: `mcos_logs_tail pattern="CreateProcessW|gateway|HttpSys"` to surface listener bind errors.
 
 ### Chain D — pool instance stuck in `Failed`
 

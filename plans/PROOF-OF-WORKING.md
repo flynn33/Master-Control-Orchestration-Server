@@ -188,6 +188,8 @@ Details: `plans/PROOF-OF-WORKING/08-starter-workflows.md`.
 
 ## Feature 9 — Sub-agent roster (bonus) — ✅ VERIFIED
 
+<!-- historical — pre-PHASE-06; fixed ports 7201-7207 and providerAssignmentTargets reflect the retired external Node.js fleet. Current model: supervised worker pools via WorkerSupervisor + LeaseRouter. See PHASE-06 in handoff/realignment/manifest.json. -->
+
 All 6 contract bullets pass. Evidence:
 - `/api/dashboard` publishes 7 sub-agent endpoints (ids: sentinel, architect, forge, scribe, recon, nexus, watchtower) on ports 7201–7207.
 - `docs/wiki/Sub-Agents.md` lists the same 7 with matching ports and detailed role descriptions.
@@ -231,8 +233,8 @@ Details: `plans/PROOF-OF-WORKING/10-ui-automation.md`.
 capabilities have on-disk evidence backing the claim. No feature is
 claimed as "working" without a receipt. Contract drafting errors
 (Feature 7 palette) were corrected explicitly rather than fudged.
-Operator-context issues (Feature 6 unelevated probe) were resolved by
-running the supported operator path.
+Maintainer-context issues (Feature 6 unelevated probe) were resolved by
+running the supported maintainer path.
 
 The raw `mcos_proof_*.json` / `mcos_proof_*.txt` files on the local
 machine are reproducible evidence — any future probe can re-run the

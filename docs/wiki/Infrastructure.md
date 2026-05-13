@@ -3,7 +3,7 @@
 ![targets](https://img.shields.io/badge/targets-Win11%20%2F%20Server%202022-00f6ff?style=flat-square)
 ![install size](https://img.shields.io/badge/install%20size-~44%20MB-00aacc?style=flat-square)
 ![scope](https://img.shields.io/badge/scope-single%20host-031018?style=flat-square)
-![ports](https://img.shields.io/badge/ports-7300%2F7301-5a00e8?style=flat-square)
+![ports](https://img.shields.io/badge/ports-7300%2F7301%2F8080-5a00e8?style=flat-square)
 ![persistence](https://img.shields.io/badge/persistence-ProgramData-1cf2c1?style=flat-square)
 
 > **The product is single-host by design.**
@@ -27,22 +27,20 @@ flowchart LR
             Shell[WinUI shell<br/>MasterControlShell.exe]:::faint
             Browser[Browser dashboard<br/>vanilla JS @ :7300]:::accent
             Data[(ProgramData<br/>config + logs)]:::accent
-            SubAgents[(Sub-Agents<br/>:7201-7207)]:::accent
+            Gateway[NativeHttpSysGatewayAdapter<br/>:8080/mcp]:::accent
         end
         AgentA[/AI agent A/]:::good
         AgentB[/AI agent B/]:::good
     end
 
-    Operator((👤 Operator)) --> Browser
-    Operator --> Shell
+    Maintainer((👤 Maintainer)) --> Browser
+    Maintainer --> Shell
     Shell --> Service
     Browser --> Service
     Service --> Data
-    Service -.catalog.-> SubAgents
-    AgentA -- "X-MCOS-Client-Id: alpha" --> Service
-    AgentB -- "X-MCOS-Client-Id: bravo" --> Service
-    AgentA -- direct MCP --> SubAgents
-    AgentB -- direct MCP --> SubAgents
+    Service --- Gateway
+    AgentA -- MCP --> Gateway
+    AgentB -- MCP --> Gateway
 ```
 
 The **service host** is the only long-lived process on the host. The shell, browser, and agents are all clients of the service.
@@ -54,7 +52,7 @@ The **service host** is the only long-lived process on the host. The shell, brow
 | Host | Status | Notes |
 | --- | --- | --- |
 | Windows 11 (22H2+) | ✅ supported | Primary developer target |
-| Windows Server 2022 Datacenter (Desktop Experience) | ✅ supported, end-to-end validated | Operator deployments |
+| Windows Server 2022 Datacenter (Desktop Experience) | ✅ supported, end-to-end validated | Maintainer deployments |
 | Windows Server Core | ❌ unsupported | XAML Islands required for shell |
 | Windows 10 | ⚠ untested | May work with Windows App SDK 1.5 prerequisites |
 | Linux / macOS | ❌ unsupported | Shell + service host are Win-native |
@@ -64,11 +62,11 @@ The **service host** is the only long-lived process on the host. The shell, brow
 | Resource | Minimum | Recommended |
 | --- | --- | --- |
 | CPU | 2 cores @ 2.0 GHz | 4 cores @ 3.0 GHz |
-| RAM | 2 GB free | 4 GB free (8 with sub-agent fleet) |
+| RAM | 2 GB free | 4 GB free (8+ with managed worker pools) |
 | Disk | 250 MB | 1 GB (logs, exports) |
 | Network | 100 Mbps LAN | 1 Gbps LAN |
 
-The service itself is light. Sub-agent fleet adds ~540 MB RSS combined.
+The service itself is light. Worker pool memory footprint depends on the number and kind of supervised instances.
 
 ---
 
@@ -82,23 +80,14 @@ flowchart LR
 
     Service[Service host]:::accent --> P1[TCP :7300<br/>HTTP admin + browser]:::good
     Service --> P2[UDP :7301<br/>LAN beacon broadcast]:::good
-    Service -. spawns .-> SA[Sub-agent fleet]
-    SA --> P3[TCP :7201..:7207<br/>MCP/SSE]:::good
-    Reserved[reserved :7208..:7299<br/>user-defined sub-agents]:::warn
+    Service --> P3[TCP :8080<br/>MCP gateway]:::good
 ```
 
 | Port | Purpose | Default | Bind |
 | --- | --- | --- | --- |
 | `7300/tcp` | HTTP admin + dashboard + client API | `7300` | `bindAddress` (default `0.0.0.0`) |
 | `7301/udp` | LAN beacon broadcast | `7301` | `0.0.0.0` |
-| `7201/tcp` | SENTINEL | `7201` | `127.0.0.1` |
-| `7202/tcp` | ARCHITECT | `7202` | `127.0.0.1` |
-| `7203/tcp` | FORGE | `7203` | `127.0.0.1` |
-| `7204/tcp` | SCRIBE | `7204` | `127.0.0.1` |
-| `7205/tcp` | RECON | `7205` | `127.0.0.1` |
-| `7206/tcp` | NEXUS | `7206` | `127.0.0.1` |
-| `7207/tcp` | WATCHTOWER | `7207` | `127.0.0.1` |
-| `7208–7299` | Reserved for user-defined sub-agents | — | — |
+| `8080/tcp` | MCP gateway (`NativeHttpSysGatewayAdapter`) | `8080` | `bindAddress` (default `0.0.0.0`) |
 
 ### Firewall rules (Windows Defender)
 
@@ -114,7 +103,7 @@ New-NetFirewallRule -DisplayName "MCOS Beacon" `
     -RemoteAddress 192.168.1.0/24 -Action Allow
 ```
 
-Sub-agent ports stay loopback unless the operator explicitly binds them to a LAN address.
+Sub-agent ports stay loopback unless the maintainer explicitly binds them to a LAN address.
 
 ---
 
@@ -172,7 +161,7 @@ flowchart LR
     Check -->|no| Done
 ```
 
-The legacy folder is preserved (not deleted) after migration in case the operator needs to roll back.
+The legacy folder is preserved (not deleted) after migration in case the maintainer needs to roll back.
 
 ---
 
@@ -202,7 +191,7 @@ Get-Service MasterControlProgram | Format-List *
 | `Name` | `MasterControlProgram` (legacy preserved across upgrades) |
 | `DisplayName` | `Master Control Orchestration Server` |
 | `StartType` | `Automatic` |
-| `LogOnAs` | `LocalSystem` (default — operator can change to a service account) |
+| `LogOnAs` | `LocalSystem` (default — maintainer can change to a service account) |
 | `Path` | `C:\Program Files\Master Control Orchestration Server\MasterControlServiceHost.exe` |
 
 The service runs as `LocalSystem` by default. For tighter posture, change to a dedicated service account with read access to `%ProgramData%\Master Control Orchestration Server\` and bind permissions on the configured ports.
@@ -216,7 +205,7 @@ The service runs as `LocalSystem` by default. For tighter posture, change to a d
 | URL | `http://<host>:7300/` |
 | Tech | Vanilla JS, no build step, served from `share\web\` |
 | Size | ~120 KB total |
-| Auth | None (operator-fallback context for missing header) |
+| Auth | None (maintainer-fallback context for missing header) |
 | Destinations | Home · LAN Clients · Governance · Runtime · Modules · Exports |
 
 ```mermaid
@@ -230,7 +219,7 @@ flowchart LR
     JSON --> Render[Render destinations]:::good
 ```
 
-The browser dashboard and the WinUI desktop shell are **co-equal operator surfaces** as of v0.6.0+. Both consume the same admin API and present the same data; operators pick whichever fits the deployment. The WinUI shell adds a native ToggleSwitch for Claude Code Control; the browser dashboard adds Canvas-rendered per-instance sparkline charts (PHASE-13 will add equivalent Win2D charts to the shell across v0.7.x).
+The browser dashboard and the WinUI desktop shell are **co-equal maintainer surfaces** as of v0.6.0+. Both consume the same admin API and present the same data; maintainers pick whichever fits the deployment. The WinUI shell adds a native ToggleSwitch for Claude Code Control; the browser dashboard adds Canvas-rendered per-instance sparkline charts (PHASE-13 will add equivalent Win2D charts to the shell across v0.7.x).
 
 ---
 
@@ -242,9 +231,9 @@ flowchart TD
     classDef good fill:#031a14,stroke:#1cf2c1,color:#a8efe0;
     classDef bad fill:#1a0008,stroke:#FF2D55,color:#FFC0CB;
 
-    Q{Why single host?} --> A1[LAN-trusted operator model]:::good
+    Q{Why single host?} --> A1[LAN-trusted maintainer model]:::good
     Q --> A2[No cluster = no consensus pain]:::good
-    Q --> A3[Operator already knows their LAN]:::good
+    Q --> A3[Maintainer already knows their LAN]:::good
     Q --> A4[Forsetti doctrine: scope is binding]:::good
 
     Anti[What single-host gives up] --> A5[High availability — n/a, restart is fast]:::accent
@@ -270,16 +259,16 @@ For the LAN client control plane use case, a single host is the right answer. AI
 
 ---
 
-## 10. Common operator FAQ
+## 10. Common maintainer FAQ
 
 > **Q: Can I run MCOS in a container?**
 > No. The service host depends on Windows-native APIs (Win32, XAML Islands). A future hardening track could explore Windows Server Core compat or a containerized headless service, but it's not on the roadmap.
 
 > **Q: Can MCOS run alongside other services on the same host?**
-> Yes. It's a well-behaved Windows service. Watch port collisions on `7300/7301` and the sub-agent range `7201–7207`.
+> Yes. It's a well-behaved Windows service. Watch port collisions on `7300/tcp` (admin API + browser surface), `7301/udp` (LAN beacon), and `8080/tcp` (MCP gateway).
 
 > **Q: Why `0.0.0.0` as the default `bindAddress`?**
-> Trusted-LAN posture. Operators on tight networks should override to a specific LAN IP via `app-configuration.json` — the bundle resolver respects `preferredBindAddress` regardless.
+> Trusted-LAN posture. Maintainers on tight networks should override to a specific LAN IP via `app-configuration.json` — the bundle resolver respects `preferredBindAddress` regardless.
 
 > **Q: Where does the activity ring live?**
 > In-memory only. 512 most recent events. Restart loses history. Stream the telemetry endpoint or scrape `/api/runtime/activity` periodically for long-term retention.

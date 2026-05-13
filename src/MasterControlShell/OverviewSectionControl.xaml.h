@@ -19,6 +19,16 @@ struct OverviewSectionControl : OverviewSectionControlT<OverviewSectionControl> 
 
     void ClaudePluginToggle_Toggled(Windows::Foundation::IInspectable const&,
                                     Microsoft::UI::Xaml::RoutedEventArgs const&);
+    // v0.10.12: ChatGPT / Grok Direct AI Plugin Connection toggle handlers.
+    // Same pattern as ClaudePluginToggle_Toggled but each routes the
+    // request to /api/<providerId>-plugin/toggle. The backend enforces
+    // mutual exclusion across all three slots; this side just refreshes
+    // every toggle's IsOn after the response so the operator sees the
+    // sibling toggles flip off in real time.
+    void ChatGptPluginToggle_Toggled(Windows::Foundation::IInspectable const&,
+                                     Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void GrokPluginToggle_Toggled(Windows::Foundation::IInspectable const&,
+                                  Microsoft::UI::Xaml::RoutedEventArgs const&);
     // v0.8.7: export the visible error set to a timestamped JSON file
     // under %PUBLIC%\Documents\Master Control Orchestration Server\.
     void ExportErrorsButton_Click(Windows::Foundation::IInspectable const&,
@@ -42,12 +52,27 @@ struct OverviewSectionControl : OverviewSectionControlT<OverviewSectionControl> 
                                         Microsoft::UI::Xaml::RoutedEventArgs const&);
     void SupervisorRevokeButton_Click(Windows::Foundation::IInspectable const&,
                                       Microsoft::UI::Xaml::RoutedEventArgs const&);
+    // v0.10.13: Verify Endpoints button click. Calls
+    // ShellRuntime::CheckSupervisorReachability() which hits
+    // /api/supervisor/reachability-check and surfaces a per-probe
+    // roster in SupervisorReachabilityText.
+    void SupervisorVerifyEndpointsButton_Click(Windows::Foundation::IInspectable const&,
+                                               Microsoft::UI::Xaml::RoutedEventArgs const&);
 
 private:
     winrt::Windows::Foundation::IAsyncAction RefreshClaudePluginAsync();
     winrt::Windows::Foundation::IAsyncAction ToggleClaudePluginAsync(bool requestedOn);
     winrt::Windows::Foundation::IAsyncAction ReRunSelfTestsAsync();
     void RenderClaudePluginStatus(const ::MasterControlShell::ShellClaudePluginStatus& status);
+    // v0.10.12: Direct AI Plugin Connection refresh + toggle + render
+    // helpers. providerId == L"chatgpt" or L"grok". RefreshAll re-fetches
+    // all three (claude + chatgpt + grok) so a successful toggle on any
+    // surface is reflected on the other two within one round-trip.
+    winrt::Windows::Foundation::IAsyncAction RefreshDirectAIPluginAsync(std::wstring providerId);
+    winrt::Windows::Foundation::IAsyncAction ToggleDirectAIPluginAsync(std::wstring providerId, bool requestedOn);
+    winrt::Windows::Foundation::IAsyncAction RefreshAllPluginSlotsAsync();
+    void RenderDirectAIPluginStatus(const std::wstring& providerId,
+                                    const ::MasterControlShell::ShellDirectAIPluginStatus& status);
     // v0.8.7: per-card status writers driven by ApplySnapshot.
     // v0.10.10: ApplyMcpServersCard + ApplySubAgentsCard removed; the
     // Overview deck no longer carries those summary cards (Runtime +
@@ -61,6 +86,10 @@ private:
     void ApplySupervisorCard(const ::MasterControlShell::ShellSnapshot& snapshot);
     winrt::Windows::Foundation::IAsyncAction GenerateSupervisorConfigAsync(std::wstring providerId);
     winrt::Windows::Foundation::IAsyncAction RevokeSupervisorAsync();
+    // v0.10.13: server-side reachability self-check coroutine. Runs
+    // the probe on the background thread, renders results into
+    // SupervisorReachabilityText.
+    winrt::Windows::Foundation::IAsyncAction VerifySupervisorEndpointsAsync();
     // Single-selection radio behavior across the three supervisor toggles.
     void SetSupervisorSelection(const std::wstring& providerId);
     std::wstring CurrentSupervisorSelection();
@@ -68,6 +97,16 @@ private:
     ::MasterControlShell::ShellRuntime* runtime_ = nullptr;
     bool claudePluginBusy_ = false;
     bool suspendClaudePluginToggleHandler_ = false;
+    // v0.10.12: per-provider busy + suspend flags for the ChatGPT and
+    // Grok Direct AI Plugin Connection toggles. Same shape as the
+    // Claude pair above: busy_ short-circuits the timer-driven refresh
+    // while a toggle request is in flight; suspend_ blocks the
+    // ToggleSwitch's Toggled handler while we set IsOn programmatically
+    // from a snapshot/response.
+    bool chatGptPluginBusy_ = false;
+    bool suspendChatGptPluginToggleHandler_ = false;
+    bool grokPluginBusy_ = false;
+    bool suspendGrokPluginToggleHandler_ = false;
     // v0.8.7: cache of the most recent snapshot's error events so the
     // Export button writes the same set the operator currently sees,
     // even if a fresh snapshot lands between render and click.

@@ -1,3 +1,5 @@
+> **STATUS: deprecated, pre-PHASE-06 architecture (frozen).** This document describes the v0.5.x and earlier model: seven Node.js sub-agents (SENTINEL, ARCHITECT, FORGE, SCRIBE, RECON, NEXUS, WATCHTOWER) running as external processes on fixed ports `7201-7207`, with hardcoded developer-machine paths. That model was retired during the realignment. The current architecture is supervised worker pools managed by `WorkerSupervisor` + `LeaseRouter` + autoscaling under `ScalePolicy` (see PHASE-06 in `handoff/realignment/manifest.json` and the `Sub-Agents.md` wiki page). No part of this document reflects current behavior. It is preserved for historical traceability only.
+
 ## Sub-Agent System - Architecture Plan & Status
 
 ### Architecture

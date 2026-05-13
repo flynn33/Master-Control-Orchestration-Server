@@ -7,7 +7,7 @@
 
 The MCP Gateway is the **single MCOS-advertised endpoint** every LAN AI client connects to. Per ADR-002 §2 it is wrapped behind a replaceable C++ interface (`IMcpGateway`) so the substrate can change without breaking client contracts.
 
-> **v0.9.0 change:** MCPJungle support was retired per operator directive. The only shipping substrate is `NativeHttpSysGatewayAdapter` (Windows-native HTTP.sys, in-process, no external binary). The historical `McpJungleGatewayAdapter` code path and binary supervision are gone. `cfg.mcpGateway.type` is kept in the JSON schema only so existing on-disk configs deserialize — at runtime the value is ignored and the native adapter is always used. The historical MCPJungle documentation below remains for operators consulting v0.8.x and earlier deployments.
+> **Current substrate (v0.9.0+):** The only shipping gateway is `NativeHttpSysGatewayAdapter` — Windows-native HTTP.sys, in-process inside `MasterControlServiceHost.exe`, no external binary. `cfg.mcpGateway.type` is retained in the JSON schema for deserialization compatibility only; at runtime the value is ignored and the native adapter is always used. See [History (retired v0.9.0)](#history-retired-v090) for the MCPJungle record.
 
 ## Native HTTP.sys substrate (v0.9.0+)
 
@@ -27,105 +27,16 @@ curl.exe -X POST http://127.0.0.1:8080/mcp `
 |---|---|
 | Listener | `0.0.0.0:cfg.mcpGateway.listenPort` (default `8080`) |
 | MCP path | `cfg.mcpGateway.mcpPath` (default `/mcp`) |
-| URL ACL | auto-installed by the bootstrapper at MSI install (`netsh http add urlacl url=http://+:8080/ user=Everyone`) so console-mode operators bind without elevation |
+| URL ACL | auto-installed by the bootstrapper at MSI install (`netsh http add urlacl url=http://+:8080/ user=Everyone`) so console-mode maintainers bind without elevation |
 | `tools/list` source | aggregated by walking each pool's first Ready instance via the v0.6.10 stdio bridge |
 | `tools/call` forwarding | lease router selects an instance, supervisor's `sendStdioJsonRpc` writes to child stdin and reads stdout |
 | Status reporting | `GET /api/dashboard.mcpGatewayStatus` and `GET /.well-known/mcos.json.gateway` carry `mcpUrl`, `healthUrl`, `state` |
 
 ---
 
-## Historical: MCPJungle substrate (v0.8.x and earlier, retired in v0.9.0)
+## How to enable and verify the gateway
 
-Pre-v0.9.0 the gateway could supervise an external MCPJungle binary as a Job Object child. The substrate was operator-selectable via `cfg.mcpGateway.type`, with `mcpjungle` as the default for backward compatibility. As of v0.9.0 the supervised-binary code path is gone; the rest of this section is preserved as a reference for operators consulting older deployments.
-
-```powershell
-# Pre-v0.9.0 substrate selection (NO LONGER FUNCTIONAL — runtime ignores type)
-$cfg = Invoke-RestMethod http://localhost:7300/api/config
-$cfg.mcpGateway.type = 'native'      # in-process HTTP.sys
-# $cfg.mcpGateway.type = 'mcpjungle' # supervised external binary (RETIRED)
-$cfg.mcpGateway.enabled = $true
-```
-
-| Question | `mcpjungle` (retired v0.9.0) | `native` (current) |
-|---|---|---|
-| External binary required? | yes — operator installed MCPJungle separately | no |
-| Spawn model | Job Object child process | in-process HTTP.sys server in `MasterControlServiceHost.exe` |
-| URL ACL | not needed (the supervised child managed its own listener) | auto-installed by the bootstrapper at MSI install |
-| `tools/list` source | MCPJungle's own catalog | aggregated via the v0.6.10 stdio bridge |
-| `tools/call` forwarding | MCPJungle handled internally | MCOS lease router + `sendStdioJsonRpc` |
-| When the substrate was unconfigured | v0.6.7 honest-503 listener returned structured JSON 503 | adapter reports `state=disabled` until enabled via `/api/config` |
-
----
-
-## How to install MCPJungle and turn the supervised substrate on
-
-If you picked `mcpGateway.type = "mcpjungle"`, the MSI does NOT bundle the binary. Operators install MCPJungle separately, then point MCOS at it.
-
-```mermaid
-flowchart LR
-    classDef step fill:#031018,stroke:#00F6FF,color:#E6FCFF;
-    classDef good fill:#031a14,stroke:#1cf2c1,color:#a8efe0;
-
-    A[1. Download MCPJungle binary]:::step --> B[2. Place at stable path]:::step
-    B --> C[3. Set mcos.json mcpGateway]:::step
-    C --> D[4. Restart service]:::step
-    D --> E[5. Verify health probe]:::good
-```
-
-### 1. Download or build MCPJungle
-Get the Windows binary from the upstream MCPJungle release. Confirm it runs standalone first:
-```powershell
-.\mcpjungle.exe --help
-```
-
-### 2. Place at a stable path
-```powershell
-$dest = "C:\Program Files\Master Control Orchestration Server\bin\mcpjungle"
-New-Item -ItemType Directory -Force -Path $dest | Out-Null
-Copy-Item .\mcpjungle.exe -Destination $dest\
-```
-Any stable path works — MCOS reads `binaryPath` from `mcos.json` and supervises whatever you point at.
-
-### 3. Update `mcos.json`
-```powershell
-notepad "$env:ProgramData\Master Control Orchestration Server\mcos.json"
-```
-Set the `mcpGateway` block:
-```json
-{
-  "mcpGateway": {
-    "type": "mcpjungle",
-    "enabled": true,
-    "binaryPath": "C:\\Program Files\\Master Control Orchestration Server\\bin\\mcpjungle\\mcpjungle.exe",
-    "listenHost": "0.0.0.0",
-    "listenPort": 8080,
-    "mcpPath": "/mcp",
-    "healthPath": "/health",
-    "mode": "lan-trusted"
-  }
-}
-```
-
-### 4. Restart the service
-```powershell
-Restart-Service MasterControlProgram
-```
-The adapter spawns MCPJungle under a Windows Job Object on next start. The Windows service is registered as `MasterControlProgram` (display name "Master Control Orchestration Server"); pre-v0.5.0 docs called it `MasterControlOrchestrationServer` — that name is no longer in use.
-
-### 5. Verify
-```powershell
-Invoke-RestMethod http://localhost:7300/api/gateway/status | ConvertTo-Json
-Invoke-RestMethod http://localhost:7300/api/gateway/health | ConvertTo-Json
-```
-Expected: `state=running`, `health=healthy`, `message` field reflecting the live probe. If `health=unknown`, see [Troubleshooting](Troubleshooting) §Gateway supervised-mock.
-
-Dashboard surface: **Gateway** destination shows the same data with auto-refresh.
-
----
-
-## How to enable the native HTTP.sys substrate
-
-The native substrate has no separate binary to install — `MasterControlServiceHost.exe` binds HTTP.sys directly. The MSI's bootstrapper has already registered the matching URL ACL during install.
+The native substrate has no separate binary to install — `MasterControlServiceHost.exe` binds HTTP.sys directly. The MSI's bootstrapper registers the matching URL ACL during install.
 
 ### 1. Confirm the URL ACL is registered
 
@@ -149,24 +60,9 @@ If the reservation is missing, re-run the bootstrapper's install action or apply
 netsh http add urlacl url=http://+:8080/ user=Everyone
 ```
 
-(LocalSystem service-mode does not require the ACL — Windows grants the binding privilege automatically. The ACL is for console-mode operators running `MasterControlServiceHost.exe --console` as a regular user.)
+(LocalSystem service-mode does not require the ACL — Windows grants the binding privilege automatically. The ACL is for console-mode maintainers running `MasterControlServiceHost.exe --console` as a regular user.)
 
-### 2. Switch the configuration to `native`
-
-```powershell
-$cfg = Invoke-RestMethod http://localhost:7300/api/config
-$cfg.mcpGateway.type = 'native'
-$cfg.mcpGateway.enabled = $true
-Invoke-RestMethod http://localhost:7300/api/config -Method Post `
-  -Body ($cfg | ConvertTo-Json -Depth 12) -ContentType 'application/json' `
-  -Headers @{ 'X-Confirm-Unsafe' = '1' }
-Restart-Service MasterControlProgram
-Invoke-RestMethod http://localhost:7300/api/gateway/start -Method Post
-```
-
-The `X-Confirm-Unsafe` header is required by the configuration service when any field that touches security posture is being written; the substrate field qualifies. The header confirms the operator's intent.
-
-### 3. Verify
+### 2. Verify the gateway is running
 
 ```powershell
 (Invoke-RestMethod http://localhost:7300/api/discovery).gateway | ConvertTo-Json -Depth 4
@@ -174,15 +70,46 @@ The `X-Confirm-Unsafe` header is required by the configuration service when any 
 
 Expected: `state=running`, `type=native`. The native adapter binds HTTP.sys via `HttpInitialize` → `HttpCreateServerSession` → `HttpCreateUrlGroup` → `HttpAddUrlToUrlGroup` → `HttpCreateRequestQueue` → `HttpSetUrlGroupProperty(BindingProperty)` and a serve thread reads requests via `HttpReceiveHttpRequest`.
 
+Quick reachability self-check (v0.10.13+):
+
+```powershell
+Invoke-RestMethod http://localhost:7300/api/supervisor/reachability-check | ConvertTo-Json -Depth 4
+```
+
 Smoke-test the MCP `initialize` handshake from any LAN host pointed at the advertised IP and port:
 
 ```powershell
-$initBody = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0"}}}'
+$initBody = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke","version":"1.0"}}}'
 Invoke-RestMethod -Method Post -Uri http://<MCOS-IP>:8080/mcp `
   -Body $initBody -ContentType 'application/json'
 ```
 
-Expected reply: `serverInfo.name = "MCOS Native Gateway"`, `serverInfo.version = "0.7.0"`, `protocolVersion = "2024-11-05"`, `capabilities.tools.listChanged = false`.
+Expected reply: `serverInfo.name = "MCOS Native Gateway"`, `protocolVersion = "2025-03-26"`. A `GET /mcp` returns `405 Method Not Allowed` (proves the listener is alive). `GET /health` returns `200` with gateway-state JSON.
+
+### 3. Connect a client
+
+Fetch the ready-to-import config for the client type:
+
+```powershell
+# Supported clientType values: claude-code, codex, chatgpt, grok, generic
+Invoke-RestMethod http://localhost:7300/api/onboarding/claude-code | ConvertTo-Json -Depth 6
+```
+
+Import the returned JSON directly into the client. The gateway URL the config encodes (`http://<lan-ip>:8080/mcp`) is the same URL advertised in the discovery document:
+
+```powershell
+Invoke-RestMethod http://<lan-ip>:7300/.well-known/mcos.json | ConvertTo-Json -Depth 4
+```
+
+The shell's **APIS & SERVICES** card (Overview deck) shows the gateway URL alongside the bind line.
+
+### 4. Hot deploy after a build
+
+```powershell
+.\scripts\Deploy-LocalLive.ps1 -RelaunchShell
+```
+
+The script stops the running service, installs the new binary to the live path, and relaunches the shell. No URL ACL re-registration is needed unless the port changes.
 
 ### How tools/list and tools/call work under the native substrate
 
@@ -199,10 +126,10 @@ If pipe creation fails at spawn time, the child still runs in no-bridge mode and
 ## How to start, stop, and restart the gateway
 
 ```powershell
-# Start (the adapter handles supervision)
+# Start (adapter opens HTTP.sys request queue and starts serve thread)
 Invoke-RestMethod -Method POST http://localhost:7300/api/gateway/start
 
-# Stop (Job Object closure reaps the child tree)
+# Stop (closes request queue; serve thread unblocks and exits)
 Invoke-RestMethod -Method POST http://localhost:7300/api/gateway/stop
 
 # Status / health on demand
@@ -229,12 +156,6 @@ If the list is empty:
 
 ---
 
-## How to switch back to supervised-mock (for testing)
-
-Set `mcpGateway.binaryPath` to empty (or to a path that does not exist) in `mcos.json` and restart the service. The adapter falls back to supervised-mock and reports `health=unknown` honestly. ADR-002 §9.
-
----
-
 ## Reference
 
 The rest of this page is the C++ contract, lifecycle states, and FORBIDDEN-CONTRACT enforcement points. Read when extending the adapter or evaluating a substrate swap.
@@ -257,13 +178,15 @@ classDiagram
         +AdapterType() GatewayType
     }
 
-    class McpJungleGatewayAdapter {
+    class NativeHttpSysGatewayAdapter {
+        <<production>>
         +Start() GatewayStatus
         +Probe() GatewayHealth
         ...
-        -jobObject_
-        -childPid_
-        -isSupervisingChildProcess()
+        -httpServerSession_
+        -httpUrlGroup_
+        -httpRequestQueue_
+        -serveThread_
     }
 
     class FakeMcpGatewayAdapter {
@@ -274,19 +197,11 @@ classDiagram
         +setStartShouldFail(bool, string)
     }
 
-    class NativeHttpSysGatewayAdapter {
-        <<future, conditional>>
-        +Start() GatewayStatus
-        +Probe() GatewayHealth
-        ...
-    }
-
-    IMcpGateway <|.. McpJungleGatewayAdapter : production
+    IMcpGateway <|.. NativeHttpSysGatewayAdapter : production
     IMcpGateway <|.. FakeMcpGatewayAdapter : tests
-    IMcpGateway <|.. NativeHttpSysGatewayAdapter : ADR-003 PHASE-12
 ```
 
-`IMcpGateway` lives in [`include/MasterControl/MasterControlContracts.h`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/include/MasterControl/MasterControlContracts.h). Both adapters live in [`include/MasterControl/McpGatewayAdapters.h`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/include/MasterControl/McpGatewayAdapters.h) + [`src/MasterControlApp/McpGatewayAdapters.cpp`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/src/MasterControlApp/McpGatewayAdapters.cpp).
+`IMcpGateway` lives in [`include/MasterControl/MasterControlContracts.h`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/include/MasterControl/MasterControlContracts.h). The adapters live in [`include/MasterControl/McpGatewayAdapters.h`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/include/MasterControl/McpGatewayAdapters.h) + [`src/MasterControlApp/McpGatewayAdapters.cpp`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/src/MasterControlApp/McpGatewayAdapters.cpp).
 
 ---
 
@@ -295,64 +210,66 @@ classDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> Configured: adapter constructed
-    Configured --> Starting: enabled and binary path set
-    Configured --> SupervisedMock: enabled and binary path absent or invalid
-    Starting --> Running: child spawned + AssignProcessToJobObject
-    Starting --> Failed: CreateProcessW fail or probe fail
+    Configured --> Starting: enabled == true
+    Configured --> Configured: enabled == false (Start() no-op)
+    Starting --> Running: HttpCreateRequestQueue + serve thread started
+    Starting --> Failed: HttpInitialize or URL group bind failed
     Running --> Stopping: Stop() called
-    SupervisedMock --> Stopping: Stop() called
     Stopping --> Stopped
     Failed --> Stopped: terminal
     Stopped --> [*]
 ```
 
-The `Configured` and `SupervisedMock` distinction is key. When `mcpGateway.binaryPath` in `mcos.json` is empty or points to a missing file, the adapter enters **supervised-mock mode**: state transitions still fire so the contract is exercisable, but `Probe()` reports `GatewayHealthStatus::Unknown` rather than fabricating a healthy state. ADR-002 §9 calls this "no live-looking seeded infrastructure."
+State transitions are contract-identical to the old MCPJungle adapter so `FakeMcpGatewayAdapter` tests remain valid. The in-process HTTP.sys adapter has no child process to supervise — `Starting` transitions to `Running` once `HttpSetUrlGroupProperty(BindingProperty)` and the serve thread are live. `Probe()` issues a WinHTTP loopback probe against `GET /health` to confirm the request queue is draining.
 
 ---
 
-## 3. Supervised process containment
+## 3. HTTP.sys binding sequence
 
-When a real binary is configured, the adapter spawns it under a Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. If MCOS dies for any reason — clean shutdown, crash, kill — the OS reaps the gateway child tree atomically.
+`NativeHttpSysGatewayAdapter::Start()` binds entirely in-process — no child process is spawned. The sequence:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Adapter as McpJungleGatewayAdapter
-    participant Win32 as Windows kernel
-    participant Job as Job Object
-    participant Child as MCPJungle process
+    participant Adapter as NativeHttpSysGatewayAdapter
+    participant Sys as HTTP.sys (kernel)
+    participant Thread as Serve thread
 
-    Adapter->>Win32: CreateJobObjectW
-    Win32-->>Adapter: hJobObject
-    Adapter->>Job: SetInformationJobObject(JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
-    Adapter->>Win32: CreateProcessW(... CREATE_SUSPENDED ...)
-    Win32-->>Adapter: PROCESS_INFORMATION (suspended)
-    Adapter->>Job: AssignProcessToJobObject(hJobObject, hProcess)
-    Adapter->>Win32: ResumeThread(hThread)
-    Win32->>Child: process now running
+    Adapter->>Sys: HttpInitialize(HTTPAPI_VERSION_2)
+    Sys-->>Adapter: NO_ERROR
+    Adapter->>Sys: HttpCreateServerSession
+    Sys-->>Adapter: serverSessionId
+    Adapter->>Sys: HttpCreateUrlGroup(serverSessionId)
+    Sys-->>Adapter: urlGroupId
+    Adapter->>Sys: HttpAddUrlToUrlGroup(urlGroupId, "http://+:8080/")
+    Adapter->>Sys: HttpCreateRequestQueue
+    Sys-->>Adapter: hRequestQueue
+    Adapter->>Sys: HttpSetUrlGroupProperty(BindingProperty, hRequestQueue)
+    Adapter->>Thread: spawn serve thread
+    Thread->>Sys: HttpReceiveHttpRequest (loop)
 
-    note over Adapter,Child: Probe loop runs<br/>WinHTTP probe of /health every N seconds
+    note over Adapter,Thread: Probe loop issues WinHTTP GET /health<br/>every N seconds to confirm queue is draining.
 
-    note over Adapter,Job: When MCOS shutdown closes hJobObject,<br/>Windows kills the entire child tree.
+    note over Adapter,Sys: On Stop(): HttpCloseRequestQueue closes hRequestQueue;<br/>serve thread unblocks and exits; HttpTerminate called.
 ```
 
 Source: [`src/MasterControlApp/McpGatewayAdapters.cpp`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/src/MasterControlApp/McpGatewayAdapters.cpp).
 
-FORBIDDEN-CONTRACT §2.1a forbids `CreateProcessW` outside of two documented call sites: this adapter and `WorkerSupervisor::startInstanceLocked`.
+FORBIDDEN-CONTRACT §2.1a forbids `CreateProcessW` outside of two documented call sites: `WorkerSupervisor::startInstanceLocked` and any future substrate that requires a child process. The native gateway adapter is not one of them.
 
 ---
 
-## 4. The supervised-mock fallback
+## 4. Telemetry and self-test integration
 
-This is the most-tested part of the adapter because the dev environment never deployed a real MCPJungle binary. The fallback honors ADR-002 §9 explicitly.
+Gateway events feed the in-process events ring; per-request latency feeds `GatewayTrafficSnapshot`. Both are consumed by the Telemetry deck.
 
 | Trigger | Adapter behavior |
 |---|---|
 | `mcpGateway.enabled == false` | `Start()` returns immediately; `state=configured`; `health=unknown` |
-| `mcpGateway.binaryPath` empty or missing | `Start()` succeeds; `state=running`; `isSupervisingChildProcess()=false`; `Probe()` returns `health=unknown`, `message="No gateway binary configured."` |
-| Real binary exists | Job Object containment; `Probe()` runs WinHTTP against `/health` |
+| `enabled == true`, URL ACL missing | `HttpAddUrlToUrlGroup` returns `ERROR_ACCESS_DENIED`; `state=failed`; message carries the Win32 error |
+| Normal start | `state=running`; `Probe()` issues WinHTTP `GET /health` loopback; returns `health=healthy` on `200` |
 
-The dashboard renders the supervised-mock state honestly: "Adapter: mcpjungle / State: running / Health: unknown / Advertised MCP URL: http://0.0.0.0:8080/mcp".
+The self-test framework probes gateway state at boot. As of v0.10.14, 39/39 self-tests pass in production. The shell's **APIS & SERVICES** card (Overview deck) reflects `state` and the advertised MCP URL in real time.
 
 ---
 
@@ -385,7 +302,7 @@ This rule is enforced by FORBIDDEN-CONTRACT §2.2: registering autoscaled clones
 
 ## 6. HTTP routes (admin surface)
 
-Routes the operator surface exposes for the gateway. All return JSON.
+Routes the maintainer surface exposes for the gateway. All return JSON.
 
 | Method | Route | Returns |
 |---|---|---|
@@ -406,8 +323,7 @@ sequenceDiagram
     autonumber
     participant Client as AI client
     participant DNS as DNS-SD
-    participant Gateway as IMcpGateway adapter
-    participant Substrate as MCPJungle process
+    participant Adapter as NativeHttpSysGatewayAdapter
     participant Lease as LeaseRouter
     participant Pool as Managed pool
     participant Inst as Endpoint instance N
@@ -415,22 +331,20 @@ sequenceDiagram
     Client->>DNS: Browse _mcos-mcp._tcp.local
     DNS-->>Client: MCP gateway URL (host:8080/mcp)
 
-    Client->>Substrate: POST /mcp (MCP request)
-    Substrate->>Gateway: forwards to logical server URL<br/>(http://localhost:7300/.../mcp)
+    Client->>Adapter: POST /mcp (MCP JSON-RPC request)
 
-    note over Gateway,Lease: Adapter consults the lease router<br/>before dispatching to a backend instance
+    note over Adapter,Lease: Adapter resolves poolId from tool name,<br/>consults the lease router
 
-    Gateway->>Lease: acquireLease(poolId, sessionId, stateful)
+    Adapter->>Lease: acquireLease(poolId, sessionId, stateful)
     Lease->>Pool: bind to instance N
-    Lease-->>Gateway: EndpointLease(instanceId=N, state=active)
+    Lease-->>Adapter: EndpointLease(instanceId=N, state=active)
 
-    Gateway->>Inst: forward MCP request
-    Inst-->>Gateway: response
-    Gateway-->>Substrate: response
-    Substrate-->>Client: response
+    Adapter->>Inst: forward MCP request via sendStdioJsonRpc
+    Inst-->>Adapter: response
+    Adapter-->>Client: response
 ```
 
-The substrate (MCPJungle today) handles MCP wire-protocol negotiation; the adapter handles registration + supervision; the lease router handles backend selection. None of these layers know about the others' internals — that is what makes the substrate replaceable.
+`NativeHttpSysGatewayAdapter` handles both MCP wire-protocol negotiation and request dispatch in-process. The adapter handles registration; the lease router handles backend selection. Neither layer knows the other's internals — that is what makes the substrate replaceable via `IMcpGateway`.
 
 ---
 
@@ -440,7 +354,7 @@ Thirteen tests in [`tests/MasterControlOrchestrationServerTests.cpp`](https://gi
 
 | Test | What it pins |
 |---|---|
-| `testGatewayConfigurationDefaults` | Default `mcos.json` has type=mcpjungle, port 8080, disabled |
+| `testGatewayConfigurationDefaults` | Default config: `type` field present for deserialization compat, `listenHost=0.0.0.0`, `listenPort=8080`, `mcpPath=/mcp`, `healthPath=/health`, `enabled=true`; runtime always selects the native adapter regardless of `type` value |
 | `testFakeGatewayDisabledStartsDisabled` | Disabled adapter refuses `Start()` |
 | `testFakeGatewayEnabledStartStopRoundTrip` | Configured → Running → Stopped with timestamps |
 | `testFakeGatewayStartFailureScripted` | `Start()` propagates a Failed state and message |
@@ -448,8 +362,8 @@ Thirteen tests in [`tests/MasterControlOrchestrationServerTests.cpp`](https://gi
 | `testFakeGatewayRegistrationRejectsEmptyName` | Empty name fails registration without polluting registry |
 | `testFakeGatewayProbeUsesScriptedHealth` | `Probe()` returns scripted health verbatim |
 | `testFakeGatewayMcpUrlComposition` | URL composes from `listenHost+listenPort+mcpPath`; missing leading slash normalized |
-| `testRealAdapterDisabledByDefault` | Real adapter refuses Start when disabled, probes Unknown |
-| `testRealAdapterSupervisedMockWhenBinaryMissing` | Supervised-mock when no binary configured |
+| `testRealAdapterDisabledByDefault` | Real adapter refuses `Start()` when disabled; `Probe()` returns `Unknown` |
+| `testRealAdapterStartBindsHttpSys` | Real adapter `Start()` binds HTTP.sys; `GET /health` returns 200; `state=running` |
 | `testRealAdapterRegistrationSurvivesAcrossStartStop` | Registry persists across the lifecycle |
 | `testGatewayEnumRoundTrips` | All four gateway enums round-trip through documented slugs |
 | `testGatewayConfigJsonRoundTrip` | `McpGatewayConfiguration` round-trips through JSON |
@@ -458,16 +372,15 @@ Thirteen tests in [`tests/MasterControlOrchestrationServerTests.cpp`](https://gi
 
 ## 9. Replacing the substrate
 
-The native HTTP.sys gateway is documented in [`docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md). It activates only when one of five triggers from ADR-003 fires. The migration plan is:
+The native HTTP.sys adapter is the sole gateway substrate as of v0.9.0. No second substrate is currently planned. If a future substrate swap is required, the pattern is:
 
-1. Add `NativeHttpSysGatewayAdapter` next to `McpJungleGatewayAdapter`. **Do not delete MCPJungle.**
-2. Add `GatewayType::Native` enum value; default config still ships `mcpjungle`.
-3. Operator opts in by setting `mcpGateway.type = "native"` in `mcos.json`.
-4. Soak test against both adapters with identical traffic.
-5. After at least one full release-gate cycle on the native adapter, propose the default flip.
-6. Never delete the MCPJungle adapter — keep it as a fallback and a regression target.
+1. Implement the new adapter behind `IMcpGateway`.
+2. Add a new `GatewayType` enum value; leave the default as `native`.
+3. Maintainer opts in via `cfg.mcpGateway.type`; runtime selects the adapter by enum value.
+4. Soak test both adapters against identical traffic before flipping the default.
+5. Retire the old adapter only after at least one full release-gate cycle on the new one.
 
-The `IMcpGateway` interface is the contract that survives across the swap. New methods can only be added in lockstep with both adapters.
+The `IMcpGateway` interface is the contract that survives across any swap. New methods may only be added when all shipping adapters implement them.
 
 ---
 
@@ -475,7 +388,14 @@ The `IMcpGateway` interface is the contract that survives across the swap. New m
 
 - **Decision** → [ADR-003 — MCP Gateway Substrate Decision](ADR-003-mcp-gateway-substrate-decision)
 - **Worker pool integration** → [Worker Pools](Worker-Pools)
-- **Operator gateway panel** → [Dashboard](Dashboard) §Gateway
+- **Maintainer gateway panel** → [Dashboard](Dashboard) §Gateway
 - **MCP gateway URL discovery** → [LAN Discovery](LAN-Discovery)
-- **MCPJungle install** → [Packaging and Gateway Binary](Packaging-and-Gateway-Binary)
+- **Client onboarding profiles** → `/api/onboarding/{clientType}` (claude-code, codex, chatgpt, grok, generic)
 - **Native gateway evaluation** → [docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md)
+- **MCPJungle history** → [History (retired v0.9.0)](#history-retired-v090) below
+
+---
+
+## History (retired v0.9.0)
+
+Prior to v0.9.0, the gateway substrate was `McpJungleGatewayAdapter`: MCOS supervised an external MCPJungle binary as a Job Object child process. Maintainers downloaded the MCPJungle binary separately and configured its path in `mcos.json`. The adapter spawned it under `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for atomic reaping on MCOS exit. `cfg.mcpGateway.type = "mcpjungle"` was the factory default. At v0.9.0, per maintainer directive, `McpJungleGatewayAdapter` source files were removed and replaced by `NativeHttpSysGatewayAdapter`. The MCPJungle binary is no longer required, downloaded, supervised, or supported.

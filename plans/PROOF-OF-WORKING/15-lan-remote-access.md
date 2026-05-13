@@ -1,3 +1,5 @@
+> **STATUS: superseded.** This proof-of-working note predates the v0.9.0 realignment. The live equivalent in current builds is the `/api/health/summary` endpoint (returns gateway state + pool counts) and the `/api/supervisor/reachability-check` endpoint (server-side LAN probe across loopback + LAN IP, added v0.10.13). For current LAN-remote-access validation, see those routes plus the WinUI Shell's "Verify Endpoints" button on the Supervisor card.
+
 # 15 - LAN Remote Access
 
 **Build:** Master Control Orchestration Server build 48
@@ -92,7 +94,7 @@ netsh advfirewall firewall add rule name="MCOS Browser 7300" ^
   dir=in action=allow protocol=TCP localport=7300 profile=Private
 ```
 
-(Not applied — no firewall changes were made. Operator consent required.)
+(Not applied — no firewall changes were made. Maintainer consent required.)
 
 ## 7. Browser surface parity
 
@@ -139,7 +141,7 @@ need `bindAddress: "::"` (dual-stack) or an explicit `fde3:…` address, and
 the service restarted.
 
 No firewall rule exists but none is needed on the current network profile.
-Documenting the `netsh advfirewall` rule above for operators who deploy on
+Documenting the `netsh advfirewall` rule above for maintainers who deploy on
 profiles where inbound 7300 is blocked by default.
 
 ## Artefacts (in `G:\Claude\`)

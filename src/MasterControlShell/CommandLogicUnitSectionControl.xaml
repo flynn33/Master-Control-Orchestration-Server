@@ -90,32 +90,35 @@
                 </Border>
             </Grid>
 
+            <!-- v0.10.12: Guided CLU Actions card removed. Pre-v0.10.12 it
+                 routed the same six workflow tokens (new-mcp, new-subagent,
+                 new-subagent-group, manage-forsetti-modules, new-apple-host,
+                 guided-import) that Settings > Guided Setup Wizards already
+                 ships. Operator investigated the duplication ("why do
+                 the guided CLU Actions exist? Do they do something
+                 different from the guided MCP server and sub-agent
+                 settings in the Settings View/Tab?") and the answer was
+                 no: both surfaces called the same actionRequested_
+                 handler with identical tokens. CLU keeps its own posture
+                 grid, roles, rules, documents, findings, Apple ops,
+                 platform gateways, and governance executions; the
+                 creation wizards now live exclusively on the Settings
+                 tab. The CluQuickActionButton_Click handler is retained
+                 in the .cpp for any external XAML override that still
+                 references it, but no longer surfaces on this deck. -->
             <Border Style="{StaticResource ShellCardStyle}">
-                <StackPanel Spacing="16">
-                    <TextBlock Text="Guided CLU Actions" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                <StackPanel Spacing="8">
+                    <TextBlock Text="CLU Workflow Notes" Style="{StaticResource ShellSectionTitleTextStyle}" />
                     <TextBlock
                         x:Name="CluActionSummaryText"
                         Style="{StaticResource ShellBodyTextStyle}"
-                        Text="Connect models, assign responsibility lanes, deploy MCP servers and sub-agents, and manage Forsetti modules from one CLU workflow hub."
+                        Text="Pending."
                         TextWrapping="WrapWholeWords" />
-                    <Grid ColumnSpacing="12" RowSpacing="12">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-
-                        <Button Grid.Row="0" Grid.Column="0" Click="CluQuickActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Create MCP Server" Tag="new-mcp" />
-                        <Button Grid.Row="0" Grid.Column="1" Click="CluQuickActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Create Sub-Agent" Tag="new-subagent" />
-                        <Button Grid.Row="0" Grid.Column="2" Click="CluQuickActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Create Sub-Agent Group" Tag="new-subagent-group" />
-                        <Button Grid.Row="1" Grid.Column="0" Click="CluQuickActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Manage Forsetti Modules" Tag="manage-forsetti-modules" />
-                        <Button Grid.Row="1" Grid.Column="1" Click="CluQuickActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="New Apple Host" Tag="new-apple-host" />
-                        <Button Grid.Row="1" Grid.Column="2" Click="CluQuickActionButton_Click" Style="{StaticResource ShellCommandButtonStyle}" Content="Guided Import" Tag="guided-import" />
-                    </Grid>
+                    <TextBlock
+                        Style="{StaticResource ShellLabelTextStyle}"
+                        Foreground="{StaticResource ShellTextMutedBrush}"
+                        TextWrapping="WrapWholeWords"
+                        Text="Creation wizards (New MCP Server, New Sub-Agent, New Sub-Agent Group, Manage Forsetti Modules, New Apple Host, Guided Import) live on the Settings tab > Guided Setup Wizards. The CLU deck focuses on governance posture, roles, rules, documents, findings, and Apple operations." />
                 </StackPanel>
             </Border>
 

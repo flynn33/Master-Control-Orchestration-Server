@@ -11,6 +11,11 @@ target_link_libraries(MasterControlOrchestrationServerTests PRIVATE
     ws2_32
 )
 
+target_include_directories(MasterControlOrchestrationServerTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/MasterControlApp
+    ${CMAKE_SOURCE_DIR}/include
+)
+
 add_test(
     NAME MasterControlOrchestrationServerTests
     COMMAND $<TARGET_FILE:MasterControlOrchestrationServerTests>

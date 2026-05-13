@@ -71,15 +71,27 @@ function Resolve-VcRuntimeDirectory {
         throw "Microsoft VC++ runtime root was not found at $redistRoot"
     }
 
+    # Try newest toolset CRT directory first, then fall back to older ones.
+    # Visual Studio 18 (VS2026) ships v145; VS2022 ships v143. Listing both
+    # here keeps the script working on dev machines that haven't migrated yet
+    # AND on the github-hosted windows-2025-vs2026 runner image that v0.10.14+
+    # CI targets.
+    $crtDirectoryNames = @(
+        "Microsoft.VC145.CRT",  # VS2026 / VS18 / Platform Toolset v145
+        "Microsoft.VC143.CRT"   # VS2022 / Platform Toolset v143
+    )
+
     $candidates = @(Get-ChildItem -Path $redistRoot -Directory | Sort-Object Name -Descending)
     foreach ($candidate in $candidates) {
-        $crtDirectory = Join-Path $candidate.FullName "x64\Microsoft.VC143.CRT"
-        if (Test-Path $crtDirectory) {
-            return $crtDirectory
+        foreach ($crtName in $crtDirectoryNames) {
+            $crtDirectory = Join-Path $candidate.FullName "x64\$crtName"
+            if (Test-Path $crtDirectory) {
+                return $crtDirectory
+            }
         }
     }
 
-    throw "Microsoft VC++ x64 runtime directory was not found under $redistRoot"
+    throw "Microsoft VC++ x64 runtime directory was not found under $redistRoot (looked for: $($crtDirectoryNames -join ', '))"
 }
 
 function Resolve-MasterControlToolchain {

@@ -25,7 +25,7 @@
 # so dashboards line up.
 
 $ErrorActionPreference = "Stop"
-$projectRoot = "G:\Claude\Master-Control-Orchastration-Server\master-control-dashboard-main"
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $nodeExe     = "C:\Program Files\nodejs\node.exe"
 $globalRoot  = "C:\Users\Flynn\AppData\Roaming\npm\node_modules"
 $nodePath    = "C:\Program Files\nodejs\;C:\Windows\System32;C:\Windows"

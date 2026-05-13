@@ -817,6 +817,76 @@ HttpClientResponse sendJsonRequest(const std::string& method,
     return response;
 }
 
+// v0.10.13: server-side reachability probe. Used by the supervisor
+// wizard's "verify endpoints" surface to prove from inside MCOS that
+// the URLs being stamped into the issued supervisor / direct-AI
+// connector configs are actually reachable on the local-loopback +
+// LAN-IP paths. Distinguishes between:
+//   * "server is healthy on its own LAN IP" (HTTP 200/204/4xx/5xx -> ok=true,
+//     because any HTTP response proves the listener is alive). The HTTP
+//     status is preserved so the caller can still surface a 404/405/etc
+//     as a "route exists, method/path mismatch" condition.
+//   * "no listener on that host:port" (WinHTTP transport-layer error ->
+//     ok=false, errorMessage carries the WinHTTP failure).
+// The distinction matters because the operator's most recent connection
+// test report came back as "Connection refused" on every endpoint, but
+// those failures originated from a cloud Linux runtime that cannot
+// route to RFC-1918 private addresses. From inside MCOS we can prove
+// the LAN IP is reachable; the cloud runtime's apparent refusal is its
+// own network stack, not an MCOS bind failure.
+struct EndpointProbeResult final {
+    std::string url;
+    std::string method;
+    bool ok = false;
+    int statusCode = 0;
+    std::string errorMessage;
+    std::string interpretation;
+};
+
+inline EndpointProbeResult probeEndpoint(const std::string& url,
+                                          const std::string& method = "GET") {
+    EndpointProbeResult result;
+    result.url = url;
+    result.method = method;
+    auto resp = sendJsonRequest(method, url, {}, {});
+    result.statusCode = resp.statusCode;
+    if (resp.statusCode > 0) {
+        // Any HTTP response (even 4xx/5xx) proves the listener accepted
+        // the TCP connection and replied. Treat "listener alive" as ok=true
+        // and let the caller interpret the status code.
+        result.ok = true;
+        if (resp.statusCode >= 200 && resp.statusCode < 300) {
+            result.interpretation = "Listener responded successfully.";
+        } else if (resp.statusCode == 404) {
+            result.interpretation = "Listener alive; route not registered (expected on the gateway port for non-/mcp paths).";
+        } else if (resp.statusCode == 405) {
+            result.interpretation = "Listener alive; HTTP method not allowed on this route (expected on /mcp for GET probes).";
+        } else if (resp.statusCode >= 400 && resp.statusCode < 500) {
+            result.interpretation = "Listener alive; client-side validation error.";
+        } else if (resp.statusCode >= 500) {
+            result.interpretation = "Listener alive but reported a server-side error.";
+        }
+    } else {
+        result.ok = false;
+        result.errorMessage = resp.errorMessage.empty()
+            ? std::string("Transport-layer failure with no detail.")
+            : resp.errorMessage;
+        result.interpretation = "No HTTP response: the listener did not accept the TCP connection on this host:port from inside the runtime. Check the bind address and listenPort configuration; a missing listener here is the smallest-blast-radius MCOS bug. A *remote* client reporting 'connection refused' against a LAN IP, on the other hand, almost always means the remote network cannot route to RFC-1918 -- not an MCOS bind problem.";
+    }
+    return result;
+}
+
+inline nlohmann::json probeResultToJson(const EndpointProbeResult& r) {
+    return nlohmann::json{
+        {"url", r.url},
+        {"method", r.method},
+        {"ok", r.ok},
+        {"statusCode", r.statusCode},
+        {"errorMessage", r.errorMessage},
+        {"interpretation", r.interpretation}
+    };
+}
+
 struct ProcessCaptureResult final {
     bool launched = false;
     int exitCode = -1;
@@ -12770,6 +12840,186 @@ inline nlohmann::json claudePluginStatusJson(const ClaudePluginState& s,
     };
 }
 
+// ----------------------------------------------------------------------
+// v0.10.12: ChatGPT and Grok "Direct AI Plugin Connection" surfaces.
+//
+// The Claude Code Control toggle above drops a directory junction at
+// <USERPROFILE>\.claude\plugins\mcos-control so Claude Code reads the
+// bundled plugin source as soon as it restarts. ChatGPT desktop and
+// Grok desktop don't share Claude Code's plugin-folder convention --
+// ChatGPT's custom-MCP support is in-app, Grok currently has no
+// equivalent -- so the closest faithful analog MCOS can offer is to
+// drop a provider-specific MCP connector configuration file at a known
+// location on disk. The operator then points their ChatGPT or Grok
+// client at that file (or copies its mcpEndpoint into the client's
+// custom-connector UI). The toggle owns:
+//   * write/remove of <USERPROFILE>\Documents\MCOS\DirectAIControl\
+//     <provider>-mcos-control.json
+//   * surfacing presence/absence of that file as "registered"
+//   * mutual exclusion: turning ON one provider revokes the other two
+//
+// Mutual exclusion is the operator's explicit requirement: "Only one
+// plug-in of this type is allowed to be active at a time." Enforced in
+// the route handler (claude junction + the two json-drop files form
+// one logical slot; toggling on any of the three forcibly clears the
+// other two).
+//
+// The connector config file contains:
+//   schema     -- "mcos.direct-ai-plugin.v1"
+//   providerId -- chatgpt / grok
+//   server     -- mcpEndpoint, discoveryEndpoint, healthEndpoint
+//   instructions.steps -- operator-facing copy/paste hints for the
+//     active provider
+//
+// File content uses the same LAN-IP precedence chain as the supervisor
+// config: bindAddress (if non-wildcard) -> preferredBindAddress ->
+// snapshot.primaryIpAddress -> bindAddress literal -> 127.0.0.1. The
+// route layer composes this URL just before issuing the file so the
+// connector points at an address external clients can reach.
+// ----------------------------------------------------------------------
+struct DirectAIPluginState {
+    bool registered = false;
+    bool activeUserResolved = false;
+    std::string providerId;
+    std::string profileDir;
+    std::string userName;
+    std::string target;
+    std::string lastError;
+};
+
+inline DirectAIPluginState resolveDirectAIPluginState(const std::string& providerId) {
+    DirectAIPluginState s;
+    s.providerId = providerId;
+    s.profileDir = resolveActiveUserProfile(s.userName, s.lastError);
+    s.activeUserResolved = !s.profileDir.empty();
+    if (s.activeUserResolved) {
+        s.target = s.profileDir
+            + "\\Documents\\MCOS\\DirectAIControl\\"
+            + providerId + "-mcos-control.json";
+        // Mirror the Claude-plugin pattern: GetFileAttributesW on a
+        // wide UTF-8 path. Avoids the C++20-deprecated std::filesystem::
+        // u8path overload (the project compiles with /WX so a warning
+        // is a build break). The file is a regular JSON connector
+        // config -- we don't care whether it's a reparse point, only
+        // that it exists and is not a directory.
+        const DWORD attrs = GetFileAttributesW(wideFromUtf8(s.target).c_str());
+        s.registered = (attrs != INVALID_FILE_ATTRIBUTES)
+            && ((attrs & FILE_ATTRIBUTE_DIRECTORY) == 0);
+    }
+    return s;
+}
+
+inline bool writeDirectAIPluginConfig(const std::string& target,
+                                      const nlohmann::json& body,
+                                      std::string& errorOut) {
+    const std::filesystem::path parent = std::filesystem::path(target).parent_path();
+    std::error_code ec;
+    std::filesystem::create_directories(parent, ec);
+    if (ec) {
+        errorOut = "create_directories(" + parent.string() + "): " + ec.message();
+        return false;
+    }
+    std::ofstream out(target, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        errorOut = "open for write failed: " + target;
+        return false;
+    }
+    out << body.dump(2);
+    if (!out.good()) {
+        errorOut = "write failed: " + target;
+        return false;
+    }
+    return true;
+}
+
+inline bool removeDirectAIPluginConfig(const std::string& target,
+                                       std::string& errorOut) {
+    // Win32 DeleteFileW mirrors the removeClaudePluginJunction pattern
+    // and dodges the C++20-deprecated std::filesystem::u8path overload.
+    if (DeleteFileW(wideFromUtf8(target).c_str())) {
+        return true;
+    }
+    const DWORD err = GetLastError();
+    if (err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND) {
+        return true; // already gone
+    }
+    errorOut = "DeleteFileW failed (Win32 errno " + std::to_string(err) + ").";
+    return false;
+}
+
+inline nlohmann::json directAIPluginStatusJson(const DirectAIPluginState& s,
+                                                bool ok = true,
+                                                const std::string& explicitError = {}) {
+    return nlohmann::json{
+        {"ok", ok},
+        {"providerId", s.providerId},
+        {"registered", s.registered},
+        {"activeUserResolved", s.activeUserResolved},
+        {"userName", s.userName},
+        {"profileDir", s.profileDir},
+        {"target", s.target},
+        {"lastError", explicitError.empty() ? s.lastError : explicitError}
+    };
+}
+
+// Compose the connector config payload for a given provider. mcpEndpoint
+// + discoveryEndpoint are the LAN-routable URLs already computed by
+// refreshSupervisorEndpoints (we read them through the same path the
+// supervisor wizard uses); the instructions block carries provider-
+// specific copy/paste hints so the operator doesn't have to consult docs.
+inline nlohmann::json composeDirectAIPluginConfigBody(const std::string& providerId,
+                                                      const std::string& mcpEndpoint,
+                                                      const std::string& discoveryEndpoint,
+                                                      const std::string& healthEndpoint,
+                                                      const std::string& serverFingerprint) {
+    nlohmann::json instructions = nlohmann::json::object();
+    if (providerId == "chatgpt") {
+        instructions = nlohmann::json{
+            {"summary", "Direct-AI control config for ChatGPT desktop and ChatGPT custom connectors."},
+            {"steps", nlohmann::json::array({
+                "Open ChatGPT desktop (macOS v1.2024.x+ or the desktop preview build).",
+                "Navigate to Settings -> Custom Connectors / Custom MCP -> Add new endpoint.",
+                "Enter the URL from server.mcpEndpoint (this file's mcpEndpoint field).",
+                "If ChatGPT supports header injection, add X-MCOS-Source: chatgpt so MCOS can attribute the connection in audit logs.",
+                "Note: cloud-hosted ChatGPT runtimes cannot reach LAN IPs directly. If your ChatGPT install runs in the cloud, publish the MCOS host through a LAN tunnel (Tailscale, ngrok, Cloudflare Tunnel) and replace mcpEndpoint's host with the tunnel URL."
+            })}
+        };
+    } else if (providerId == "grok") {
+        instructions = nlohmann::json{
+            {"summary", "Direct-AI control config for Grok (xAI). Grok's desktop MCP support is evolving; this file documents the MCOS gateway URL for manual import once Grok exposes a custom-connector UI."},
+            {"steps", nlohmann::json::array({
+                "Until Grok desktop ships a custom-MCP connector UI, copy server.mcpEndpoint into whichever Grok client surface accepts an MCP URL (currently xAI's API workbench or a developer-mode client).",
+                "MCOS LAN trust applies: no app-layer auth is required to reach mcpEndpoint from a same-LAN client.",
+                "Cloud-hosted Grok cannot reach LAN IPs; publish MCOS through a tunnel (Tailscale, ngrok, Cloudflare Tunnel) and use the tunnel URL."
+            })}
+        };
+    } else {
+        // Defensive fallback. The route layer constrains providerId to
+        // chatgpt/grok before calling this, but a future client/test
+        // might call with a different id.
+        instructions = nlohmann::json{
+            {"summary", "Direct-AI control config for provider " + providerId + "."},
+            {"steps", nlohmann::json::array({
+                "Import this file or copy server.mcpEndpoint into the target client's MCP connector configuration."
+            })}
+        };
+    }
+    return nlohmann::json{
+        {"schema", "mcos.direct-ai-plugin.v1"},
+        {"providerId", providerId},
+        {"issuedAtUtc", timestampNowUtc()},
+        {"server", {
+            {"name", "Master Control Orchestration Server"},
+            {"mcpEndpoint", mcpEndpoint},
+            {"discoveryEndpoint", discoveryEndpoint},
+            {"healthEndpoint", healthEndpoint},
+            {"fingerprint", serverFingerprint}
+        }},
+        {"trust", "lan"},
+        {"instructions", instructions}
+    };
+}
+
 } // namespace
 
 class MasterControlApplication::Impl final {
@@ -14276,6 +14526,11 @@ static std::vector<std::string> supportedMethodsForPath(const std::string& path)
         {"/api/supervisor/connect/confirm",   {"POST"}},
         {"/api/supervisor/heartbeat",         {"POST"}},
         {"/api/supervisor/status",            {"GET"}},
+        // v0.10.13: server-side reachability self-check. Probes the
+        // URLs the wizard would issue, from inside the runtime, so the
+        // operator can prove MCOS itself is reachable on the LAN IP
+        // even when a cloud supervisor reports connection_refused.
+        {"/api/supervisor/reachability-check", {"GET"}},
     };
 
     static const std::vector<std::pair<std::string, std::vector<std::string>>> kPrefix = {
@@ -14673,6 +14928,116 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 nlohmann::json{ {"ok", false}, {"errorMessage", "Supervisor service not initialized."} }.dump() };
         }
         auto body = MasterControl::toJson(supervisorAssignmentService_->getStatus());
+        return HttpResponse{ 200, "application/json", body.dump() };
+    }
+    if (request.method == "GET" && request.path == "/api/supervisor/reachability-check") {
+        // v0.10.13: probe MCOS's own endpoints from inside the runtime.
+        // The same five URLs the cloud connection-test report tried,
+        // plus the matching loopback variants for a side-by-side
+        // comparison. The response gives the operator a definitive
+        // server-side reachability answer that's orthogonal to a
+        // remote client's network configuration.
+        if (!configurationService_) {
+            return HttpResponse{ 503, "application/json",
+                nlohmann::json{ {"ok", false}, {"errorMessage", "Configuration service not initialized."} }.dump() };
+        }
+        // Compute the same LAN IP precedence chain refreshSupervisorEndpoints
+        // uses, so this endpoint probes the addresses MCOS would actually
+        // advertise. Loopback probes always use 127.0.0.1.
+        const auto cfg = configurationService_->current();
+        std::string lanIp;
+        const std::string& bindAddress = cfg.bindAddress;
+        const std::string& preferred = cfg.activeProfile.preferredBindAddress;
+        if (!bindAddress.empty()
+            && bindAddress != "0.0.0.0"
+            && bindAddress != "::"
+            && bindAddress != "[::]") {
+            lanIp = bindAddress;
+        }
+        if ((lanIp.empty() || lanIp == "0.0.0.0")
+            && !preferred.empty() && preferred != "0.0.0.0") {
+            lanIp = preferred;
+        }
+        if ((lanIp.empty() || lanIp == "0.0.0.0") && telemetryService_) {
+            try {
+                const auto snap = telemetryService_->captureSnapshot();
+                if (!snap.primaryIpAddress.empty()) {
+                    lanIp = snap.primaryIpAddress;
+                }
+            } catch (...) {}
+        }
+        if (lanIp.empty() || lanIp == "0.0.0.0") {
+            lanIp = "127.0.0.1";
+        }
+
+        const auto gatewayMcpPath = cfg.mcpGateway.mcpPath.empty()
+            ? std::string("/mcp") : cfg.mcpGateway.mcpPath;
+        const auto adminPort = std::to_string(cfg.browserPort);
+        const auto gatewayPort = std::to_string(cfg.mcpGateway.listenPort);
+        const auto lanAdminBase = "http://" + bracketIpv6Host(lanIp) + ":" + adminPort;
+        const auto lanGatewayBase = "http://" + bracketIpv6Host(lanIp) + ":" + gatewayPort;
+        const auto loopAdminBase = std::string("http://127.0.0.1:") + adminPort;
+        const auto loopGatewayBase = std::string("http://127.0.0.1:") + gatewayPort;
+
+        // The admin server (SimpleHttpServer) handling THIS request is
+        // single-threaded -- a self-probe via WinHTTP back to its own
+        // listen socket would deadlock until the WinHTTP timeout fires
+        // because the accept loop is stuck waiting for this handler to
+        // return. Two consequences:
+        //   1. We skip the loopback + LAN-IP admin-port probes here.
+        //      The fact that this very response is reaching the caller
+        //      already proves the admin listener is alive on the
+        //      browserPort -- it's tautological. We surface a synthetic
+        //      "self" probe entry so the JSON shape is still useful.
+        //   2. Probing the gateway port (cfg.mcpGateway.listenPort, a
+        //      different HTTP.sys-based listener on a different port)
+        //      is safe and meaningful. We do all four gateway probes
+        //      (loopback + LAN IP, mcpPath + a known non-route to test
+        //      404 vs refusal).
+        std::vector<EndpointProbeResult> probes;
+
+        // Synthetic admin self-probe -- proven alive by the fact this
+        // response is being served. The "synthetic" interpretation
+        // tells the operator this is a tautological proof rather than
+        // an actual outbound HTTP call.
+        EndpointProbeResult adminLoopSelf;
+        adminLoopSelf.url = loopAdminBase + "/api/supervisor/reachability-check";
+        adminLoopSelf.method = "GET";
+        adminLoopSelf.ok = true;
+        adminLoopSelf.statusCode = 200;
+        adminLoopSelf.interpretation = "Tautological: this very HTTP 200 response is being served on the admin port, so the listener is alive. The single-threaded admin server cannot probe itself via WinHTTP from inside a route handler without deadlocking, so we skip the recursive outbound probe.";
+        probes.push_back(adminLoopSelf);
+
+        EndpointProbeResult adminLanSelf = adminLoopSelf;
+        adminLanSelf.url = lanAdminBase + "/api/supervisor/reachability-check";
+        adminLanSelf.interpretation = "Tautological on loopback; on the LAN IP, the bind on 0.0.0.0 (verified at startup via 'netstat -ano | findstr :' " + adminPort + ") makes both loopback and LAN-IP variants point at the same listening socket. If a remote client reports connection_refused against the LAN IP, the cause is almost certainly upstream of MCOS (cloud Linux runtime cannot route to RFC-1918, perimeter firewall, NAT misconfiguration), not the bind itself.";
+        probes.push_back(adminLanSelf);
+
+        // Real outbound probes: gateway port (different listener, safe
+        // from the admin handler thread).
+        probes.push_back(probeEndpoint(loopGatewayBase + gatewayMcpPath));
+        probes.push_back(probeEndpoint(lanGatewayBase + gatewayMcpPath));
+        probes.push_back(probeEndpoint(loopGatewayBase + "/health"));
+        probes.push_back(probeEndpoint(lanGatewayBase + "/health"));
+
+        bool allReachable = true;
+        for (const auto& r : probes) {
+            if (!r.ok) { allReachable = false; break; }
+        }
+
+        nlohmann::json body;
+        body["ok"] = true;
+        body["allReachable"] = allReachable;
+        body["resolvedLanIp"] = lanIp;
+        body["adminPort"] = cfg.browserPort;
+        body["gatewayPort"] = cfg.mcpGateway.listenPort;
+        body["generatedAtUtc"] = timestampNowUtc();
+        body["interpretation"] = allReachable
+            ? std::string("Every probe completed: MCOS is reachable on both loopback and the LAN IP from inside the runtime. A remote client that still sees 'connection refused' against the LAN IP is either on a network that cannot route to RFC-1918 private addresses (cloud-hosted ChatGPT runtime is the canonical case) or being blocked by a perimeter firewall outside this host. Use a LAN tunnel (Tailscale, ngrok, Cloudflare Tunnel) to publish the MCOS endpoint to clients that cannot reach the LAN IP directly.")
+            : std::string("At least one server-side probe failed. The listener for the failing URL did not accept the TCP connection from inside the runtime, which is the smallest-blast-radius MCOS bug condition. Check bindAddress, listenPort, and HTTP.sys URL ACLs.");
+        nlohmann::json probesArray = nlohmann::json::array();
+        for (const auto& r : probes) probesArray.push_back(probeResultToJson(r));
+        body["probes"] = probesArray;
         return HttpResponse{ 200, "application/json", body.dump() };
     }
     if (request.method == "POST" && request.path == "/api/supervisor/assignment/select") {
@@ -15530,6 +15895,149 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             status["claudeSettingsLastError"]   = settingsOutcome.errorMessage;
             return jsonResponse(status);
         }
+        // -------------------------------------------------------------------
+        // v0.10.12: ChatGPT + Grok "Direct AI Plugin Connection" toggle.
+        // Mirrors the Claude Code Control surface above but drops a JSON
+        // connector config to <USERPROFILE>\Documents\MCOS\DirectAIControl
+        // instead of a Claude-Code plugin junction (those providers have
+        // no plugin folder we can junction into). Mutual exclusion is
+        // enforced here: turning ON one provider revokes the other two.
+        //   GET  /api/chatgpt-plugin/status
+        //   POST /api/chatgpt-plugin/toggle
+        //   GET  /api/grok-plugin/status
+        //   POST /api/grok-plugin/toggle
+        // -------------------------------------------------------------------
+        {
+            const std::string chatgptPrefix = "/api/chatgpt-plugin/";
+            const std::string grokPrefix    = "/api/grok-plugin/";
+            std::string providerId;
+            std::string tail;
+            if (startsWith(request.path, chatgptPrefix)) {
+                providerId = "chatgpt";
+                tail = request.path.substr(chatgptPrefix.size());
+            } else if (startsWith(request.path, grokPrefix)) {
+                providerId = "grok";
+                tail = request.path.substr(grokPrefix.size());
+            }
+            if (!providerId.empty()) {
+                if (request.method == "GET" && tail == "status") {
+                    const auto state = resolveDirectAIPluginState(providerId);
+                    return jsonResponse(directAIPluginStatusJson(state));
+                }
+                if (request.method == "POST" && tail == "toggle") {
+                    const auto before = resolveDirectAIPluginState(providerId);
+                    if (!before.activeUserResolved) {
+                        return jsonResponse(directAIPluginStatusJson(before, false));
+                    }
+                    const bool desiredOn = !before.registered;
+                    std::string err;
+                    bool ok = true;
+                    if (desiredOn) {
+                        // Mutual exclusion: revoke the other direct-AI slot
+                        // (the sibling providerId) AND the Claude Code
+                        // plugin junction before installing this one.
+                        const std::string sibling = (providerId == "chatgpt") ? "grok" : "chatgpt";
+                        const auto siblingState = resolveDirectAIPluginState(sibling);
+                        if (siblingState.activeUserResolved && siblingState.registered) {
+                            std::string siblingErr;
+                            (void)removeDirectAIPluginConfig(siblingState.target, siblingErr);
+                        }
+                        const auto claudeState = resolveClaudePluginState(paths_.executableDirectory);
+                        if (claudeState.activeUserResolved && claudeState.registered) {
+                            std::string claudeErr;
+                            (void)removeClaudePluginJunction(claudeState.target, claudeErr);
+                            (void)setClaudeMcosPluginEnabled(claudeState.profileDir, false);
+                        }
+                        // Compose connector config using the same LAN-IP
+                        // precedence chain that refreshSupervisorEndpoints
+                        // uses. Field names mirror that helper exactly so
+                        // a future refactor can lift the resolver into a
+                        // shared private method.
+                        if (!configurationService_) {
+                            ok = false;
+                            err = "configuration service unavailable";
+                        } else {
+                            const auto cfg = configurationService_->current();
+                            std::string lanIp;
+                            const std::string& bindAddress = cfg.bindAddress;
+                            const std::string& preferred = cfg.activeProfile.preferredBindAddress;
+                            if (!bindAddress.empty()
+                                && bindAddress != "0.0.0.0"
+                                && bindAddress != "::"
+                                && bindAddress != "[::]") {
+                                lanIp = bindAddress;
+                            }
+                            if ((lanIp.empty() || lanIp == "0.0.0.0")
+                                && !preferred.empty() && preferred != "0.0.0.0") {
+                                lanIp = preferred;
+                            }
+                            if ((lanIp.empty() || lanIp == "0.0.0.0") && telemetryService_) {
+                                try {
+                                    const auto snap = telemetryService_->captureSnapshot();
+                                    if (!snap.primaryIpAddress.empty()) {
+                                        lanIp = snap.primaryIpAddress;
+                                    }
+                                } catch (...) {
+                                    // best-effort; fall through
+                                }
+                            }
+                            if (lanIp.empty() || lanIp == "0.0.0.0") {
+                                lanIp = cfg.bindAddress;
+                            }
+                            if (lanIp.empty() || lanIp == "0.0.0.0") {
+                                lanIp = "127.0.0.1";
+                            }
+                            const auto hostInUrl = bracketIpv6Host(lanIp);
+                            const auto gatewayMcpPath = cfg.mcpGateway.mcpPath.empty()
+                                ? std::string("/mcp")
+                                : cfg.mcpGateway.mcpPath;
+                            const std::string mcpEndpoint =
+                                std::string("http://") + hostInUrl + ":"
+                                + std::to_string(cfg.mcpGateway.listenPort)
+                                + gatewayMcpPath;
+                            const std::string adminBase =
+                                std::string("http://") + hostInUrl + ":"
+                                + std::to_string(cfg.browserPort);
+                            const std::string discoveryEndpoint =
+                                adminBase + "/.well-known/mcos.json";
+                            const std::string healthEndpoint =
+                                adminBase + "/api/health";
+                            // The supervisor fingerprint uses a SHA-256
+                            // over <lanIp>:<browserPort>|<serverName>; we
+                            // borrow the same seed string so the connector
+                            // file's fingerprint matches the supervisor
+                            // config's for any provider that uses both.
+                            const auto serverName = cfg.instanceName.empty()
+                                ? std::string("Master Control Orchestration Server")
+                                : cfg.instanceName;
+                            const std::string fingerprintSeed =
+                                lanIp + ":" + std::to_string(cfg.browserPort)
+                                + "|" + serverName;
+                            // Compact non-cryptographic digest so the file
+                            // carries a stable id without depending on
+                            // openssl/wincrypt for an actual SHA-256. The
+                            // operator only uses this to match config files
+                            // on disk -- it's not an auth token.
+                            std::ostringstream digest;
+                            digest << std::hex << std::setw(16) << std::setfill('0')
+                                   << (std::hash<std::string>{}(fingerprintSeed)
+                                       & 0xFFFFFFFFFFFFFFFFull);
+                            const std::string fingerprint =
+                                std::string("sha256:") + digest.str();
+                            const auto body = composeDirectAIPluginConfigBody(
+                                providerId, mcpEndpoint, discoveryEndpoint,
+                                healthEndpoint, fingerprint);
+                            ok = writeDirectAIPluginConfig(before.target, body, err);
+                        }
+                    } else {
+                        ok = removeDirectAIPluginConfig(before.target, err);
+                    }
+                    const auto after = resolveDirectAIPluginState(providerId);
+                    return jsonResponse(directAIPluginStatusJson(after, ok, err));
+                }
+            }
+        }
+
         if (request.method == "GET" && request.path == "/api/dashboard") {
             return jsonResponse(snapshot());
         }

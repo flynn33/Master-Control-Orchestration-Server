@@ -12,9 +12,8 @@ These are source categories Claude Code should verify again during implementatio
 
 ## MCP Gateway
 
-- MCPJungle is the preferred initial gateway substrate.
-- MCPJungle provides a single MCP endpoint, supports Streamable HTTP and stdio backend registration, and can run as a host binary or container.
-- Microsoft MCP Gateway is also useful as a reference pattern for session-aware routing and lifecycle management, but it is Kubernetes-oriented and not the preferred Windows-native first implementation.
+- Native HTTP.sys adapter is the current and only shipping gateway substrate (v0.9.0+). MCPJungle was retired in the same release. The substrate-agnostic `IMcpGateway` interface preserved the option to swap later, which made the v0.9.0 retirement a clean delete.
+- Microsoft MCP Gateway is useful as a reference pattern for session-aware routing and lifecycle management, but it is Kubernetes-oriented and not applicable to the Windows-native in-process implementation.
 
 ## LAN discovery
 

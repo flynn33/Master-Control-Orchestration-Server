@@ -17,7 +17,7 @@ inline std::wstring boolLabel(const bool value) {
 // bindAddress is a wildcard (0.0.0.0 / :: / [::]) or empty, render
 // the LAN-routable primary IP instead so every Shell card surfaces an
 // address an actual client can connect to. Editor fields (Settings
-// surface, Setup Wizard) stay on the raw stored value so operator
+// surface, Setup Wizard) stay on the raw stored value so maintainer
 // edits round-trip; display-only cards route through this helper.
 inline std::wstring resolveDisplayBindAddress(const std::wstring& bindAddress,
                                               const std::wstring& lanIp) {
@@ -32,6 +32,32 @@ inline std::wstring resolveDisplayBindAddress(const std::wstring& bindAddress,
     return bindAddress;
 }
 
+// v0.10.12: substitute the LAN-routable primary IP into an MCP gateway
+// URL whose host segment is a wildcard. Mirrors the substituteWildcardHostInUrl
+// helper in the C++ runtime that powers /api/health/summary's mcpUrl. We
+// don't try to URL-parse — the runtime emits a stable shape (scheme://host:port/path),
+// so a straight strchr is enough. Empty input returns empty. Non-wildcard
+// hosts are returned unchanged.
+inline std::wstring substituteWildcardInGatewayUrl(const std::wstring& rawUrl,
+                                                   const std::wstring& lanIp) {
+    if (rawUrl.empty()) return rawUrl;
+    const auto schemeEnd = rawUrl.find(L"://");
+    if (schemeEnd == std::wstring::npos) return rawUrl;
+    const auto hostStart = schemeEnd + 3;
+    auto hostEnd = rawUrl.find_first_of(L":/?", hostStart);
+    if (hostEnd == std::wstring::npos) hostEnd = rawUrl.size();
+    const auto host = rawUrl.substr(hostStart, hostEnd - hostStart);
+    const bool wildcard = host.empty()
+        || host == L"0.0.0.0"
+        || host == L"::"
+        || host == L"[::]"
+        || host == L"::0"
+        || host == L"[::0]";
+    if (!wildcard) return rawUrl;
+    const std::wstring replacement = lanIp.empty() ? std::wstring(L"127.0.0.1") : lanIp;
+    return rawUrl.substr(0, hostStart) + replacement + rawUrl.substr(hostEnd);
+}
+
 inline bool isWildcardBindAddress(const std::wstring& bindAddress) {
     return bindAddress.empty()
         || bindAddress == L"0.0.0.0"
@@ -41,9 +67,23 @@ inline bool isWildcardBindAddress(const std::wstring& bindAddress) {
         || bindAddress == L"[::0]";
 }
 
+// std::string overload — same canonical wildcard set, for callers that
+// hold a UTF-8 narrow string (e.g., ShellRuntime::CaptureSnapshot, where
+// bindAddress comes out of JSON parsing as std::string before being
+// converted to wstring for the snapshot). Both overloads MUST agree on
+// the wildcard set; if either grows a new sentinel, the other must too.
+inline bool isWildcardBindAddress(const std::string& bindAddress) {
+    return bindAddress.empty()
+        || bindAddress == "0.0.0.0"
+        || bindAddress == "::"
+        || bindAddress == "[::]"
+        || bindAddress == "::0"
+        || bindAddress == "[::0]";
+}
+
 // v0.9.90: relative-time formatter. Parses an ISO-8601 UTC stamp (e.g.
 // "2026-05-11T00:57:59Z") into a system_clock time_point, computes now
-// - that, and renders the duration in operator-friendly buckets:
+// - that, and renders the duration in maintainer-friendly buckets:
 //
 //   <60s        -> "Xs ago"
 //   <60m        -> "Xm Ys ago" (or "Xm ago" when seconds == 0)
@@ -71,7 +111,7 @@ inline std::wstring formatRelativeUtcTime(const std::wstring& isoStampUtc) {
     if (deltaSeconds < 0) {
         // Timestamp is in the future (clock skew or freshly-stamped
         // value the parser rounded down). Treat as "just now" instead
-        // of "-3s ago" which looks wrong to the operator.
+        // of "-3s ago" which looks wrong to the maintainer.
         return std::wstring(L"just now");
     }
     if (deltaSeconds < 60) {
@@ -119,7 +159,7 @@ inline std::wstring formatFutureUtcTime(const std::wstring& isoStampUtc) {
         std::chrono::system_clock::now());
     const auto deltaSeconds = static_cast<int64_t>(stampTime - nowTime);
     if (deltaSeconds <= 0) {
-        // Past timestamp — surface as 'expired X ago' so the operator
+        // Past timestamp — surface as 'expired X ago' so the maintainer
         // sees the timestamp is no longer ahead of now.
         const auto since = formatRelativeUtcTime(isoStampUtc);
         return since.empty() ? std::wstring(L"expired") : (L"expired " + since);
@@ -143,6 +183,37 @@ inline std::wstring formatFutureUtcTime(const std::wstring& isoStampUtc) {
     const int64_t hours = (deltaSeconds % 86400) / 3600;
     if (hours == 0) return L"in " + std::to_wstring(days) + L"d";
     return L"in " + std::to_wstring(days) + L"d " + std::to_wstring(hours) + L"h";
+}
+
+// v0.10.12: ISO-UTC -> host-local HH:MM:SS converter for the activity-stream
+// "Live Command Stream" log. Pre-v0.10.12 the renderer just substr'd the
+// ISO stamp's "HH:MM:SS" segment, which surfaced UTC-time rows alongside the
+// title-bar's GetLocalTime clock and produced an apparent offset (5h on a
+// CST host) that maintainers read as "the live log is displaying a different
+// time from the server time". Returns empty string on parse failure so the
+// caller can fall back to the raw stamp segment.
+inline std::wstring formatLocalClockFromIsoUtc(const std::wstring& isoStampUtc) {
+    if (isoStampUtc.size() < 19 || isoStampUtc[10] != L'T') return std::wstring{};
+    std::tm tm{};
+    std::wistringstream in(isoStampUtc);
+    in >> std::get_time(&tm, L"%Y-%m-%dT%H:%M:%S");
+    if (in.fail()) return std::wstring{};
+#if defined(_WIN32)
+    const auto stampTime = _mkgmtime(&tm);
+#else
+    const auto stampTime = timegm(&tm);
+#endif
+    if (stampTime == static_cast<std::time_t>(-1)) return std::wstring{};
+    std::tm local{};
+#if defined(_WIN32)
+    if (localtime_s(&local, &stampTime) != 0) return std::wstring{};
+#else
+    if (localtime_r(&stampTime, &local) == nullptr) return std::wstring{};
+#endif
+    wchar_t buffer[16]{};
+    swprintf_s(buffer, L"%02d:%02d:%02d",
+               local.tm_hour, local.tm_min, local.tm_sec);
+    return std::wstring(buffer);
 }
 
 inline std::wstring formatPercent(const double value) {

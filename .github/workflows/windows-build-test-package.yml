@@ -3,7 +3,7 @@ name: Windows Build, Test, and Package
 # PHASE-10 release-gate hard rule (ADR-002 §10):
 # This workflow is the same-SHA product gate. It MUST stay triggered by
 # `push` and `pull_request` only. DO NOT add `workflow_dispatch` here —
-# manual dispatch would let an operator bypass a failing CI run by re-running
+# manual dispatch would let a maintainer bypass a failing CI run by re-running
 # from a clean state. The release workflow (.github/workflows/release.yml)
 # explicitly verifies that this workflow succeeded on the same SHA before
 # any artifact ships. FORBIDDEN-CONTRACT §6.2 greps for the bypass pattern.
@@ -24,7 +24,13 @@ concurrency:
 
 jobs:
   windows-product-gate:
-    runs-on: windows-latest
+    # MasterControlShell.vcxproj is pinned to Platform Toolset v145 (Visual
+    # Studio 18 / VS2026), which is not available on `windows-latest` (= VS2022
+    # / v143). Per the GitHub runner-image roll-out for May 2026, the
+    # `windows-2025` label redirects to `windows-2025-vs2026` and ships the
+    # v145 toolset preinstalled. If that label is renamed in the future, also
+    # update release.yml's runner.
+    runs-on: windows-2025-vs2026
     env:
       PACKAGE_ROOT: dist/packages/release
 
@@ -80,12 +86,71 @@ jobs:
       - name: Bootstrap vcpkg and install dependencies
         shell: pwsh
         run: |
-          vcpkg install nlohmann-json:x64-windows
+          # vcpkg.json at the repo root puts vcpkg in manifest mode, where
+          # `vcpkg install <port>` is rejected with "In manifest mode, vcpkg
+          # install does not support individual package arguments." The
+          # manifest already lists nlohmann-json (and is the source of truth
+          # for any future deps), so the manifest-mode form is the right
+          # invocation here. The CMake preset's vcpkg toolchain file would
+          # also auto-install at configure time; running it explicitly first
+          # keeps the early-fail-loudly property when vcpkg.json is malformed.
+          vcpkg install --triplet x64-windows
 
       - name: Check repository version metadata
         shell: pwsh
         run: |
           pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/Sync-RepositoryVersionBadges.ps1 -CheckOnly
+
+      - name: Propagate VCPKG_ROOT for the CMake preset
+        shell: pwsh
+        run: |
+          # CMakeLists.txt:14-20 throws "VCPKG_ROOT is not set in the current
+          # environment" because CMakePresets.json references
+          # $env{VCPKG_ROOT}. github-hosted windows runners pre-install
+          # vcpkg at $env:VCPKG_INSTALLATION_ROOT (documented at
+          # https://github.com/actions/runner-images); copy it into
+          # VCPKG_ROOT for every subsequent step in this job.
+          if (-not $env:VCPKG_INSTALLATION_ROOT) {
+            Write-Error "VCPKG_INSTALLATION_ROOT is not set on this runner; cannot derive VCPKG_ROOT."
+            exit 1
+          }
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "VCPKG_ROOT will be: $env:VCPKG_INSTALLATION_ROOT"
+
+      - name: Discover vstest.console.exe for the Forsetti test runner
+        shell: pwsh
+        run: |
+          # CMakeLists.txt's find_program for MASTERCONTROL_VSTEST_CONSOLE
+          # checks a small set of well-known prefixes (VS2022 Community/
+          # BuildTools, VS18 Community/BuildTools). The github-hosted
+          # windows-2025-vs2026 runner installs VS Enterprise at a different
+          # prefix; vswhere is the documented discovery path. Find the
+          # latest install with the test-window component, locate
+          # vstest.console.exe under its CommonExtensions tree, and export
+          # the path so cmake configure picks it up before the test target
+          # is built. Without this, the Forsetti tests fail with "Unable to
+          # locate vstest.console.exe" at ctest time.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            Write-Warning "vswhere.exe not found at $vswhere; skipping vstest.console.exe discovery."
+            return
+          }
+          $vsRoot = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsRoot) {
+            Write-Warning "vswhere did not resolve a VS install; skipping vstest.console.exe discovery."
+            return
+          }
+          $candidates = @(
+            (Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe'),
+            (Join-Path $vsRoot 'Common7\IDE\Extensions\TestPlatform\vstest.console.exe')
+          )
+          $found = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $found) {
+            Write-Warning "vstest.console.exe not found under $vsRoot; cmake will warn at configure time."
+            return
+          }
+          Write-Host "MASTERCONTROL_VSTEST_CONSOLE will be: $found"
+          "MASTERCONTROL_VSTEST_CONSOLE=$found" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Configure (Release)
         shell: pwsh
@@ -102,6 +167,27 @@ jobs:
         run: |
           ctest --test-dir build/release -C Release --output-on-failure --timeout 300
 
+      - name: Install WiX 5 toolset for MSI authoring
+        shell: pwsh
+        run: |
+          # installer/Build-Msi.ps1 invokes the WiX 5 global tool plus the
+          # WixToolset.UI and WixToolset.Util extensions. These are not
+          # pre-installed on the github-hosted windows-2025-vs2026 runner;
+          # without them the Package script falls back to zip-only output
+          # and the smoke step fails because the MSI/EXE staging tree
+          # isn't replicated into the bundle directory. Install once here.
+          dotnet tool install --global wix --version 5.0.2 2>&1 | Out-Host
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) { throw "dotnet tool install wix failed (exit $LASTEXITCODE)" }
+          # Add the dotnet global tool path to GITHUB_PATH so subsequent
+          # steps (Package) can resolve `wix` via Get-Command.
+          $toolPath = Join-Path $env:USERPROFILE ".dotnet\tools"
+          "$toolPath" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          $env:Path = "$toolPath;$env:Path"
+          wix --version | Out-Host
+          wix extension add --global WixToolset.UI.wixext/5.0.2 2>&1 | Out-Host
+          wix extension add --global WixToolset.Util.wixext/5.0.2 2>&1 | Out-Host
+          wix extension list --global | Out-Host
+
       - name: Package
         shell: pwsh
         run: |
@@ -110,9 +196,35 @@ jobs:
       - name: Smoke validation - verify package contents
         shell: pwsh
         run: |
-          $packageDir = Get-ChildItem -Path $env:PACKAGE_ROOT -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $packageDir) {
-            Write-Error "No package output found in $env:PACKAGE_ROOT"
+          # Package-MasterControlOrchestrationServer.ps1 produces three
+          # artifacts in $env:PACKAGE_ROOT (= dist/packages/release):
+          #   1. <packageName>.msi  — WiX-built installer wrapping every EXE
+          #   2. <packageName>.zip  — portable ZIP
+          #   3. <packageName>/      — bundle dir with PACKAGE-METADATA.json,
+          #                            INSTALL.txt, START-HERE.txt, and a copy
+          #                            of the .msi
+          # The raw EXEs themselves live in build/_payload/<packageName>/
+          # (the cmake --install staging tree the script then wraps); the
+          # smoke step verifies BOTH that the canonical artifact (.msi) was
+          # produced AND that the staging tree contains the 3 required
+          # service binaries.
+          $packageRoot = Resolve-Path $env:PACKAGE_ROOT
+          $msiFiles = @(Get-ChildItem -Path $packageRoot -Filter '*.msi' -ErrorAction SilentlyContinue)
+          if ($msiFiles.Count -eq 0) {
+            Write-Error "No MSI installer produced under $packageRoot"
+            exit 1
+          }
+          $msi = $msiFiles[0]
+          if ($msi.Length -lt 5MB) {
+            Write-Error ("MSI suspiciously small ({0:N0} bytes): {1}" -f $msi.Length, $msi.FullName)
+            exit 1
+          }
+          Write-Host ("Found MSI: {0}  ({1:N1} MB)" -f $msi.FullName, ($msi.Length / 1MB))
+
+          $packageName = [System.IO.Path]::GetFileNameWithoutExtension($msi.Name)
+          $stagingDir = Join-Path (Resolve-Path 'build/_payload') $packageName
+          if (-not (Test-Path $stagingDir)) {
+            Write-Error "Staging directory not found: $stagingDir"
             exit 1
           }
           $requiredFiles = @(
@@ -121,12 +233,20 @@ jobs:
             "MasterControlBootstrapper.exe"
           )
           foreach ($file in $requiredFiles) {
-            $found = Get-ChildItem -Path $packageDir.FullName -Recurse -Filter $file
+            $found = Get-ChildItem -Path $stagingDir -Recurse -Filter $file
             if (-not $found) {
-              Write-Error "Missing required binary: $file"
+              Write-Error "Missing required binary in staging tree: $file"
               exit 1
             }
-            Write-Host "Found: $($found.FullName)"
+            Write-Host "Found in staging: $($found.FullName)"
+          }
+
+          $bundleDir = Join-Path $packageRoot $packageName
+          if (Test-Path $bundleDir) {
+            $metadataPath = Join-Path $bundleDir 'PACKAGE-METADATA.json'
+            if (Test-Path $metadataPath) {
+              Write-Host "Found bundle metadata: $metadataPath"
+            }
           }
           $versionJson = Get-Content -Path VERSION.json -Raw | ConvertFrom-Json
           Write-Host "Package version: $($versionJson.current_version)"
@@ -134,12 +254,23 @@ jobs:
       - name: Bootstrapper preflight validation
         shell: pwsh
         run: |
+          # The bootstrapper EXE lives in the staging tree
+          # (build/_payload/<packageName>/), not under PACKAGE_ROOT --
+          # the .msi wraps it but we can't run it from inside the .msi
+          # directly. Look in PACKAGE_ROOT first (in case a future change
+          # moves it), then fall back to the staging tree.
           $bootstrapper = Get-ChildItem -Path $env:PACKAGE_ROOT -Recurse -Filter "MasterControlBootstrapper.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $bootstrapper) {
+            $stagingRoot = Resolve-Path 'build/_payload' -ErrorAction SilentlyContinue
+            if ($stagingRoot) {
+              $bootstrapper = Get-ChildItem -Path $stagingRoot -Recurse -Filter "MasterControlBootstrapper.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            }
+          }
           if ($bootstrapper) {
             & $bootstrapper.FullName preflight --json-output 2>&1 | Out-Host
             Write-Host "Bootstrapper preflight completed (exit: $LASTEXITCODE)"
           } else {
-            Write-Warning "Bootstrapper binary not found in package output - skipping preflight"
+            Write-Warning "Bootstrapper binary not found in package output or staging tree - skipping preflight"
           }
 
       - name: Upload package artifact

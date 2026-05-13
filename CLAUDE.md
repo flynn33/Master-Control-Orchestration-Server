@@ -10,9 +10,9 @@ MCOS must no longer embed direct AI-provider execution. External AI clients runn
 - Do not reintroduce direct provider execution inside MCOS.
 - Treat ChatGPT, Codex, Claude Code, Grok, and generic agents as external clients, not embedded providers.
 - LAN AI-client surfaces require no application-layer authentication. Trust is enforced at the network level.
-- Keep the admin/operator surface logically separate from the AI-client MCP Gateway surface.
+- Keep the admin/maintainer surface logically separate from the AI-client MCP Gateway surface.
 - Use a gateway pattern: clients connect to one MCOS-advertised MCP endpoint.
-- Preferred first gateway implementation is MCPJungle behind an `IMcpGateway` adapter.
+- Gateway substrate is the in-process Windows-native HTTP.sys adapter (`NativeHttpSysGatewayAdapter`) behind the `IMcpGateway` interface. This replaces the v0.6-v0.8 `McpJungleGatewayAdapter`, which was retired at v0.9.0. Any new substrate must implement `IMcpGateway` and be wired through `cfg.mcpGateway.type` so the topology stays single-endpoint to clients.
 - MCOS remains the Windows-native C++20 orchestration host.
 - Use Windows-native APIs first: Win32, HTTP.sys, WinHTTP, DNS-SD APIs, Job Objects, PDH, DXGI, ETW/TraceLogging where appropriate.
 - Preserve Forsetti module boundaries and do not modify vendored Forsetti framework code.

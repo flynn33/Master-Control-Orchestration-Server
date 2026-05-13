@@ -1,13 +1,17 @@
 # Architecture
 
 ![governing](https://img.shields.io/badge/governing-ADR--002-5a00e8?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.10.14-00f6ff?style=flat-square)
 ![layer](https://img.shields.io/badge/layer-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20vanilla%20JS-00f6ff?style=flat-square)
-![phases](https://img.shields.io/badge/architecture-PHASE--00..PHASE--12-00aacc?style=flat-square)
-![substrates](https://img.shields.io/badge/gateway%20substrates-mcpjungle%20%2B%20native-1cf2c1?style=flat-square)
+![toolchain](https://img.shields.io/badge/toolchain-VS2026%20%E2%80%A2%20v145%20%E2%80%A2%20CMake%204.x-5a00e8?style=flat-square)
+![phases](https://img.shields.io/badge/architecture-PHASE--00..PHASE--14-00aacc?style=flat-square)
+![gateway](https://img.shields.io/badge/gateway-native%20HTTP.sys-1cf2c1?style=flat-square)
 
 Canonical map of how MCOS is structured. When in doubt, the source files referenced here are ground truth — every assertion on this page points to a real header, route, or test.
 
-The architecture target is the **gateway-first MCP host** declared in [ADR-002](ADR-002-gateway-first-mcp-realignment) and the substrate question is decided by [ADR-003](ADR-003-mcp-gateway-substrate-decision) (status-updated 2026-05-05: both supervised MCPJungle and Windows-native HTTP.sys now ship and are operator-selectable). The original [ADR-001 LAN client identity model](ADR-001-lan-client-control-plane) survives as the operator surface that coexists with the AI-client gateway surface. v0.7.0 marks the architecture-complete milestone — every numbered phase from PHASE-00 (repo baseline + ADR lock) through PHASE-12 follow-up (native gateway with stdio bridge to supervised pool children, v0.6.10) is delivered. PHASE-13 visual polish is scheduled for v0.7.x point releases.
+The architecture target is the **gateway-first MCP host** declared in [ADR-002](ADR-002-gateway-first-mcp-realignment). The substrate question was settled by [ADR-003](ADR-003-mcp-gateway-substrate-decision): MCPJungle was retired at v0.9.0; the sole current gateway substrate is the in-process `NativeHttpSysGatewayAdapter` on top of HTTP.sys. The original [ADR-001 LAN client identity model](ADR-001-lan-client-control-plane) survives as the maintainer surface that coexists with the AI-client gateway surface. v0.10.14 is the current target — phases PHASE-00 through PHASE-12 are delivered; PHASE-13 (Win2D shell rendering) and PHASE-14 (comprehensive diagnostics) are scheduled.
+
+Three maintainer-deck features are part of the WinUI Shell Overview surface: **direct AI plugin slots** (v0.10.12+) let the maintainer activate exactly one of Claude Code, ChatGPT, or Grok as the connected client — the selections are mutually exclusive and MCOS issues the appropriate connector config on activation; the **Supervisor Wizard** (v0.9.76+) lets the maintainer pick a supervisor model (Claude/ChatGPT/Grok) and export a model-specific JSON config for LAN import; and the **reachability self-check** (v0.10.13) exposes `GET /api/supervisor/reachability-check`, which probes MCOS's own loopback and LAN-IP variants and reports results to the shell.
 
 ---
 
@@ -25,23 +29,23 @@ flowchart LR
         AC1[Claude Code, Codex,<br/>Grok, ChatGPT, generic MCP]
     end
 
-    subgraph Operator[Operator]
+    subgraph Maintainer[Maintainer]
         OP1[Browser dashboard<br/>+ WinUI shell]
     end
 
     subgraph Host[Master Control Orchestration Server <br/>single Windows service]
         AIClientSurface[AI-client surface<br/>auth=none, trust=lan]:::accent
-        OperatorSurface[Operator surface<br/>LAN-trusted with privilege gates]:::accent
+        MaintainerSurface[Maintainer surface<br/>LAN-trusted with privilege gates]:::accent
     end
 
     AIClients -->|"MCP Gateway URL<br/>(advertised via DNS-SD)"| AIClientSurface
-    Operator -->|"Admin API + dashboard<br/>(per-client privilege gates)"| OperatorSurface
+    Maintainer -->|"Admin API + dashboard<br/>(per-client privilege gates)"| MaintainerSurface
 
     AIClientSurface -.-> AIClientSurface_Note[/no app-layer auth /<br/>trust at network layer/]:::sub
-    OperatorSurface -.-> OperatorSurface_Note[/X-MCOS-Client-Id middleware /<br/>nine-flag privilege model/]:::sub
+    MaintainerSurface -.-> MaintainerSurface_Note[/X-MCOS-Client-Id middleware /<br/>nine-flag privilege model/]:::sub
 ```
 
-The AI-client surface is gateway-first (PHASE-02 onward). The operator surface preserves the ADR-001 LAN client identity model with `X-MCOS-Client-Id` and per-client privileges. Network firewall scoping (`Profile=Private,Domain`) is the load-bearing trust control on both surfaces.
+The AI-client surface is gateway-first (PHASE-02 onward). The maintainer surface preserves the ADR-001 LAN client identity model with `X-MCOS-Client-Id` and per-client privileges. Network firewall scoping (`Profile=Private,Domain`) is the load-bearing trust control on both surfaces.
 
 ---
 
@@ -60,7 +64,7 @@ flowchart TB
         Other[/Generic MCP on host C/]:::client
     end
 
-    subgraph Surfaces[Operator surfaces on the host]
+    subgraph Surfaces[Maintainer surfaces on the host]
         Browser[Browser dashboard<br/>resources/web/]:::accent
         Shell[WinUI 3 shell<br/>src/MasterControlShell/]:::accent
     end
@@ -79,12 +83,11 @@ flowchart TB
         Sup[WorkerSupervisor<br/>Job Object + stdio bridge]:::accent
         Lease[LeaseRouter<br/>sticky / least-loaded]:::accent
         Tel[TelemetryAggregator]:::accent
-        Adapter[(IMcpGateway:<br/>McpJungleGatewayAdapter OR<br/>NativeHttpSysGatewayAdapter)]:::good
+        Adapter[(IMcpGateway:<br/>NativeHttpSysGatewayAdapter)]:::good
         Pools[(Managed Endpoint Pools)]:::good
     end
 
     subgraph External[Spawned processes under Job Object containment]
-        Jungle[(MCPJungle binary<br/>only when type=mcpjungle)]:::sub
         Workers[(MCP server / sub-agent<br/>backend instances)]:::sub
     end
 
@@ -105,10 +108,9 @@ flowchart TB
     Runtime --> Lease
     Runtime --> Tel
     Runtime --> Adapter
-    Adapter ==>|"type=mcpjungle: supervises"| Jungle
-    Adapter ==>|"type=native: tools/call via stdio bridge"| Sup
+    Adapter ==>|"tools/call via stdio bridge"| Sup
     Sup ==>|"spawns + supervises<br/>+ redirects stdin/stdout"| Workers
-    Adapter -->|"registers logical pools"| Sup
+    Adapter -->|"registers logical pools"| Lease
     Lease -->|"route requests to"| Pools
     Sup -->|"manages"| Pools
     Pools -.->|"heartbeats"| Tel
@@ -118,11 +120,11 @@ flowchart TB
 
 ## 3. The eleven required terms
 
-ADR-002 §1 fixes the vocabulary. Use these terms exactly throughout the codebase, the docs, and operator communication:
+ADR-002 §1 fixes the vocabulary. Use these terms exactly throughout the codebase, the docs, and maintainer communication:
 
 | Term | Meaning | Lives in |
 |---|---|---|
-| **MCP Gateway** | The single MCOS-advertised MCP endpoint AI clients connect to | `IMcpGateway` / `McpJungleGatewayAdapter` / `NativeHttpSysGatewayAdapter` |
+| **MCP Gateway** | The single MCOS-advertised MCP endpoint AI clients connect to | `IMcpGateway` / `NativeHttpSysGatewayAdapter` |
 | **LAN Discovery Service** | DNS-SD + UDP beacon advertising the gateway URL | `DiscoveryService` |
 | **Client Onboarding Profile** | Per-client-type config bundle MCOS hands out at first connect | `IOnboardingProfileService` + `/api/onboarding/{clientType}` |
 | **Governance Bundle** | Forsetti + agentic-coding instructions per platform | `IGovernanceBundleService` + `/api/governance/bundles/{platform}` |
@@ -167,13 +169,12 @@ flowchart TB
     subgraph L3[Layer 3 - Supervision and substrate]
       direction LR
       Supervisor[Worker Supervisor]:::C
-      GatewayAdapter[IMcpGateway adapter]:::C
+      GatewayAdapter[IMcpGateway adapter<br/>NativeHttpSysGatewayAdapter in-process]:::C
       JobObj[Windows Job Objects]:::D
     end
 
     subgraph L4[Layer 4 - Spawned processes]
       direction LR
-      JungleBin[MCPJungle binary<br/>only when mcpGateway.type=mcpjungle]:::D
       Backends[Backend MCP servers and sub-agents<br/>spawned by supervisor with stdin/stdout pipes]:::D
     end
 
@@ -227,7 +228,7 @@ The seven states from PHASE-06.
 ```mermaid
 stateDiagram-v2
     [*] --> Configured: pool registered
-    Configured --> Starting: scale-up trigger or operator action
+    Configured --> Starting: scale-up trigger or maintainer action
     Starting --> Ready: probe says healthy
     Starting --> Failed: spawn / probe failure
     Ready --> Busy: lease acquired
@@ -278,13 +279,13 @@ The dashboard's `formatMetric()` helper (in `resources/web/app.js`) renders `-1.
 
 ---
 
-## 8. The 12 phases of the realignment
+## 8. The phases of the realignment
 
-ADR-002 was delivered in 12 explicitly labeled phases. Every phase has its own file in `handoff/realignment/` plus a completion report.
+ADR-002 was delivered in explicitly labeled phases (PHASE-00 through PHASE-12 complete; PHASE-13 and PHASE-14 scheduled). Every phase has its own file in `handoff/realignment/` plus a completion report.
 
 ```mermaid
 gantt
-    title MCOS Realignment Program (PHASE-00..PHASE-11)
+    title MCOS Realignment Program (PHASE-00..PHASE-14)
     dateFormat  YYYY-MM-DD
     axisFormat  %m-%d
 
@@ -309,9 +310,14 @@ gantt
     PHASE-09 Tron dashboard realignment    :done, p9, after p8, 1d
     PHASE-10 Windows hardening, CI, MSI    :done, p10, after p9, 1d
     PHASE-11 Native gateway evaluation     :done, p11, after p10, 1d
+
+    section Native gateway and shell
+    PHASE-12 Native HTTP.sys gateway       :done, p12, after p11, 1d
+    PHASE-13 Win2D shell rendering         :scheduled, p13, after p12, 1d
+    PHASE-14 Comprehensive diagnostics     :scheduled, p14, after p13, 1d
 ```
 
-Each phase ended with a written completion report. See [Versions](Versions) for the full timeline + commit SHAs.
+Each phase ended with a written completion report. PHASE-12 (native HTTP.sys gateway, v0.9.0) is complete. PHASE-13 (Win2D shell rendering) and PHASE-14 (comprehensive diagnostics, maintainer-approved) are scheduled for post-v0.10.x delivery. See [Versions](Versions) for the full timeline + commit SHAs.
 
 ---
 
@@ -332,7 +338,7 @@ Each phase ended with a written completion report. See [Versions](Versions) for 
 | `scripts/` | Build, package, sync, compliance, deployment scripts |
 | `Forsetti-Framework-Windows-main/` | Vendored Forsetti framework — sealed by ADR-002 §11 |
 | `tests/` | C++ tests (`MasterControlOrchestrationServerTests.cpp`) |
-| `docs/wiki/` | Operator-facing documentation (mirror of the GitHub wiki) |
+| `docs/wiki/` | Maintainer-facing documentation (mirror of the GitHub wiki) |
 | `docs/implementation/` | Internal architecture, schemas, drift inventory, FORBIDDEN-CONTRACT |
 | `handoff/realignment/` | Phase manifests + phase files + completion reports |
 
@@ -364,7 +370,7 @@ The same pipeline runs in CI via `.github/workflows/windows-build-test-package.y
 
 ## 11. Configuration
 
-`mcos.json` lives at `%ProgramData%\Master Control Orchestration Server\mcos.json` after install. Operators edit it directly or via the WinUI Settings panel. Key fields:
+`mcos.json` lives at `%ProgramData%\Master Control Orchestration Server\mcos.json` after install. Maintainers edit it directly or via the WinUI Settings panel. Key fields:
 
 ```json
 {
@@ -375,7 +381,7 @@ The same pipeline runs in CI via `.github/workflows/windows-build-test-package.y
   "beaconPort": 7301,
   "beaconEnabled": true,
   "mcpGateway": {
-    "type": "mcpjungle",
+    "type": "native",
     "enabled": false,
     "binaryPath": "",
     "listenHost": "0.0.0.0",
@@ -384,6 +390,9 @@ The same pipeline runs in CI via `.github/workflows/windows-build-test-package.y
     "healthPath": "/health",
     "mode": "lan-trusted"
   },
+  // "type" is retained for back-compat deserialization of pre-v0.9.0 config files only.
+  // The runtime always selects NativeHttpSysGatewayAdapter regardless of this field value.
+  // "mcpjungle" was the prior value; it is no longer a valid substrate (retired v0.9.0).
   "security": { "allowOpenLanAccess": false },
   "resourcePolicy": {
     "cpuAllocationPercent": 50,
@@ -407,4 +416,4 @@ Default values come from `buildDefaultConfiguration()` in `src/MasterControlApp/
 - **Telemetry surface** → [Telemetry and Activity](Telemetry-and-Activity)
 - **HTTP routes** → [API Reference](API-Reference)
 - **Dashboard tour** → [Dashboard](Dashboard)
-- **Operator surface (ADR-001)** → [LAN Clients](LAN-Clients), [Privileges](Privileges), [Client Config Bundle](Client-Config-Bundle)
+- **Maintainer surface (ADR-001)** → [LAN Clients](LAN-Clients), [Privileges](Privileges), [Client Config Bundle](Client-Config-Bundle)

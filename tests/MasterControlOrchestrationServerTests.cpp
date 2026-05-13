@@ -19,7 +19,7 @@
 // in src/MasterControlApp/; the relative include matches the
 // MasterControlApp target's PUBLIC include path so this resolves
 // without extending the test target's include dirs.
-#include "../src/MasterControlApp/SupervisorAssignmentService.h"
+#include "SupervisorAssignmentService.h"
 
 #include <nlohmann/json.hpp>
 
