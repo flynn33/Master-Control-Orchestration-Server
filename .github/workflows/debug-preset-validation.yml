@@ -1,0 +1,127 @@
+name: Debug Preset Validation
+
+# Gates the project's "Required validation baseline" -- the four-step
+# chain the repository's top-level agent-instruction file prescribes
+# for every contributor before declaring a phase complete:
+#
+#   cmake --preset debug
+#   cmake --build --preset debug
+#   ctest --preset debug --output-on-failure
+#   scripts\check-mastercontrol-forsetti.ps1
+#
+# The release product gate (.github/workflows/windows-build-test-package.yml)
+# already runs the Release preset, packages an MSI, and smoke-validates
+# the staging tree. That gate is load-bearing for releases but slow.
+# This workflow runs the same source-of-truth validation on every
+# PR and every push to main, on the Debug preset, with no packaging
+# or MSI authoring. Failing this workflow means the prescribed
+# contributor validation chain does not pass on the proposed change.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: debug-preset-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  debug-preset-validation:
+    # MasterControlShell.vcxproj is pinned to Platform Toolset v145
+    # (Visual Studio 18 / VS2026). `windows-latest` resolves to VS2022
+    # / v143 and fails MSB8020. Keep this runner in lockstep with
+    # windows-build-test-package.yml and release.yml.
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Discover and document toolchain
+        shell: pwsh
+        run: |
+          $vsInstall = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          Write-Host "Visual Studio install: $vsInstall"
+          # The project's validation-reporting rule (evidence-rules
+          # discipline) forbids claiming a build passed without
+          # actually running. Surfacing tool versions up front gives
+          # any audit log the objective state of the toolchain that
+          # produced the build/test result rows below.
+          cmake --version
+
+      - name: Bootstrap vcpkg dependencies (manifest mode)
+        shell: pwsh
+        run: |
+          # vcpkg.json at the repo root puts vcpkg in manifest mode.
+          # Per memory-tracked CI fix history, manifest-mode is the
+          # only supported invocation here; passing individual port
+          # arguments produces "In manifest mode, vcpkg install does
+          # not support individual package arguments."
+          vcpkg install --triplet x64-windows
+
+      - name: Propagate VCPKG_ROOT for the CMake preset
+        shell: pwsh
+        run: |
+          # CMakeLists.txt:14-20 hard-guards on VCPKG_ROOT because
+          # CMakePresets.json references $env{VCPKG_ROOT}. Github-hosted
+          # windows runners pre-install vcpkg at
+          # $env:VCPKG_INSTALLATION_ROOT; copy it into VCPKG_ROOT for
+          # every subsequent step in this job.
+          if (-not $env:VCPKG_INSTALLATION_ROOT) {
+            Write-Error "VCPKG_INSTALLATION_ROOT is not set on this runner; cannot derive VCPKG_ROOT."
+            exit 1
+          }
+          "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Discover vstest.console.exe
+        shell: pwsh
+        run: |
+          # Same discovery contract as the release product gate.
+          # CMakeLists.txt only searches a small set of well-known
+          # prefixes; the github-hosted VS Enterprise install lives
+          # elsewhere, so vswhere is the supported discovery path.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            Write-Warning "vswhere.exe not found at $vswhere; skipping vstest.console.exe discovery."
+            return
+          }
+          $vsRoot = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsRoot) {
+            Write-Warning "vswhere did not resolve a VS install; skipping vstest.console.exe discovery."
+            return
+          }
+          $candidates = @(
+            (Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe'),
+            (Join-Path $vsRoot 'Common7\IDE\Extensions\TestPlatform\vstest.console.exe')
+          )
+          $found = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $found) {
+            Write-Warning "vstest.console.exe not found under $vsRoot; cmake will warn at configure time."
+            return
+          }
+          "MASTERCONTROL_VSTEST_CONSOLE=$found" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Configure (Debug)
+        shell: pwsh
+        run: cmake --preset debug
+
+      - name: Build (Debug)
+        shell: pwsh
+        run: cmake --build --preset debug
+
+      - name: Test (CTest Debug)
+        shell: pwsh
+        run: ctest --preset debug --output-on-failure --timeout 300
+
+      - name: Forsetti compliance gate
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/check-mastercontrol-forsetti.ps1

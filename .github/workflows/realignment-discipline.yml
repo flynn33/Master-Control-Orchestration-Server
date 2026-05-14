@@ -1,0 +1,259 @@
+name: Realignment Discipline
+
+# Enforces the project's realignment hard rules as CI gates so a PR
+# cannot reintroduce a forbidden contract by accident. Pairs with the
+# AI Contributor Guard (no-attribution rule) and the Forsetti
+# Compliance workflow (vendored boundary rule) to provide static
+# coverage of every "do not" in the realignment instruction set.
+#
+# Rules covered (rule topic -> what this enforces):
+#
+#   MCOS realignment rule
+#     - "MCPJungle gateway adapter retired v0.9.0" -> reintroducing
+#       the retired adapter class is blocked
+#     (The realignment rule's "no fake telemetry / no live-looking
+#     seeded infrastructure" guidance is not gated by this workflow.
+#     A robust grep for that anti-pattern is intent-sensitive --
+#     hardcoded fake metrics, placeholder strings, and TODO markers
+#     in telemetry code can all look identical to a legitimate
+#     unavailable-sentinel default at the syntax level. Currently
+#     enforced by code review against the honest-unavailable-sentinel
+#     contract documented in the realignment rule.)
+#
+#   Windows-native C++ rule
+#     - "Do not add Java or interpreted runtime dependencies as core
+#       MCOS implementation. Python may be used for test tooling only,
+#       not MCOS source implementation."
+#
+#   MCP gateway + discovery rule
+#     - "Do not require each client to discover or configure every
+#       backend MCP server. MCOS advertises one gateway endpoint."
+#     - "Do not expose autoscaled clones directly" -> no per-clone
+#       public tool namespace registration helper
+#
+#   PHASE-10 release-gate rule + the project ADR on release gating
+#     - "Manual dispatch cannot bypass successful same-SHA build."
+#       The release workflow and the windows-product-gate workflow
+#       must not carry workflow_dispatch triggers.
+#
+# Each check fails loudly with the specific rule it would violate so
+# the reviewer can point at the exact constraint in the project's
+# realignment rules directory.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: realignment-discipline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  realignment-discipline:
+    # No native compilation required, so the cheapest available linux
+    # image is fine. Keep the discipline checks fast so they gate
+    # every push without delaying contributor feedback.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Rule windows-native-cpp - no Java runtime in MCOS source
+        shell: bash
+        run: |
+          # MCOS source is C++20. Java references in src/ or include/
+          # indicate an interpreted-runtime dependency the realignment
+          # rule explicitly forbids. README, docs, vendored Forsetti
+          # framework files, and Java client examples under docs/ are
+          # out of scope.
+          hits=$(grep -RIn --include='*.cpp' --include='*.hpp' --include='*.h' --include='*.cc' \
+                       -E '#include\s+<jni\.h>|JNIEnv|JNIEXPORT|JNICALL' \
+                       src/ include/ 2>/dev/null || true)
+          if [ -n "$hits" ]; then
+            echo "::error::JNI / Java-runtime symbols in MCOS source. The Windows-native C++ rule forbids interpreted runtime dependencies in core MCOS implementation."
+            echo "$hits"
+            exit 1
+          fi
+          echo "OK: no JNI/Java imports under src/ or include/."
+
+      - name: Rule windows-native-cpp - Python only under tests/
+        shell: bash
+        run: |
+          # Python may be used for test tooling only. Production
+          # MCOS code must not depend on a Python runtime at run-time.
+          # Allowed locations: tests/, scripts/, installer/,
+          # .github/workflows scripts, and other tooling outside src/.
+          stray=$(find src include -type f -name '*.py' 2>/dev/null || true)
+          if [ -n "$stray" ]; then
+            echo "::error::Python files found under src/ or include/. The Windows-native C++ rule restricts Python to test tooling only."
+            echo "$stray"
+            exit 1
+          fi
+          echo "OK: no stray *.py files under src/ or include/."
+
+      - name: Rule realignment - no MCPJungle adapter reintroduction
+        shell: bash
+        run: |
+          # MCPJungle was retired at v0.9.0; NativeHttpSysGatewayAdapter
+          # is the shipping substrate. The forbidden thing is the
+          # retired ADAPTER CLASS (McpJungleGatewayAdapter), not the
+          # legacy GatewayType::MCPJungle enum value or the
+          # "mcpjungle" serialization string -- both of those are
+          # intentionally retained for back-compat config
+          # deserialization (config files written by pre-v0.9.0 MCOS
+          # installs still round-trip cleanly) and the test suite
+          # explicitly verifies that contract. This check fires only
+          # if the adapter class itself reappears as a live symbol,
+          # which would mean a real reintroduction of the retired
+          # gateway substrate.
+          hits=$(grep -RIn -E 'McpJungleGatewayAdapter|class\s+McpJungle' \
+                       src/ include/ 2>/dev/null || true)
+          # Exclude purely-comment historical references (the legacy
+          # transition note in McpGatewayAdapters.cpp is allowed).
+          # The alternation covers every comment-line prefix that
+          # appears in this codebase:
+          #   //         - line comment
+          #   /*  / /**  - block-comment opener (incl. doxygen-style)
+          #   *          - block-comment continuation line
+          # Listing /\* and /\*\* before the bare \* matters: regex
+          # alternation tries left-to-right and would otherwise match
+          # the bare \* on a /\* line at the wrong column, which is
+          # harmless here but keeps the pattern more obviously correct.
+          filtered=$(echo "$hits" | grep -vE '^[^:]*:[0-9]+:\s*(//|/\*\*|/\*|\*)' || true)
+          if [ -n "$filtered" ]; then
+            echo "::error::McpJungleGatewayAdapter has been reintroduced. The MCOS realignment rule retired this gateway at v0.9.0; the NativeHttpSysGatewayAdapter is the only shipping substrate."
+            echo "$filtered"
+            exit 1
+          fi
+          echo "OK: no McpJungleGatewayAdapter class reintroduction in src/ or include/."
+
+      - name: Rule PHASE-10 - release gate cannot be bypassed
+        shell: bash
+        run: |
+          # PHASE-10 release-gate hard rule: the same-SHA product
+          # gate (.github/workflows/windows-build-test-package.yml)
+          # and the tag-triggered release workflow
+          # (.github/workflows/release.yml) must not be
+          # workflow_dispatch-able. Manual dispatch would let a
+          # maintainer publish a release without a passing build, or
+          # re-run the gate from a clean state to bypass a failure.
+          fail=0
+          for f in .github/workflows/windows-build-test-package.yml .github/workflows/release.yml; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Required gate workflow missing: $f"
+              fail=1
+              continue
+            fi
+            if grep -E '^\s*workflow_dispatch\s*:' "$f" >/dev/null; then
+              echo "::error::$f carries a workflow_dispatch trigger. The PHASE-10 release-gate ADR forbids manual dispatch on the release/product-gate workflows; manual dispatch would let a maintainer bypass a failing CI run."
+              fail=1
+            fi
+          done
+          if [ $fail -ne 0 ]; then
+            exit 1
+          fi
+          echo "OK: neither release workflow carries workflow_dispatch."
+
+      - name: Rule PHASE-10 - no hardcoded VS Enterprise paths
+        shell: bash
+        run: |
+          # The PHASE-10 release-gate ADR forbids hardcoded VS
+          # Enterprise install paths in workflow steps and resolver
+          # scripts; vswhere is the only supported discovery path.
+          # Catching this in CI keeps a quick-fix from silently
+          # pinning the toolchain to a specific edition.
+          hits=$(grep -RIn 'Microsoft Visual Studio[\\/][0-9.]\+[\\/]Enterprise' \
+                       .github/workflows scripts 2>/dev/null || true)
+          if [ -n "$hits" ]; then
+            echo "::error::Hardcoded VS Enterprise path detected. The PHASE-10 release-gate ADR requires vswhere-based discovery; never pin to the Enterprise edition install path."
+            echo "$hits"
+            exit 1
+          fi
+          echo "OK: no hardcoded VS Enterprise install paths under .github/workflows or scripts/."
+
+      - name: Rule mcp-gateway - no per-clone public MCP tool registration
+        shell: bash
+        run: |
+          # "Do not expose autoscaled clones directly. Registering
+          # every spawned worker clone as a separate public MCP tool
+          # namespace will pollute client tool lists and break the
+          # gateway abstraction." Stable logical endpoints are the
+          # only public contract; clones live behind the lease router.
+          hits=$(grep -RIn -E 'registerClone|registerInstanceAsTool|publishClone|exposeClone' \
+                       src/ include/ 2>/dev/null || true)
+          if [ -n "$hits" ]; then
+            echo "::error::Per-instance public MCP tool registration helpers detected. The MCP gateway + discovery rule forbids exposing autoscaled clones directly; only stable logical endpoints are public."
+            echo "$hits"
+            exit 1
+          fi
+          echo "OK: no per-clone public tool registration helpers."
+
+      - name: Manifest.json is valid and identifies the active phase set
+        shell: bash
+        run: |
+          # The realignment manifest is the source of truth for phase
+          # discipline. If it stops parsing as JSON or loses its
+          # phases[] shape, every contributor instruction that cites
+          # "read the active phase file" breaks silently. CI catches
+          # both at the same time.
+          python - <<'PY'
+          import json, sys
+          path = "handoff/realignment/manifest.json"
+          try:
+              with open(path, "r", encoding="utf-8") as f:
+                  manifest = json.load(f)
+          except FileNotFoundError:
+              sys.stderr.write(f"::error::{path} not found.\n")
+              sys.exit(1)
+          except json.JSONDecodeError as exc:
+              sys.stderr.write(f"::error::{path} is not valid JSON: {exc}\n")
+              sys.exit(1)
+          phases = manifest.get("phases")
+          if not isinstance(phases, list) or not phases:
+              sys.stderr.write(f"::error::{path} has no phases[] array.\n")
+              sys.exit(1)
+          required = ("id", "label", "file", "objective", "deliverables", "acceptanceCriteria", "validation")
+          missing = []
+          for index, phase in enumerate(phases):
+              for key in required:
+                  if key not in phase:
+                      missing.append(f"phases[{index}] missing '{key}'")
+          if missing:
+              for m in missing:
+                  sys.stderr.write(f"::error::{m}\n")
+              sys.exit(1)
+          print(f"OK: manifest.json parses; {len(phases)} phases declared.")
+          PY
+
+      - name: AI Contributor Guard safeguards still present
+        shell: bash
+        run: |
+          # The "No AI attribution" rule is the operator's explicit
+          # carve-out: every other workflow may be rewritten, but
+          # the guard and its safeguards must remain. Fail loudly if
+          # a future rewrite accidentally drops them.
+          required_files=(
+            ".github/workflows/ai-contributor-guard.yml"
+            ".github/copilot-instructions.md"
+            "scripts/github_agents/check_no_ai_contributors.py"
+            "scripts/github_agents/common.py"
+          )
+          fail=0
+          for f in "${required_files[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Required AI-attribution safeguard missing: $f"
+              fail=1
+            fi
+          done
+          if [ $fail -ne 0 ]; then
+            exit 1
+          fi
+          echo "OK: all AI-attribution safeguard files present."
