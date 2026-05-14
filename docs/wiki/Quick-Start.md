@@ -109,7 +109,7 @@ Five checkboxes on the **Setup Options** dialog:
 |---|---|
 | Service | Service registered as `MasterControlProgram` (display name "Master Control Orchestration Server") + started |
 | Firewall | Four `New-NetFirewallRule` entries created on Private + Domain profiles. See the rule table in [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) |
-| URL ACL | `netsh http add urlacl url=http://+:8080/ user=Everyone` registered automatically by the bootstrapper, so the native HTTP.sys gateway can bind without elevation in console mode |
+| URL ACL | `netsh http add urlacl url=http://+:8080/ user=Everyone` registered automatically by the bootstrapper, so the in-process HTTP.sys adapter can bind without elevation in console mode |
 | Start Menu shortcut | Shortcut at `Start Menu → Master Control Orchestration Server → Master Control Orchestration Server` |
 | Desktop shortcut | Shortcut on every maintainer's desktop |
 | Launch on exit | Opens the WinUI shell when the installer finishes |

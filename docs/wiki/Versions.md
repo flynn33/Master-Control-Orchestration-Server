@@ -20,13 +20,13 @@
 | **Released** | `2026-05-11` |
 | **Theme** | LAN MCP Gateway + Supervisor Wizard + Direct AI plugin slots + audit remediation |
 | **Tag** | [`v0.10.14`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.10.14) |
-| **Gateway substrate** | `native` (in-process Windows HTTP.sys) — only shipping substrate as of v0.9.0. MCPJungle retired per maintainer directive. `cfg.mcpGateway.type` is retained for back-compat deserialization only; runtime always uses the native adapter. |
+| **Gateway substrate** | `native` (in-process Windows HTTP.sys) — only shipping substrate as of v0.9.0. the legacy external gateway retired per maintainer directive. `cfg.mcpGateway.type` is retained for back-compat deserialization only; runtime always uses the native adapter. |
 | **Live state on reference host** | 31/31 supervised worker pools healthy, 97 advertised gateway tools, 39/39 boot self-tests pass |
 | **Next** | v1.0.0+ candidates: CLU Phase 2/3 (`enforceAction` wiring), PHASE-14 DiagnosticsSectionControl with FileSavePicker, telemetry log rotation, PHASE-13 Win2D shell rendering |
 
 ### What v0.10.14 represents
 
-Aggregate release line spanning v0.9.4 through v0.10.14 on top of the v0.7.0 production-milestone baseline. The architecture established at v0.7.0 is unchanged — every phase from PHASE-00 through PHASE-12 remains delivered. v0.9.x and v0.10.x iterate on top of the locked architecture across four themes: (1) gateway-substrate simplification (MCPJungle dropped at v0.9.0, native HTTP.sys becomes the only path), (2) Supervisor Agent Assignment Wizard (v0.9.76+ — maintainer picks one supervisor model and MCOS issues a LAN-routable config the client uses to bind), (3) WinUI Shell tile-grid realignment (Telemetry, Runtime, and the cross-tab footer all render the same per-endpoint tile shape), (4) Direct AI plugin slots for Claude Code / ChatGPT / Grok with mutual exclusion (v0.10.12+) plus reachability self-check (v0.10.13) and audit remediation (v0.10.14: `.mcp.json` portability, scribe handoffDir derivation, register-pools.ps1 `$projectRoot` derivation, tests/CMakeLists.txt include path fix, and retired-MCPJungle doc scrubbing).
+Aggregate release line spanning v0.9.4 through v0.10.14 on top of the v0.7.0 production-milestone baseline. The architecture established at v0.7.0 is unchanged — every phase from PHASE-00 through PHASE-12 remains delivered. v0.9.x and v0.10.x iterate on top of the locked architecture across four themes: (1) gateway-substrate simplification (the in-process HTTP.sys adapter dropped at v0.9.0, native HTTP.sys becomes the only path), (2) Supervisor Agent Assignment Wizard (v0.9.76+ — maintainer picks one supervisor model and MCOS issues a LAN-routable config the client uses to bind), (3) WinUI Shell tile-grid realignment (Telemetry, Runtime, and the cross-tab footer all render the same per-endpoint tile shape), (4) Direct AI plugin slots for Claude Code / ChatGPT / Grok with mutual exclusion (v0.10.12+) plus reachability self-check (v0.10.13) and audit remediation (v0.10.14: `.mcp.json` portability, scribe handoffDir derivation, register-pools.ps1 `$projectRoot` derivation, tests/CMakeLists.txt include path fix, and retired-the in-process HTTP.sys adapter doc scrubbing).
 
 ```mermaid
 gantt
@@ -39,7 +39,7 @@ gantt
     PHASE-01 Provider-era cleanup          :done, p1, after p0, 1d
 
     section Gateway plus discovery
-    PHASE-02 IMcpGateway + MCPJungle adapter :done, p2, after p1, 1d
+    PHASE-02 IMcpGateway + native HTTP.sys adapter :done, p2, after p1, 1d
     PHASE-03 Bonjour LAN discovery         :done, p3, after p2, 1d
 
     section Onboarding plus governance
@@ -67,7 +67,7 @@ gantt
 
 ### Highlights across v0.6.x → v0.7.0
 
-- **`IMcpGateway` with three concrete adapters** — `McpJungleGatewayAdapter` (supervised external binary, the original v0.6.x substrate), `NativeHttpSysGatewayAdapter` (Windows-native HTTP.sys, in-process, no external binary), `FakeMcpGatewayAdapter` (test harness). Maintainers select via `mcpGateway.type`.
+- **`IMcpGateway` with three concrete adapters** — `NativeHttpSysGatewayAdapter` (supervised external binary, the original v0.6.x substrate), `NativeHttpSysGatewayAdapter` (Windows-native HTTP.sys, in-process, no external binary), `FakeMcpGatewayAdapter` (test harness). Maintainers select via `mcpGateway.type`.
 - **Stdio bridge** (v0.6.10) — `IWorkerSupervisor::sendStdioJsonRpc(instanceId, request, timeoutMs)` writes a `\n`-terminated JSON-RPC envelope to a supervised child's stdin, polls stdout via `PeekNamedPipe` + deadline-based `ReadFile`, parses newline-delimited JSON, matches by `id`. Per-instance mutex serializes concurrent calls. Native gateway uses this to forward `tools/call` end-to-end.
 - **DNS-SD + UDP beacon advertising** — three Bonjour service types (`_mcos._tcp.local`, `_mcos-mcp._tcp.local`, `_mcos-onboarding._tcp.local`) plus the legacy beacon, all carrying the canonical `DiscoveryDocument` (PHASE-03).
 - **Per-client-type onboarding profiles** — `claude-code`, `codex`, `grok`, `chatgpt`, `generic-mcp`. Manual setup is first-class (PHASE-04).
@@ -80,7 +80,7 @@ gantt
 - **Tron dashboard realigned to gateway-first** — eleven destinations covering every layer; `formatMetric()` honesty helper enforced by FORBIDDEN-CONTRACT §8.1 (PHASE-09).
 - **Per-instance browser sparkline charts** (v0.6.8) — Pools deck Canvas-rendered CPU% + RAM MB time-series, 60-sample ring per instance (~2 minutes at the 2 s polling cadence). Browser GPU-composites the canvas.
 - **Honest-503 listener** (v0.6.7) — gateway port returns structured JSON 503 instead of TCP RST when the supervised substrate has no binary configured. Replaced wholesale by the native HTTP.sys substrate when active.
-- **PHASE-12 MVP** (v0.6.9) — `NativeHttpSysGatewayAdapter` ships alongside `McpJungleGatewayAdapter`. Full HTTP.sys lifecycle (`HttpInitialize` → `HttpCreateServerSession` → `HttpCreateUrlGroup` → `HttpAddUrlToUrlGroup` → `HttpCreateRequestQueue` → `HttpSetUrlGroupProperty(BindingProperty)`); MCP `initialize` and `tools/list` end-to-end; `tools/call` returned an honest "stdio bridge pending" error pending v0.6.10.
+- **PHASE-12 MVP** (v0.6.9) — `NativeHttpSysGatewayAdapter` ships alongside `NativeHttpSysGatewayAdapter`. Full HTTP.sys lifecycle (`HttpInitialize` → `HttpCreateServerSession` → `HttpCreateUrlGroup` → `HttpAddUrlToUrlGroup` → `HttpCreateRequestQueue` → `HttpSetUrlGroupProperty(BindingProperty)`); MCP `initialize` and `tools/list` end-to-end; `tools/call` returned an honest "stdio bridge pending" error pending v0.6.10.
 - **PHASE-12 follow-up** (v0.6.10) — stdio bridge implementation, real `tools/list` aggregation across pools (with `serverName=poolId` attribution and qualified `{poolId}__{toolName}` advertisement), real `tools/call` forwarding via lease-router-selected instance, bootstrapper-installed URL ACL via `netsh http add urlacl url=http://+:<port>/ user=Everyone`. Plus correctness fixes shaken loose during smoke-test: HTTP.sys body extraction now drains via `HttpReceiveRequestEntityBody` after `HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY` (the v0.6.9 path missed bodies from PowerShell `Invoke-RestMethod` and chunked-TE clients), and `nlohmann::json{nullptr}` was producing `[null]` arrays in JSON-RPC error envelopes (replaced with explicit null-scalar construction).
 - **Claude Code Control toggle** (v0.6.1 / 0.6.3) — one-click directory-junction install of the bundled `mcos-control` plugin under `%USERPROFILE%\.claude\plugins\`. Toggle switch on the Overview deck of both browser dashboard and WinUI shell.
 - **Maintainer-set advertised IP** (v0.6.4) — `activeProfile.preferredBindAddress` is the primary source for the advertised LAN IP. On dual-stack hosts, the runtime no longer surfaces an IPv6 ULA when the maintainer pinned IPv4.
@@ -143,7 +143,7 @@ flowchart LR
 | --- | --- | --- |
 | `v0.7.0` | 2026-05-05 | **Production milestone** — architecture complete; PHASE-13 visual polish scheduled for v0.7.x |
 | `v0.6.10` | 2026-05-05 | PHASE-12 follow-up complete — stdio bridge, real `tools/list` + `tools/call` forwarding, URL ACL |
-| `v0.6.9` | 2026-05-05 | PHASE-12 MVP — `NativeHttpSysGatewayAdapter` ships alongside MCPJungle adapter |
+| `v0.6.9` | 2026-05-05 | PHASE-12 MVP — `NativeHttpSysGatewayAdapter` ships alongside native HTTP.sys adapter |
 | `v0.6.8` | 2026-05-05 | Pool persistence, per-instance browser sparkline charts, telemetry events ring producer, PHASE-12 + PHASE-13 plan files |
 | `v0.6.7` | 2026-05-05 | Honest-503 listener on gateway port (no more TCP RST in supervised-mock mode) |
 | `v0.6.5..v0.6.6` | 2026-05-04 | Per-instance CPU/RAM telemetry sampling, MSI uninstall stale-shortcut fix, settings Apply gate fix |
@@ -272,7 +272,7 @@ flowchart LR
 
 > ⚠️ Pool definitions persist across MajorUpgrade since v0.6.8 (`AppConfiguration.pools`). Maintainers who upgrade from v0.6.0..v0.6.7 to v0.7.0+ still need to re-register their pools, since pre-v0.6.8 installs did not write them to disk. Pools registered at v0.6.8 or later survive the upgrade automatically.
 
-> ⚠️ Substrate choice removed: as of v0.9.0 the native HTTP.sys adapter is the only substrate. Any prior `mcpGateway.type = "mcpjungle"` value in a persisted config is now ignored at runtime; the field is retained only for back-compat JSON deserialization.
+> ⚠️ Substrate choice removed: as of v0.9.0 the native HTTP.sys adapter is the only substrate. Any prior `mcpGateway.type = "native"` value in a persisted config is now ignored at runtime; the field is retained only for back-compat JSON deserialization.
 
 > ⚠️ Same-version VERSIONINFO note: when reinstalling the same v0.7.0 MSI on top of itself, default Windows Installer file-replacement rules treat the binaries as already-current. To force replacement, use `msiexec /i <msi> REINSTALL=ALL REINSTALLMODE=amus`.
 
@@ -386,7 +386,7 @@ gh release create v0.x.y \
 > No. v0.4.x and earlier are provider-era. The schemas and routes are incompatible.
 
 > **Q: Which gateway substrate should I pick?**
-> There is only one substrate as of v0.9.0: the in-process native HTTP.sys adapter. It has no external binary to manage, and the bootstrapper has already registered the URL ACL during install. The `cfg.mcpGateway.type` field is retained in the JSON schema for back-compat deserialization only; the runtime always uses the native adapter regardless of value. The `McpJungleGatewayAdapter` source files were removed at v0.9.0.
+> There is only one substrate as of v0.9.0: the in-process native HTTP.sys adapter. It has no external binary to manage, and the bootstrapper has already registered the URL ACL during install. The `cfg.mcpGateway.type` field is retained in the JSON schema for back-compat deserialization only; the runtime always uses the native adapter regardless of value. The `NativeHttpSysGatewayAdapter` source files were removed at v0.9.0.
 
 > **Q: Why not `v1.0.0`?**
 > `v1.0.0` is reserved for the hardening track (bearer tokens / mTLS) or a header rename — anything that breaks the trusted-LAN posture documented in ADR-001. Until that lands, `v0.x` signals "additive change against a stable architecture." v0.7.0's "production milestone" framing is about completing the realignment program, not about graduating from `v0.x` to `v1.0.0`.

@@ -148,7 +148,6 @@ std::string to_string(GovernanceDecisionOutcome value) {
 
 std::string to_string(GatewayType value) {
     return enumToString(value, {
-        { GatewayType::MCPJungle, "mcpjungle" },
         { GatewayType::Native, "native" }
     });
 }
@@ -333,11 +332,23 @@ GovernanceDecisionOutcome governanceDecisionOutcomeFromString(const std::string&
     });
 }
 
-GatewayType gatewayTypeFromString(const std::string& value) {
-    return enumFromString<GatewayType>(value, {
-        { GatewayType::MCPJungle, "mcpjungle" },
-        { GatewayType::Native, "native" }
-    });
+GatewayType gatewayTypeFromString(const std::string& /*value*/) {
+    // Always Native, never throws. Native is the only shipping
+    // substrate and the runtime constructs NativeHttpSysGatewayAdapter
+    // unconditionally regardless of the persisted slug. Keeping this
+    // function exception-free is load-bearing: the only call site
+    // (json adl_serializer<McpGatewayConfiguration>::from_json) lets
+    // any exception bubble up into FileBackedConfigurationService,
+    // which catches it and reverts the entire on-disk AppConfiguration
+    // to defaults -- destroying every other persisted operator
+    // setting along with the gateway type. A regression test
+    // (testGatewayConfigUnknownTypeFallsBackWithoutWipe) pins this
+    // contract. The input is ignored to make the no-throw guarantee
+    // syntactically obvious; the only observable artifact of the
+    // coercion is via to_string() round-trips and the dashboard's
+    // mcpGateway.type display, both of which now emit "native"
+    // consistently.
+    return GatewayType::Native;
 }
 
 GatewayState gatewayStateFromString(const std::string& value) {

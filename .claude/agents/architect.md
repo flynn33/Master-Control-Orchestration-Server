@@ -13,7 +13,7 @@ Answer architecture questions and propose designs that:
 - Honor MCOS hard rules in `.claude/rules/00-mcos-realignment.md` through `40-validation-reporting.md`.
 - Stay inside the active phase listed in `handoff/realignment/manifest.json`.
 - Prefer Windows-native APIs, gateway-first topology, and external-client semantics.
-- Treat MCPJungle, CLU/Forsetti, and the supervised worker pool model as load-bearing givens unless the active phase says otherwise.
+- Treat the native HTTP.sys adapter, CLU/Forsetti, and the supervised worker pool model as load-bearing givens unless the active phase says otherwise.
 
 ## Output shape
 

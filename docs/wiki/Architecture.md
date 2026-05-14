@@ -9,7 +9,7 @@
 
 Canonical map of how MCOS is structured. When in doubt, the source files referenced here are ground truth — every assertion on this page points to a real header, route, or test.
 
-The architecture target is the **gateway-first MCP host** declared in [ADR-002](ADR-002-gateway-first-mcp-realignment). The substrate question was settled by [ADR-003](ADR-003-mcp-gateway-substrate-decision): MCPJungle was retired at v0.9.0; the sole current gateway substrate is the in-process `NativeHttpSysGatewayAdapter` on top of HTTP.sys. The original [ADR-001 LAN client identity model](ADR-001-lan-client-control-plane) survives as the maintainer surface that coexists with the AI-client gateway surface. v0.10.14 is the current target — phases PHASE-00 through PHASE-12 are delivered; PHASE-13 (Win2D shell rendering) and PHASE-14 (comprehensive diagnostics) are scheduled.
+The architecture target is the **gateway-first MCP host** declared in [ADR-002](ADR-002-gateway-first-mcp-realignment). The substrate question was settled by [ADR-003](ADR-003-mcp-gateway-substrate-decision): the legacy external gateway was retired at v0.9.0; the sole current gateway substrate is the in-process `NativeHttpSysGatewayAdapter` on top of HTTP.sys. The original [ADR-001 LAN client identity model](ADR-001-lan-client-control-plane) survives as the maintainer surface that coexists with the AI-client gateway surface. v0.10.14 is the current target — phases PHASE-00 through PHASE-12 are delivered; PHASE-13 (Win2D shell rendering) and PHASE-14 (comprehensive diagnostics) are scheduled.
 
 Three maintainer-deck features are part of the WinUI Shell Overview surface: **direct AI plugin slots** (v0.10.12+) let the maintainer activate exactly one of Claude Code, ChatGPT, or Grok as the connected client — the selections are mutually exclusive and MCOS issues the appropriate connector config on activation; the **Supervisor Wizard** (v0.9.76+) lets the maintainer pick a supervisor model (Claude/ChatGPT/Grok) and export a model-specific JSON config for LAN import; and the **reachability self-check** (v0.10.13) exposes `GET /api/supervisor/reachability-check`, which probes MCOS's own loopback and LAN-IP variants and reports results to the shell.
 
@@ -294,7 +294,7 @@ gantt
     PHASE-01 Provider-era removal          :done, p1, after p0, 1d
 
     section Gateway plus discovery
-    PHASE-02 MCP Gateway spike (MCPJungle) :done, p2, after p1, 1d
+    PHASE-02 MCP Gateway spike (IMcpGateway adapter) :done, p2, after p1, 1d
     PHASE-03 Bonjour LAN discovery         :done, p3, after p2, 1d
 
     section Onboarding plus governance
@@ -312,12 +312,12 @@ gantt
     PHASE-11 Native gateway evaluation     :done, p11, after p10, 1d
 
     section Native gateway and shell
-    PHASE-12 Native HTTP.sys gateway       :done, p12, after p11, 1d
+    PHASE-12 the in-process HTTP.sys adapter       :done, p12, after p11, 1d
     PHASE-13 Win2D shell rendering         :scheduled, p13, after p12, 1d
     PHASE-14 Comprehensive diagnostics     :scheduled, p14, after p13, 1d
 ```
 
-Each phase ended with a written completion report. PHASE-12 (native HTTP.sys gateway, v0.9.0) is complete. PHASE-13 (Win2D shell rendering) and PHASE-14 (comprehensive diagnostics, maintainer-approved) are scheduled for post-v0.10.x delivery. See [Versions](Versions) for the full timeline + commit SHAs.
+Each phase ended with a written completion report. PHASE-12 (native HTTP.sys substrate, v0.9.0) is complete. PHASE-13 (Win2D shell rendering) and PHASE-14 (comprehensive diagnostics, maintainer-approved) are scheduled for post-v0.10.x delivery. See [Versions](Versions) for the full timeline + commit SHAs.
 
 ---
 
@@ -392,7 +392,7 @@ The same pipeline runs in CI via `.github/workflows/windows-build-test-package.y
   },
   // "type" is retained for back-compat deserialization of pre-v0.9.0 config files only.
   // The runtime always selects NativeHttpSysGatewayAdapter regardless of this field value.
-  // "mcpjungle" was the prior value; it is no longer a valid substrate (retired v0.9.0).
+  // (legacy slugs were tolerated by the deserializer); it is no longer a valid substrate (retired v0.9.0).
   "security": { "allowOpenLanAccess": false },
   "resourcePolicy": {
     "cpuAllocationPercent": 50,

@@ -12,9 +12,9 @@
     "gatewayType": {
       "type": "string",
       "enum": [
-        "mcpjungle",
         "native"
-      ]
+      ],
+      "description": "Slug emitted by to_string(GatewayType) and accepted by gatewayTypeFromString. The only valid value is 'native'; unknown / legacy slugs are tolerated by the deserializer (coerced to Native) but should not be considered valid for new configs."
     },
     "enabled": {
       "type": "boolean"

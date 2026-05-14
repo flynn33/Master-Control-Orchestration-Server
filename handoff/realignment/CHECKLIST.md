@@ -4,7 +4,7 @@
 
 - [ ] No direct AI-provider execution remains in MCOS.
 - [ ] AI clients connect through gateway/onboarding profiles.
-- [ ] MCPJungle adapter exists or native gateway adapter exists.
+- [ ] native HTTP.sys adapter exists or native gateway adapter exists.
 - [ ] DNS-SD/mDNS discovery exists.
 - [ ] `/.well-known/mcos.json` exists.
 - [ ] Generic onboarding profile exists.

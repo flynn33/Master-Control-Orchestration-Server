@@ -87,7 +87,7 @@ Validation commands required by the manifest (`cmake --preset debug`, `cmake --b
 | `BuildSetupReadinessView` `[[maybe_unused]]` cleanup for the C4100 warning | PHASE-09 or PHASE-10 | Cosmetic; not a defect. |
 | Renaming `GuidedSubAgentGroupWizardButton` and its CLU quick-action equivalents to non-provider language | PHASE-09 | Tron dashboard realignment is the right place. |
 | Forsetti compliance script (`scripts/check-mastercontrol-forsetti.ps1`) re-run | PHASE-05 / PHASE-10 | Per `.claude/rules/20-forsetti-clu-governance.md`, update only when architecture changes invalidate its assumptions; PHASE-05 introduces the gateway/governance changes that warrant a re-evaluation. |
-| MCP Gateway implementation (`IMcpGateway`, `McpJungleGatewayAdapter`, gateway port) | PHASE-02 | The next phase's deliverable. |
+| MCP Gateway implementation (`IMcpGateway`, `NativeHttpSysGatewayAdapter`, gateway port) | PHASE-02 | The next phase's deliverable. |
 | DNS-SD discovery, `/.well-known/mcos.json`, `/api/discovery`, UDP beacon update | PHASE-03 | |
 | Per-clientType onboarding profiles | PHASE-04 | |
 | Governance bundle distribution for Windows/macOS/iOS | PHASE-05 | |
@@ -97,9 +97,9 @@ Validation commands required by the manifest (`cmake --preset debug`, `cmake --b
 **Answer: yes** — PHASE-01 acceptance criteria are met (no provider execution path remains; client model is external-agent oriented; tests pass), the build is green for the first time post-realignment overlay, and the static-grep regression detection is in place to catch any reintroduction.
 
 PHASE-02 should begin by:
-1. Reading [handoff/realignment/PHASE-02-mcp-gateway-spike-mcpjungle.md](PHASE-02-mcp-gateway-spike-mcpjungle.md) and its `readFirst` files (`src/MasterControlApp/MasterControlRuntime.cpp`, `src/MasterControlServiceHost`, `src/MasterControlModules`, `CMakeLists.txt`, `docs/implementation/MCOS-REALIGNMENT-MASTER.md`).
-2. Producing a file-by-file plan to introduce `IMcpGateway` (per the C++ interface sketch in the phase file), `McpJungleGatewayAdapter` (with Win32 supervised child-process lifecycle + health probe), the `gateway-service.schema.json`-conformant configuration, the gateway's distinct listen port (probably 8080 to keep admin port 7300 isolated), and the first logical MCP endpoint registration path.
-3. Adding a fake/mock gateway adapter for tests so unit tests can exercise the IMcpGateway state machine without a live MCPJungle binary.
+1. Reading [handoff/realignment/PHASE-02-mcp-gateway-spike-the in-process HTTP.sys adapter.md](PHASE-02-mcp-gateway-spike-the in-process HTTP.sys adapter.md) and its `readFirst` files (`src/MasterControlApp/MasterControlRuntime.cpp`, `src/MasterControlServiceHost`, `src/MasterControlModules`, `CMakeLists.txt`, `docs/implementation/MCOS-REALIGNMENT-MASTER.md`).
+2. Producing a file-by-file plan to introduce `IMcpGateway` (per the C++ interface sketch in the phase file), `NativeHttpSysGatewayAdapter` (with Win32 supervised child-process lifecycle + health probe), the `gateway-service.schema.json`-conformant configuration, the gateway's distinct listen port (probably 8080 to keep admin port 7300 isolated), and the first logical MCP endpoint registration path.
+3. Adding a fake/mock gateway adapter for tests so unit tests can exercise the IMcpGateway state machine without a live gateway binary.
 4. Running `cmake --preset debug` / `cmake --build` / `ctest` end-to-end after the changes (now that PHASE-01 unblocked the build).
 5. Stopping at the PHASE-02 completion report. Not proceeding to PHASE-03.
 

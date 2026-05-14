@@ -67,7 +67,7 @@ const destinations = [
     label: 'Gateway',
     eyebrow: 'MCP GATEWAY',
     title: 'MCP Gateway',
-    subtitle: 'One advertised LAN MCP endpoint. MCPJungle adapter health, tool surface, lifecycle.'
+    subtitle: 'One advertised LAN MCP endpoint. native HTTP.sys adapter health, tool surface, lifecycle.'
   },
   {
     id: 'pools',

@@ -231,7 +231,7 @@ if (-not (Test-Path $runtimePath)) {
     Assert-Contains $runtime 'startsWith\(request\.path,\s*"/api/governance/bundles/"\)' "MasterControlRuntime.cpp must wire the dynamic /api/governance/bundles/{platform} dispatcher."
     Assert-Contains $runtime '/api/governance/bundles/\{windows\|macos\|ios\}' "MasterControlRuntime.cpp must document the dispatcher's accepted platforms (Windows/macOS/iOS)."
 
-    # Native HTTP.sys gateway adapter is the only shipping substrate (v0.9.0+).
+    # the in-process HTTP.sys adapter adapter is the only shipping substrate (v0.9.0+).
     Assert-Contains $runtime 'NativeHttpSysGatewayAdapter' "MasterControlRuntime.cpp must reference the NativeHttpSysGatewayAdapter (v0.9.0+ shipping substrate)."
 
     # Direct AI plugin slots (v0.10.12+): mutually exclusive Claude / ChatGPT / Grok routes.
@@ -249,18 +249,43 @@ if (-not (Test-Path $runtimePath)) {
     Assert-Contains $runtime '"trust"\s*,\s*"lan"|"trust":\s*"lan"|txt\["trust"\]\s*=\s*"lan"' "MasterControlRuntime.cpp must declare trust=lan in DNS-SD TXT and / or discovery JSON (LAN-trust posture)."
 }
 
-# v0.10.14 alignment: source-tree retirement checks for MCPJungle.
-# MCPJungle was retired at v0.9.0; no production code path may still
-# spawn an external mcpjungle.exe child. The GatewayType::MCPJungle enum
-# value is allowed only as a back-compat deserialization tombstone in
-# MasterControlModels.cpp / .h (so existing on-disk configs still parse).
-$bootstrapperMainPath = Join-Path $repoRoot "src\MasterControlBaselineToolsWorker\main.cpp"
-$bootstrapperEntryPath = Join-Path $repoRoot "src\MasterControlBootstrapper\main.cpp"
-foreach ($p in @($bootstrapperMainPath, $bootstrapperEntryPath)) {
-    if (Test-Path $p) {
-        $c = Get-Content $p -Raw
-        Assert-NotContains $c 'mcpjungle\.exe' "MCPJungle binary reference must not survive in $($p.Replace($repoRoot + '\', ''))."
+# Source-tree gateway-substrate guard.
+# The legacy external supervised-binary gateway was retired before
+# v0.9.0; NativeHttpSysGatewayAdapter is the only shipping substrate.
+# This guard enforces two contracts in the production source:
+#   (1) GatewayType only carries the live `Native` slot. Any new
+#       value would silently change adapter selection.
+#   (2) gatewayTypeFromString must be tolerant -- the deserializer
+#       cannot throw on unknown slugs, because the only call site is
+#       inside the AppConfiguration JSON load path and an exception
+#       there resets the entire on-disk config to defaults. The
+#       check looks for the explicit fallback marker.
+$modelsHeaderPath = Join-Path $repoRoot "include\MasterControl\MasterControlModels.h"
+$modelsImplPath   = Join-Path $repoRoot "src\MasterControlApp\MasterControlModels.cpp"
+if (Test-Path $modelsHeaderPath) {
+    $c = Get-Content $modelsHeaderPath -Raw
+    # The enum must contain Native and nothing else.
+    if ($c -notmatch 'enum\s+class\s+GatewayType\s*\{\s*Native\s*\}') {
+        Assert-Contains $c 'enum class GatewayType {\s*Native\s*}' "GatewayType enum must declare only the Native slot; additional slots would silently change adapter selection (include/MasterControl/MasterControlModels.h)."
     }
+}
+if (Test-Path $modelsImplPath) {
+    $c = Get-Content $modelsImplPath -Raw
+    # The deserializer must not invoke the throwing enumFromString
+    # helper. Any code path that lets std::invalid_argument bubble
+    # out of gatewayTypeFromString will be caught in
+    # FileBackedConfigurationService and wipe the entire on-disk
+    # AppConfiguration to defaults. Two structural checks:
+    #   (1) the function body must NOT contain enumFromString<GatewayType>
+    #       (the only construct in this TU that throws on unknown).
+    #   (2) the function must end with a Native fallback.
+    if ($c -match '(?s)GatewayType gatewayTypeFromString\([^)]*\)\s*\{(?<body>.*?)\n\}') {
+        $body = $matches['body']
+        if ($body -match 'enumFromString') {
+            Assert-Contains $c 'tolerant deserialization' "gatewayTypeFromString must not call the throwing enumFromString helper; unknown / legacy slugs must coerce to Native instead of throwing (src/MasterControlApp/MasterControlModels.cpp)."
+        }
+    }
+    Assert-Contains $c 'return GatewayType::Native;\s*\}' "gatewayTypeFromString must end with a Native fallback (src/MasterControlApp/MasterControlModels.cpp)."
 }
 
 # v0.10.14 alignment: vendored Forsetti directory integrity check.

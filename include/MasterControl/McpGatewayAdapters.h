@@ -2,23 +2,12 @@
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 //
-// PHASE-12 (ADR-002 §2 / ADR-003): MCP Gateway adapters. The gateway
-// abstraction (`IMcpGateway`) lives in
-// `MasterControl/MasterControlContracts.h`. This header declares the
-// production adapter and a test fake that implements the same interface
-// without binding HTTP.sys or making network calls.
-//
-// History:
-//   * v0.6.x shipped `McpJungleGatewayAdapter`, which supervised an
-//     external MCPJungle binary. PHASE-12 replaced that substrate with a
-//     native HTTP.sys implementation (NativeHttpSysGatewayAdapter).
-//   * v0.9.0 retired McpJungleGatewayAdapter as the default but kept its
-//     source in-tree as inert dead code for one release cycle.
-//   * v0.9.1 deletes McpJungleGatewayAdapter outright. Persisted configs
-//     that still carry mcpGateway.type='mcpjungle' transparently resolve
-//     to the native substrate at runtime construction (the GatewayType
-//     enum value is retained only so old JSON deserializes without
-//     rejection).
+// MCP Gateway adapters. The gateway abstraction (`IMcpGateway`)
+// lives in `MasterControl/MasterControlContracts.h`. This header
+// declares the production adapter (NativeHttpSysGatewayAdapter,
+// the in-process Win32 HTTP.sys substrate) and a test fake that
+// implements the same interface without binding HTTP.sys or
+// making network calls.
 
 #pragma once
 
@@ -52,7 +41,7 @@ namespace MasterControl {
 
 // PHASE-12 native gateway substrate. Implements `IMcpGateway` directly
 // using HTTP.sys (Win32 kernel-mode HTTP server) instead of supervising
-// MCPJungle as an external child process. Operator selects via
+// an external gateway as an external child process. Operator selects via
 // mcpGateway.type = "native". Replaces the v0.6.7 honest-503 listener
 // when active.
 //

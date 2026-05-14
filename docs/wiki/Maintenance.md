@@ -173,7 +173,7 @@ The MSI removes:
 The MSI does **not** remove:
 - `%ProgramData%\Master Control Orchestration Server\` (config + runtime + logs preserved)
 - Windows Firewall rules
-- The MCPJungle binary if you placed it separately
+- The gateway binary if you placed it separately
 
 ### Clean uninstall (removes config + firewall rules)
 

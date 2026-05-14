@@ -20,7 +20,7 @@
       "txt": {
         "product": "MCOS",
         "role": "mcp-gateway",
-        "gateway": "mcpjungle",
+        "gateway": "native",
         "mcp_path": "/mcp",
         "protovers": "2025-03-26",
         "auth": "none"

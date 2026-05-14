@@ -21,7 +21,7 @@ If you can't measure it here, say so. Static-only analysis is labeled `STATIC` i
 - **Process supervision** — tight `WaitForSingleObject` loops, missing timeouts, runaway child processes (see `MasterControlRuntime.cpp:914-1110` for the canonical pattern).
 - **Telemetry collection** — PDH counter accumulation costs, DXGI poll frequency, ETW listener overhead.
 - **HTTP front door** — synchronous I/O on the request thread, repeated string allocations, per-request log writes.
-- **Gateway adapter** — repeated MCPJungle calls when one batched call would do; non-cached governance bundle reads.
+- **Gateway adapter** — redundant per-request work in the HTTP.sys handler; non-cached governance bundle reads.
 - **Worker pool** — unbounded queue growth, lease churn, idle worker leak.
 - **JSON handling** — re-parsing the same payload, copying strings that could be views.
 

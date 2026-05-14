@@ -25,7 +25,7 @@ MCOS advertises the gateway and onboarding service using DNS-SD/mDNS and an opti
 ```text
 product=MCOS
 role=mcp-gateway
-gateway=mcpjungle
+gateway=native
 mcp_path=/mcp
 config_path=/api/onboarding
 governance_path=/api/governance/bundles

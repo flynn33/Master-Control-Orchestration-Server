@@ -14,7 +14,7 @@ Dashboard displays the new architecture in real time.
 ## Required panels
 
 - Host telemetry: CPU/GPU/network/disk.
-- Gateway status and MCPJungle/native gateway health.
+- Gateway status and the in-process HTTP.sys adapter/native gateway health.
 - Connected clients and models with IPs.
 - MCP/sub-agent pools with utilization indicators.
 - Lease/router/autoscale state.

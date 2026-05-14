@@ -539,7 +539,7 @@ foreach ($id in @('mcp-filesystem','mcp-memory','mcp-everything','mcp-sequential
 }
 ```
 
-If every line prints a `leaseId` and a corresponding `instanceId`, the supervisor + lease router stack is healthy end-to-end. AI clients consuming the gateway path (`http://<host>:8080/mcp/...` or `/agents/...`) inherit the same routing once MCPJungle (or any future native gateway) is bound to TCP 8080 — see [Packaging and Gateway Binary](Packaging-and-Gateway-Binary) for the gateway-binary side.
+If every line prints a `leaseId` and a corresponding `instanceId`, the supervisor + lease router stack is healthy end-to-end. AI clients consuming the gateway path (`http://<host>:8080/mcp/...` or `/agents/...`) inherit the same routing once the in-process HTTP.sys adapter (or any future native gateway) is bound to TCP 8080 — see [Packaging and Gateway Binary](Packaging-and-Gateway-Binary) for the gateway-binary side.
 
 **Cleanup any test pool:**
 ```powershell

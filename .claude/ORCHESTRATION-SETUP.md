@@ -64,7 +64,7 @@ All sub-agents live in `.claude/agents/`. Each is a markdown file with YAML fron
 | `mcos-debugger` | MCOS-specific failure triage |
 | `mcos-phase-planner` | Phase scope and validation gating |
 | `mcos-researcher` | Project-context research |
-| `mcp-gateway-reviewer` | MCPJungle / IMcpGateway topology review |
+| `mcp-gateway-reviewer` | IMcpGateway topology review |
 | `windows-native-cpp-reviewer` | Windows API conformance review |
 | `forsetti-governance-reviewer` | Forsetti compliance review |
 | `qa-release-gate` | Release-phase quality gate |

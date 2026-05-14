@@ -103,7 +103,7 @@ None of these block declaring PHASE-05 complete; they are forward-flagged for PH
 
 PHASE-06 should begin by:
 1. Reading [handoff/realignment/PHASE-06-managed-worker-pools.md](PHASE-06-managed-worker-pools.md) and its `readFirst` files (`src/MasterControlApp/MasterControlRuntime.cpp`, `include/MasterControl/`, `tests/MasterControlOrchestrationServerTests.cpp`, `docs/wiki/Sub-Agents.md`).
-2. Producing a file-by-file plan to introduce `EndpointTemplate`, `EndpointInstance`, `ManagedEndpointPool`, `WorkerSupervisor`, `HealthProbe`, `WorkerTelemetry` types matching `docs/implementation/schemas/managed-endpoint-pool.schema.json`. Lifecycle states: `configured/starting/ready/busy/draining/failed/stopped`. Worker process trees contained with Windows Job Objects (the same pattern the MCPJungle adapter already uses).
+2. Producing a file-by-file plan to introduce `EndpointTemplate`, `EndpointInstance`, `ManagedEndpointPool`, `WorkerSupervisor`, `HealthProbe`, `WorkerTelemetry` types matching `docs/implementation/schemas/managed-endpoint-pool.schema.json`. Lifecycle states: `configured/starting/ready/busy/draining/failed/stopped`. Worker process trees contained with Windows Job Objects (the same pattern the native HTTP.sys adapter already uses).
 3. Wiring the supervised-pool model so PHASE-02's `mcos-default-pool` registration evolves from a single placeholder name into one stable logical server per pool — never per instance.
 4. Running `cmake --preset debug` / `cmake --build` / `ctest` end-to-end after the changes.
 5. Stopping at the PHASE-06 completion report. Not proceeding to PHASE-07.

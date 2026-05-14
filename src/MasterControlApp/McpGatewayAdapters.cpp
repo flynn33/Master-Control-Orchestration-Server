@@ -6,10 +6,9 @@
 // includes them in the right order; doing it here too defends against any
 // future TU-level include-order regression.
 //
-// v0.9.1 removed the WinHTTP-based health probe (it lived inside the now-
-// deleted McpJungleGatewayAdapter::probeOverHttp). The native gateway
-// uses HTTP.sys to listen and an in-process state check for Probe(), so
-// winhttp.h / winhttp.lib are no longer needed.
+// The native gateway uses HTTP.sys to listen and an in-process state
+// check for Probe(), so winhttp.h / winhttp.lib are not needed in
+// this TU.
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -111,18 +110,6 @@ std::string composeHealthUrl(const McpGatewayConfiguration& configuration) {
 }
 
 } // namespace
-
-// ---------------------------------------------------------------------------
-// McpJungleGatewayAdapter — REMOVED in v0.9.1
-// ---------------------------------------------------------------------------
-// Pre-v0.9.0 the production adapter supervised an external MCPJungle binary
-// over its HTTP API. v0.9.0 retired that substrate in favor of the
-// native HTTP.sys implementation below; the McpJungle implementation
-// remained in-tree as inert dead code for one release cycle. v0.9.1
-// deletes it. The runtime continues to accept the legacy
-// mcpGateway.type='mcpjungle' value in persisted configs and transparently
-// resolves to NativeHttpSysGatewayAdapter at construction time.
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // FakeMcpGatewayAdapter
@@ -298,9 +285,10 @@ std::vector<std::string> FakeMcpGatewayAdapter::registeredServerNames() const {
 //
 // Windows-native MCP gateway built on HTTP.sys (Win32 kernel-mode HTTP
 // server). Replaces the v0.6.7 honest-503 listener with a real
-// implementation. Selected via mcpGateway.type = "native". The MCPJungle
-// adapter remains available for operators with existing MCPJungle
-// deployments.
+// implementation. This is the only shipping gateway substrate;
+// mcpGateway.type is retained in the JSON schema for back-compat
+// deserialization only -- the runtime constructs this adapter
+// unconditionally regardless of the persisted value.
 //
 // MVP scope (v0.6.9):
 //   * HTTP.sys URL group + request queue bound to mcpGateway.listenPort
@@ -350,7 +338,7 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
     }
 #if !defined(_WIN32)
     status_.state = GatewayState::Failed;
-    status_.message = "Native HTTP.sys gateway requires Windows.";
+    status_.message = "the in-process HTTP.sys adapter requires Windows.";
     return status_;
 #else
     if (running_) {
@@ -472,7 +460,7 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
     serveThread_ = std::thread(&NativeHttpSysGatewayAdapter::serveLoop, this);
 
     status_.state = GatewayState::Running;
-    status_.message = "Native HTTP.sys gateway listening on " + status_.mcpUrl
+    status_.message = "the in-process HTTP.sys adapter listening on " + status_.mcpUrl
         + ". MCP tools/list and tools/call routed through the supervisor + lease router.";
     status_.startedAtUtc = timestampNowUtc();
     return status_;
@@ -487,7 +475,7 @@ GatewayStatus NativeHttpSysGatewayAdapter::Stop() {
         if (status_.state != GatewayState::Disabled) {
             status_.state = GatewayState::Stopped;
             status_.startedAtUtc.clear();
-            status_.message = "Native HTTP.sys gateway stopped.";
+            status_.message = "the in-process HTTP.sys adapter stopped.";
         }
         return status_;
     }
@@ -495,7 +483,7 @@ GatewayStatus NativeHttpSysGatewayAdapter::Stop() {
     teardownHttpSysLocked();
     status_.state = GatewayState::Stopped;
     status_.startedAtUtc.clear();
-    status_.message = "Native HTTP.sys gateway stopped. Registry preserved in-memory.";
+    status_.message = "the in-process HTTP.sys adapter stopped. Registry preserved in-memory.";
 #endif
     return status_;
 }
@@ -562,7 +550,7 @@ GatewayHealth NativeHttpSysGatewayAdapter::Probe() {
         }
 #else
         health.status = GatewayHealthStatus::Unhealthy;
-        health.message = "Native HTTP.sys gateway requires Windows.";
+        health.message = "the in-process HTTP.sys adapter requires Windows.";
 #endif
     }
     return health;

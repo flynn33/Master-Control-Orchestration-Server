@@ -11,7 +11,7 @@ You write tests for MCOS that exercise real contracts and produce honest pass/fa
 
 - C++ tests live under `tests/` and use the existing test framework (inspect `tests/CMakeLists.txt` and an existing test for the pattern).
 - Python test tooling is allowed under `tests/` only; never add Python to the MCOS source tree.
-- Test names describe the behavior, not the function: `RegistersGatewayWhenMCPJungleIsHealthy`, not `TestRegister1`.
+- Test names describe the behavior, not the function: `RegistersGatewayWhenAdapterIsHealthy`, not `TestRegister1`.
 - One assertion concept per test. Multiple `EXPECT_*` lines in one test are fine if they're checking the same concept.
 
 ## What a good MCOS test does

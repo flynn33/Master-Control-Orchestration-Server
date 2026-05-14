@@ -13394,14 +13394,9 @@ bool MasterControlApplication::Impl::initialize() {
     registerConfigurationDefaults();
     createForsettiRuntime();
 
-    // v0.9.0: MCP Gateway is exclusively the native HTTP.sys adapter.
-    // MCPJungle support was dropped per the operator directive
-    // ("MCP Jungle support is to be dropped in place of a custom
-    // solution"). Persisted configs that still carry
-    // mcpGateway.type='mcpjungle' from v0.8.x and earlier transparently
-    // resolve to the native substrate -- the enum value is kept in
-    // GatewayType only so old JSON deserializes without rejection.
-    // gatewayConfig.type is otherwise ignored.
+    // The MCP Gateway is exclusively the native HTTP.sys adapter.
+    // gatewayConfig.type is read for telemetry only; the adapter
+    // construction is fixed.
     {
         const auto gatewayConfig = configurationService_->current().mcpGateway;
         mcpGateway_ = std::make_shared<NativeHttpSysGatewayAdapter>(gatewayConfig);
@@ -13724,11 +13719,13 @@ bool MasterControlApplication::Impl::initialize() {
     // scalePolicy.maxInstances ceiling.
     leaseRouter_ = std::make_shared<LeaseRouter>(workerSupervisor_);
 
-    // PHASE-12 follow-up (v0.6.10): wire the native HTTP.sys gateway to
-    // the supervisor + lease router so tools/call can forward to a
-    // supervised pool instance via the stdio bridge. v0.9.0: every
-    // adapter is the native one now (MCPJungle dropped); the cast is
-    // unconditional but kept defensive in case future substrates land.
+    // PHASE-12 follow-up (v0.6.10): wire the in-process HTTP.sys
+    // adapter to the supervisor + lease router so tools/call can
+    // forward to a supervised pool instance via the stdio bridge.
+    // NativeHttpSysGatewayAdapter is the only adapter the runtime
+    // constructs since v0.9.0, so the dynamic_pointer_cast always
+    // succeeds; it is kept defensive in case a future substrate is
+    // added behind IMcpGateway.
     if (auto nativeAdapter =
             std::dynamic_pointer_cast<NativeHttpSysGatewayAdapter>(mcpGateway_)) {
         nativeAdapter->AttachWorkerBridge(workerSupervisor_, leaseRouter_);
