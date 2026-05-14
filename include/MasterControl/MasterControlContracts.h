@@ -238,7 +238,7 @@ public:
 // In-memory only at PHASE-06. Persistence across restarts is intentional
 // later work (PHASE-08/PHASE-09 may add disk backing).
 // PHASE-12 follow-up (v0.6.10): result of a synchronous stdio JSON-RPC
-// request to a supervised pool instance. The native HTTP.sys gateway
+// request to a supervised pool instance. the in-process HTTP.sys adapter
 // uses this when a LAN AI client invokes tools/call: lease-router-
 // selected instance receives the JSON-RPC envelope on its stdin pipe,
 // and its stdout response (one or more lines, until a line carrying

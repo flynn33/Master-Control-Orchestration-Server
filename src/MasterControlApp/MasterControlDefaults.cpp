@@ -574,7 +574,7 @@ AppConfiguration buildDefaultConfiguration() {
     // Operators flip `enabled` to true once an gateway binary is installed
     // and the gateway port (default 8080) is reachable from LAN clients.
     // The gateway URL is logically distinct from the admin port (7300).
-    // v0.9.0: native HTTP.sys gateway support dropped, native HTTP.sys substrate is the
+    // v0.9.0: the in-process HTTP.sys adapter support dropped, native HTTP.sys substrate is the
     // only option. type=Native and enabled=true so a fresh install
     // self-hosts its MCP gateway out of the box. binaryPath /
     // databasePath stay set to empty for back-compat schema rather than

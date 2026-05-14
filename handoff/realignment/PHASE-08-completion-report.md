@@ -112,7 +112,7 @@ None of these block declaring PHASE-08 complete.
 
 PHASE-09 should begin by:
 1. Reading [handoff/realignment/PHASE-09-tron-dashboard-realignment.md](PHASE-09-tron-dashboard-realignment.md) and its `readFirst` files (`resources/web/`, the new `/api/discovery`, `/api/onboarding/{clientType}`, `/api/governance/bundles`, `/api/pools`, `/api/telemetry/{events,clients,gateway}` routes).
-2. Producing a file-by-file plan to introduce dashboard panels for: gateway status (native HTTP.sys gateway health), client/model roster (driven by `/api/telemetry/clients`), worker pool gauges with utilization (driven by `/api/pools` + `/api/pools/{poolId}/saturation`), governance bundle downloads, real-time activity log (driven by `/api/telemetry/events`), and onboarding/setup view (driven by `/api/onboarding/{clientType}`). Manual and import setup paths must be preserved.
+2. Producing a file-by-file plan to introduce dashboard panels for: gateway status (the in-process HTTP.sys adapter health), client/model roster (driven by `/api/telemetry/clients`), worker pool gauges with utilization (driven by `/api/pools` + `/api/pools/{poolId}/saturation`), governance bundle downloads, real-time activity log (driven by `/api/telemetry/events`), and onboarding/setup view (driven by `/api/onboarding/{clientType}`). Manual and import setup paths must be preserved.
 3. Honoring ADR-002 §9: dashboards must render the `-1.0` sentinel as "unavailable", never as "idle" or "0%". No fake utilization in the UI.
 4. Running `cmake --preset debug` / `cmake --build` / `ctest` end-to-end after the changes.
 5. Stopping at the PHASE-09 completion report. Not proceeding to PHASE-10.

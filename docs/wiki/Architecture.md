@@ -294,7 +294,7 @@ gantt
     PHASE-01 Provider-era removal          :done, p1, after p0, 1d
 
     section Gateway plus discovery
-    PHASE-02 MCP Gateway spike (native HTTP.sys gateway) :done, p2, after p1, 1d
+    PHASE-02 MCP Gateway spike (IMcpGateway adapter) :done, p2, after p1, 1d
     PHASE-03 Bonjour LAN discovery         :done, p3, after p2, 1d
 
     section Onboarding plus governance
@@ -312,12 +312,12 @@ gantt
     PHASE-11 Native gateway evaluation     :done, p11, after p10, 1d
 
     section Native gateway and shell
-    PHASE-12 Native HTTP.sys gateway       :done, p12, after p11, 1d
+    PHASE-12 the in-process HTTP.sys adapter       :done, p12, after p11, 1d
     PHASE-13 Win2D shell rendering         :scheduled, p13, after p12, 1d
     PHASE-14 Comprehensive diagnostics     :scheduled, p14, after p13, 1d
 ```
 
-Each phase ended with a written completion report. PHASE-12 (native HTTP.sys gateway, v0.9.0) is complete. PHASE-13 (Win2D shell rendering) and PHASE-14 (comprehensive diagnostics, maintainer-approved) are scheduled for post-v0.10.x delivery. See [Versions](Versions) for the full timeline + commit SHAs.
+Each phase ended with a written completion report. PHASE-12 (native HTTP.sys substrate, v0.9.0) is complete. PHASE-13 (Win2D shell rendering) and PHASE-14 (comprehensive diagnostics, maintainer-approved) are scheduled for post-v0.10.x delivery. See [Versions](Versions) for the full timeline + commit SHAs.
 
 ---
 
@@ -392,7 +392,7 @@ The same pipeline runs in CI via `.github/workflows/windows-build-test-package.y
   },
   // "type" is retained for back-compat deserialization of pre-v0.9.0 config files only.
   // The runtime always selects NativeHttpSysGatewayAdapter regardless of this field value.
-  // "native HTTP.sys gateway" was the prior value; it is no longer a valid substrate (retired v0.9.0).
+  // (legacy slugs were tolerated by the deserializer); it is no longer a valid substrate (retired v0.9.0).
   "security": { "allowOpenLanAccess": false },
   "resourcePolicy": {
     "cpuAllocationPercent": 50,

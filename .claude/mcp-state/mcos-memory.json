@@ -21,7 +21,7 @@
                       "id":  "v0610release",
                       "kind":  "release-event",
                       "title":  "v0.6.10 released (PHASE-12 follow-up complete)",
-                      "body":  "Native HTTP.sys gateway can now actually forward tools/call to supervised pool children. (1) IWorkerSupervisor::sendStdioJsonRpc(instanceId, request, timeoutMs) -- per-instance mutex serializes concurrent requests; deadline-based PeekNamedPipe poll loop reads stdout, parses newline-delimited JSON lines, matches by id. (2) ChildProcess in WorkerSupervisor gains childStdoutRead, childStdinWrite, unique_ptr<mutex> stdioMutex, stdioReadBuffer, nextRequestId; startInstanceLocked creates CreatePipe pairs with SECURITY_ATTRIBUTES, sets STARTF_USESTDHANDLES + hStdInput/hStdOutput/hStdError, calls CreateProcessW with bInheritHandles=TRUE, then closes child-side ends in parent. terminateInstancesLocked closes the pipes before destroying the Job Object. (3) NativeHttpSysGatewayAdapter gains AttachWorkerBridge(supervisor, leaseRouter) for late-binding; refreshToolCatalogLocked walks every pool's first Ready instance via the bridge and aggregates tools/list with serverName=poolId attribution; tools/call resolves params.name (qualified or unique unprefixed), acquires a lease, forwards via bridge with id rewriting + name unprefixing, re-stamps response id. (4) Bootstrapper install action runs netsh http add urlacl for the gateway port so console-mode operators can bind without ERROR_ACCESS_DENIED; uninstall reverses it best-effort. (5) HTTP.sys body extraction enhanced with HttpReceiveRequestEntityBody fallback so non-COPY_BODY-friendly clients (PowerShell Invoke-RestMethod, Expect:100-continue, chunked) work. (6) Fixed nlohmann::json{nullptr} -> nlohmann::json(nullptr) bug that produced [null] arrays instead of null scalars in JSON-RPC error envelopes. End-to-end smoke test on the host: MSI installs cleanly, service starts, gateway switches native HTTP.sys gateway->native, /api/gateway/start binds HTTP.sys, MCP initialize returns serverInfo.version=0.6.10, tools/list returns honest empty array (no pools registered), URL ACL http://+:8080/ user=Everyone confirmed via netsh.",
+                      "body":  "The native HTTP.sys adapter can now actually forward tools/call to supervised pool children. (1) IWorkerSupervisor::sendStdioJsonRpc(instanceId, request, timeoutMs) -- per-instance mutex serializes concurrent requests; deadline-based PeekNamedPipe poll loop reads stdout, parses newline-delimited JSON lines, matches by id. (2) ChildProcess in WorkerSupervisor gains childStdoutRead, childStdinWrite, unique_ptr<mutex> stdioMutex, stdioReadBuffer, nextRequestId; startInstanceLocked creates CreatePipe pairs with SECURITY_ATTRIBUTES, sets STARTF_USESTDHANDLES + hStdInput/hStdOutput/hStdError, calls CreateProcessW with bInheritHandles=TRUE, then closes child-side ends in parent. terminateInstancesLocked closes the pipes before destroying the Job Object. (3) NativeHttpSysGatewayAdapter gains AttachWorkerBridge(supervisor, leaseRouter) for late-binding; refreshToolCatalogLocked walks every pool's first Ready instance via the bridge and aggregates tools/list with serverName=poolId attribution; tools/call resolves params.name (qualified or unique unprefixed), acquires a lease, forwards via bridge with id rewriting + name unprefixing, re-stamps response id. (4) Bootstrapper install action runs netsh http add urlacl for the gateway port so console-mode operators can bind without ERROR_ACCESS_DENIED; uninstall reverses it best-effort. (5) HTTP.sys body extraction enhanced with HttpReceiveRequestEntityBody fallback so non-COPY_BODY-friendly clients (PowerShell Invoke-RestMethod, Expect:100-continue, chunked) work. (6) Fixed nlohmann::json{nullptr} -> nlohmann::json(nullptr) bug that produced [null] arrays instead of null scalars in JSON-RPC error envelopes. End-to-end smoke test on the host: MSI installs cleanly, service starts, gateway switches to native, /api/gateway/start binds HTTP.sys, MCP initialize returns serverInfo.version=0.6.10, tools/list returns honest empty array (no pools registered), URL ACL http://+:8080/ user=Everyone confirmed via netsh.",
                       "tags":  [
                                    "v0.6.10",
                                    "release",
@@ -281,12 +281,12 @@
                   {
                       "id":  "8c915dfb77e9",
                       "kind":  "deferred",
-                      "title":  "native HTTP.sys gateway end-to-end gateway exercise",
+                      "title":  "external-substrate end-to-end gateway exercise",
                       "body":  "Real gateway binary integration test. Operator-installed per ADR-002 Â§11; supervised-mock fallback handles its absence honestly.",
                       "tags":  [
                                    "phase-02",
-                                   "seed:deferred:native HTTP.sys gateway end-to-end gateway exercise",
-                                   "native HTTP.sys gateway",
+                                   "seed:deferred:external-substrate end-to-end gateway exercise",
+                                   "native",
                                    "phase-10",
                                    "deferred",
                                    "gateway"
@@ -369,7 +369,7 @@
                       "id":  "1100c16ffb10",
                       "kind":  "invariant",
                       "title":  "ADR-002 Â§3 â€” gateway-first topology",
-                      "body":  "AI client -\u003e MCOS advertised MCP Gateway -\u003e native HTTP.sys gateway -\u003e MCOS logical pool -\u003e LeaseRouter -\u003e backend instance. Autoscaled clones NOT exposed as separate public tools.",
+                      "body":  "AI client -\u003e MCOS advertised MCP Gateway -\u003e the in-process HTTP.sys adapter -\u003e MCOS logical pool -\u003e LeaseRouter -\u003e backend instance. Autoscaled clones NOT exposed as separate public tools.",
                       "tags":  [
                                    "gateway",
                                    "invariant",
@@ -456,7 +456,7 @@
                       "id":  "f4ae49a19b74",
                       "kind":  "contract",
                       "title":  "Group 2 â€” Gateway abstraction integrity",
-                      "body":  "ADR-002 Â§2,Â§3. No direct native HTTP.sys gateway coupling outside the adapter; no autoscaled-clone registration as separate tools; no hot-migration; sticky-session integrity (Â§2.4); worker process tree containment (Â§2.1a).",
+                      "body":  "ADR-002 Â§2,Â§3. No direct external-gateway coupling outside the adapter; no autoscaled-clone registration as separate tools; no hot-migration; sticky-session integrity (Â§2.4); worker process tree containment (Â§2.1a).",
                       "tags":  [
                                    "gateway",
                                    "group-2",
@@ -555,14 +555,14 @@
                   {
                       "id":  "487f1cccf3e9",
                       "kind":  "decision",
-                      "title":  "ADR-003: keep native HTTP.sys gateway for v0.6.x",
-                      "body":  "PHASE-11 decision: keep native HTTP.sys gateway as the v0.6.x default gateway substrate behind the existing IMcpGateway adapter. Native HTTP.sys gateway is documented as a conditional future phase (proposed PHASE-12). The adapter abstraction makes the choice reversible. Source-tree unchanged.",
+                      "title":  "ADR-003: Keep the external supervised substrate for v0.6.x",
+                      "body":  "PHASE-11 decision: Keep the external supervised substrate as the v0.6.x default gateway substrate behind the existing IMcpGateway adapter. a native HTTP.sys substrate is documented as a conditional future phase (proposed PHASE-12). The adapter abstraction makes the choice reversible. Source-tree unchanged.",
                       "tags":  [
                                    "adr-003",
                                    "phase-11",
                                    "gateway",
                                    "decision",
-                                   "native HTTP.sys gateway"
+                                   "native"
                                ],
                       "source":  "docs/wiki/Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision.md",
                       "ts":  "2026-05-02T12:20:59Z"
@@ -570,8 +570,8 @@
                   {
                       "id":  "fc919c844aa4",
                       "kind":  "deferred",
-                      "title":  "PHASE-12 native HTTP.sys gateway (conditional)",
-                      "body":  "Native gateway implementation deferred per ADR-003. Activates only when one of five triggers is observed: (1) measured throughput cap with operational impact, (2) confirmed session-affinity break under load, (3) native HTTP.sys gateway release-cadence stall, (4) operator-experience friction blocking adoption, (5) vendoring policy change. Migration plan documented in docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md Ã‚Â§3. Effort estimate 7-18 weeks. Requirements documented in Ã‚Â§2. Native must implement IMcpGateway exactly; NativeHttpSysGatewayAdapter stays as in-tree fallback even post-migration.",
+                      "title":  "PHASE-12 native HTTP.sys substrate (conditional)",
+                      "body":  "Native gateway implementation deferred per ADR-003. Activates only when one of five triggers is observed: (1) measured throughput cap with operational impact, (2) confirmed session-affinity break under load, (3) external-substrate release-cadence stall, (4) operator-experience friction blocking adoption, (5) vendoring policy change. Migration plan documented in docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md Ã‚Â§3. Effort estimate 7-18 weeks. Requirements documented in Ã‚Â§2. Native must implement IMcpGateway exactly; the fallback path stays in-tree even post-migration.",
                       "tags":  [
                                    "phase-12",
                                    "conditional",
@@ -587,7 +587,7 @@
                       "id":  "1bd0fe124163",
                       "kind":  "invariant",
                       "title":  "ADR-003 Ã‚Â§triggers: PHASE-12 activation conditions",
-                      "body":  "PHASE-12 (native HTTP.sys gateway) activates if and only if one or more of: (1) native HTTP.sys gateway saturates below required p95 under real LAN AI-client load, (2) PHASE-07 sticky-session contract observably violated by native HTTP.sys gateway routing, (3) native HTTP.sys gateway does not track an MCP spec version we need to ship, (4) operators consistently fail to install native HTTP.sys gateway alongside MCOS, (5) ADR-002 Ã‚Â§11 vendoring policy changes. PHASE-08 telemetry surface is the right monitoring tool for triggers 1 and 2; 3 and 4 are organizational signals. Recall this fact at the start of any future operations review.",
+                      "body":  "PHASE-12 (native HTTP.sys substrate) activates if and only if one or more of: (1) the external substrate saturates below required p95 under real LAN AI-client load, (2) PHASE-07 sticky-session contract observably violated by the external substrate's routing, (3) the in-process HTTP.sys adapter does not track an MCP spec version we need to ship, (4) operators consistently fail to install the in-process HTTP.sys adapter alongside MCOS, (5) ADR-002 Ã‚Â§11 vendoring policy changes. PHASE-08 telemetry surface is the right monitoring tool for triggers 1 and 2; 3 and 4 are organizational signals. Recall this fact at the start of any future operations review.",
                       "tags":  [
                                    "adr-003",
                                    "phase-12",
@@ -630,7 +630,7 @@
                       "id":  "86cad9f49246",
                       "kind":  "release-event",
                       "title":  "v0.6.7 shipped (Option D: gateway port honest 503 listener)",
-                      "body":  "Commit 226670d. NativeHttpSysGatewayAdapter binds mcpGateway.listenHost:listenPort with a tiny accept loop returning structured 503 JSON whenever the adapter is in Disabled or supervised-mock mode. LAN AI clients pointing at http://\u003chost\u003e:8080/mcp now get a useful structured error with operator guidance instead of TCP RST. Listener stops cleanly before native HTTP.sys gateway takes the port; restarts on Stop(). Winsock include-order fix: WIN32_LEAN_AND_MEAN + winsock2.h before windows.h in both the header and the cpp.",
+                      "body":  "Commit 226670d. NativeHttpSysGatewayAdapter binds mcpGateway.listenHost:listenPort with a tiny accept loop returning structured 503 JSON whenever the adapter is in Disabled or supervised-mock mode. LAN AI clients pointing at http://\u003chost\u003e:8080/mcp now get a useful structured error with operator guidance instead of TCP RST. Listener stops cleanly before the in-process HTTP.sys adapter takes the port; restarts on Stop(). Winsock include-order fix: WIN32_LEAN_AND_MEAN + winsock2.h before windows.h in both the header and the cpp.",
                       "tags":  [
                                    "release",
                                    "v0.6.7",
@@ -658,7 +658,7 @@
                       "id":  "427c64c65674",
                       "kind":  "release-event",
                       "title":  "v0.6.8 shipped (pool persistence + Canvas charts + telemetry ring + PHASE-12/13 plans)",
-                      "body":  "Commit 06a09e2. The biggest operator-pain item is gone: pool definitions now persist across restart and MSI upgrade via AppConfiguration.pools. Runtime hydrates pools at boot, POST /api/pools and remove call persistSupervisedPoolsToConfiguration to write back. Browser dashboard gains per-instance Canvas sparklines (CPU% + RAM MB time-series, 60-sample ring at 2s cadence). Telemetry events ring producer wired (pool/lease lifecycle events). /api/telemetry/events now returns {events, maxEvents} envelope and honors ?max=N. Shell config narrative surfaces preferredBindAddress. PHASE-12 plan file (full native HTTP.sys gateway, replaces honest-503 listener with real impl) and PHASE-13 plan file (Win2D rendering for high-rate visuals in shell) shipped. Implementation deferred to next releases.",
+                      "body":  "Commit 06a09e2. The biggest operator-pain item is gone: pool definitions now persist across restart and MSI upgrade via AppConfiguration.pools. Runtime hydrates pools at boot, POST /api/pools and remove call persistSupervisedPoolsToConfiguration to write back. Browser dashboard gains per-instance Canvas sparklines (CPU% + RAM MB time-series, 60-sample ring at 2s cadence). Telemetry events ring producer wired (pool/lease lifecycle events). /api/telemetry/events now returns {events, maxEvents} envelope and honors ?max=N. Shell config narrative surfaces preferredBindAddress. PHASE-12 plan file (full the in-process HTTP.sys adapter, replaces honest-503 listener with real impl) and PHASE-13 plan file (Win2D rendering for high-rate visuals in shell) shipped. Implementation deferred to next releases.",
                       "tags":  [
                                    "release",
                                    "v0.6.8",
@@ -673,7 +673,7 @@
                   {
                       "id":  "d6807dc85c9e",
                       "kind":  "release-event",
-                      "title":  "v0.6.9 shipped (PHASE-12 MVP -- native HTTP.sys gateway)",
+                      "title":  "v0.6.9 shipped (PHASE-12 MVP -- the in-process HTTP.sys adapter)",
                       "body":  "Commit b585cc7. NativeHttpSysGatewayAdapter implements IMcpGateway via Win32 HTTP.sys. mcpGateway.type=native selects it;  Adapter handles initialize + tools/list + /health end-to-end; tools/call returns -32601 pointing at v0.6.10 stdio bridge follow-up. Build links httpapi.lib. ADR-003 trigger #4 (operator-experience friction) addressed for the discovery surface. Stdio bridge for actual tool-call forwarding is the v0.6.10 follow-up.",
                       "tags":  [
                                    "release",
@@ -827,9 +827,9 @@
                                         "commit":  "f21e868",
                                         "report":  "handoff/realignment/PHASE-11-completion-report.md",
                                         "deferred":  [
-                                                         "Conditional PHASE-12 native HTTP.sys gateway"
+                                                         "Conditional PHASE-12 the in-process HTTP.sys adapter"
                                                      ],
-                                        "notes":  "Decision: keep native HTTP.sys gateway for v0.6.x. Native HTTP.sys gateway deferred to conditional PHASE-12 gated on five triggers (throughput cap, session-affinity break, upstream stall, operator-install friction, vendoring policy change). ADR-003 records the decision. PHASE-11-NATIVE-GATEWAY-EVALUATION.md carries the matrix + requirements + migration plan + limitations.",
+                                        "notes":  "Decision: Keep the external supervised substrate for v0.6.x. the in-process HTTP.sys adapter deferred to conditional PHASE-12 gated on five triggers (throughput cap, session-affinity break, upstream stall, operator-install friction, vendoring policy change). ADR-003 records the decision. PHASE-11-NATIVE-GATEWAY-EVALUATION.md carries the matrix + requirements + migration plan + limitations.",
                                         "updatedAt":  "2026-05-02T12:21:48Z"
                                     }
                    },
@@ -946,7 +946,7 @@
                   "docs/wiki/Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision.md":  [
                                                                                                      {
                                                                                                          "ts":  "2026-05-02T12:20:59Z",
-                                                                                                         "note":  "Formal decision: keep native HTTP.sys gateway for v0.6.x. Five triggers in this ADR activate a future PHASE-12 (native HTTP.sys gateway). Cite this ADR before any gateway-substrate discussion.",
+                                                                                                         "note":  "Formal decision: Keep the external supervised substrate for v0.6.x. Five triggers in this ADR activate a future PHASE-12 (native HTTP.sys substrate). Cite this ADR before any gateway-substrate discussion.",
                                                                                                          "tags":  [
                                                                                                                       "adr-003",
                                                                                                                       "decision",

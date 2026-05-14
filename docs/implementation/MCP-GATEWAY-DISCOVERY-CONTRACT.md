@@ -13,7 +13,7 @@ Path: `/.well-known/mcos.json`
   "trust": "lan",
   "auth": "none",
   "gateway": {
-    "type": "native HTTP.sys gateway",
+    "type": "native",
     "mcpUrl": "http://HOST:PORT/mcp",
     "healthUrl": "http://HOST:PORT/health"
   },
@@ -29,7 +29,7 @@ Path: `/.well-known/mcos.json`
   },
   "capabilities": [
     "mcp-gateway",
-    "native HTTP.sys gateway-adapter",
+    "the in-process HTTP.sys adapter-adapter",
     "dns-sd",
     "udp-beacon",
     "forsetti-governance",
@@ -53,7 +53,7 @@ TXT fields:
 ```text
 product=MCOS
 role=mcp-gateway
-gateway=native HTTP.sys gateway
+gateway=native
 mcp_path=/mcp
 config_path=/api/onboarding
 governance_path=/api/governance/bundles

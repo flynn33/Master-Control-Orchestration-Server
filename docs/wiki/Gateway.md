@@ -7,7 +7,7 @@
 
 The MCP Gateway is the **single MCOS-advertised endpoint** every LAN AI client connects to. Per ADR-002 §2 it is wrapped behind a replaceable C++ interface (`IMcpGateway`) so the substrate can change without breaking client contracts.
 
-> **Current substrate (v0.9.0+):** The only shipping gateway is `NativeHttpSysGatewayAdapter` — Windows-native HTTP.sys, in-process inside `MasterControlServiceHost.exe`, no external binary. `cfg.mcpGateway.type` is retained in the JSON schema for deserialization compatibility only; at runtime the value is ignored and the native adapter is always used. See [History (retired v0.9.0)](#history-retired-v090) for the native HTTP.sys gateway record.
+> **Current substrate (v0.9.0+):** The only shipping gateway is `NativeHttpSysGatewayAdapter` — Windows-native HTTP.sys, in-process inside `MasterControlServiceHost.exe`, no external binary. `cfg.mcpGateway.type` is retained in the JSON schema for deserialization compatibility only; at runtime the value is ignored and the native adapter is always used. See [History (retired v0.9.0)](#history-retired-v090) for the legacy external-gateway record.
 
 ## Native HTTP.sys substrate (v0.9.0+)
 

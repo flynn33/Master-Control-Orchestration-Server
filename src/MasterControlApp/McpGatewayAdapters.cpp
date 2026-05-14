@@ -338,7 +338,7 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
     }
 #if !defined(_WIN32)
     status_.state = GatewayState::Failed;
-    status_.message = "Native HTTP.sys gateway requires Windows.";
+    status_.message = "the in-process HTTP.sys adapter requires Windows.";
     return status_;
 #else
     if (running_) {
@@ -460,7 +460,7 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
     serveThread_ = std::thread(&NativeHttpSysGatewayAdapter::serveLoop, this);
 
     status_.state = GatewayState::Running;
-    status_.message = "Native HTTP.sys gateway listening on " + status_.mcpUrl
+    status_.message = "the in-process HTTP.sys adapter listening on " + status_.mcpUrl
         + ". MCP tools/list and tools/call routed through the supervisor + lease router.";
     status_.startedAtUtc = timestampNowUtc();
     return status_;
@@ -475,7 +475,7 @@ GatewayStatus NativeHttpSysGatewayAdapter::Stop() {
         if (status_.state != GatewayState::Disabled) {
             status_.state = GatewayState::Stopped;
             status_.startedAtUtc.clear();
-            status_.message = "Native HTTP.sys gateway stopped.";
+            status_.message = "the in-process HTTP.sys adapter stopped.";
         }
         return status_;
     }
@@ -483,7 +483,7 @@ GatewayStatus NativeHttpSysGatewayAdapter::Stop() {
     teardownHttpSysLocked();
     status_.state = GatewayState::Stopped;
     status_.startedAtUtc.clear();
-    status_.message = "Native HTTP.sys gateway stopped. Registry preserved in-memory.";
+    status_.message = "the in-process HTTP.sys adapter stopped. Registry preserved in-memory.";
 #endif
     return status_;
 }
@@ -550,7 +550,7 @@ GatewayHealth NativeHttpSysGatewayAdapter::Probe() {
         }
 #else
         health.status = GatewayHealthStatus::Unhealthy;
-        health.message = "Native HTTP.sys gateway requires Windows.";
+        health.message = "the in-process HTTP.sys adapter requires Windows.";
 #endif
     }
     return health;

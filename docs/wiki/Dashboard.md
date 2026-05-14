@@ -45,7 +45,7 @@ The full route map lives in [`docs/implementation/DASHBOARD-ROUTE-MAP.md`](https
 Live posture across the gateway-first stack. Five primary cards: MCP Gateway, Worker Pools, Connected Clients, Governance Posture, Host Telemetry. Plus the recent telemetry events list. Quick-action buttons jump to the deeper panels.
 
 ### Gateway
-Adapter type (`native HTTP.sys gateway`), lifecycle state (`running` / `configured` / `failed`), health (`healthy` / `degraded` / `unhealthy` / `unknown`), the live advertised MCP URL, and the registered tools list. Reads from `/api/gateway/{status,health,tools}`.
+Adapter type (`native`), lifecycle state (`running` / `configured` / `failed`), health (`healthy` / `degraded` / `unhealthy` / `unknown`), the live advertised MCP URL, and the registered tools list. Reads from `/api/gateway/{status,health,tools}`.
 
 ### Pools
 One card per managed pool. Each card shows kind (`mcp-server` / `sub-agent`), scale policy (`min` / `max` / `maxLeasesPerInstance`), live utilization meter (lease count / max headroom × 100%), instance lifecycle table with worker telemetry, expandable lease list. Inline actions: scale-to-min, drain. Reads from `/api/pools` + `/api/pools/{id}/leases` + `/api/pools/{id}/saturation`.

@@ -138,7 +138,7 @@ The MCP gateway substrate. Controls the AI-client-facing surface.
 
 ```json
 "mcpGateway": {
-  "type": "native HTTP.sys gateway",
+  "type": "native",
   "enabled": false,
   "binaryPath": "",
   "listenHost": "0.0.0.0",
@@ -152,14 +152,14 @@ The MCP gateway substrate. Controls the AI-client-facing surface.
 
 | Field | Default | When to change |
 |---|---|---|
-| `type` | `native HTTP.sys gateway` | Future option `native` activates the conditional PHASE-12 native HTTP.sys gateway. ADR-003 keeps `native HTTP.sys gateway` for v0.6.x. |
+| `type` | `native` | Future option `fake` activates the in-tree test adapter. Historically the external substrate was kept for v0.6.x; v0.9.0 retired it.. |
 | `enabled` | `false` | Set to `true` once you have configured a `binaryPath` AND want MCOS to spawn it. With `enabled=true` and an empty `binaryPath`, MCOS runs in supervised-mock mode and reports `health=unknown` honestly. |
 | `binaryPath` | empty | Absolute path to the gateway binary on this host. Required for live gateway behavior. See [Packaging](Packaging-and-Gateway-Binary). |
-| `listenHost` | `0.0.0.0` | What host native HTTP.sys gateway binds. Same multi-homed considerations as `bindAddress`. |
+| `listenHost` | `0.0.0.0` | What host the native HTTP.sys adapter binds. Same multi-homed considerations as `bindAddress`. |
 | `listenPort` | `8080` | The MCP gateway port. AI clients connect here. Change if 8080 is taken. The MSI's firewall rule and the dashboard auto-template against this value. |
 | `mcpPath` | `/mcp` | Path under the listen host where MCP requests land. Almost never changes. |
 | `healthPath` | `/health` | Path the adapter probes via WinHTTP every N seconds. Almost never changes. |
-| `databasePath` | empty | If native HTTP.sys gateway wants a local store, set its path here. Optional. |
+| `databasePath` | empty | Reserved for a future substrate that wants a local store, set its path here. Optional. |
 | `mode` | `lan-trusted` | Reserved for future use. Documents the trust posture. |
 
 ### `security`

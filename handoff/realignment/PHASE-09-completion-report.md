@@ -83,7 +83,7 @@ This phase modified browser code only. There is no JavaScript test harness in th
 ## Risks and blockers
 
 1. **No browser-side automated tests.** The phase file's validation accepts "Browser static tests if present / Snapshot review / Manual UI route checklist" — there is no JS test harness in the repo, so the verification is by static grep and code review. The 5s polling + the bounded fetch list mean that a route that returns garbage will degrade gracefully (each fetch is `.catch()`-wrapped), but a regression in `formatMetric` could silently render `-1` as "-1%" if the helper is bypassed. PHASE-10 should add either a Playwright smoke or a small Node-based unit harness for `formatMetric` specifically.
-2. **native HTTP.sys gateway-backed gateway not exercised end-to-end.** Pools panel renders correctly when `/api/pools` is empty (the supervised-mock fallback). Per-pool fetches degrade silently when a pool has no instances. A real gateway binary integration test is deferred to PHASE-10.
+2. **the in-process HTTP.sys adapter-backed gateway not exercised end-to-end.** Pools panel renders correctly when `/api/pools` is empty (the supervised-mock fallback). Per-pool fetches degrade silently when a pool has no instances. A real gateway binary integration test is deferred to PHASE-10.
 3. **WinUI shell unchanged.** The phase file's `readFirst` lists `src/MasterControlShell` but the deliverables only call out browser panels. PHASE-09 deliberately scoped to the browser surface; the shell remains its own row in ARCHITECTURE-DRIFT-INVENTORY §G as deferred. WinUI realignment is a future track.
 4. **Dashboard polling is fixed at 5s.** Acceptable for LAN operations but burns request volume. PHASE-10 may want a backoff or SSE-based push for the events / clients streams. Not blocking for PHASE-09.
 5. **Pre-existing C4100 warning persists** in `SetupWizardBuilder.cpp:133`. Carries forward from PHASE-01.
@@ -98,7 +98,7 @@ None of these block declaring PHASE-09 complete.
 |---|---|---|
 | Browser-side automated tests (formatMetric unit + Playwright smoke) | PHASE-10 | Release-gate hardening concern; the phase file scopes PHASE-09 to UI realignment, not test harness creation. |
 | WinUI shell realignment | Future track | Phase file scoped to browser surface; shell deferred-cleanup row remains. |
-| native HTTP.sys gateway-backed end-to-end gateway / pool exercise | PHASE-10 | Requires a real spawnable gateway binary; release-gate concern. |
+| the in-process HTTP.sys adapter-backed end-to-end gateway / pool exercise | PHASE-10 | Requires a real spawnable gateway binary; release-gate concern. |
 | `/api/pools?expand=leases,saturation` to coalesce per-pool fetches | Future | Pure optimization; current polling is acceptable for LAN scale. |
 | SSE / WebSocket push for telemetry events stream | Future | Pure optimization; 5s polling is correct for the operator surface. |
 | Onboarding companion-utility download link | Future / PHASE-10 | Profile already documents the connector-edge constraint via `caveats`; the binary itself is not yet packaged. |
@@ -111,7 +111,7 @@ None of these block declaring PHASE-09 complete.
 PHASE-10 (Windows hardening, CI, packaging, release gate) should begin by:
 1. Reading [handoff/realignment/PHASE-10-windows-hardening-ci-release.md](PHASE-10-windows-hardening-ci-release.md) and its `readFirst` files (`.github/workflows/`, `installer/`, `CMakePresets.json`, `VERSION.json`, `scripts/`).
 2. Producing a file-by-file plan covering: `vswhere`-driven toolchain discovery, version stamping in CI, no `workflow_dispatch` bypass, MSI/MSIX packaging recipe audit, install/uninstall smoke, gateway binary packaging, firewall/LAN-mode docs, browser-side automated test harness (formatMetric unit + Playwright smoke against the new dashboard surface).
-3. Exercising the native HTTP.sys gateway-backed gateway end-to-end (the static-only validation of PHASE-02..09 becomes runtime validation here).
+3. Exercising the in-process HTTP.sys adapter-backed gateway end-to-end (the static-only validation of PHASE-02..09 becomes runtime validation here).
 4. Bumping `VERSION.json` — first allowed bump per the manifest's `noBumpUntilPhaseTen: true` rule.
 5. Stopping at the PHASE-10 completion report. Not proceeding to PHASE-11.
 

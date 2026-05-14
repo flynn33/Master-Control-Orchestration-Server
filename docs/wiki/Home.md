@@ -105,7 +105,7 @@ These pages explain why MCOS works the way it does. Read when something is not b
 | Released | `2026-05-11` |
 | Theme | LAN MCP Gateway + Supervisor Agent Assignment Wizard + footer-style tile-grid shell |
 | Tag | [`v0.10.11`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.10.11) |
-| Gateway substrate | `native` (in-process Windows HTTP.sys) — only shipping substrate as of v0.9.0. native HTTP.sys gateway retired per operator directive. |
+| Gateway substrate | `native` (in-process Windows HTTP.sys) — only shipping substrate as of v0.9.0. the legacy external gateway was retired per operator directive. |
 | Supervisor wizard | Operator selects one of `chatgpt` / `claude` / `grok`; MCOS issues a LAN-routable config bundle the supervisor client uses to bind. Lifecycle off → config_generated → pending_connection → connected → disconnected \| revoked. |
 | Boot self-tests | 39 probes (was ~30 at v0.7.0). Failures dual-emit to the persistent Diagnostics log. |
 | Scheduled next | v1.0.0+ candidates: CLU Phase 2/3 (`enforceAction` wiring), PHASE-14 DiagnosticsSectionControl, telemetry log rotation, tile-grid expand-on-click. |

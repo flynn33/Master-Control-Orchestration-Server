@@ -509,7 +509,7 @@ Symptom: the Gateway destination shows `state=running, health=unknown, message="
 
 This is the documented honest fallback (PHASE-02 / ADR-002 §9). It is not a bug. Two ways to move out of supervised-mock:
 
-1. **Install native HTTP.sys gateway and point at it.** Download or build the gateway binary, copy it somewhere stable (e.g. `C:\Program Files\Master Control Orchestration Server\bin\native HTTP.sys gateway\`), and set `mcpGateway.binaryPath` in `mcos.json` to its absolute path. Restart the service. The adapter spawns it under a Job Object on next start. See [Packaging and Gateway Binary](Packaging-and-Gateway-Binary).
+1. **Install the in-process HTTP.sys adapter and point at it.** Download or build the gateway binary, copy it somewhere stable (e.g. `C:\Program Files\Master Control Orchestration Server\bin\the in-process HTTP.sys adapter\`), and set `mcpGateway.binaryPath` in `mcos.json` to its absolute path. Restart the service. The adapter spawns it under a Job Object on next start. See [Packaging and Gateway Binary](Packaging-and-Gateway-Binary).
 2. **Confirm `mcpGateway.enabled=true`** in `mcos.json`. The adapter refuses to start in supervised mode if disabled.
 
 If the binary is configured but the adapter still reports supervised-mock, check `service-events.jsonl` for `CreateProcessW` errors. The most common cause is a path with embedded environment variables that didn't expand at config-load time.

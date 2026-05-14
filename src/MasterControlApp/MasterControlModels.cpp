@@ -332,23 +332,22 @@ GovernanceDecisionOutcome governanceDecisionOutcomeFromString(const std::string&
     });
 }
 
-GatewayType gatewayTypeFromString(const std::string& value) {
-    // Tolerant deserialization: unknown / legacy slugs (e.g. anything
-    // written by a pre-realignment config) resolve to Native rather
-    // than throwing. The strict enumFromString helper would throw
-    // std::invalid_argument here, and the only call site
+GatewayType gatewayTypeFromString(const std::string& /*value*/) {
+    // Always Native, never throws. Native is the only shipping
+    // substrate and the runtime constructs NativeHttpSysGatewayAdapter
+    // unconditionally regardless of the persisted slug. Keeping this
+    // function exception-free is load-bearing: the only call site
     // (json adl_serializer<McpGatewayConfiguration>::from_json) lets
-    // that exception bubble up into FileBackedConfigurationService,
-    // which catches it and reverts the whole AppConfiguration to
-    // defaults -- destroying every other persisted setting along with
-    // the gateway type. Since Native is the only shipping substrate,
-    // the safe fallback is to silently coerce. The runtime constructs
-    // NativeHttpSysGatewayAdapter unconditionally regardless of this
-    // value, so the coercion is observable only via to_string()
-    // round-trips and the dashboard's mcpGateway.type display.
-    if (value == "native") {
-        return GatewayType::Native;
-    }
+    // any exception bubble up into FileBackedConfigurationService,
+    // which catches it and reverts the entire on-disk AppConfiguration
+    // to defaults -- destroying every other persisted operator
+    // setting along with the gateway type. A regression test
+    // (testGatewayConfigUnknownTypeFallsBackWithoutWipe) pins this
+    // contract. The input is ignored to make the no-throw guarantee
+    // syntactically obvious; the only observable artifact of the
+    // coercion is via to_string() round-trips and the dashboard's
+    // mcpGateway.type display, both of which now emit "native"
+    // consistently.
     return GatewayType::Native;
 }
 

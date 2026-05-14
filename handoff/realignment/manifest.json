@@ -8,7 +8,7 @@
     "requiresCompletionReport": true,
     "noDirectAIProviderExecution": true,
     "lanClientAuth": "none; network-level trust only",
-    "shippingGatewaySubstrate": "NativeHttpSysGatewayAdapter (in-process HTTP.sys, v0.9.0+); native HTTP.sys gateway retired",
+    "shippingGatewaySubstrate": "NativeHttpSysGatewayAdapter (in-process HTTP.sys, v0.9.0+); the legacy external gateway retired",
     "windowsNative": true,
     "forsettiComplianceRequired": true,
     "noAiAttribution": true
@@ -349,13 +349,13 @@
     },
     {
       "id": "PHASE-11",
-      "label": "Native gateway evaluation and native HTTP.sys gateway replacement option",
+      "label": "Native gateway evaluation and the in-process HTTP.sys adapter replacement option",
       "file": "handoff/realignment/PHASE-11-native-gateway-option.md",
-      "objective": "Evaluate whether to keep native HTTP.sys gateway or implement native MCOS gateway after spike data.",
+      "objective": "Evaluate whether to keep the in-process HTTP.sys adapter or implement native MCOS gateway after spike data.",
       "readFirst": [
         "src",
         "docs/implementation",
-        "handoff/realignment/PHASE-02-mcp-gateway-spike-native HTTP.sys gateway.md"
+        "handoff/realignment/PHASE-02-mcp-gateway-spike-the in-process HTTP.sys adapter.md"
       ],
       "deliverables": [
         "Keep/replace decision matrix",
@@ -365,7 +365,7 @@
       ],
       "acceptanceCriteria": [
         "Decision is evidence-based",
-        "native HTTP.sys gateway limitations documented",
+        "external-substrate limitations documented",
         "Native implementation scope does not break previous phases"
       ],
       "validation": [
@@ -376,7 +376,7 @@
     },
     {
       "id": "PHASE-12",
-      "label": "Native HTTP.sys MCP Gateway substrate (replaces native HTTP.sys gateway)",
+      "label": "Native HTTP.sys MCP Gateway substrate (replaces the in-process HTTP.sys adapter)",
       "file": "handoff/realignment/PHASE-12-native-http-sys-gateway.md",
       "status": "shipped at v0.9.0; NativeHttpSysGatewayAdapter retired in the same release",
       "objective": "Replace the gateway adapter child process with a Windows-native MCP Gateway implemented inside MCOS in C++ on top of HTTP.sys. Maintainers get a usable gateway out of the box with no external binary to install.",

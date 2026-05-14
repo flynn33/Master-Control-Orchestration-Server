@@ -129,10 +129,10 @@ Expected: zero matches across `src/` and `resources/web`. PHASE-01 removed all o
 
 ## Group 2 — Gateway abstraction integrity (forbidden by ADR-002 §2, §3)
 
-### 2.1 Direct native HTTP.sys gateway coupling outside the adapter
+### 2.1 Direct the in-process HTTP.sys adapter coupling outside the adapter
 
 ```bash
-git grep -nE 'native HTTP.sys gateway|native HTTP.sys gateway|native HTTP.sys gateway' \
+git grep -nE 'the in-process HTTP.sys adapter|the in-process HTTP.sys adapter|the in-process HTTP.sys adapter' \
   -- src/MasterControlApp src/MasterControlServiceHost src/MasterControlBootstrapper tests resources/web include \
   ':!src/MasterControlApp/McpGatewayAdapters.cpp' \
   ':!include/MasterControl/McpGatewayAdapters.h' \

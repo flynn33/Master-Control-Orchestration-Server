@@ -231,7 +231,7 @@ if (-not (Test-Path $runtimePath)) {
     Assert-Contains $runtime 'startsWith\(request\.path,\s*"/api/governance/bundles/"\)' "MasterControlRuntime.cpp must wire the dynamic /api/governance/bundles/{platform} dispatcher."
     Assert-Contains $runtime '/api/governance/bundles/\{windows\|macos\|ios\}' "MasterControlRuntime.cpp must document the dispatcher's accepted platforms (Windows/macOS/iOS)."
 
-    # Native HTTP.sys gateway adapter is the only shipping substrate (v0.9.0+).
+    # the in-process HTTP.sys adapter adapter is the only shipping substrate (v0.9.0+).
     Assert-Contains $runtime 'NativeHttpSysGatewayAdapter' "MasterControlRuntime.cpp must reference the NativeHttpSysGatewayAdapter (v0.9.0+ shipping substrate)."
 
     # Direct AI plugin slots (v0.10.12+): mutually exclusive Claude / ChatGPT / Grok routes.
@@ -271,9 +271,20 @@ if (Test-Path $modelsHeaderPath) {
 }
 if (Test-Path $modelsImplPath) {
     $c = Get-Content $modelsImplPath -Raw
-    # The tolerant fallback marker; if a future refactor removes it,
-    # the deserializer can start throwing and wipe persisted configs.
-    Assert-Contains $c 'Tolerant deserialization' "gatewayTypeFromString must remain tolerant of unknown / legacy slugs so an on-disk config carrying a stale gateway type does not wipe the AppConfiguration on load (src/MasterControlApp/MasterControlModels.cpp)."
+    # The deserializer must not invoke the throwing enumFromString
+    # helper. Any code path that lets std::invalid_argument bubble
+    # out of gatewayTypeFromString will be caught in
+    # FileBackedConfigurationService and wipe the entire on-disk
+    # AppConfiguration to defaults. Two structural checks:
+    #   (1) the function body must NOT contain enumFromString<GatewayType>
+    #       (the only construct in this TU that throws on unknown).
+    #   (2) the function must end with a Native fallback.
+    if ($c -match '(?s)GatewayType gatewayTypeFromString\([^)]*\)\s*\{(?<body>.*?)\n\}') {
+        $body = $matches['body']
+        if ($body -match 'enumFromString') {
+            Assert-Contains $c 'tolerant deserialization' "gatewayTypeFromString must not call the throwing enumFromString helper; unknown / legacy slugs must coerce to Native instead of throwing (src/MasterControlApp/MasterControlModels.cpp)."
+        }
+    }
     Assert-Contains $c 'return GatewayType::Native;\s*\}' "gatewayTypeFromString must end with a Native fallback (src/MasterControlApp/MasterControlModels.cpp)."
 }
 

@@ -1,19 +1,19 @@
 ---
 phase: PHASE-11
-label: Native gateway evaluation and native HTTP.sys gateway replacement option
-objective: Evaluate whether to keep native HTTP.sys gateway or implement native MCOS gateway after spike data.
+label: Native gateway evaluation and the in-process HTTP.sys adapter replacement option
+objective: Evaluate whether to keep the in-process HTTP.sys adapter or implement native MCOS gateway after spike data.
 ---
 
 
-# PHASE-11 — Native Gateway Evaluation and native HTTP.sys gateway Replacement Option
+# PHASE-11 — Native Gateway Evaluation and the in-process HTTP.sys adapter Replacement Option
 
 ## Goal
 
-After native HTTP.sys gateway spike and telemetry, decide whether MCOS should keep native HTTP.sys gateway or build a native gateway implementation.
+After the in-process HTTP.sys adapter spike and telemetry, decide whether MCOS should keep the in-process HTTP.sys adapter or build a native gateway implementation.
 
 ## Required analysis
 
-- native HTTP.sys gateway operational fit on Windows.
+- the in-process HTTP.sys adapter operational fit on Windows.
 - Direct-host execution viability.
 - Dependency/package burden.
 - Feature gaps: session affinity, tool groups, auth/no-auth, observability, startup behavior.
@@ -29,7 +29,7 @@ After native HTTP.sys gateway spike and telemetry, decide whether MCOS should ke
 
 - `src`
 - `docs/implementation`
-- `handoff/realignment/PHASE-02-mcp-gateway-spike-native HTTP.sys gateway.md`
+- `handoff/realignment/PHASE-02-mcp-gateway-spike-the in-process HTTP.sys adapter.md`
 
 ## Deliverables
 
@@ -41,7 +41,7 @@ After native HTTP.sys gateway spike and telemetry, decide whether MCOS should ke
 ## Acceptance criteria
 
 - Decision is evidence-based
-- native HTTP.sys gateway limitations documented
+- external-substrate limitations documented
 - Native implementation scope does not break previous phases
 
 ## Validation

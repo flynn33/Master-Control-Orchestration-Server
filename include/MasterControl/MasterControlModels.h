@@ -744,7 +744,7 @@ struct BeaconAdvertisement final {
 };
 
 // PHASE-02 / v0.9.0: MCP Gateway configuration consumed by IMcpGateway
-// adapters. v0.9.0 drops native HTTP.sys gateway support entirely -- the runtime no
+// adapters. v0.9.0 drops the in-process HTTP.sys adapter support entirely -- the runtime no
 // longer supervises an external gateway binary. The native HTTP.sys
 // implementation (NativeHttpSysGatewayAdapter) is the only substrate
 // and starts enabled by default. binaryPath / databasePath stay in

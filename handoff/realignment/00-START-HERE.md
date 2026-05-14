@@ -39,7 +39,7 @@ Implement PHASE-01 only ...
 - PHASE-08 — Real-time telemetry model
 - PHASE-09 — Tron dashboard realignment
 - PHASE-10 — Windows hardening, CI, packaging, and release gate
-- PHASE-11 — Native gateway evaluation and native HTTP.sys gateway replacement option
+- PHASE-11 — Native gateway evaluation and the in-process HTTP.sys adapter replacement option
 
 ## Completion rule
 
