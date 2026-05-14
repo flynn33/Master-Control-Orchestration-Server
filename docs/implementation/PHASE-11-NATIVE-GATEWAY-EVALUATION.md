@@ -123,7 +123,7 @@ Triggered only if a future phase decides to replace native HTTP.sys gateway. Unt
 ### 3.2 Implement-side-by-side
 
 1. Add `NativeHttpSysGatewayAdapter` to `include/MasterControl/McpGatewayAdapters.h` as a peer to `NativeHttpSysGatewayAdapter`. **Do not delete native HTTP.sys gateway yet.**
-2. Add a `GatewayType::Native` enum value (matching the existing `GatewayType::native HTTP.sys gateway`) and seed `buildDefaultConfiguration()` so operators can opt in via config.
+2. Add a `GatewayType::Native` enum value (matching the existing the legacy `GatewayType` slot) and seed `buildDefaultConfiguration()` so operators can opt in via config.
 3. Wire `MasterControlApplication::Impl` to construct one or the other adapter based on `configuration.mcpGateway.type`. Both adapters compile in; only one runs.
 4. Update `Sync-RepositoryVersionBadges.ps1` (or its replacement) — no version bump required for additive functionality, but see release-gate notes below.
 

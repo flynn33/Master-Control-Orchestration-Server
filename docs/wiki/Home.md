@@ -7,7 +7,7 @@
 
 Internal-tool documentation. Use this wiki to install MCOS, configure it, run it day to day, and use each feature. Architecture and decisions live at the back as reference for when something is not behaving the way it should.
 
-> **v0.10.11 sits on top of the v0.7.0 production architecture.** native HTTP.sys gateway was retired in v0.9.0 — the only shipping gateway substrate is now the in-process Windows-native HTTP.sys adapter. The v0.9.x and v0.10.x lines added the Supervisor Agent Assignment Wizard (operator picks one supervisor model — `chatgpt` / `claude` / `grok` — and MCOS issues a LAN-routable config the client uses to bind), a footer-style tile-grid renderer used by Telemetry + Runtime + the cross-tab SUB-AGENT GRID, persistent Diagnostics logging, a hot-deploy helper (`scripts\Deploy-LocalLive.ps1`), and pool orchestration scaffolding under `.claude/`.
+> **v0.10.11 sits on top of the v0.7.0 production architecture.** the legacy external gateway was retired in v0.9.0 — the only shipping gateway substrate is now the in-process Windows-native HTTP.sys adapter. The v0.9.x and v0.10.x lines added the Supervisor Agent Assignment Wizard (operator picks one supervisor model — `chatgpt` / `claude` / `grok` — and MCOS issues a LAN-routable config the client uses to bind), a footer-style tile-grid renderer used by Telemetry + Runtime + the cross-tab SUB-AGENT GRID, persistent Diagnostics logging, a hot-deploy helper (`scripts\Deploy-LocalLive.ps1`), and pool orchestration scaffolding under `.claude/`.
 
 ---
 

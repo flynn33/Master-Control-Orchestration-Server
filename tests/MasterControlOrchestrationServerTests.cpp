@@ -1241,6 +1241,53 @@ bool testGatewayConfigJsonRoundTrip() {
     return ok;
 }
 
+// Regression: an on-disk config carrying an unknown / legacy
+// gateway type slug must NOT cause json.get<AppConfiguration>() to
+// throw. FileBackedConfigurationService treats any exception from
+// the get<>() call as a load failure and reverts the entire
+// AppConfiguration to defaults -- which would wipe every other
+// persisted operator setting (preferredBindAddress, seededEndpoints,
+// resourceAllocation, etc.) just because the gateway type field
+// carries a string we no longer recognize. The tolerant
+// gatewayTypeFromString coerces unknown slugs to Native; this test
+// pins that contract and asserts the surrounding fields round-trip
+// undisturbed.
+bool testGatewayConfigUnknownTypeFallsBackWithoutWipe() {
+    nlohmann::json serialized = {
+        { "type", "some-legacy-slug-we-no-longer-know" },
+        { "enabled", true },
+        { "listenHost", "0.0.0.0" },
+        { "listenPort", 9090 },
+        { "mcpPath", "/mcp" },
+        { "healthPath", "/health" },
+        { "mode", "lan-trusted" },
+        { "binaryPath", "" },
+        { "databasePath", "" }
+    };
+    bool ok = true;
+    MasterControl::McpGatewayConfiguration restored;
+    try {
+        restored = serialized.get<MasterControl::McpGatewayConfiguration>();
+        ok &= expect(true, "Unknown gateway type slug deserializes without throwing.");
+    } catch (const std::exception&) {
+        ok &= expect(false, "Unknown gateway type slug must NOT throw (would wipe full AppConfiguration).");
+        return ok;
+    }
+    ok &= expect(restored.type == MasterControl::GatewayType::Native,
+                 "Unknown gateway type slug falls back to Native.");
+    // Sibling fields must round-trip untouched -- the whole point of
+    // the tolerant fallback is that legacy configs do not get reset.
+    ok &= expect(restored.enabled == true,
+                 "Sibling field 'enabled' survives unknown-type fallback.");
+    ok &= expect(restored.listenPort == 9090,
+                 "Sibling field 'listenPort' survives unknown-type fallback.");
+    ok &= expect(restored.mcpPath == "/mcp",
+                 "Sibling field 'mcpPath' survives unknown-type fallback.");
+    ok &= expect(restored.mode == "lan-trusted",
+                 "Sibling field 'mode' survives unknown-type fallback.");
+    return ok;
+}
+
 bool testAppConfigurationCarriesLanClients() {
     MasterControl::AppConfiguration configuration;
     MasterControl::LanClient client;
@@ -1899,6 +1946,7 @@ int main() {
     ok &= testRealAdapterRegistrationSurvivesAcrossStartStop();
     ok &= testGatewayEnumRoundTrips();
     ok &= testGatewayConfigJsonRoundTrip();
+    ok &= testGatewayConfigUnknownTypeFallsBackWithoutWipe();
     // PHASE-03 LAN discovery tests
     ok &= testDiscoveryDocumentDefaultShape();
     ok &= testDiscoveryDocumentJsonRoundTrip();

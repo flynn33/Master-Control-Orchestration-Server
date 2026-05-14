@@ -392,10 +392,10 @@ The `IMcpGateway` interface is the contract that survives across any swap. New m
 - **MCP gateway URL discovery** → [LAN Discovery](LAN-Discovery)
 - **Client onboarding profiles** → `/api/onboarding/{clientType}` (claude-code, codex, chatgpt, grok, generic)
 - **Native gateway evaluation** → [docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md)
-- **native HTTP.sys gateway history** → [History (retired v0.9.0)](#history-retired-v090) below
+- **Legacy external-gateway history** → [History (retired v0.9.0)](#history-retired-v090) below
 
 ---
 
 ## History (retired v0.9.0)
 
-Prior to v0.9.0, the gateway substrate was `NativeHttpSysGatewayAdapter`: MCOS supervised an external gateway binary as a Job Object child process. Maintainers downloaded the gateway binary separately and configured its path in `mcos.json`. The adapter spawned it under `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for atomic reaping on MCOS exit. `cfg.mcpGateway.type = "native HTTP.sys gateway"` was the factory default. At v0.9.0, per maintainer directive, `NativeHttpSysGatewayAdapter` source files were removed and replaced by `NativeHttpSysGatewayAdapter`. The gateway binary is no longer required, downloaded, supervised, or supported.
+Prior to v0.9.0, the gateway substrate was an external supervised-binary adapter: MCOS spawned a separate gateway binary as a Job Object child process under `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` for atomic reaping on MCOS exit. Maintainers downloaded the gateway binary separately and configured its path in `mcos.json`. At v0.9.0, per maintainer directive, that external substrate was retired and `NativeHttpSysGatewayAdapter` (in-process Win32 HTTP.sys, no external binary) became the only shipping adapter. The gateway binary is no longer required, downloaded, supervised, or supported.

@@ -142,7 +142,7 @@ git grep -nE 'native HTTP.sys gateway|native HTTP.sys gateway|native HTTP.sys ga
   ':!docs/**'
 ```
 
-Expected: zero matches as of PHASE-02. The substring is allowed inside the adapter (`include/MasterControl/McpGatewayAdapters.h`, `src/MasterControlApp/McpGatewayAdapters.cpp`), the enum string tables (`src/MasterControlApp/MasterControlModels.cpp`), default-config seeding (`MasterControlDefaults.cpp`), and the `GatewayType::native HTTP.sys gateway` declaration. Anywhere else is a coupling regression.
+Expected: zero matches as of PHASE-02. The substring is allowed inside the adapter (`include/MasterControl/McpGatewayAdapters.h`, `src/MasterControlApp/McpGatewayAdapters.cpp`), the enum string tables (`src/MasterControlApp/MasterControlModels.cpp`), default-config seeding (`MasterControlDefaults.cpp`), and the legacy `GatewayType` slot declaration. Anywhere else is a coupling regression.
 
 ### 2.1a Worker process tree containment (PHASE-06, ADR-002 §7)
 

@@ -1,6 +1,6 @@
 # Architecture Drift Inventory (PHASE-00 Baseline)
 
-> **NOTE (post-PHASE-12, v0.9.0):** This document is a historical PHASE-00 baseline snapshot. Several decisions noted here as "TBD" or "PHASE-11 evaluation" have since been resolved. Specifically, native HTTP.sys gateway was retired at v0.9.0 and replaced by the in-process `NativeHttpSysGatewayAdapter`. ADR-003 captures the substrate decision. Treat the rest of this file as a frozen baseline for traceability, not as current state.
+> **NOTE (post-PHASE-12, v0.9.0):** This document is a historical PHASE-00 baseline snapshot. Several decisions noted here as "TBD" or "PHASE-11 evaluation" have since been resolved. Specifically, the legacy external gateway was retired at v0.9.0 and replaced by the in-process `NativeHttpSysGatewayAdapter`. ADR-003 captures the substrate decision. Treat the rest of this file as a frozen baseline for traceability, not as current state.
 
 This file maps where the current MCOS implementation conflicts with the gateway-first model declared in [ADR-002](../wiki/Architecture-Decisions/ADR-002-gateway-first-mcp-realignment.md). It is a forward-looking inventory: each row identifies an existing surface and the phase that resolves it. PHASE-00 makes no edits; this is the map subsequent phases consume.
 

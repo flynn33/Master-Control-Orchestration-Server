@@ -74,7 +74,7 @@ ADR-003 made native HTTP.sys gateway the v0.6.x default and reserved this phase 
 
 - MVP (this plan): 1-2 weeks of focused engineering.
 - Production-ready (SSE, TLS handoff, multi-tenant LAN auth, hot-reload, full MCP spec coverage): 4-8 weeks.
-- The MVP is enough to retire the native HTTP.sys gateway dependency for new installs. Existing native HTTP.sys gateway deployments keep working via the preserved adapter.
+- The MVP is enough to retire the legacy external-gateway dependency for new installs. Existing native HTTP.sys gateway deployments keep working via the preserved adapter.
 
 ## Risks
 

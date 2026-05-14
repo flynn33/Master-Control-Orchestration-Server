@@ -333,9 +333,23 @@ GovernanceDecisionOutcome governanceDecisionOutcomeFromString(const std::string&
 }
 
 GatewayType gatewayTypeFromString(const std::string& value) {
-    return enumFromString<GatewayType>(value, {
-        { GatewayType::Native, "native" }
-    });
+    // Tolerant deserialization: unknown / legacy slugs (e.g. anything
+    // written by a pre-realignment config) resolve to Native rather
+    // than throwing. The strict enumFromString helper would throw
+    // std::invalid_argument here, and the only call site
+    // (json adl_serializer<McpGatewayConfiguration>::from_json) lets
+    // that exception bubble up into FileBackedConfigurationService,
+    // which catches it and reverts the whole AppConfiguration to
+    // defaults -- destroying every other persisted setting along with
+    // the gateway type. Since Native is the only shipping substrate,
+    // the safe fallback is to silently coerce. The runtime constructs
+    // NativeHttpSysGatewayAdapter unconditionally regardless of this
+    // value, so the coercion is observable only via to_string()
+    // round-trips and the dashboard's mcpGateway.type display.
+    if (value == "native") {
+        return GatewayType::Native;
+    }
+    return GatewayType::Native;
 }
 
 GatewayState gatewayStateFromString(const std::string& value) {

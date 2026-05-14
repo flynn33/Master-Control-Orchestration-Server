@@ -15,7 +15,7 @@ The release-management and doc-sync GitHub agents that previously generated part
 - Per-pass self-test rows in the persistent Diagnostics log (behind an opt-in flag).
 - PHASE-13 Win2D / Direct2D high-rate visual surfaces in the WinUI Shell (per-pool sparklines, Tron grid HLSL, activity stream SwapChainPanel).
 - Onboarding profile `governanceBundleUrl` platform-awareness (currently hardcoded to `windows` in `MasterControlRuntime.cpp`; should reflect the requesting client's target platform).
-- Source-code tombstone removal of `GatewayType::native HTTP.sys gateway` enum value and `native HTTP.sys gateway.exe` reference in `MasterControlBootstrapper/main.cpp` supervised-gateway child list (kept for back-compat deserialization in v0.10.x; removable at the next major bump).
+- Source-code tombstone removal of the legacy `GatewayType` slot enum value and `the legacy gateway binary` reference in `MasterControlBootstrapper/main.cpp` supervised-gateway child list (kept for back-compat deserialization in v0.10.x; removable at the next major bump).
 
 ## [0.10.14] - 2026-05-11
 
@@ -86,7 +86,7 @@ Aggregate entry covering the 80+ patch releases between v0.9.3 (last committed b
 
 ### Added
 
-- **Native HTTP.sys MCP gateway is now the only substrate.** native HTTP.sys gateway support was dropped in v0.9.0 per maintainer directive. `cfg.mcpGateway.type` is retained for back-compat JSON deserialization only; the runtime always uses the native HTTP.sys adapter on `0.0.0.0:cfg.mcpGateway.listenPort` (default 8080) at `cfg.mcpGateway.mcpPath` (default `/mcp`).
+- **Native HTTP.sys MCP gateway is now the only substrate.** the legacy external gateway was dropped before v0.9.0 per maintainer directive. `cfg.mcpGateway.type` is retained for back-compat JSON deserialization only; the runtime always uses the native HTTP.sys adapter on `0.0.0.0:cfg.mcpGateway.listenPort` (default 8080) at `cfg.mcpGateway.mcpPath` (default `/mcp`).
 - **Supervisor Agent Assignment Wizard.** Full backend + WinUI Shell + browser dashboard surface for selecting one supervisor model (chatgpt / claude / grok). Lifecycle: `off → config_generated → pending_connection → connected → disconnected | revoked`. 120-second heartbeat watchdog flips Connected → Disconnected. Persistence at `<dataDirectory>/supervisor-assignment.json` survives service restart.
 - **Persistent Diagnostics log.** Supervisor lifecycle + boot self-test failures + per-boot self-test summaries dual-emit to `<PUBLIC>\Documents\Master Control Orchestration Server\logs\<component>\events.jsonl`.
 - **Boot self-test count grew to 39 probes** (was ~30 at v0.9.3). New probes include `diagnostics.log_writable` (v0.10.3), `gateway.tool_count_nonzero` (v0.10.4), supervisor lifecycle probes, and pool readiness probes.
@@ -103,7 +103,7 @@ Aggregate entry covering the 80+ patch releases between v0.9.3 (last committed b
 
 ### Removed
 
-- **native gateway substrate** (v0.9.0). The `GatewayType::native HTTP.sys gateway` enum value is retained only so existing on-disk configs deserialize; the runtime always falls through to the native HTTP.sys adapter. `gatewayConfig.binaryPath`, `gatewayConfig.databasePath`, and the native HTTP.sys gateway supervised-binary management code path are gone.
+- **native gateway substrate** (v0.9.0). the legacy `GatewayType` slot enum value is retained only so existing on-disk configs deserialize; the runtime always falls through to the native HTTP.sys adapter. `gatewayConfig.binaryPath`, `gatewayConfig.databasePath`, and the legacy supervised-binary management code path are gone.
 - **Overview deck `MCP SERVERS` and `SUB-AGENTS` summary cards** (v0.10.10). The 2x2 status grid shrinks to 1x2 — `APIS & SERVICES` + `SECURITY STANCE` remain. The MCP / sub-agent decks live on Runtime and Telemetry as tile grids.
 - **Runtime deck `Runtime Endpoints` ListView** (v0.10.11). The flat `name | host:port | status` list that mixed MCP servers, sub-agents, and gateways into one column conflicted with the tile-grid directive. The dedicated MCP Servers and Sub-Agents tile-grid panels above carry the same data in the correct visual form.
 
@@ -124,11 +124,11 @@ Aggregate entry covering the 80+ patch releases between v0.9.3 (last committed b
 
 ### Production milestone — architecture complete
 
-The 0.7.0 minor bump under the manifest's `minor-on-architecture-change` policy marks the architectural-completion line. Every numbered phase from PHASE-00 (repository baseline + ADR lock) through PHASE-12 follow-up (native HTTP.sys gateway with end-to-end stdio bridge to supervised pool children, shipped in v0.6.10) is delivered, validated, and shipping. PHASE-12 follow-up was the last architectural change; from here the work is iteration on top of the locked architecture.
+The 0.7.0 minor bump under the manifest's `minor-on-architecture-change` policy marks the architectural-completion line. Every numbered phase from PHASE-00 (repository baseline + ADR lock) through PHASE-12 follow-up (the native HTTP.sys adapter with end-to-end stdio bridge to supervised pool children, shipped in v0.6.10) is delivered, validated, and shipping. PHASE-12 follow-up was the last architectural change; from here the work is iteration on top of the locked architecture.
 
 #### Verified at this milestone
 
-- Both gateway substrates ship and are maintainer-selectable via `mcpGateway.type`. `native HTTP.sys gateway` supervises an external gateway binary (Job Object child); `native` binds Windows-native HTTP.sys directly inside `MasterControlServiceHost.exe` with the v0.6.10 stdio bridge forwarding `tools/list` and `tools/call` to supervised pool children. Both satisfy `IMcpGateway` exactly.
+- The native HTTP.sys substrate is the only shipping option; `mcpGateway.type` is retained in the schema for back-compat deserialization only. The legacy external-binary substrate (retired before v0.9.0) supervised a separate gateway binary as a Job Object child; the `native` substrate binds Windows-native HTTP.sys directly inside `MasterControlServiceHost.exe` with the v0.6.10 stdio bridge forwarding `tools/list` and `tools/call` to supervised pool children. Both satisfied `IMcpGateway` at the time; only the `native` substrate ships now.
 - Bootstrapper `install` action runs `netsh http add urlacl url=http://+:8080/ user=Everyone` so console-mode maintainers bind the native gateway port without `ERROR_ACCESS_DENIED`. `uninstall` reverses it best-effort.
 - All four CTest suites (`ForsettiCoreTests`, `ForsettiPlatformTests`, `ForsettiArchitectureTests`, `MasterControlOrchestrationServerTests`) pass green at the 0.7.0 commit.
 - End-to-end host smoke-test: MSI installs cleanly, service starts, native gateway binds and responds to MCP `initialize` with `serverInfo.version=0.7.0`, `tools/list` returns honest empty array (no pools registered), URL ACL confirmed via `netsh http show urlacl`.
@@ -209,7 +209,7 @@ The 0.7.0 minor bump under the manifest's `minor-on-architecture-change` policy 
 #### Added
 
 - **`NativeHttpSysGatewayAdapter` honest-503 listener**. When the adapter is in `Disabled` or supervised-mock mode (no gateway binary configured, the default state), the adapter binds the configured listen port (default 8080) with a tiny accept loop that returns a structured HTTP 503 "Service Unavailable" JSON to every request. LAN AI clients pointing at the advertised gateway URL get a useful error with maintainer guidance instead of connection refused.
-- **Lifecycle** — listener releases the port the moment a real gateway binary is about to be spawned, and re-binds it after `Stop()` so the gateway port stays answerable across the entire adapter lifecycle. Replaced wholesale by PHASE-12's native HTTP.sys gateway when active.
+- **Lifecycle** — listener releases the port the moment a real gateway binary is about to be spawned, and re-binds it after `Stop()` so the gateway port stays answerable across the entire adapter lifecycle. Replaced wholesale by the native HTTP.sys adapter (PHASE-12) when active.
 
 #### Fixed
 
@@ -269,7 +269,7 @@ The realignment program declared in ADR-002 lands in twelve named phases. The pr
 - **PHASE-08** — telemetry aggregator with `-1.0` honest-unavailable sentinel. Events ring (1024 cap), client presence roster, gateway traffic snapshot. Activity event taxonomy.
 - **PHASE-09** — Tron dashboard realigned to gateway-first. Eleven destinations covering every layer; `formatMetric()` honesty helper enforced by FORBIDDEN-CONTRACT §8.1.
 - **PHASE-10** — Windows release gate closed. vswhere-driven toolchain, version-stamping before configure, no `workflow_dispatch` bypass on the gating workflows, MSI rebuilt clean.
-- **PHASE-11** — native gateway evaluation memo + `ADR-003` recording the decision to keep native HTTP.sys gateway for the v0.6.x line and defer a native HTTP.sys gateway to a conditional future PHASE-12 with five named operational triggers.
+- **PHASE-11** — native gateway evaluation memo + `ADR-003` recording the decision to keep the external supervised substrate for the v0.6.x line and defer a native HTTP.sys substrate to a conditional future PHASE-12 with five named operational triggers.
 
 #### Notes
 

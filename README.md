@@ -52,7 +52,7 @@ flowchart LR
     LANClients -.->|on demand| Governance
 ```
 
-The architecture target is the **gateway-first MCP host** declared in [ADR-002](docs/wiki/ADR-002-gateway-first-mcp-realignment.md) and locked at the substrate level by [ADR-003](docs/wiki/ADR-003-mcp-gateway-substrate-decision.md). As of v0.9.0 the only shipping substrate is the in-process Windows-native HTTP.sys adapter — native HTTP.sys gateway was retired per maintainer directive. `cfg.mcpGateway.type` is retained for back-compat JSON deserialization only; the runtime always uses the native HTTP.sys adapter on `0.0.0.0:cfg.mcpGateway.listenPort` (default `8080`) at `cfg.mcpGateway.mcpPath` (default `/mcp`). The original [ADR-001 LAN client identity model](docs/wiki/ADR-001-lan-client-control-plane.md) survives as the maintainer surface that coexists with the AI-client gateway surface.
+The architecture target is the **gateway-first MCP host** declared in [ADR-002](docs/wiki/ADR-002-gateway-first-mcp-realignment.md) and locked at the substrate level by [ADR-003](docs/wiki/ADR-003-mcp-gateway-substrate-decision.md). As of v0.9.0 the only shipping substrate is the in-process Windows-native HTTP.sys adapter — the legacy external gateway was retired per maintainer directive. `cfg.mcpGateway.type` is retained for back-compat JSON deserialization only; the runtime always uses the native HTTP.sys adapter on `0.0.0.0:cfg.mcpGateway.listenPort` (default `8080`) at `cfg.mcpGateway.mcpPath` (default `/mcp`). The original [ADR-001 LAN client identity model](docs/wiki/ADR-001-lan-client-control-plane.md) survives as the maintainer surface that coexists with the AI-client gateway surface.
 
 ---
 
@@ -88,7 +88,7 @@ Multiple AI coding clients on the same trusted LAN need to share an MCP server a
 
 The current release line, spanning v0.9.4 through v0.10.14 since the v0.7.0 production-milestone baseline.
 
-**Native HTTP.sys is the only shipping gateway substrate.** native HTTP.sys gateway support was retired in v0.9.0 per maintainer directive. `cfg.mcpGateway.type` is kept in the JSON schema for backward-compatible deserialization, but the runtime always uses the native HTTP.sys adapter. No external binary to supervise.
+**Native HTTP.sys is the only shipping gateway substrate.** the legacy external gateway was retired before v0.9.0 per maintainer directive. `cfg.mcpGateway.type` is kept in the JSON schema for backward-compatible deserialization, but the runtime always uses the native HTTP.sys adapter. No external binary to supervise.
 
 | Field | Value |
 |---|---|
@@ -172,7 +172,7 @@ Invoke-RestMethod http://localhost:7300/api/discovery | ConvertTo-Json -Depth 6
 Resolve-DnsName -Name _mcos._tcp.local -Type PTR -LlmnrFallback
 
 # 6. (Optional) Assign a supervisor model via /api/supervisor.
-#    The native HTTP.sys gateway is the only shipping substrate as of v0.9.0;
+#    The native HTTP.sys adapter is the only shipping substrate as of v0.9.0;
 #    no maintainer action is needed to "select" it. To bind a supervisor model
 #    (chatgpt / claude / grok), generate the config bundle and hand it to the
 #    LAN client. The wizard's "Generate Config & Save" button on the Overview
@@ -204,7 +204,7 @@ The same toggle is on the WinUI desktop shell's **Overview** page. Either surfac
 
 | Surface | What it does | Where |
 |---|---|---|
-| **AI-client gateway** | One advertised MCP URL; auth=none, trust=lan | `IMcpGateway` + `NativeHttpSysGatewayAdapter` (in-process HTTP.sys, v0.9.0+; native HTTP.sys gateway substrate retired in the same release) |
+| **AI-client gateway** | One advertised MCP URL; auth=none, trust=lan | `IMcpGateway` + `NativeHttpSysGatewayAdapter` (in-process HTTP.sys, v0.9.0+; legacy external-gateway substrate retired in the same release) |
 | **Stdio bridge** | Forwards `tools/call` JSON-RPC from gateway to supervised pool children via stdin/stdout | `IWorkerSupervisor::sendStdioJsonRpc` (PHASE-12 follow-up, v0.6.10) |
 | **LAN discovery** | DNS-SD + UDP beacon + `/.well-known/mcos.json` | `DiscoveryService` + `BeaconService` |
 | **Onboarding profiles** | Per-client-type config + manual instructions | `OnboardingProfileService` + `/api/onboarding/{type}` |
