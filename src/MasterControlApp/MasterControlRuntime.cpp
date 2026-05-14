@@ -13719,11 +13719,13 @@ bool MasterControlApplication::Impl::initialize() {
     // scalePolicy.maxInstances ceiling.
     leaseRouter_ = std::make_shared<LeaseRouter>(workerSupervisor_);
 
-    // PHASE-12 follow-up (v0.6.10): wire the native HTTP.sys gateway to
-    // the supervisor + lease router so tools/call can forward to a
-    // supervised pool instance via the stdio bridge. v0.9.0: every
-    // adapter is the native one now (native HTTP.sys gateway dropped); the cast is
-    // unconditional but kept defensive in case future substrates land.
+    // PHASE-12 follow-up (v0.6.10): wire the in-process HTTP.sys
+    // adapter to the supervisor + lease router so tools/call can
+    // forward to a supervised pool instance via the stdio bridge.
+    // NativeHttpSysGatewayAdapter is the only adapter the runtime
+    // constructs since v0.9.0, so the dynamic_pointer_cast always
+    // succeeds; it is kept defensive in case a future substrate is
+    // added behind IMcpGateway.
     if (auto nativeAdapter =
             std::dynamic_pointer_cast<NativeHttpSysGatewayAdapter>(mcpGateway_)) {
         nativeAdapter->AttachWorkerBridge(workerSupervisor_, leaseRouter_);

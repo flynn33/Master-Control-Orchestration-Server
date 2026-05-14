@@ -285,9 +285,10 @@ std::vector<std::string> FakeMcpGatewayAdapter::registeredServerNames() const {
 //
 // Windows-native MCP gateway built on HTTP.sys (Win32 kernel-mode HTTP
 // server). Replaces the v0.6.7 honest-503 listener with a real
-// implementation. Selected via mcpGateway.type = "native". The native HTTP.sys gateway
-// adapter remains available for operators with existing native HTTP.sys gateway
-// deployments.
+// implementation. This is the only shipping gateway substrate;
+// mcpGateway.type is retained in the JSON schema for back-compat
+// deserialization only -- the runtime constructs this adapter
+// unconditionally regardless of the persisted value.
 //
 // MVP scope (v0.6.9):
 //   * HTTP.sys URL group + request queue bound to mcpGateway.listenPort
