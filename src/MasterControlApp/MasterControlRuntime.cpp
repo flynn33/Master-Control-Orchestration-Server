@@ -7744,6 +7744,18 @@ public:
         document.gateway.healthUrl = "http://" + hostInUrl + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.healthPath;
         document.gateway.state = mcpGateway_ ? to_string(mcpGateway_->CurrentStatus().state) : "disabled";
 
+        // v0.11.0-alpha.2: when the gateway is configured for TLS dual-bind
+        // (cfg.mcpGateway.tlsEnabled), also advertise the HTTPS counterparts
+        // so strict clients (ChatGPT connector-edge, Claude.ai web, security-
+        // conscious browser extensions) that refuse plain HTTP get a working
+        // URL straight from the well-known doc. Empty strings stay otherwise
+        // so legacy clients don't see scheme drift.
+        document.gateway.tlsEnabled = gatewayConfig.tlsEnabled;
+        if (gatewayConfig.tlsEnabled) {
+            document.gateway.mcpUrlTls    = "https://" + hostInUrl + ":" + std::to_string(gatewayConfig.tlsListenPort) + gatewayConfig.mcpPath;
+            document.gateway.healthUrlTls = "https://" + hostInUrl + ":" + std::to_string(gatewayConfig.tlsListenPort) + gatewayConfig.healthPath;
+        }
+
         document.onboarding.generic = adminBase + "/api/onboarding/generic";
         document.onboarding.claudeCode = adminBase + "/api/onboarding/claude-code";
         document.onboarding.codex = adminBase + "/api/onboarding/codex";
@@ -10375,7 +10387,17 @@ public:
 
         OnboardingProfile profile;
         profile.clientType = normalized;
-        profile.gatewayMcpUrl = document.gateway.mcpUrl;
+        // v0.11.0-alpha.2: prefer the HTTPS gateway URL when TLS dual-bind
+        // is configured + advertised by the discovery doc. This is the URL
+        // strict clients (ChatGPT connector-edge, Claude.ai web,
+        // security-conscious browser extensions) will see embedded in their
+        // .mcp.json snippet -- they refuse plain HTTP and would otherwise
+        // hard-fail the connect. HTTP fallback stays available on the
+        // listenPort prefix for in-LAN curl / browser debugging tooling.
+        profile.gatewayMcpUrl = (document.gateway.tlsEnabled
+                                 && !document.gateway.mcpUrlTls.empty())
+            ? document.gateway.mcpUrlTls
+            : document.gateway.mcpUrl;
         profile.transport = "streamable_http";
         profile.authRequired = false;       // schema const; ADR-002 §1 invariant
         profile.trust = "lan";

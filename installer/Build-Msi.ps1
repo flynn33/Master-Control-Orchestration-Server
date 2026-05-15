@@ -43,7 +43,11 @@ function ConvertTo-MsiProductVersion {
         [Parameter(Mandatory=$true)] [string]$Version
     )
 
-    if ($Version -match '^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-rc\.(?<build>\d+))?$') {
+    # v0.11.0-alpha.1: accept -alpha.N and -beta.N pre-release tags alongside
+    # -rc.N so internal alpha / beta milestones map cleanly to MSI
+    # MAJOR.MINOR.PATCH.N. Retail with no suffix maps to MAJOR.MINOR.PATCH.0.
+    # Unknown pre-release prefixes (e.g. -zeta.1) still throw.
+    if ($Version -match '^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?:alpha|beta|rc)\.(?<build>\d+))?$') {
         $build = if ($Matches['build']) { $Matches['build'] } else { '0' }
         return "$($Matches['major']).$($Matches['minor']).$($Matches['patch']).$build"
     }

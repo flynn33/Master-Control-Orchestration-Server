@@ -8,6 +8,40 @@ The release-management and doc-sync GitHub agents that previously generated part
 
 ### Deferred to v1.0.0+
 
+## [0.11.0-alpha.2] - 2026-05-15
+
+### Summary
+
+**LAN-trust TLS dual-bind on the MCP gateway.** Adds optional HTTPS support so strict clients (ChatGPT connector-edge, Claude.ai web, security-conscious browser extensions) that refuse plain HTTP can connect. When `cfg.mcpGateway.tlsEnabled=true`, `NativeHttpSysGatewayAdapter` registers a second URL prefix `https://+:tlsListenPort/` on the same HTTP.sys URL group + request queue alongside the existing `http://+:listenPort/`. The same handler serves both prefixes — no per-route plumbing changes.
+
+Cert binding is operator-managed out-of-band via `scripts\Configure-LocalServerCert.ps1` (self-signed cert generation + `netsh http add sslcert` + Windows Firewall rule + optional service restart). `/api/discovery` and onboarding profiles automatically emit the HTTPS URL when TLS is enabled, so `.mcp.json` snippets clients receive carry `https://` straight from the well-known doc.
+
+App-layer auth remains intentionally deferred to retail — transport TLS is a separate concern from authentication; LAN trust posture intact. HTTP fallback on the existing `listenPort` stays available for in-LAN curl / browser-dashboard debugging tooling.
+
+### Added
+
+- **`McpGatewayConfiguration.tlsEnabled` / `tlsListenPort` (default 8443) / `tlsCertThumbprint`** — three new persistable fields on the gateway config block. Default state is `tlsEnabled=false`, so existing installs stay HTTP-only without operator intervention.
+- **TLS dual-bind in `NativeHttpSysGatewayAdapter::Start()`** — second `HttpAddUrlToUrlGroup(https://+:tlsListenPort/)` call after the existing HTTP prefix succeeds. Bind failures (cert not bound, URL ACL missing) are recorded in the gateway status message but do not fail Start — HTTP fallback continues serving.
+- **`DiscoveryGateway.mcpUrlTls` / `healthUrlTls` / `tlsEnabled`** — three new fields on the discovery doc's gateway block. Populated only when TLS is enabled.
+- **HTTPS-aware onboarding profile builder** — `OnboardingService::profileFor()` prefers `document.gateway.mcpUrlTls` over `mcpUrl` when TLS is on. All five client types (`claude-code`, `codex`, `grok`, `chatgpt`, `generic`) emit `.mcp.json` snippets with `https://` URLs automatically.
+- **`scripts\Configure-LocalServerCert.ps1`** — idempotent self-signed cert provisioning. Generates cert with DNS + IP SANs in `Cert:\LocalMachine\My`, exports public key to `%PUBLIC%\Documents\Master Control Orchestration Server\certs\mcos-server-public.cer`, runs `netsh http add sslcert ipport=...`, opens firewall rule, optionally restarts the service. Prints the operator-facing `mcos.config.json` snippet.
+- **`scripts\Remove-LocalServerCert.ps1`** — companion rollback. Removes the binding, removes the firewall rule, optionally deletes the cert + exported `.cer`.
+- **`handoff/realignment/v0.11.0-alpha.2-tls-dual-bind.md`** — alpha.2 cut report covering scope, source changes, scripts, build pipeline notes, operator quickstart for HTTPS.
+
+### Changed
+
+- `VERSION.json` bumped 0.11.0-alpha.1 → 0.11.0-alpha.2. `last_release_commit` backfilled to the v0.11.0 merge commit `94cad65`. Two new `history[]` entries: alpha.2 at index 0, alpha.1 at index 1; v0.11.0 commit field backfilled to `94cad65`.
+- `vcpkg.json` `version-string` synced.
+- README version badge bumped to `v0.11.0--alpha.2`. The `Internal Alpha` channel badge moved up the alpha line.
+
+### Notes
+
+- **Admin HTTP listener (port 7300) stays HTTP-only this iteration.** It uses `SimpleHttpServer` (Winsock), not HTTP.sys, so adding TLS there requires an SChannel handshake rewrite — out of scope for alpha.2. Operator-facing surfaces (WinUI Shell, browser dashboard) typically run on the same trusted host as the service, so the practical impact is bounded.
+- **Self-signed cert means per-machine trust on every LAN client.** Distribute `mcos-server-public.cer` from `%PUBLIC%\Documents\Master Control Orchestration Server\certs\` and add it to each client's OS trust store (Windows: `certmgr.msc` → Trusted Root; macOS: `security add-trusted-cert`; Linux: `update-ca-trust`). A local-CA upgrade path is documented for the next iteration.
+- **`Build-Msi.ps1`'s regex** already accepts `-alpha.N` (shipped in alpha.1 / PR #8) — no installer change required for this cut.
+
+
+
 - CLU rebuild Phase 2 + Phase 3 (`enforceAction` wiring).
 - PHASE-14 `DiagnosticsSectionControl` with FileSavePicker export — plan file in place, implementation gated on maintainer approval.
 - Telemetry log rotation (size / age / count). v0.10.5 throttling defers the disk-fill horizon from weeks to many months but does not bound it.

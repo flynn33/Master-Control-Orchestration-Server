@@ -760,6 +760,26 @@ struct McpGatewayConfiguration final {
     std::string healthPath = "/health";
     std::string databasePath;        // unused since v0.9.0 -- kept for back-compat
     std::string mode = "lan-trusted"; // development | enterprise | lan-trusted
+
+    // v0.11.0-alpha.2: optional TLS dual-bind. When `tlsEnabled` is true the
+    // native HTTP.sys adapter additionally registers `https://+:tlsListenPort/`
+    // on the same URL group + request queue as the existing
+    // `http://+:listenPort/` prefix. HTTP traffic on `listenPort` stays
+    // available for in-LAN curl / browser-dashboard debugging; strict clients
+    // (ChatGPT connector-edge, Claude.ai, browser extensions) get a working
+    // HTTPS endpoint. Cert binding to `ip:tlsListenPort` is operator-managed
+    // out-of-band via `netsh http add sslcert` (see
+    // scripts\Configure-LocalServerCert.ps1). The runtime does NOT manage the
+    // cert directly -- HTTP.sys terminates SSL using whatever cert is bound
+    // to the ip:port at the OS level.
+    //
+    // `tlsCertThumbprint` is informational for the operator-facing surfaces
+    // (`/api/discovery`, `/api/health/summary`) so they can echo back which
+    // cert is bound. The runtime does not verify it -- the OS-level binding
+    // is authoritative.
+    bool tlsEnabled = false;
+    uint16_t tlsListenPort = 8443;
+    std::string tlsCertThumbprint;
 };
 
 // PHASE-02: opaque registration request handed to IMcpGateway when MCOS
@@ -1125,6 +1145,14 @@ struct DiscoveryGateway final {
     std::string mcpUrl;      // e.g. http://192.168.1.10:8080/mcp
     std::string healthUrl;   // e.g. http://192.168.1.10:8080/health
     std::string state;       // GatewayState slug
+    // v0.11.0-alpha.2: optional TLS dual-bind URLs. Populated only when
+    // McpGatewayConfiguration.tlsEnabled is true. Empty strings signal
+    // "TLS disabled on this host." Strict clients (ChatGPT connector,
+    // Claude.ai web, security-conscious browser extensions) that refuse
+    // plain HTTP should follow these URLs.
+    std::string mcpUrlTls;    // e.g. https://192.168.1.10:8443/mcp
+    std::string healthUrlTls; // e.g. https://192.168.1.10:8443/health
+    bool tlsEnabled = false;
 };
 
 struct DiscoveryOnboarding final {
@@ -2109,7 +2137,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     mcpPath,
     healthPath,
     databasePath,
-    mode)
+    mode,
+    tlsEnabled,
+    tlsListenPort,
+    tlsCertThumbprint)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     McpServerRegistration,
@@ -2167,7 +2198,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     type,
     mcpUrl,
     healthUrl,
-    state)
+    state,
+    mcpUrlTls,
+    healthUrlTls,
+    tlsEnabled)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     DiscoveryOnboarding,

@@ -96,6 +96,25 @@ std::string composeMcpUrl(const McpGatewayConfiguration& configuration) {
     return stream.str();
 }
 
+// v0.11.0-alpha.2: companion to composeMcpUrl for the dual-bind HTTPS
+// surface. Returns an empty string when tlsEnabled=false so callers can
+// branch on emptiness without checking the bool field themselves.
+std::string composeMcpUrlTls(const McpGatewayConfiguration& configuration) {
+    if (!configuration.tlsEnabled) {
+        return std::string();
+    }
+    const std::string host = configuration.listenHost.empty()
+        ? std::string("0.0.0.0")
+        : bracketIpv6Host(configuration.listenHost);
+    std::ostringstream stream;
+    stream << "https://"
+           << host
+           << ":"
+           << configuration.tlsListenPort
+           << ensureLeadingSlash(configuration.mcpPath);
+    return stream.str();
+}
+
 std::string composeHealthUrl(const McpGatewayConfiguration& configuration) {
     const std::string host = configuration.listenHost.empty()
         ? std::string("0.0.0.0")
@@ -105,6 +124,24 @@ std::string composeHealthUrl(const McpGatewayConfiguration& configuration) {
            << host
            << ":"
            << configuration.listenPort
+           << ensureLeadingSlash(configuration.healthPath);
+    return stream.str();
+}
+
+// v0.11.0-alpha.2: HTTPS counterpart to composeHealthUrl. Returns empty
+// when TLS is off so callers can use emptiness as the disabled signal.
+std::string composeHealthUrlTls(const McpGatewayConfiguration& configuration) {
+    if (!configuration.tlsEnabled) {
+        return std::string();
+    }
+    const std::string host = configuration.listenHost.empty()
+        ? std::string("0.0.0.0")
+        : bracketIpv6Host(configuration.listenHost);
+    std::ostringstream stream;
+    stream << "https://"
+           << host
+           << ":"
+           << configuration.tlsListenPort
            << ensureLeadingSlash(configuration.healthPath);
     return stream.str();
 }
@@ -428,6 +465,63 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
         return status_;
     }
 
+    // v0.11.0-alpha.2: TLS dual-bind. When `tlsEnabled`, register a
+    // second URL prefix `https://+:tlsListenPort/` on the same URL group
+    // and same request queue. HTTP.sys multiplexes both prefixes through
+    // the same handler -- the serve loop sees identical HTTP_REQUEST
+    // structures regardless of which prefix terminated SSL.
+    //
+    // SSL termination is the OS's job: the cert is bound to
+    // `ip:tlsListenPort` via `netsh http add sslcert ...` ahead of time
+    // (operator runs scripts\Configure-LocalServerCert.ps1). This C++
+    // code does not load, validate, or rotate the cert -- HTTP.sys does.
+    //
+    // Failure mode: if the operator forgot to bind a cert, HTTP.sys
+    // returns NO_ERROR from HttpAddUrlToUrlGroup (the URL prefix is
+    // registered) but every incoming HTTPS handshake will fail at the
+    // TLS layer with the client seeing an SSL_ERROR. The runtime stays
+    // up; the HTTP prefix keeps serving normally; the operator's first
+    // diagnostic is a 5061 in the System event log
+    // ("A fatal error occurred when attempting to access the SSL
+    // server credential private key"). We surface a hint in the status
+    // message so the operator can correlate.
+    //
+    // We do NOT fail Start() if the HTTPS prefix fails to register --
+    // HTTP fallback is the more important behaviour. The error is
+    // recorded in the status message instead.
+    bool tlsBound = false;
+    std::string tlsBindError;
+    if (configuration_.tlsEnabled) {
+        std::wstring tlsUrlPrefix = L"https://+:"
+            + std::to_wstring(configuration_.tlsListenPort) + L"/";
+        ULONG tlsAddResult = NO_ERROR;
+        for (int attempt = 0; attempt < kMaxRetries; ++attempt) {
+            tlsAddResult = HttpAddUrlToUrlGroup(
+                urlGroupId_, tlsUrlPrefix.c_str(), 0, 0);
+            if (tlsAddResult != ERROR_ALREADY_EXISTS) {
+                break;
+            }
+            Sleep(kRetryDelayMs);
+        }
+        if (tlsAddResult == NO_ERROR) {
+            tlsBound = true;
+        } else if (tlsAddResult == ERROR_ACCESS_DENIED) {
+            tlsBindError = "TLS prefix bind: ACCESS_DENIED on https://+:"
+                + std::to_string(configuration_.tlsListenPort)
+                + "/ -- run scripts\\Configure-LocalServerCert.ps1 from "
+                  "an elevated shell, or pre-register: netsh http add urlacl "
+                  "url=https://+:" + std::to_string(configuration_.tlsListenPort)
+                + "/ user=Everyone";
+        } else if (tlsAddResult == ERROR_ALREADY_EXISTS) {
+            tlsBindError = "TLS prefix bind: https://+:"
+                + std::to_string(configuration_.tlsListenPort)
+                + "/ is held by another process / leaked URL group.";
+        } else {
+            tlsBindError = "TLS prefix bind failed (code "
+                + std::to_string(tlsAddResult) + ").";
+        }
+    }
+
     // Create the request queue.
     HANDLE queue = nullptr;
     ULONG queueResult = HttpCreateRequestQueue(
@@ -460,8 +554,21 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
     serveThread_ = std::thread(&NativeHttpSysGatewayAdapter::serveLoop, this);
 
     status_.state = GatewayState::Running;
-    status_.message = "the in-process HTTP.sys adapter listening on " + status_.mcpUrl
-        + ". MCP tools/list and tools/call routed through the supervisor + lease router.";
+    // v0.11.0-alpha.2: surface TLS dual-bind state in the operator-facing
+    // status message so /api/gateway/status and /api/health/summary make
+    // the HTTPS URL discoverable without an additional config GET.
+    std::string runningMessage = "the in-process HTTP.sys adapter listening on " + status_.mcpUrl;
+    if (configuration_.tlsEnabled) {
+        if (tlsBound) {
+            runningMessage += " (+ TLS dual-bind on "
+                + composeMcpUrlTls(configuration_) + ")";
+        } else {
+            runningMessage += " (TLS configured but bind FAILED: "
+                + tlsBindError + ")";
+        }
+    }
+    runningMessage += ". MCP tools/list and tools/call routed through the supervisor + lease router.";
+    status_.message = runningMessage;
     status_.startedAtUtc = timestampNowUtc();
     return status_;
 #endif
