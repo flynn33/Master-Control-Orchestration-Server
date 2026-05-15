@@ -16141,35 +16141,75 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
              request.path == "/api/diagnostics/self-test" ||
              request.path == "/api/diagnostics/export")) {
 
-            auto aggregateEvents = [&]() -> std::vector<nlohmann::json> {
+            // v0.11.0 (Copilot review fix): the aggregator now accepts
+            // an optional soft cap so /api/diagnostics/events?max=N
+            // doesn't have to parse every live + rotated jsonl line on
+            // disk before truncating. With v0.10.21 rotation (50 MB
+            // live + 50 MB rotated per component), a naive read-all
+            // would parse hundreds of MB on a small max=5 query. The
+            // softCap path:
+            //   1. Reads live events.jsonl files first across all
+            //      components -- these are bounded at 50 MB but
+            //      typically much smaller (~10 KB at audit time).
+            //   2. Only descends into rotated .1.jsonl files if the
+            //      live pass didn't produce enough events to satisfy
+            //      the cap (with severity-filter headroom).
+            //   3. summary / export / unbounded queries pass softCap=0
+            //      to retain the original read-all semantics.
+            auto aggregateEvents = [&](std::size_t softCap) -> std::vector<nlohmann::json> {
                 std::vector<nlohmann::json> events;
-                // Probe the canonical diagnostics root from the helper.
                 const auto rootPaths = MasterControl::Diagnostics::resolvePersistentLogPaths(L"runtime");
                 const auto logsRoot = rootPaths.root;
                 std::error_code ec;
                 if (!std::filesystem::exists(logsRoot, ec)) return events;
+
+                // Headroom multiplier so post-filter truncation still
+                // hits the cap. 4x covers ?severity=error filtering
+                // against an info-dominated stream without surprises.
+                const std::size_t headroomCap = softCap == 0 ? 0 : softCap * 4 + 32;
+                auto haveEnough = [&]() {
+                    return headroomCap != 0 && events.size() >= headroomCap;
+                };
+
+                auto readJsonlLines = [&](const std::filesystem::path& p) {
+                    std::ifstream f(p, std::ios::binary);
+                    if (!f.is_open()) return;
+                    std::string line;
+                    while (std::getline(f, line)) {
+                        if (line.empty()) continue;
+                        try {
+                            auto parsed = nlohmann::json::parse(line);
+                            events.push_back(std::move(parsed));
+                        } catch (...) {
+                            // Partial-write tolerance: skip bad line.
+                        }
+                    }
+                };
+
+                // Pass 1: live events.jsonl across all components.
                 for (const auto& componentDir : std::filesystem::directory_iterator(logsRoot, ec)) {
                     if (ec) break;
                     if (!componentDir.is_directory(ec)) continue;
-                    for (const auto& entry : std::filesystem::directory_iterator(componentDir.path(), ec)) {
-                        if (ec) break;
-                        if (!entry.is_regular_file(ec)) continue;
-                        const auto& name = entry.path().filename().string();
-                        if (name != "events.jsonl" && name != "events.jsonl.1") continue;
-                        std::ifstream f(entry.path(), std::ios::binary);
-                        if (!f.is_open()) continue;
-                        std::string line;
-                        while (std::getline(f, line)) {
-                            if (line.empty()) continue;
-                            try {
-                                auto parsed = nlohmann::json::parse(line);
-                                events.push_back(std::move(parsed));
-                            } catch (...) {
-                                // Partial-write tolerance: skip bad line.
-                            }
-                        }
+                    const auto live = componentDir.path() / "events.jsonl";
+                    if (std::filesystem::exists(live, ec)) {
+                        readJsonlLines(live);
                     }
                 }
+
+                // Pass 2: rotated events.jsonl.1 ONLY IF the live pass
+                // hasn't already covered the soft cap (with headroom).
+                if (!haveEnough()) {
+                    for (const auto& componentDir : std::filesystem::directory_iterator(logsRoot, ec)) {
+                        if (ec) break;
+                        if (!componentDir.is_directory(ec)) continue;
+                        const auto rotated = componentDir.path() / "events.jsonl.1";
+                        if (std::filesystem::exists(rotated, ec)) {
+                            readJsonlLines(rotated);
+                        }
+                        if (haveEnough()) break;
+                    }
+                }
+
                 // Sort recent-first by capturedAtUtc (ISO-8601 strings sort lexicographically).
                 std::sort(events.begin(), events.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
                     const auto av = a.value("capturedAtUtc", std::string());
@@ -16200,8 +16240,10 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             };
 
             if (request.path == "/api/diagnostics/events") {
-                auto events = aggregateEvents();
-                applyFilters(events);
+                // v0.11.0 (Copilot review fix): parse max= BEFORE
+                // aggregating so the aggregator can early-out on the
+                // rotated .1.jsonl files when only a small recent
+                // slice is requested.
                 std::size_t maxN = 200;
                 if (!request.query.empty()) {
                     const auto maxValue = MasterControl::extractQueryParamAny(
@@ -16211,13 +16253,17 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                         if (maxN == 0) maxN = 200;
                     }
                 }
+                auto events = aggregateEvents(maxN);
+                applyFilters(events);
                 if (events.size() > maxN) events.resize(maxN);
                 nlohmann::json body = { {"events", events}, {"count", events.size()} };
                 return HttpResponse{ 200, "application/json", body.dump() };
             }
 
             if (request.path == "/api/diagnostics/summary") {
-                auto events = aggregateEvents();
+                // softCap=0 for unbounded read; summary needs accurate
+                // totals across the entire on-disk diagnostic history.
+                auto events = aggregateEvents(0);
                 std::map<std::string, std::size_t> bySeverity;
                 std::map<std::string, std::size_t> byComponent;
                 for (const auto& e : events) {
@@ -16248,7 +16294,8 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const auto format = MasterControl::extractQueryParamAny(
                 request.query, {"format", "fmt", "type"});
             const bool asMarkdown = (format == "markdown" || format == "md");
-            auto events = aggregateEvents();
+            // softCap=0: export should serialise the full history.
+            auto events = aggregateEvents(0);
             applyFilters(events);
 
             if (asMarkdown) {
@@ -16257,18 +16304,44 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 md << "**Captured:** " << timestampNowUtc() << "  \n";
                 md << "**Version:** " << MASTERCONTROL_VERSION << "  \n";
                 md << "**Total events:** " << events.size() << "  \n\n";
-                const std::vector<std::string> severityOrder = {"critical", "error", "warning", "info", "debug"};
-                for (const auto& sev : severityOrder) {
+                // v0.11.0 (Copilot review fix): match BOTH `warning` and
+                // `warn` severities. TelemetrySeverity::Warning emits
+                // "warning" via to_string; boot self-test rows emit
+                // "warn". Pre-v0.11.0 the markdown export only iterated
+                // "warning" so any persisted "warn" entries were counted
+                // by /summary but silently omitted from the operator
+                // export. The aliasing happens here in the rendering
+                // layer rather than at aggregation so the on-disk
+                // jsonl files keep their producer-visible severity
+                // strings unchanged.
+                struct SeveritySection {
+                    const char* heading;
+                    std::vector<std::string> matchValues;
+                };
+                const std::vector<SeveritySection> severityOrder = {
+                    { "critical", {"critical"} },
+                    { "error",    {"error"} },
+                    { "warning",  {"warning", "warn"} },
+                    { "info",     {"info"} },
+                    { "debug",    {"debug"} }
+                };
+                auto matchesSection = [&](const std::string& sev, const std::vector<std::string>& matchValues) -> bool {
+                    for (const auto& m : matchValues) {
+                        if (sev == m) return true;
+                    }
+                    return false;
+                };
+                for (const auto& section : severityOrder) {
                     std::size_t count = 0;
                     for (const auto& e : events) {
-                        if (e.value("severity", std::string()) == sev) ++count;
+                        if (matchesSection(e.value("severity", std::string()), section.matchValues)) ++count;
                     }
                     if (count == 0) continue;
-                    md << "## " << sev << " (" << count << ")\n\n";
+                    md << "## " << section.heading << " (" << count << ")\n\n";
                     std::size_t emitted = 0;
                     for (const auto& e : events) {
-                        if (e.value("severity", std::string()) != sev) continue;
-                        if (emitted >= 50) { md << "_…" << (count - emitted) << " more " << sev << " events truncated…_\n\n"; break; }
+                        if (!matchesSection(e.value("severity", std::string()), section.matchValues)) continue;
+                        if (emitted >= 50) { md << "_…" << (count - emitted) << " more " << section.heading << " events truncated…_\n\n"; break; }
                         md << "- **" << e.value("capturedAtUtc", std::string("?")) << "** "
                            << "`" << e.value("component", std::string("?")) << "`"
                            << " · `" << e.value("event", std::string("?")) << "` — "
@@ -16300,7 +16373,8 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     {"message", "Clearing diagnostics is not supported in this slice. The persistent log files at <PUBLIC>\\Documents\\Master Control Orchestration Server\\logs\\ remain operator-owned. A future slice with the SqliteDiagnosticsStore will support clear-with-retention."}
                 }.dump() };
         }
-        // once (capturedAtUtc non-empty).
+        // Pre-existing comment continuation: health summary requires the
+        // telemetry sampler to have run at least once (capturedAtUtc non-empty).
         if (request.method == "GET" && request.path == "/api/health/summary") {
             nlohmann::json out;
             out["version"] = std::string{ MASTERCONTROL_VERSION };

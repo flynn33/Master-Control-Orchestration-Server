@@ -77,11 +77,23 @@ inline std::string extractQueryParam(std::string_view query,
 }
 
 // Try each candidate name in order and return the value of the first
-// match. Returns an empty string when none of the candidates appear.
+// match with a NON-EMPTY value. Returns an empty string when none
+// of the candidates appear, OR when every candidate that does appear
+// has an empty value (e.g. `?max=&limit=10` returns "10" because the
+// `max=` candidate has an empty value).
+//
+// Empty-value semantics: a present-but-empty query parameter (`name=`
+// with nothing after the `=`) is treated as "fall through to the
+// next alias" rather than "present with empty value". This matches
+// the route-handler convention upstream of this helper, where every
+// caller already does `if (!value.empty()) { ... try parse ... } else
+// { fall through to default cap }`. A future helper variant that
+// distinguishes present-empty from absent could be added when the
+// route surface requires that distinction; today no route does.
 //
 // Use when a canonical wire name has well-known operator-natural
-// aliases. List the canonical name first so callers that mix
-// canonical + alias get canonical-wins semantics.
+// aliases. List the canonical name first so callers that supply only
+// canonical (with a non-empty value) get canonical-wins semantics.
 //
 // Example:
 //   const auto maxValue = MasterControl::extractQueryParamAny(

@@ -16,7 +16,31 @@ The release-management and doc-sync GitHub agents that previously generated part
 - PHASE-13 Win2D / Direct2D high-rate visual surfaces in the WinUI Shell (per-pool sparklines, Tron grid HLSL, activity stream SwapChainPanel).
 - Onboarding profile `governanceBundleUrl` platform-awareness (currently hardcoded to `windows` in `MasterControlRuntime.cpp`; should reflect the requesting client's target platform).
 - Source-code tombstone removal of the legacy `GatewayType` slot enum value and `the legacy gateway binary` reference in `MasterControlBootstrapper/main.cpp` supervised-gateway child list (kept for back-compat deserialization in v0.10.x; removable at the next major bump).
-- PHASE-14 `DiagnosticsSectionControl` with persistent ring + `SqliteDiagnosticsStore` + WinUI Shell + browser Export buttons. Scheduled for v0.11.0 (minor bump per phase scope).
+- PHASE-14 Slice B: `mcos-bridge` MCP plugin tools (`mcos_diagnostics_summary`, `_events`, `_self_test`, `_export_markdown`, `_export_json`, `_clear`). Slice A's HTTP routes landed in v0.11.0; the MCP-plugin shim defers to a v0.11.x follow-up.
+- PHASE-14 Slice C: WinUI Shell `DiagnosticsSectionControl` with `FileSavePicker` for native Export Markdown / Export JSON.
+- PHASE-14 Slice D: Browser dashboard Diagnostics tab + Blob-download Export buttons.
+- PHASE-14 Slice E: `SqliteDiagnosticsStore` (persistent ring + retention + schema migration) + tests + completion report. Required before `POST /api/diagnostics/clear` can move from 501 to functional.
+
+## [0.11.0] - 2026-05-15
+
+### Summary
+
+PHASE-14 Slice A — five operator-visible HTTP routes under `/api/diagnostics/*` aggregating events from the per-component `events.jsonl` persistent logs (`runtime`, `supervisor`, `installer`) plus their rotated `.1.jsonl` siblings from v0.10.21 rotation. Closes item 7 from the operator's 2026-05-15 testing-phase audit. Minor bump per the manifest's phase-scope convention.
+
+Pre-v0.11.0 operators had no programmatic way to query, search, or export the persisted events — they had to manually concatenate files from `C:\Users\Public\Documents\Master Control Orchestration Server\logs\<component>\` on disk. Slice A delivers the operator-visible HTTP surface; the SqliteDiagnosticsStore (Slice E), WinUI Shell `DiagnosticsSectionControl` (Slice C), browser dashboard Diagnostics tab (Slice D), and `mcos-bridge` MCP plugin tools (Slice B) land in subsequent v0.11.x iterations.
+
+### Added
+
+- **`GET /api/diagnostics/events`** — Aggregates the merged event stream across all per-component `events.jsonl` files. Sorted recent-first. Supports `?max=` / `?severity=` / `?source=` filters via the v0.10.15 alias-aware extractor.
+- **`GET /api/diagnostics/summary`** — Returns `totalEvents` + `bySeverity` map + `byComponent` map + `latest5` array + `generatedAtUtc`.
+- **`GET /api/diagnostics/self-test`** — Returns the in-memory boot `SelfTestSnapshot` (passed/failed counts + per-test rows).
+- **`GET /api/diagnostics/export?format=markdown|json`** — Markdown export renders a structured doc with sections per severity (`critical`, `error`, `warning`/`warn`, `info`, `debug`), capped at 50 events/section with a truncation note. JSON export returns the full event set. `Content-Type` matches the format.
+- **`POST /api/diagnostics/clear`** — Returns 501 with a clear deferred-to-Slice-E message. Clear-with-retention lands when `SqliteDiagnosticsStore` arrives.
+
+### Notes
+
+- Slice A intentionally avoids the new `SqliteDiagnosticsStore` / `DiagnosticsService` class hierarchy from the original PHASE-14 plan. The inline route handlers + jsonl-aggregation deliver the operator-visible surface without adding a new database dependency. The persistent store lands in Slice E.
+- The minor bump (0.10.21 → 0.11.0) follows the manifest's phase-scope convention — a new HTTP route surface introduced as part of a phase qualifies as an architectural change.
 
 ## [0.10.21] - 2026-05-15
 
