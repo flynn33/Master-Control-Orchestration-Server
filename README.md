@@ -1,12 +1,15 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.11.0-00f6ff?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.11.0--alpha.1-00f6ff?style=flat-square)
+![channel](https://img.shields.io/badge/channel-Internal%20Alpha-ff8c00?style=flat-square)
 ![released](https://img.shields.io/badge/released-2026--05--15-031018?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%E2%80%A2%20Server%202022-0a1018?style=flat-square)
 ![toolchain](https://img.shields.io/badge/toolchain-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20CMake-00aacc?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
 ![governance](https://img.shields.io/badge/governance-CLU%20%2B%20Forsetti-5a00e8?style=flat-square)
 ![license](https://img.shields.io/badge/license-Proprietary-031018?style=flat-square)
+
+> **v0.11.0-alpha.1 — first internal alpha.** Packages the merged v0.11.0 tree (commit `94cad65`) as a Windows Installer MSI for LAN distribution. Closes operator-audit items 1–7 (PHASE-14 Slice A diagnostics surface + v0.10.21 supervisor/telemetry/rotation hardening + v0.10.15-20 query alias / SSE resume / JSON strictness / npx pool seeds / mcp-server-runtime routes). LAN trust posture intact — `auth=none, trust=lan` per the operator's secure-LAN directive. App-layer auth lands in the retail build. See [`handoff/realignment/v0.11.0-alpha.1-internal-alpha.md`](handoff/realignment/v0.11.0-alpha.1-internal-alpha.md) for the alpha cut report.
 
 > **A Windows-native LAN MCP Gateway host.** External AI coding clients (Claude Code, Codex, Grok, ChatGPT, generic MCP) connect to one MCOS-advertised endpoint, consume server-generated onboarding profiles and CLU/Forsetti governance bundles, and operate against supervised MCP server and sub-agent worker pools. MCOS owns discovery, governance, telemetry, worker supervision, autoscaling, dashboarding, and Windows packaging.
 
