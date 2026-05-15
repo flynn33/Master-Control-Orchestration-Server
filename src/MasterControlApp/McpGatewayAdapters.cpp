@@ -604,7 +604,15 @@ std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::ListTools() const {
     // every pool's stdio is wedged, refreshToolCatalogLocked clears
     // the cache and we return the empty list, exactly the same outcome.
     std::lock_guard<std::mutex> lock(mutex_);
-    if (toolCatalogCache_.empty() && workerSupervisor_) {
+    // v0.10.19: always defer to refreshToolCatalogLocked so cache-invalidation
+    // by upsertPool / InvalidateToolCatalog actually surfaces here. Pre-
+    // v0.10.19 this branch only refreshed when the cache was EMPTY, which
+    // meant /api/health/summary.gateway.toolCount stayed at the first-priming
+    // count for the lifetime of the process even as pools registered and
+    // contributed new tools. refreshToolCatalogLocked already self-bypasses
+    // when toolCatalogCacheValidUntil_ is still in the future, so this
+    // is a no-op on the hot path.
+    if (workerSupervisor_) {
         refreshToolCatalogLocked();
     }
     return toolCatalogCache_;

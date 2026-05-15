@@ -23,6 +23,9 @@
 #include "MasterControl/MasterControlDefaults.h"
 #include "MasterControl/MasterControlModules.h"
 #include "MasterControl/MasterControlVersion.h"
+#include "MasterControl/QueryParamParse.h"  // v0.10.15: alias-aware ?param= extractor.
+#include "MasterControl/JsonStrictness.h"   // v0.10.17: dropped-top-level-keys diagnostic.
+#include "MasterControl/DiagnosticsAggregator.h"  // v0.11.0 Slice A: testable aggregator + markdown renderer.
 
 #include <bcrypt.h>
 #include <iomanip>
@@ -8570,18 +8573,69 @@ private:
             startupInfo.hStdInput  = childStdinRead;
         }
 
+        // v0.10.21: honor pool.template_.environment. Pre-v0.10.21 the
+        // supervisor passed nullptr for lpEnvironment and every child
+        // inherited the MCOS service's environment verbatim (service
+        // runs as SYSTEM with SYSTEM's PATH, APPDATA, etc.). Pool-spec
+        // environment overrides were silently ignored. Build a merged
+        // env block from the parent env + the pool's overrides, in
+        // Unicode form, and pass it with CREATE_UNICODE_ENVIRONMENT
+        // so the child sees the operator-supplied PATH / NPM_CONFIG_*
+        // / etc. The block is wide-character key=value pairs separated
+        // by single NULs and terminated by a double NUL. Mirrors the
+        // existing runOneShotProcess env-block pattern around line
+        // 1006-1039.
+        LPWCH environmentBlock = nullptr;
+        if (!pool.template_.environment.empty()) {
+            const LPWCH currentEnvironment = GetEnvironmentStringsW();
+            if (currentEnvironment != nullptr) {
+                std::map<std::wstring, std::wstring> variables;
+                for (const wchar_t* cursor = currentEnvironment; *cursor != L'\0'; cursor += wcslen(cursor) + 1) {
+                    std::wstring entry(cursor);
+                    const auto separator = entry.find(L'=');
+                    if (separator == std::wstring::npos) {
+                        continue;
+                    }
+                    variables[entry.substr(0, separator)] = entry.substr(separator + 1);
+                }
+                FreeEnvironmentStringsW(currentEnvironment);
+                for (const auto& [name, value] : pool.template_.environment) {
+                    variables[wideFromUtf8(name)] = wideFromUtf8(value);
+                }
+                std::wstring flatEnvironment;
+                for (const auto& [name, value] : variables) {
+                    flatEnvironment += name;
+                    flatEnvironment += L'=';
+                    flatEnvironment += value;
+                    flatEnvironment.push_back(L'\0');
+                }
+                flatEnvironment.push_back(L'\0');
+                environmentBlock = static_cast<LPWCH>(HeapAlloc(GetProcessHeap(), 0,
+                    (flatEnvironment.size() + 1) * sizeof(wchar_t)));
+                if (environmentBlock != nullptr) {
+                    memcpy(environmentBlock, flatEnvironment.data(),
+                           flatEnvironment.size() * sizeof(wchar_t));
+                }
+            }
+        }
+
         PROCESS_INFORMATION processInfo{};
         std::wstring workingDir = wideFromUtf8(pool.template_.workingDirectory);
+        const DWORD creationFlags = CREATE_NO_WINDOW | CREATE_SUSPENDED |
+            (environmentBlock != nullptr ? CREATE_UNICODE_ENVIRONMENT : 0);
         const BOOL launched = CreateProcessW(
             nullptr,
             mutableCommandLine.data(),
             nullptr, nullptr,
             bridgeAvailable ? TRUE : FALSE,
-            CREATE_NO_WINDOW | CREATE_SUSPENDED,
-            nullptr,
+            creationFlags,
+            environmentBlock,
             workingDir.empty() ? nullptr : workingDir.c_str(),
             &startupInfo,
             &processInfo);
+        if (environmentBlock != nullptr) {
+            HeapFree(GetProcessHeap(), 0, environmentBlock);
+        }
         if (!launched) {
             if (child.jobObject) {
                 CloseHandle(child.jobObject);
@@ -9936,6 +9990,44 @@ public:
     void recordEvent(TelemetryEvent event) override {
         if (event.timestamp.empty()) {
             event.timestamp = timestampNowUtc();
+        }
+        // v0.10.21: persist error/warning/critical events to the
+        // runtime/events.jsonl Diagnostics log. Pre-v0.10.21 only
+        // info-severity boot self-test summaries reached the file;
+        // every TelemetryEvent (incl. all 168 pool_worker_death and
+        // pool_quarantine errors operators saw during testing-phase
+        // remediation) was in-memory only and lost on service restart.
+        // The append happens BEFORE the in-memory ring push so it does
+        // not block the hot path under mutex_ -- Diagnostics::
+        // appendEvent has its own static mutex and writes
+        // asynchronously w.r.t. the aggregator's storage. Info-severity
+        // events stay in-memory-only to avoid filling the disk with
+        // dashboard-snapshot chatter; the existing appendTelemetry
+        // path already handles the high-volume info stream separately.
+        const bool persistThisEvent =
+            event.severity == TelemetrySeverity::Warning ||
+            event.severity == TelemetrySeverity::Error ||
+            event.severity == TelemetrySeverity::Critical;
+        if (persistThisEvent) {
+            try {
+                nlohmann::json data = {
+                    { "category", to_string(event.category) },
+                    { "poolId",   event.poolId },
+                    { "clientId", event.clientId }
+                };
+                MasterControl::Diagnostics::appendEvent(
+                    L"runtime",
+                    to_string(event.severity),
+                    event.category == TelemetryCategory::Worker
+                        ? std::string("worker_event")
+                        : std::string("telemetry_event"),
+                    event.message,
+                    std::move(data));
+            } catch (...) {
+                // Diagnostics persistence MUST NOT throw out of the
+                // aggregator's recordEvent path; even if disk is full
+                // we still keep the in-memory ring honest.
+            }
         }
         std::lock_guard<std::mutex> lock(mutex_);
         events_.push_back(std::move(event));
@@ -11453,6 +11545,18 @@ public:
                 }
                 stat.readyInstanceCount = readyCount;
 
+                // v0.10.19: stdio-supervised pools listen via stdio JSON-RPC,
+                // not TCP. The endpoint.status field above was derived from a
+                // TCP-probe and therefore says "offline" even when the worker
+                // is alive and serving on its inherited stdin/stdout pair.
+                // Override to "online" when any instance is Ready -- this is
+                // what stat.reachable already reflects, just exposed via the
+                // status string field too so consumers that key off status
+                // (older dashboards, third-party log consumers) see truth.
+                if (readyCount > 0) {
+                    stat.status = "online";
+                }
+
                 const int perInstanceCap = (pool.scalePolicy.maxActiveLeasesPerInstance > 0)
                     ? pool.scalePolicy.maxActiveLeasesPerInstance
                     : 1;
@@ -11575,6 +11679,18 @@ public:
                     }
                 }
                 stat.readyInstanceCount = readyCount;
+
+                // v0.10.19: stdio-supervised pools listen via stdio JSON-RPC,
+                // not TCP. The endpoint.status field above was derived from a
+                // TCP-probe and therefore says "offline" even when the worker
+                // is alive and serving on its inherited stdin/stdout pair.
+                // Override to "online" when any instance is Ready -- this is
+                // what stat.reachable already reflects, just exposed via the
+                // status string field too so consumers that key off status
+                // (older dashboards, third-party log consumers) see truth.
+                if (readyCount > 0) {
+                    stat.status = "online";
+                }
 
                 const int perInstanceCap = (pool.scalePolicy.maxActiveLeasesPerInstance > 0)
                     ? pool.scalePolicy.maxActiveLeasesPerInstance
@@ -13692,6 +13808,146 @@ bool MasterControlApplication::Impl::initialize() {
         // the MCP wire is live.
         registerWorkerPool("docker-control", "Docker Control MCP",   2);
         registerWorkerPool("local-database", "Local Database MCP",   2);
+
+        // v0.10.18: external MCP-package seeds for catalog ids that
+        // were previously "awaiting_pool_registration" placeholders.
+        // Pre-v0.10.18 a fresh install advertised these in the
+        // endpoint catalog with host:port 7101/7102/7103/7107 but
+        // had no pool spec to back them; the dashboard reported
+        // reachable=false on the operator's Telemetry deck even
+        // though the install was nominally complete.
+        //
+        // Each entry below spawns the standard npm-published MCP
+        // server via npx. The packages follow the same stdio
+        // JSON-RPC contract as the in-tree baseline worker, so the
+        // supervisor's healthProbe transport stays "stdio_handshake"
+        // and the gateway's tools/list discovery aggregates their
+        // tools into the unified catalog without additional wiring.
+        //
+        // sqlite is deliberately omitted: mcp-server-sqlite-npx
+        // exits with exit code 1 immediately when spawned under
+        // the MCOS supervisor (root cause TBD; the same package
+        // initializes cleanly when invoked directly via stdin-pipe
+        // outside the supervisor process tree). Operators can
+        // register a sqlite pool manually via POST /api/pools
+        // once a working configuration is identified; the catalog
+        // placeholder continues to advertise the install command.
+        //
+        // The npx path is hardcoded to the standard nodejs install
+        // location. If nodejs is not installed there the seed
+        // skips the registration -- the catalog placeholder
+        // remains visible with its installHint, preserving the
+        // honest-unavailable-sentinel contract.
+        const std::filesystem::path npxPath = "C:\\Program Files\\nodejs\\npx.cmd";
+        const bool nodejsInstalled = std::filesystem::exists(npxPath);
+        if (nodejsInstalled) {
+            auto registerNpxMcpPool = [&](const std::string& poolId,
+                                          const std::string& displayName,
+                                          const std::vector<std::string>& args,
+                                          const std::unordered_map<std::string, std::string>& extraEnv = {}) {
+                ManagedEndpointPool p;
+                p.poolId         = poolId;
+                p.kind           = EndpointPoolKind::McpServer;
+                p.displayName    = displayName;
+                p.logicalMcpUrl  = "";
+                p.template_.executable    = npxPath.string();
+                p.template_.args          = args;
+                p.template_.environment   = {
+                    { "PATH", "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows" }
+                };
+                for (const auto& kv : extraEnv) {
+                    p.template_.environment[kv.first] = kv.second;
+                }
+                p.template_.workingDirectory = paths_.executableDirectory.string();
+                p.template_.transport        = "stdio_jsonrpc";
+                p.template_.healthProbe.transport         = "stdio_handshake";
+                p.template_.healthProbe.intervalMs        = 10000;
+                p.template_.healthProbe.timeoutMs         = 15000;
+                p.template_.healthProbe.unhealthyThreshold = 5;
+                p.scalePolicy.minInstances               = 1;
+                p.scalePolicy.maxInstances               = 2;
+                p.scalePolicy.maxActiveLeasesPerInstance = 4;
+                p.scalePolicy.scaleOutQueueWaitMs        = 1500;
+                p.scalePolicy.scaleInIdleSeconds         = 300;
+                workerSupervisor_->upsertPool(p);
+            };
+            registerNpxMcpPool(
+                "memory",
+                "Memory MCP",
+                { "-y", "@modelcontextprotocol/server-memory" },
+                {});
+            registerNpxMcpPool(
+                "filesystem",
+                "Filesystem MCP",
+                { "-y", "@modelcontextprotocol/server-filesystem", "C:\\Users\\Public\\Documents" },
+                {});
+            registerNpxMcpPool(
+                "sequential-thinking",
+                "Sequential Thinking MCP",
+                { "-y", "@modelcontextprotocol/server-sequential-thinking" },
+                {});
+            registerNpxMcpPool(
+                "chrome-devtools",
+                "Chrome DevTools MCP",
+                { "-y", "chrome-devtools-mcp" },
+                {});
+
+            // v0.10.19: sqlite MCP via the SYSTEM-account npm-globally
+            // installed binary path. Pre-v0.10.19 the v0.10.18 seed
+            // omitted sqlite because spawning `npx -y mcp-server-sqlite-
+            // npx <db>` under the MCOS service's SYSTEM context exited
+            // with exitCode=1 within ~1s of spawn -- root cause traced
+            // 2026-05-15 to the native `node_sqlite3.node` build/load
+            // path under SYSTEM's npm cache (other npx-based MCP
+            // packages without native dependencies worked unaltered).
+            // Pointing the pool directly at the SYSTEM-resolved npm-
+            // global mcp-server-sqlite-npx.cmd bypasses npx's first-run
+            // download + native-build step and the worker spawns
+            // cleanly. The operator install step is expected to drop
+            // the package into SYSTEM's npm-global location ahead of
+            // time; if the binary is absent at boot the seed skips and
+            // sqlite stays a catalog placeholder (honest-unavailable-
+            // sentinel preserved). The db file path defaults to the
+            // operator-writable C:\ProgramData\MCOS\state\mcp-sqlite.db
+            // (created here if absent) so the supervisor doesn't crash
+            // the worker because the db is missing.
+            const std::filesystem::path sqliteSystemBin =
+                "C:\\WINDOWS\\system32\\config\\systemprofile\\AppData\\Roaming\\npm\\mcp-server-sqlite-npx.cmd";
+            const std::filesystem::path sqliteDbPath = "C:\\ProgramData\\MCOS\\state\\mcp-sqlite.db";
+            if (std::filesystem::exists(sqliteSystemBin)) {
+                std::error_code ec;
+                std::filesystem::create_directories(sqliteDbPath.parent_path(), ec);
+                if (!std::filesystem::exists(sqliteDbPath, ec)) {
+                    // sqlite-mcp-server requires an existing file; create
+                    // an empty one. The mcp-server-sqlite-npx package
+                    // promotes it to a usable sqlite database on first
+                    // open.
+                    std::ofstream(sqliteDbPath.string(), std::ios::binary | std::ios::trunc);
+                }
+                ManagedEndpointPool sp;
+                sp.poolId         = "sqlite";
+                sp.kind           = EndpointPoolKind::McpServer;
+                sp.displayName    = "SQLite MCP";
+                sp.logicalMcpUrl  = "";
+                sp.template_.executable    = sqliteSystemBin.string();
+                sp.template_.args          = { sqliteDbPath.string() };
+                sp.template_.environment   = {
+                    { "PATH", "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows" }
+                };
+                sp.template_.workingDirectory = paths_.executableDirectory.string();
+                sp.template_.transport        = "stdio_jsonrpc";
+                sp.template_.healthProbe.transport         = "stdio_handshake";
+                sp.template_.healthProbe.intervalMs        = 10000;
+                sp.template_.healthProbe.timeoutMs         = 15000;
+                sp.template_.healthProbe.unhealthyThreshold = 5;
+                sp.scalePolicy.minInstances              = 1;
+                sp.scalePolicy.maxInstances              = 2;
+                sp.scalePolicy.maxActiveLeasesPerInstance = 4;
+                sp.scalePolicy.scaleOutQueueWaitMs       = 1500;
+                sp.scalePolicy.scaleInIdleSeconds        = 300;
+                workerSupervisor_->upsertPool(sp);
+            }
+        }
     }
 
     // v0.9.1: auto-spawn instances for any pool whose minInstances >= 1.
@@ -14840,11 +15096,44 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         HttpResponse resp;
         resp.statusCode = 200;
         resp.streamMode = true;
-        resp.streamHandler = [this](SOCKET client, std::atomic<bool>* serverRunning) {
+
+        // v0.10.16: SSE resume. Per WHATWG SSE the browser EventSource
+        // sends `Last-Event-ID` automatically on reconnect (it echoes
+        // back the most-recent `id:` field it received). We honor that
+        // header verbatim. We additionally accept `?since=` (and the
+        // standard aliases established in v0.10.15) so curl/manual
+        // probes can simulate a resume without the full handshake.
+        // Pre-v0.10.16 the handler initialised `lastActivityId = ""`
+        // unconditionally so a reconnecting client replayed from the
+        // current ring head every time, losing any events that landed
+        // between disconnect and reconnect.
+        std::string initialWatermark;
+        if (auto resumeHeader = findHeaderCaseInsensitive(
+                request.headers, "Last-Event-ID");
+            !resumeHeader.empty()) {
+            initialWatermark = std::move(resumeHeader);
+        } else if (!request.query.empty()) {
+            initialWatermark = MasterControl::extractQueryParamAny(
+                request.query,
+                {"since", "sinceId", "after", "from", "cursor", "lastEventId"});
+        }
+
+        resp.streamHandler =
+            [this, initialWatermark = std::move(initialWatermark)]
+            (SOCKET client, std::atomic<bool>* serverRunning) {
+            // v0.10.16: sendEvent now accepts an optional eventId.
+            // When non-empty an `id: <eventId>\n` line is emitted
+            // between the event-name and data lines per SSE spec.
+            // EventSource clients store that id and echo it back as
+            // the Last-Event-ID request header on automatic reconnect.
             auto sendEvent = [&](const std::string& eventName,
-                                 const std::string& jsonBody) -> bool {
+                                 const std::string& jsonBody,
+                                 const std::string& eventId = std::string()) -> bool {
                 std::ostringstream frame;
                 frame << "event: " << eventName << "\n";
+                if (!eventId.empty()) {
+                    frame << "id: " << eventId << "\n";
+                }
                 // Split on \n so each line is prefixed with "data:"
                 // per RFC SSE; nlohmann's dump(0) emits no newlines
                 // so the entire body lives on a single data: line,
@@ -14866,7 +15155,10 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             const std::string hello = ": mcos sse stream open\n\n";
             ::send(client, hello.c_str(), static_cast<int>(hello.size()), 0);
 
-            std::string lastActivityId;
+            // v0.10.16: resume from the caller's watermark when one
+            // was supplied via Last-Event-ID or ?since=. Empty (the
+            // default) preserves the pre-v0.10.16 fresh-stream start.
+            std::string lastActivityId = initialWatermark;
             std::string lastSnapshotHash;
             int loopsWithoutChange = 0;
 
@@ -14902,7 +15194,14 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     if (!recent.events.empty()) {
                         for (const auto& evt : recent.events) {
                             const std::string body = nlohmann::json(evt).dump();
-                            if (!sendEvent("activity", body)) break;
+                            // v0.10.16: pass evt.id as the SSE `id:`
+                            // field so EventSource records it; on a
+                            // dropped connection the browser sends it
+                            // back as Last-Event-ID and the handler
+                            // resumes from there. Dashboard events are
+                            // sent without an id because they are not
+                            // resumable (each tick is a fresh snapshot).
+                            if (!sendEvent("activity", body, evt.id)) break;
                         }
                         lastActivityId = recent.highWaterMarkId;
                     } else if (lastActivityId.empty()) {
@@ -15497,22 +15796,20 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         // because the query string is no longer in request.path; pre-
         // v0.9.50 we used rfind("/api/activity", 0) == 0 to absorb the
         // query suffix.
+        // v0.10.15: param extraction moved to MasterControl::extractQueryParamAny
+        // (boundary-aware + alias-aware). Canonical names come first; the
+        // listed aliases capture operator-natural variants that prior
+        // versions silently ignored (e.g. ?limit=N returned the full
+        // 512-event ring instead of N events).
         size_t maxCount = ActivityEventRing::kCapacity;
         if (!request.query.empty()) {
-            const auto& query = request.query;
-            const auto sincePos = query.find("since=");
-            if (sincePos != std::string::npos) {
-                sinceId = query.substr(sincePos + 6);
-                const auto amp = sinceId.find('&');
-                if (amp != std::string::npos) sinceId = sinceId.substr(0, amp);
-            }
-            const auto maxPos = query.find("max=");
-            if (maxPos != std::string::npos) {
-                auto maxValue = query.substr(maxPos + 4);
-                const auto amp = maxValue.find('&');
-                if (amp != std::string::npos) {
-                    maxValue = maxValue.substr(0, amp);
-                }
+            sinceId = MasterControl::extractQueryParamAny(
+                request.query,
+                {"since", "sinceId", "after", "from", "cursor", "lastEventId"});
+            const auto maxValue = MasterControl::extractQueryParamAny(
+                request.query,
+                {"max", "limit", "count", "n", "top"});
+            if (!maxValue.empty()) {
                 try {
                     const auto parsed = std::stoull(maxValue);
                     if (parsed > 0) {
@@ -15528,16 +15825,15 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             // ("?kind=supervisor_connect") or a prefix wildcard
             // ("?kind=supervisor_*") so operators can subscribe to a
             // whole family of events without enumerating individual
-            // kinds. Unknown URL-encoding is left as-is.
-            const auto kindPos = query.find("kind=");
-            if (kindPos != std::string::npos) {
-                kindFilter = query.substr(kindPos + 5);
-                const auto amp = kindFilter.find('&');
-                if (amp != std::string::npos) kindFilter = kindFilter.substr(0, amp);
-                if (!kindFilter.empty() && kindFilter.back() == '*') {
-                    kindFilterIsPrefix = true;
-                    kindFilter.pop_back();
-                }
+            // kinds. v0.10.15: also accept type/event/filter/category
+            // aliases (canonical name still wins). Unknown URL-encoding
+            // is left as-is.
+            kindFilter = MasterControl::extractQueryParamAny(
+                request.query,
+                {"kind", "type", "event", "filter", "category"});
+            if (!kindFilter.empty() && kindFilter.back() == '*') {
+                kindFilterIsPrefix = true;
+                kindFilter.pop_back();
             }
         }
         // Read 2x the requested cap when filtering so the filter doesn't
@@ -15931,6 +16227,161 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
 
             return jsonResponse(out);
         }
+        // -------------------------------------------------------------------
+        // v0.11.0 PHASE-14 Slice A: Diagnostics HTTP surface. Five routes
+        // aggregated against the existing per-component events.jsonl
+        // persistent logs (runtime, supervisor, installer). Pre-v0.11.0
+        // operators had no programmatic way to query, search, or export
+        // the persisted events; they had to manually concatenate files
+        // from `<PUBLIC>\Documents\Master Control Orchestration Server\
+        // logs\<component>\` on disk. Slice A delivers the operator-
+        // visible HTTP surface; the SqliteDiagnosticsStore + WinUI
+        // Shell + browser UI + MCP plugin tools land in subsequent
+        // slices (B-E per PHASE-14 plan).
+        //
+        // The five routes:
+        //   GET  /api/diagnostics/events?max=N&severity=X&source=Y
+        //   GET  /api/diagnostics/summary
+        //   GET  /api/diagnostics/self-test
+        //   GET  /api/diagnostics/export?format=markdown|json
+        //   POST /api/diagnostics/clear     -> 501 in slice A (no
+        //                                      writeable store yet)
+        //
+        // Aggregation reads the live + rotated (.1.jsonl) jsonl files
+        // under the diagnostics root resolved via the same Diagnostics::
+        // resolvePersistentLogPaths helper. Each line is parsed; bad
+        // lines are silently skipped (resilient against partial writes).
+        if (request.method == "GET" &&
+            (request.path == "/api/diagnostics/events" ||
+             request.path == "/api/diagnostics/summary" ||
+             request.path == "/api/diagnostics/self-test" ||
+             request.path == "/api/diagnostics/export")) {
+
+            // v0.11.0 (Copilot review fix): the aggregator now defers
+            // to MasterControl::aggregateDiagnosticsEventsFromRoot in
+            // the testable header so unit tests can exercise the
+            // file-walk + softCap + sort behaviour against a synthetic
+            // logs directory. softCap > 0 caps the read: live
+            // events.jsonl files pass first, rotated .1.jsonl files
+            // only if the live pass didn't fill the cap (4x headroom
+            // for severity filtering). softCap == 0 retains the
+            // unbounded read-all semantics that summary + export need.
+            auto aggregateEvents = [&](std::size_t softCap) -> std::vector<nlohmann::json> {
+                const auto rootPaths = MasterControl::Diagnostics::resolvePersistentLogPaths(L"runtime");
+                return MasterControl::aggregateDiagnosticsEventsFromRoot(rootPaths.root, softCap);
+            };
+
+            auto applyFilters = [&](std::vector<nlohmann::json>& events) {
+                if (request.query.empty()) return;
+                const auto sevFilter = MasterControl::extractQueryParamAny(
+                    request.query, {"severity", "level"});
+                const auto srcFilter = MasterControl::extractQueryParamAny(
+                    request.query, {"source", "component"});
+                if (!sevFilter.empty()) {
+                    events.erase(std::remove_if(events.begin(), events.end(),
+                        [&](const nlohmann::json& e) {
+                            return e.value("severity", std::string()) != sevFilter;
+                        }), events.end());
+                }
+                if (!srcFilter.empty()) {
+                    events.erase(std::remove_if(events.begin(), events.end(),
+                        [&](const nlohmann::json& e) {
+                            return e.value("component", std::string()) != srcFilter;
+                        }), events.end());
+                }
+            };
+
+            if (request.path == "/api/diagnostics/events") {
+                // v0.11.0 (Copilot review fix): parse max= BEFORE
+                // aggregating so the aggregator can early-out on the
+                // rotated .1.jsonl files when only a small recent
+                // slice is requested.
+                std::size_t maxN = 200;
+                if (!request.query.empty()) {
+                    const auto maxValue = MasterControl::extractQueryParamAny(
+                        request.query, {"max", "limit", "count", "n", "top"});
+                    if (!maxValue.empty()) {
+                        try { maxN = static_cast<std::size_t>(std::stoull(maxValue)); } catch (...) {}
+                        if (maxN == 0) maxN = 200;
+                    }
+                }
+                auto events = aggregateEvents(maxN);
+                applyFilters(events);
+                if (events.size() > maxN) events.resize(maxN);
+                nlohmann::json body = { {"events", events}, {"count", events.size()} };
+                return HttpResponse{ 200, "application/json", body.dump() };
+            }
+
+            if (request.path == "/api/diagnostics/summary") {
+                // softCap=0 for unbounded read; summary needs accurate
+                // totals across the entire on-disk diagnostic history.
+                auto events = aggregateEvents(0);
+                std::map<std::string, std::size_t> bySeverity;
+                std::map<std::string, std::size_t> byComponent;
+                for (const auto& e : events) {
+                    ++bySeverity[e.value("severity", std::string("info"))];
+                    ++byComponent[e.value("component", std::string("unknown"))];
+                }
+                nlohmann::json latest = nlohmann::json::array();
+                for (std::size_t i = 0; i < (std::min<std::size_t>)(5, events.size()); ++i) {
+                    latest.push_back(events[i]);
+                }
+                nlohmann::json body;
+                body["totalEvents"] = events.size();
+                body["bySeverity"]  = bySeverity;
+                body["byComponent"] = byComponent;
+                body["latest5"]     = latest;
+                body["generatedAtUtc"] = timestampNowUtc();
+                return HttpResponse{ 200, "application/json", body.dump() };
+            }
+
+            if (request.path == "/api/diagnostics/self-test") {
+                const auto snapshot = getLastSelfTestSnapshot();
+                nlohmann::json body = snapshot;
+                body["queryAtUtc"] = timestampNowUtc();
+                return HttpResponse{ 200, "application/json", body.dump() };
+            }
+
+            // /api/diagnostics/export?format=markdown|json
+            const auto format = MasterControl::extractQueryParamAny(
+                request.query, {"format", "fmt", "type"});
+            const bool asMarkdown = (format == "markdown" || format == "md");
+            // softCap=0: export should serialise the full history.
+            auto events = aggregateEvents(0);
+            applyFilters(events);
+
+            if (asMarkdown) {
+                // v0.11.0: markdown rendering delegates to the testable
+                // helper in DiagnosticsAggregator.h. The helper handles
+                // the warning/warn severity alias + 50-events/section
+                // truncation note + per-section headings consistently
+                // across this route and unit tests.
+                std::string md = MasterControl::renderDiagnosticsMarkdown(
+                    events, timestampNowUtc(), std::string{MASTERCONTROL_VERSION});
+                return HttpResponse{ 200, "text/markdown; charset=utf-8", std::move(md) };
+            }
+            // JSON export (default)
+            nlohmann::json body;
+            body["generatedAtUtc"] = timestampNowUtc();
+            body["version"]        = std::string{ MASTERCONTROL_VERSION };
+            body["totalEvents"]    = events.size();
+            body["events"]         = events;
+            return HttpResponse{ 200, "application/json", body.dump(2) };
+        }
+        if (request.method == "POST" && request.path == "/api/diagnostics/clear") {
+            // v0.11.0 PHASE-14 Slice A: deferred to a follow-up slice
+            // when the SqliteDiagnosticsStore lands. The current
+            // jsonl-aggregated path is read-only; clearing would
+            // require deleting per-component log files which has
+            // operator-side risk. Return 501 with a clear message
+            // so consumers don't silently retry.
+            return HttpResponse{ 501, "application/json",
+                nlohmann::json{
+                    {"ok", false},
+                    {"message", "Clearing diagnostics is not supported in this slice. The persistent log files at <PUBLIC>\\Documents\\Master Control Orchestration Server\\logs\\ remain operator-owned. A future slice with the SqliteDiagnosticsStore will support clear-with-retention."}
+                }.dump() };
+        }
+        // -------------------------------------------------------------------
         // v0.9.4 (Fix #4): host telemetry surface. Pre-v0.9.4 the
         // discovery doc, the dashboard, and the realignment manifest
         // (PHASE-08 Real-Time Telemetry deliverable) all implied a
@@ -16488,11 +16939,16 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "POST" && request.path == "/api/pools") {
             try {
-                auto poolBody = nlohmann::json::parse(request.body).get<ManagedEndpointPool>();
+                auto parsed = nlohmann::json::parse(request.body);
+                auto poolBody = parsed.get<ManagedEndpointPool>();
                 if (!workerSupervisor_) {
                     // v0.9.39: 503 -- supervisor not initialized (see CLU 503 above).
                 return jsonResponse(OperationResult{ false, false, "Worker supervisor is not running." }, 503);
                 }
+                // v0.10.17: capture dropped top-level keys BEFORE move so
+                // the diagnostic reflects the input payload, not the
+                // post-move (default-constructed) struct.
+                const auto dropped = MasterControl::collectDroppedTopLevelKeys(parsed, poolBody);
                 const std::string poolIdEvt = poolBody.poolId;
                 const std::string poolKindEvt = to_string(poolBody.kind);
                 const auto result = workerSupervisor_->upsertPool(std::move(poolBody));
@@ -16523,10 +16979,16 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                         telemetryAggregator_->recordEvent(std::move(evt));
                     }
                 }
-                if (result.succeeded) { return jsonResponse(result, 200); }
+                // v0.10.17: additive droppedKeys diagnostic (see /api/clients).
+                nlohmann::json body = result;
+                if (!dropped.empty()) {
+                    body["droppedKeys"] = MasterControl::droppedKeysToJson(dropped);
+                }
                 // v0.9.52: upsertPool now validates poolId character set
                 // and scalePolicy bounds. Failure is client error -> 400.
-                return jsonResponse(result, 400);
+                return HttpResponse{ result.succeeded ? 200 : 400,
+                                     "application/json",
+                                     body.dump() };
             } catch (const std::exception& ex) {
                 // v0.9.29: malformed body -> 400 (see governance-decisions
                 // catch above for the rationale -- middleware/observability
@@ -16724,14 +17186,15 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             // returned a raw array instead of the {events, maxEvents}
             // envelope the dashboard expects. Both fixed in v0.6.8.
             // v0.9.50: query string is in request.query now.
+            // v0.10.15: param extraction moved to alias-aware helper so
+            // ?limit=N / ?count=N / ?n=N / ?top=N also work; pre-v0.10.15
+            // operators using ?limit= silently got the full 1024-event cap.
             std::size_t maxEvents = 1024;
             if (!request.query.empty()) {
-                const auto& qs = request.query;
-                const auto maxAt = qs.find("max=");
-                if (maxAt != std::string::npos) {
-                    auto value = qs.substr(maxAt + 4);
-                    const auto amp = value.find('&');
-                    if (amp != std::string::npos) value = value.substr(0, amp);
+                const auto value = MasterControl::extractQueryParamAny(
+                    request.query,
+                    {"max", "limit", "count", "n", "top"});
+                if (!value.empty()) {
                     try { maxEvents = static_cast<std::size_t>(std::stoul(value)); } catch (...) {}
                     if (maxEvents == 0) maxEvents = 1024;
                 }
@@ -16771,11 +17234,13 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 return jsonResponse(OperationResult{ false, false, "Telemetry aggregator is not running." }, 503);
             }
             try {
-                auto heartbeat = nlohmann::json::parse(request.body).get<ClientHeartbeat>();
+                auto parsed = nlohmann::json::parse(request.body);
+                auto heartbeat = parsed.get<ClientHeartbeat>();
                 if (heartbeat.clientId.empty()) {
                     // v0.9.29: missing required field -> 400.
                     return jsonResponse(OperationResult{ false, false, "ClientHeartbeat.clientId is required." }, 400);
                 }
+                const auto dropped = MasterControl::collectDroppedTopLevelKeys(parsed, heartbeat);
                 telemetryAggregator_->recordHeartbeat(heartbeat);
                 TelemetryEvent event;
                 event.category = TelemetryCategory::Client;
@@ -16783,7 +17248,12 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 event.message = "Client heartbeat recorded.";
                 event.clientId = heartbeat.clientId;
                 telemetryAggregator_->recordEvent(std::move(event));
-                return jsonResponse(OperationResult{ true, false, "Heartbeat recorded." });
+                // v0.10.17: additive droppedKeys diagnostic (see /api/clients).
+                nlohmann::json body = OperationResult{ true, false, "Heartbeat recorded." };
+                if (!dropped.empty()) {
+                    body["droppedKeys"] = MasterControl::droppedKeysToJson(dropped);
+                }
+                return HttpResponse{ 200, "application/json", body.dump() };
             } catch (const std::exception& ex) {
                 // v0.9.29: malformed body -> 400 (see governance-decisions
                 // catch above for the rationale).
@@ -17007,12 +17477,72 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             // Re-uses the global activity ring; clients receive the same
             // FIFO event stream as the operator dashboard. Phase 7 may
             // filter to events scoped to the requester.
-            const auto snap = globalActivityRing().read("");
+            //
+            // v0.10.15: mirrors /api/activity query-string surface so
+            // client callers get the same pagination + watermark + kind
+            // filtering. Pre-v0.10.15 the route silently returned the
+            // entire 512-event ring on every call regardless of params,
+            // which made polling clients re-download the world on each
+            // poll. Canonical names: since= / max= / kind= ; alias names
+            // covered by extractQueryParamAny.
+            std::string sinceId;
+            std::string kindFilter;
+            bool kindFilterIsPrefix = false;
+            size_t maxCount = ActivityEventRing::kCapacity;
+            if (!request.query.empty()) {
+                sinceId = MasterControl::extractQueryParamAny(
+                    request.query,
+                    {"since", "sinceId", "after", "from", "cursor", "lastEventId"});
+                const auto maxValue = MasterControl::extractQueryParamAny(
+                    request.query,
+                    {"max", "limit", "count", "n", "top"});
+                if (!maxValue.empty()) {
+                    try {
+                        const auto parsed = std::stoull(maxValue);
+                        if (parsed > 0) {
+                            maxCount = (parsed > ActivityEventRing::kCapacity)
+                                ? ActivityEventRing::kCapacity
+                                : static_cast<size_t>(parsed);
+                        }
+                    } catch (...) {
+                        // Bad max= value -> fall through to the default cap.
+                    }
+                }
+                kindFilter = MasterControl::extractQueryParamAny(
+                    request.query,
+                    {"kind", "type", "event", "filter", "category"});
+                if (!kindFilter.empty() && kindFilter.back() == '*') {
+                    kindFilterIsPrefix = true;
+                    kindFilter.pop_back();
+                }
+            }
+            // Same expanded-read strategy /api/activity uses so kind=
+            // filtering doesn't starve the response when 99% of ring
+            // events are not the requested kind. ringCap clamps the
+            // upper bound. Parens defeat the windows.h min/max macros.
+            const size_t expandedReadCap = maxCount * 4;
+            const size_t ringCap = static_cast<size_t>(ActivityEventRing::kCapacity);
+            const size_t readCount = kindFilter.empty()
+                ? maxCount
+                : (expandedReadCap < ringCap ? expandedReadCap : ringCap);
+            const auto snap = globalActivityRing().read(sinceId, readCount);
             nlohmann::json body;
             body["highWaterMarkId"] = snap.highWaterMarkId;
             body["events"] = nlohmann::json::array();
+            size_t emitted = 0;
             for (const auto& e : snap.events) {
+                if (!kindFilter.empty()) {
+                    if (kindFilterIsPrefix) {
+                        if (e.kind.compare(0, kindFilter.size(), kindFilter) != 0) continue;
+                    } else {
+                        if (e.kind != kindFilter) continue;
+                    }
+                }
                 body["events"].push_back(e);
+                if (++emitted >= maxCount) break;
+            }
+            if (!kindFilter.empty()) {
+                body["kindFilter"] = kindFilter + (kindFilterIsPrefix ? "*" : "");
             }
             return HttpResponse{ 200, "application/json", body.dump() };
         }
@@ -17645,9 +18175,24 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             // outer 500 handler -- 500 is for server-side bugs, but a
             // client sending the wrong enum spelling is a 400. Same shape
             // as v0.9.29's parse-error 400 fix.
+            // v0.10.20: additive droppedKeys diagnostic. Parse body in the
+            // route layer so collectDroppedTopLevelKeys can detect operator
+            // typos against the RuntimeEndpoint model. Service still
+            // re-parses (the upsertMcpServerJson signature is rawBody);
+            // the extra parse is cheap and the typed model is the
+            // canonical source of truth for known keys.
             try {
+                const auto parsed = nlohmann::json::parse(request.body);
+                const auto typed = parsed.get<RuntimeEndpoint>();
+                const auto dropped = MasterControl::collectDroppedTopLevelKeys(parsed, typed);
                 const auto result = adminApiService_->upsertMcpServerJson(request.body);
-                return jsonResponse(result, result.succeeded ? 200 : 400);
+                nlohmann::json body = result;
+                if (!dropped.empty()) {
+                    body["droppedKeys"] = MasterControl::droppedKeysToJson(dropped);
+                }
+                return HttpResponse{ result.succeeded ? 200 : 400,
+                                     "application/json",
+                                     body.dump() };
             } catch (const std::exception& ex) {
                 return jsonResponse(OperationResult{ false, false,
                     std::string("Invalid runtime MCP server payload: ") + ex.what() }, 400);
@@ -17720,8 +18265,16 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             // v0.9.38: catch enum/parse throws (see /api/runtime/mcp-servers
             // upsert above). Lift the result-only declaration into a try
             // block; the auto-promote-to-pool block below stays inside.
+            // v0.10.20: additive droppedKeys diagnostic (same pattern as
+            // /api/runtime/mcp-servers upsert above). subAgentDroppedKeys
+            // lives at this scope so the response-emit code path below
+            // (after the auto-promote block) can append it.
             OperationResult result;
+            std::vector<std::string> subAgentDroppedKeys;
             try {
+                const auto parsed = nlohmann::json::parse(request.body);
+                const auto typed = parsed.get<RuntimeEndpoint>();
+                subAgentDroppedKeys = MasterControl::collectDroppedTopLevelKeys(parsed, typed);
                 result = adminApiService_->upsertSubAgentJson(request.body);
             } catch (const std::exception& ex) {
                 return jsonResponse(OperationResult{ false, false,
@@ -17772,7 +18325,19 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     // pool manually via /api/pools.
                 }
             }
-            return jsonResponse(result, result.succeeded ? 200 : 400);
+            {
+                // v0.10.20: emit droppedKeys diagnostic alongside the
+                // base OperationResult so operator typos against the
+                // RuntimeEndpoint shape are visible without changing the
+                // status code.
+                nlohmann::json respBody = result;
+                if (!subAgentDroppedKeys.empty()) {
+                    respBody["droppedKeys"] = MasterControl::droppedKeysToJson(subAgentDroppedKeys);
+                }
+                return HttpResponse{ result.succeeded ? 200 : 400,
+                                     "application/json",
+                                     respBody.dump() };
+            }
         }
         if (request.method == "POST" && request.path == "/api/runtime/subagents/remove") {
             if (auto deny = requirePrivilege(context.privileges.canRemoveSubAgents,
@@ -17815,9 +18380,20 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                                              "canModifySubAgents")) {
                 return *deny;
             }
+            // v0.10.20: additive droppedKeys diagnostic against the
+            // SubAgentGroupDefinition model.
             try {
+                const auto parsed = nlohmann::json::parse(request.body);
+                const auto typed = parsed.get<SubAgentGroupDefinition>();
+                const auto dropped = MasterControl::collectDroppedTopLevelKeys(parsed, typed);
                 const auto result = adminApiService_->upsertSubAgentGroupJson(request.body);
-                return jsonResponse(result, result.succeeded ? 200 : 400);
+                nlohmann::json body = result;
+                if (!dropped.empty()) {
+                    body["droppedKeys"] = MasterControl::droppedKeysToJson(dropped);
+                }
+                return HttpResponse{ result.succeeded ? 200 : 400,
+                                     "application/json",
+                                     body.dump() };
             } catch (const std::exception& ex) {
                 // v0.9.42: parse-error -> 400.
                 return jsonResponse(OperationResult{ false, false,
@@ -17892,9 +18468,22 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 return *governance;
             }
             try {
-                const auto client = nlohmann::json::parse(request.body).get<LanClient>();
+                const auto parsed = nlohmann::json::parse(request.body);
+                const auto client = parsed.get<LanClient>();
+                const auto dropped = MasterControl::collectDroppedTopLevelKeys(parsed, client);
                 const auto result = lanClientAccessService_->upsertClient(client);
-                return jsonResponse(result, result.succeeded ? 200 : 400);
+                // v0.10.17: additive droppedKeys diagnostic. Pre-v0.10.17
+                // operators typing a wrong field name (e.g. "enabledFlag"
+                // instead of "enabled") got 200 with the default applied
+                // and no indication anything went wrong. Status code is
+                // unchanged so existing clients stay wire-compatible.
+                nlohmann::json body = result;
+                if (!dropped.empty()) {
+                    body["droppedKeys"] = MasterControl::droppedKeysToJson(dropped);
+                }
+                return HttpResponse{ result.succeeded ? 200 : 400,
+                                     "application/json",
+                                     body.dump() };
             } catch (const std::exception& parseError) {
                 return jsonResponse(
                     OperationResult{ false, false, std::string("Invalid LAN client payload: ") + parseError.what() },
@@ -17952,14 +18541,26 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             if (auto governance = enforceGovernance(GovernanceActionKind::ClientPrivilegeChange, clientId)) {
                 return *governance;
             }
+            // v0.10.20: additive droppedKeys diagnostic against the
+            // LanClientPrivileges model. Snapshot the parsed JSON before
+            // calling setPrivileges so the round-trip key set reflects
+            // the input payload, not the post-defaults model.
             try {
-                const auto privileges = nlohmann::json::parse(request.body).get<LanClientPrivileges>();
+                const auto parsed = nlohmann::json::parse(request.body);
+                const auto privileges = parsed.get<LanClientPrivileges>();
+                const auto dropped = MasterControl::collectDroppedTopLevelKeys(parsed, privileges);
                 const auto result = lanClientAccessService_->setPrivileges(clientId, privileges);
-                if (result.succeeded) { return jsonResponse(result, 200); }
+                nlohmann::json body = result;
+                if (!dropped.empty()) {
+                    body["droppedKeys"] = MasterControl::droppedKeysToJson(dropped);
+                }
+                if (result.succeeded) {
+                    return HttpResponse{ 200, "application/json", body.dump() };
+                }
                 // v0.9.46: 404 for missing client (continues v0.9.30
                 // 200/false-with-not-found-message -> 404 sweep).
                 const int status = (result.message == "LAN client not found.") ? 404 : 400;
-                return jsonResponse(result, status);
+                return HttpResponse{ status, "application/json", body.dump() };
             } catch (const std::exception& parseError) {
                 return jsonResponse(
                     OperationResult{ false, false, std::string("Invalid privileges payload: ") + parseError.what() },

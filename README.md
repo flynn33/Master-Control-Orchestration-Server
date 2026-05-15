@@ -1,7 +1,7 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.10.14-00f6ff?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--05--11-031018?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.11.0-00f6ff?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--05--15-031018?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%E2%80%A2%20Server%202022-0a1018?style=flat-square)
 ![toolchain](https://img.shields.io/badge/toolchain-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20CMake-00aacc?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
@@ -84,9 +84,9 @@ Multiple AI coding clients on the same trusted LAN need to share an MCP server a
 
 ---
 
-## v0.10.14 — LAN MCP Gateway, Supervisor Wizard, Direct AI plugin slots, audit remediation
+## v0.11.0 — LAN MCP Gateway, Supervisor Wizard, Direct AI plugin slots, PHASE-14 Diagnostics Slice A
 
-The current release line, spanning v0.9.4 through v0.10.14 since the v0.7.0 production-milestone baseline.
+The current release line, spanning v0.9.4 through v0.11.0 since the v0.7.0 production-milestone baseline.
 
 **Native HTTP.sys is the only shipping gateway substrate.** the legacy external gateway was retired before v0.9.0 per maintainer directive. `cfg.mcpGateway.type` is kept in the JSON schema for backward-compatible deserialization, but the runtime always uses the native HTTP.sys adapter. No external binary to supervise.
 
@@ -157,7 +157,7 @@ ctest --test-dir build/release -C Release --output-on-failure --timeout 300
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release -SkipBuild
 
 # 2. Install (interactive UI)
-msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.10.14-win-x64\MasterControlOrchestrationServer-v0.10.14-win-x64.msi"
+msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.11.0-win-x64\MasterControlOrchestrationServer-v0.11.0-win-x64.msi"
 
 # 3. Verify (after install)
 & "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output

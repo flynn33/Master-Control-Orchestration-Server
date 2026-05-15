@@ -8,11 +8,14 @@
 // later phases as privilege enforcement and config bundle issuance land.
 
 #include "MasterControl/AuthenticatedRequestContext.h"
+#include "MasterControl/DiagnosticsAggregator.h"
+#include "MasterControl/JsonStrictness.h"
 #include "MasterControl/LanClient.h"
 #include "MasterControl/MasterControlDefaults.h"
 #include "MasterControl/MasterControlModels.h"
 #include "MasterControl/MasterControlVersion.h"
 #include "MasterControl/McpGatewayAdapters.h"
+#include "MasterControl/QueryParamParse.h"
 #include "MasterControl/SupervisorAssignment.h"
 // v0.9.76: Supervisor Agent Assignment Wizard backend tests use the
 // service implementation directly. The header lives next to the .cpp
@@ -1918,10 +1921,379 @@ bool testSupervisorHeartbeatWatchdogFlipsConnectedToDisconnected() {
     return ok;
 }
 
+// v0.10.15: QueryParamParse helper tests. The helper backs the
+// alias-aware param extraction on /api/activity, /api/telemetry/events,
+// and /api/client/activity. Pre-v0.10.15 these routes called
+// `query.find("max=")` directly, so any operator-natural alias such as
+// `?limit=N` was silently ignored and the route shipped the entire
+// event ring. These tests verify (1) canonical parse, (2) alias
+// fallback, (3) name-boundary safety, (4) missing-param returns empty,
+// (5) multi-pair query strings.
+
+bool testQueryParamCanonicalParse() {
+    bool ok = true;
+    ok &= expect(MasterControl::extractQueryParam("max=5", "max") == "5",
+                 "extractQueryParam matches name= at start of query.");
+    ok &= expect(MasterControl::extractQueryParam("since=42&max=5", "max") == "5",
+                 "extractQueryParam matches name= after &.");
+    ok &= expect(MasterControl::extractQueryParam("max=5&since=42", "max") == "5",
+                 "extractQueryParam trims at first & boundary.");
+    ok &= expect(MasterControl::extractQueryParam("kind=supervisor_*", "kind") == "supervisor_*",
+                 "extractQueryParam preserves wildcard suffix.");
+    return ok;
+}
+
+bool testQueryParamAliasFallback() {
+    bool ok = true;
+    // /api/activity ?max= aliases.
+    ok &= expect(MasterControl::extractQueryParamAny("limit=5", {"max", "limit", "count", "n", "top"}) == "5",
+                 "extractQueryParamAny falls back to limit= when max= is absent.");
+    ok &= expect(MasterControl::extractQueryParamAny("count=7", {"max", "limit", "count", "n", "top"}) == "7",
+                 "extractQueryParamAny falls back to count= when max=/limit= absent.");
+    ok &= expect(MasterControl::extractQueryParamAny("top=9", {"max", "limit", "count", "n", "top"}) == "9",
+                 "extractQueryParamAny falls back to top= last in the list.");
+    // Canonical wins over alias when both are present.
+    ok &= expect(MasterControl::extractQueryParamAny("limit=5&max=42", {"max", "limit"}) == "42",
+                 "Canonical name wins when both canonical + alias are present.");
+    // /api/activity ?since= aliases.
+    ok &= expect(MasterControl::extractQueryParamAny("after=abc", {"since", "sinceId", "after", "from"}) == "abc",
+                 "extractQueryParamAny falls back to after= for the watermark alias set.");
+    ok &= expect(MasterControl::extractQueryParamAny("lastEventId=z9", {"since", "sinceId", "after", "from", "cursor", "lastEventId"}) == "z9",
+                 "extractQueryParamAny accepts SSE-style lastEventId alias.");
+    return ok;
+}
+
+bool testQueryParamBoundaryGuard() {
+    bool ok = true;
+    // "xmax=10" must NOT match a search for "max" -- the anchor is name boundary.
+    ok &= expect(MasterControl::extractQueryParam("xmax=10", "max").empty(),
+                 "extractQueryParam refuses mid-name substring match (xmax= != max=).");
+    ok &= expect(MasterControl::extractQueryParam("sinceId=99", "since").empty(),
+                 "extractQueryParam refuses prefix substring match (sinceId= != since=).");
+    // The same name AFTER a different prefix-named pair still matches.
+    ok &= expect(MasterControl::extractQueryParam("xmax=10&max=5", "max") == "5",
+                 "extractQueryParam still matches name= after & even when a similar name precedes.");
+    return ok;
+}
+
+bool testQueryParamMissingReturnsEmpty() {
+    bool ok = true;
+    ok &= expect(MasterControl::extractQueryParam("", "max").empty(),
+                 "extractQueryParam on empty query returns empty.");
+    ok &= expect(MasterControl::extractQueryParam("foo=bar", "max").empty(),
+                 "extractQueryParam returns empty when name absent.");
+    ok &= expect(MasterControl::extractQueryParamAny("foo=bar", {"max", "limit"}).empty(),
+                 "extractQueryParamAny returns empty when no candidate matches.");
+    ok &= expect(MasterControl::extractQueryParam("anything", "").empty(),
+                 "extractQueryParam refuses an empty name.");
+    return ok;
+}
+
+// v0.10.17: JsonStrictness helper tests. Verifies the additive
+// dropped-top-level-keys diagnostic surface added to /api/clients,
+// /api/pools, and /api/telemetry/heartbeat. The detection algorithm
+// round-trips the typed model back through nlohmann::json() and
+// compares the input's top-level keys to the round-tripped key set.
+
+bool testJsonStrictnessDetectsTypo() {
+    using namespace MasterControl;
+    bool ok = true;
+    nlohmann::json input = {
+        { "clientId", "claude-code-foo" },
+        { "displayName", "Foo" },
+        { "clientType", "claude_code" },
+        { "hostName", "host" },
+        { "networkAddress", "192.168.1.42" },
+        { "enabledFlag", true }, // operator typo for "enabled"
+        { "createdAtUtc", "2026-05-15T00:00:00Z" },
+        { "lastSeenUtc",  "2026-05-15T00:00:00Z" }
+    };
+    const auto client = input.get<LanClient>();
+    const auto dropped = collectDroppedTopLevelKeys(input, client);
+    ok &= expect(dropped.size() == 1, "Exactly one dropped key (the operator typo) detected.");
+    if (dropped.size() == 1) {
+        ok &= expect(dropped[0] == "enabledFlag",
+                     "Dropped key reports the typo'd field name verbatim.");
+    }
+    return ok;
+}
+
+bool testJsonStrictnessNoDropsWhenAllKeysKnown() {
+    using namespace MasterControl;
+    bool ok = true;
+    LanClient seed;
+    seed.clientId = "claude-code-foo";
+    seed.displayName = "Foo";
+    seed.clientType = "claude_code";
+    seed.hostName = "host";
+    seed.networkAddress = "192.168.1.42";
+    seed.enabled = true;
+    seed.createdAtUtc = "2026-05-15T00:00:00Z";
+    seed.lastSeenUtc  = "2026-05-15T00:00:00Z";
+    // Round-trip through JSON so the input has exactly the model's keys.
+    const nlohmann::json input = seed;
+    const auto roundTripped = input.get<LanClient>();
+    const auto dropped = collectDroppedTopLevelKeys(input, roundTripped);
+    ok &= expect(dropped.empty(),
+                 "No dropped keys when input has exactly the model's keys.");
+    return ok;
+}
+
+bool testJsonStrictnessSafeOnNonObjectInput() {
+    using namespace MasterControl;
+    bool ok = true;
+    LanClient seed;
+    seed.clientId = "x";
+    // Array input should never report drops.
+    nlohmann::json arr = nlohmann::json::array();
+    arr.push_back("foo");
+    ok &= expect(collectDroppedTopLevelKeys(arr, seed).empty(),
+                 "Array input returns no drops (safe fallback).");
+    // Null input should never report drops.
+    nlohmann::json nullJson = nullptr;
+    ok &= expect(collectDroppedTopLevelKeys(nullJson, seed).empty(),
+                 "Null input returns no drops (safe fallback).");
+    // Scalar input should never report drops.
+    nlohmann::json scalar = 42;
+    ok &= expect(collectDroppedTopLevelKeys(scalar, seed).empty(),
+                 "Scalar input returns no drops (safe fallback).");
+    return ok;
+}
+
+bool testDroppedKeysToJsonShape() {
+    using namespace MasterControl;
+    bool ok = true;
+    const auto empty = droppedKeysToJson({});
+    ok &= expect(empty.is_array(), "Empty dropped list serialises as a JSON array.");
+    ok &= expect(empty.size() == 0, "Empty dropped list has zero entries.");
+    const auto two = droppedKeysToJson({"foo", "bar"});
+    ok &= expect(two.is_array(), "Two-element list serialises as array.");
+    ok &= expect(two.size() == 2, "Two-element list reports size 2.");
+    ok &= expect(two[0].get<std::string>() == "foo",
+                 "Serialised array preserves insertion order.");
+    ok &= expect(two[1].get<std::string>() == "bar",
+                 "Serialised array second element matches.");
+    return ok;
+}
+
+bool testQueryParamMultiPair() {
+    bool ok = true;
+    const std::string q = "since=abc&max=10&kind=supervisor_*";
+    ok &= expect(MasterControl::extractQueryParam(q, "since") == "abc",
+                 "multi-pair: since= extracted correctly.");
+    ok &= expect(MasterControl::extractQueryParam(q, "max") == "10",
+                 "multi-pair: max= extracted correctly.");
+    ok &= expect(MasterControl::extractQueryParam(q, "kind") == "supervisor_*",
+                 "multi-pair: kind= extracted correctly (incl. wildcard).");
+    // Empty value is honored as "present with empty string" -- callers
+    // that need a non-empty value (parsing into size_t etc.) treat it
+    // as "fall through to default" upstream.
+    ok &= expect(MasterControl::extractQueryParam("max=&since=42", "max").empty(),
+                 "Empty value after = is returned as empty string.");
+    return ok;
+}
+
+// v0.11.0 PHASE-14 Slice A diagnostics aggregator + markdown render tests.
+// Pre-v0.11.0 the aggregation lived as an inline lambda inside the
+// route handler so the custom bool-test runner could not cover the
+// new /api/diagnostics/* HTTP surface (no in-process HTTP fixture).
+// v0.11.0 extracted the file-walk + softCap + sort logic into
+// include/MasterControl/DiagnosticsAggregator.h; these tests cover
+// the testable helper against a synthetic logs directory.
+
+namespace {
+
+std::filesystem::path makeSyntheticLogsRoot(const std::string& suffix) {
+    auto base = std::filesystem::temp_directory_path() /
+                ("mcos-diag-test-" + suffix + "-" + std::to_string(
+                    std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(base);
+    return base;
+}
+
+void writeJsonlLines(const std::filesystem::path& path,
+                     const std::vector<nlohmann::json>& lines) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    for (const auto& line : lines) {
+        out << line.dump() << '\n';
+    }
+}
+
+nlohmann::json makeEvent(const std::string& capturedAtUtc,
+                         const std::string& component,
+                         const std::string& severity,
+                         const std::string& event,
+                         const std::string& message) {
+    return nlohmann::json{
+        { "capturedAtUtc", capturedAtUtc },
+        { "component",     component },
+        { "severity",      severity },
+        { "event",         event },
+        { "message",       message },
+        { "data",          nlohmann::json::object() }
+    };
+}
+
+} // namespace
+
+bool testDiagnosticsAggregator_emptyRoot() {
+    bool ok = true;
+    const auto root = makeSyntheticLogsRoot("empty");
+    std::filesystem::remove_all(root);
+    const auto events = MasterControl::aggregateDiagnosticsEventsFromRoot(root, 0);
+    ok &= expect(events.empty(),
+                 "aggregateDiagnosticsEventsFromRoot returns empty on nonexistent root.");
+    return ok;
+}
+
+bool testDiagnosticsAggregator_singleComponentSorted() {
+    bool ok = true;
+    const auto root = makeSyntheticLogsRoot("sorted");
+    const auto compDir = root / "runtime";
+    writeJsonlLines(compDir / "events.jsonl", {
+        makeEvent("2026-05-15T10:00:00Z", "runtime", "info",  "boot",         "boot ok"),
+        makeEvent("2026-05-15T12:00:00Z", "runtime", "error", "worker_event", "pool died"),
+        makeEvent("2026-05-15T11:00:00Z", "runtime", "warn",  "self_test_summary", "boot 39/40")
+    });
+    const auto events = MasterControl::aggregateDiagnosticsEventsFromRoot(root, 0);
+    std::filesystem::remove_all(root);
+    ok &= expect(events.size() == 3, "Three events read back.");
+    if (events.size() == 3) {
+        ok &= expect(events[0].value("capturedAtUtc", std::string()) == "2026-05-15T12:00:00Z",
+                     "Recent-first sort: 12:00 entry comes first.");
+        ok &= expect(events[1].value("capturedAtUtc", std::string()) == "2026-05-15T11:00:00Z",
+                     "Recent-first sort: 11:00 entry comes second.");
+        ok &= expect(events[2].value("capturedAtUtc", std::string()) == "2026-05-15T10:00:00Z",
+                     "Recent-first sort: 10:00 entry comes last.");
+    }
+    return ok;
+}
+
+bool testDiagnosticsAggregator_softCapEarlyExit() {
+    bool ok = true;
+    const auto root = makeSyntheticLogsRoot("softcap");
+    const auto compDir = root / "runtime";
+    // 100 live events should saturate softCap=5 (headroom 5*4+32=52).
+    std::vector<nlohmann::json> live;
+    for (int i = 0; i < 100; ++i) {
+        live.push_back(makeEvent(
+            "2026-05-15T12:" + (i < 10 ? std::string("0") : std::string()) + std::to_string(i) + ":00Z",
+            "runtime", "info", "tick", "tick " + std::to_string(i)));
+    }
+    writeJsonlLines(compDir / "events.jsonl", live);
+    // Rotated tier holds a sentinel event the test should NOT see when
+    // softCap is reached by live alone.
+    writeJsonlLines(compDir / "events.jsonl.1", {
+        makeEvent("2026-05-14T00:00:00Z", "runtime", "error", "sentinel_rotated_only", "DO NOT READ ME")
+    });
+
+    const auto events = MasterControl::aggregateDiagnosticsEventsFromRoot(root, 5);
+    std::filesystem::remove_all(root);
+
+    bool sawSentinel = false;
+    for (const auto& e : events) {
+        if (e.value("event", std::string()) == "sentinel_rotated_only") {
+            sawSentinel = true;
+            break;
+        }
+    }
+    ok &= expect(!sawSentinel,
+                 "softCap=5 with 100 live events skips the rotated .1.jsonl tier (sentinel not read).");
+    ok &= expect(events.size() >= 5,
+                 "softCap=5 still returns at least 5 events from the live tier.");
+    return ok;
+}
+
+bool testDiagnosticsAggregator_partialWriteTolerance() {
+    bool ok = true;
+    const auto root = makeSyntheticLogsRoot("partial");
+    const auto compDir = root / "runtime";
+    std::filesystem::create_directories(compDir);
+    // Mix valid + invalid lines.
+    std::ofstream out(compDir / "events.jsonl", std::ios::binary | std::ios::trunc);
+    out << "{\"capturedAtUtc\":\"2026-05-15T10:00:00Z\",\"component\":\"runtime\",\"severity\":\"info\"}\n";
+    out << "not-json-at-all\n";
+    out << "{\"capturedAtUtc\":\"2026-05-15T11:00:00Z\",\"component\":\"runtime\",\"severity\":\"error\"}\n";
+    out << "{\"capturedAtUtc\":\"2026-05-15T09:30:00Z\",\"" /* deliberately truncated */;
+    out.close();
+
+    const auto events = MasterControl::aggregateDiagnosticsEventsFromRoot(root, 0);
+    std::filesystem::remove_all(root);
+    ok &= expect(events.size() == 2,
+                 "Partial-write tolerance: 2 valid lines read; bad + truncated lines skipped.");
+    return ok;
+}
+
+bool testDiagnosticsMarkdownRender_warnWarningAlias() {
+    bool ok = true;
+    const std::vector<nlohmann::json> events = {
+        makeEvent("2026-05-15T12:00:00Z", "runtime", "warning", "tele_warn", "telemetry warning"),
+        makeEvent("2026-05-15T11:00:00Z", "runtime", "warn",    "boot_warn", "boot warn row"),
+        makeEvent("2026-05-15T10:00:00Z", "runtime", "info",    "boot",      "boot ok")
+    };
+    const auto md = MasterControl::renderDiagnosticsMarkdown(
+        events, "2026-05-15T13:00:00Z", "0.11.0");
+
+    // The warning section must include BOTH the "warning" event and
+    // the "warn" event under "## warning (2)".
+    ok &= expect(md.find("## warning (2)") != std::string::npos,
+                 "Warning section header counts BOTH warning + warn entries.");
+    ok &= expect(md.find("tele_warn") != std::string::npos,
+                 "Markdown export contains the 'warning'-severity event.");
+    ok &= expect(md.find("boot_warn") != std::string::npos,
+                 "Markdown export contains the 'warn'-severity event under the same warning section.");
+    return ok;
+}
+
+bool testDiagnosticsMarkdownRender_truncatesOver50() {
+    bool ok = true;
+    std::vector<nlohmann::json> events;
+    // 60 info events: section header should report (60) and the
+    // truncation note should mention 10 more.
+    for (int i = 0; i < 60; ++i) {
+        events.push_back(makeEvent(
+            "2026-05-15T12:" + (i < 10 ? std::string("0") : std::string()) + std::to_string(i) + ":00Z",
+            "runtime", "info", "tick", "tick " + std::to_string(i)));
+    }
+    const auto md = MasterControl::renderDiagnosticsMarkdown(
+        events, "2026-05-15T13:00:00Z", "0.11.0");
+    ok &= expect(md.find("## info (60)") != std::string::npos,
+                 "Section header reports the true total count even when truncated.");
+    ok &= expect(md.find("10 more info events truncated") != std::string::npos,
+                 "Truncation note mentions the suppressed count (60 - 50 = 10).");
+    return ok;
+}
+
 int main() {
     bool ok = true;
     ok &= testDefaultConfiguration();
     ok &= testSeededEndpoints();
+    // v0.10.15 QueryParamParse helper tests (alias-aware ?param= extractor
+    // backing /api/activity, /api/telemetry/events, /api/client/activity).
+    ok &= testQueryParamCanonicalParse();
+    ok &= testQueryParamAliasFallback();
+    ok &= testQueryParamBoundaryGuard();
+    ok &= testQueryParamMissingReturnsEmpty();
+    ok &= testQueryParamMultiPair();
+    // v0.10.17 JsonStrictness helper tests (additive droppedKeys
+    // diagnostic on /api/clients, /api/pools, /api/telemetry/heartbeat).
+    ok &= testJsonStrictnessDetectsTypo();
+    ok &= testJsonStrictnessNoDropsWhenAllKeysKnown();
+    ok &= testJsonStrictnessSafeOnNonObjectInput();
+    ok &= testDroppedKeysToJsonShape();
+    // v0.11.0 PHASE-14 Slice A diagnostics aggregator + markdown
+    // render tests against the new include/MasterControl/Diagnostics
+    // Aggregator.h helpers. Covers the file-walk + softCap early-out
+    // + recent-first sort + partial-write tolerance + markdown
+    // warn/warning aliasing + 50-events/section truncation paths
+    // that back the new /api/diagnostics/* HTTP surface.
+    ok &= testDiagnosticsAggregator_emptyRoot();
+    ok &= testDiagnosticsAggregator_singleComponentSorted();
+    ok &= testDiagnosticsAggregator_softCapEarlyExit();
+    ok &= testDiagnosticsAggregator_partialWriteTolerance();
+    ok &= testDiagnosticsMarkdownRender_warnWarningAlias();
+    ok &= testDiagnosticsMarkdownRender_truncatesOver50();
     ok &= testLanClientDefaults();
     ok &= testLanClientRoundTrip();
     ok &= testAppConfigurationCarriesLanClients();

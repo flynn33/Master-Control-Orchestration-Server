@@ -16,6 +16,190 @@ The release-management and doc-sync GitHub agents that previously generated part
 - PHASE-13 Win2D / Direct2D high-rate visual surfaces in the WinUI Shell (per-pool sparklines, Tron grid HLSL, activity stream SwapChainPanel).
 - Onboarding profile `governanceBundleUrl` platform-awareness (currently hardcoded to `windows` in `MasterControlRuntime.cpp`; should reflect the requesting client's target platform).
 - Source-code tombstone removal of the legacy `GatewayType` slot enum value and `the legacy gateway binary` reference in `MasterControlBootstrapper/main.cpp` supervised-gateway child list (kept for back-compat deserialization in v0.10.x; removable at the next major bump).
+- PHASE-14 Slice B: `mcos-bridge` MCP plugin tools (`mcos_diagnostics_summary`, `_events`, `_self_test`, `_export_markdown`, `_export_json`, `_clear`). Slice A's HTTP routes landed in v0.11.0; the MCP-plugin shim defers to a v0.11.x follow-up.
+- PHASE-14 Slice C: WinUI Shell `DiagnosticsSectionControl` with `FileSavePicker` for native Export Markdown / Export JSON.
+- PHASE-14 Slice D: Browser dashboard Diagnostics tab + Blob-download Export buttons.
+- PHASE-14 Slice E: `SqliteDiagnosticsStore` (persistent ring + retention + schema migration) + tests + completion report. Required before `POST /api/diagnostics/clear` can move from 501 to functional.
+
+## [0.11.0] - 2026-05-15
+
+### Summary
+
+PHASE-14 Slice A — five operator-visible HTTP routes under `/api/diagnostics/*` aggregating events from the per-component `events.jsonl` persistent logs (`runtime`, `supervisor`, `installer`) plus their rotated `.1.jsonl` siblings from v0.10.21 rotation. Closes item 7 from the operator's 2026-05-15 testing-phase audit. Minor bump per the manifest's phase-scope convention.
+
+Pre-v0.11.0 operators had no programmatic way to query, search, or export the persisted events — they had to manually concatenate files from `C:\Users\Public\Documents\Master Control Orchestration Server\logs\<component>\` on disk. Slice A delivers the operator-visible HTTP surface; the SqliteDiagnosticsStore (Slice E), WinUI Shell `DiagnosticsSectionControl` (Slice C), browser dashboard Diagnostics tab (Slice D), and `mcos-bridge` MCP plugin tools (Slice B) land in subsequent v0.11.x iterations.
+
+### Added
+
+- **`GET /api/diagnostics/events`** — Aggregates the merged event stream across all per-component `events.jsonl` files. Sorted recent-first. Supports `?max=` / `?severity=` / `?source=` filters via the v0.10.15 alias-aware extractor.
+- **`GET /api/diagnostics/summary`** — Returns `totalEvents` + `bySeverity` map + `byComponent` map + `latest5` array + `generatedAtUtc`.
+- **`GET /api/diagnostics/self-test`** — Returns the in-memory boot `SelfTestSnapshot` (passed/failed counts + per-test rows).
+- **`GET /api/diagnostics/export?format=markdown|json`** — Markdown export renders a structured doc with sections per severity (`critical`, `error`, `warning`/`warn`, `info`, `debug`), capped at 50 events/section with a truncation note. JSON export returns the full event set. `Content-Type` matches the format.
+- **`POST /api/diagnostics/clear`** — Returns 501 with a clear deferred-to-Slice-E message. Clear-with-retention lands when `SqliteDiagnosticsStore` arrives.
+
+### Notes
+
+- Slice A intentionally avoids the new `SqliteDiagnosticsStore` / `DiagnosticsService` class hierarchy from the original PHASE-14 plan. The inline route handlers + jsonl-aggregation deliver the operator-visible surface without adding a new database dependency. The persistent store lands in Slice E.
+- The minor bump (0.10.21 → 0.11.0) follows the manifest's phase-scope convention — a new HTTP route surface introduced as part of a phase qualifies as an architectural change.
+
+## [0.10.21] - 2026-05-15
+
+### Summary
+
+Three infrastructure fixes from the operator's testing-phase audit. Closes the carry-over from v0.10.20.
+
+1. **Supervisor honors `pool.template_.environment`.** Pre-v0.10.21 `startInstanceLocked` passed `nullptr` for `CreateProcessW`'s `lpEnvironment` so every stdio-supervised child inherited the MCOS service's env (SYSTEM context). The v0.10.19 sqlite seed set `PATH` in its template but the override was a no-op. v0.10.21 builds a merged Unicode env block from `GetEnvironmentStringsW()` + the pool's overrides and passes it with `CREATE_UNICODE_ENVIRONMENT`.
+2. **Error-severity TelemetryEvents persist.** `TelemetryAggregator::recordEvent` now routes `Warning`/`Error`/`Critical` events through `MasterControl::Diagnostics::appendEvent` so they reach `runtime/events.jsonl`. Pre-v0.10.21 only info-severity boot self-test summaries reached the file; every operational error (incl. the 168 sqlite-crash errors during testing-phase remediation) was in-memory only and lost on restart. Info-severity events stay in-memory-only to keep the disk-write rate low.
+3. **Persistent log rotation.** `appendJsonLine` in `MasterControlDiagnostics.h` now rotates the live file to `<name>.1.jsonl` when it exceeds 50 MB. Two-file rotation caps total per-component disk consumption at ~100 MB. Pre-v0.10.21 `runtime/telemetry.jsonl` had reached 25.7 MB / 101 K snapshots with no upper bound.
+
+### Fixed
+
+- **Supervisor env-block in `MasterControlRuntime.cpp::startInstanceLocked`** (~line 8577). New `LPWCH environmentBlock` build path mirrors the existing `runOneShotProcess` pattern at line 1006–1039. Allocation is `HeapAlloc(GetProcessHeap()...)`, freed after `CreateProcessW` returns. `CREATE_UNICODE_ENVIRONMENT` is OR'd into `creationFlags` only when the block is non-null.
+- **`TelemetryAggregator::recordEvent`** (~line 9938). New persist-on-non-info branch wraps a try/catch so Diagnostics failures cannot throw out of the aggregator path. Persisted record carries `category`, `poolId`, `clientId` as `data` fields.
+- **`appendJsonLine`** (`include/MasterControl/MasterControlDiagnostics.h`). New `rotateIfOversizedLocked` helper + `kLogRotationBytes = 50 MB` constant. The rotation happens under the existing static `writeMutex` so the rename target isn't held open by this process. If rename fails (e.g. another reader has the file), the function falls through and continues appending — better an oversized log than a dropped event.
+
+### Notes
+
+- No new files. Three localized changes in two existing files. Patch bump (0.10.20 → 0.10.21).
+- Backward compatible at every surface. Pool templates without `environment` overrides keep the prior nullptr-env behaviour (inherit parent). Logs that haven't hit 50 MB keep the prior single-file behaviour.
+
+## [0.10.20] - 2026-05-15
+
+### Summary
+
+POST-body unknown-key (`droppedKeys`) parity for the 4 remaining mutation routes that v0.10.17 deferred. Each route now parses the body once in the route layer (in addition to the existing `AdminApiService` parse) so `collectDroppedTopLevelKeys` can detect operator typos against the typed model, and emits the `droppedKeys` array in the response body when the input carried unknown top-level fields. HTTP status codes are unchanged; pre-v0.10.20 clients that ignore the new field stay wire-compatible.
+
+### Added
+
+- **`droppedKeys` field on `POST /api/runtime/mcp-servers`** (round-trip against `RuntimeEndpoint`).
+- **`droppedKeys` field on `POST /api/runtime/subagents`** (`RuntimeEndpoint`). The diagnostic is captured at the top of the handler in a `subAgentDroppedKeys` local; the response emit at the bottom (after the v0.7.2 auto-promote-to-pool block) appends it to the result body.
+- **`droppedKeys` field on `POST /api/runtime/subagent-groups`** (`SubAgentGroupDefinition`).
+- **`droppedKeys` field on `POST /api/clients/{clientId}/privileges`** (`LanClientPrivileges`).
+
+### Notes
+
+- The diagnostic uses the same `MasterControl::collectDroppedTopLevelKeys<T>(input, model)` helper added in v0.10.17 and the same `droppedKeysToJson(list)` serialiser. No new helper required.
+- Patch bump (0.10.19 → 0.10.20). No new files. ~50 lines net change in `MasterControlRuntime.cpp`.
+
+## [0.10.19] - 2026-05-15
+
+### Summary
+
+Three operator-flagged testing-phase defects fixed in a single patch.
+
+1. **`sqlite` catalog placeholder is now reachable on a fresh install.** v0.10.18 omitted sqlite from the npx seed block because spawning `npx -y mcp-server-sqlite-npx <db>` under the MCOS service's SYSTEM context exited with `exitCode=1` within ~1s. Root cause traced to a native-module (`better-sqlite3` / `node_sqlite3.node`) build/load failure under SYSTEM's npm cache path — `npx` couldn't materialise the prebuilt native binary into SYSTEM's npm-global cache layout. v0.10.19 seeds the pool against the SYSTEM-account npm-globally-installed binary at `C:\WINDOWS\system32\config\systemprofile\AppData\Roaming\npm\mcp-server-sqlite-npx.cmd`, bypassing the npx download + native-build path entirely.
+2. **`/api/health/summary.gateway.toolCount` no longer stays stale.** `NativeHttpSysGatewayAdapter::ListTools()` previously only refreshed the cache when it was empty. After `InvalidateToolCatalog()` was called by `upsertPool()`, the validity stamp reset but the next `ListTools()` call returned the old cached vector. v0.10.19 routes through `refreshToolCatalogLocked()` unconditionally; the refresh function already self-bypasses when the validity stamp is in the future, so the hot path is unchanged.
+3. **`mcpServerRuntimeStats[i].status` and `subAgentRuntimeStats[i].status` are no longer decoupled from `.reachable` for stdio-supervised workers.** The status string was derived from a TCP-probe of `endpoint.host:port` and stayed `"offline"` because stdio-supervised workers don't listen on TCP. Now overridden to `"online"` when `readyInstanceCount > 0`.
+
+### Fixed
+
+- **Sqlite seed in `MasterControlRuntime.cpp`** (~line 13823). New `if (std::filesystem::exists(sqliteSystemBin))` block right after the v0.10.18 npx batch. Skips when the SYSTEM npm-global binary is absent — operator sees the catalog placeholder with its `installHint` until they install the package for SYSTEM.
+- **`NativeHttpSysGatewayAdapter::ListTools()`** in `McpGatewayAdapters.cpp` (line 595–611). Now always defers to `refreshToolCatalogLocked()`; was conditional on cache-empty.
+- **`McpServerRuntimeStat.status` + `SubAgentRuntimeStat.status` derivation** in `MasterControlRuntime.cpp` (both ~line 11456 and ~line 11580). Override to `"online"` when the pool has any Ready instance.
+
+### Notes
+
+- `mcp-server-sqlite-npx` install for SYSTEM is currently a manual step (`npm install -g` as Flynn, then copy the package + bin script into SYSTEM's npm-global). The installer will handle this in a future iteration; for now the seed's binary-exists check keeps the failure mode honest (placeholder remains visible).
+- No breaking public-API change. Patch bump (0.10.18 → 0.10.19) per semver.
+- Live state: `/api/version` = `0.10.19`, dashboard reaches 26/26 reachable with sqlite stable for 60+s, gateway.toolCount = 121 matching tools/list count, all 23 stdio-supervised runtime stats report `status="online"`.
+
+## [0.10.18] - 2026-05-15
+
+### Summary
+
+Source-seed fix for the 4 catalog placeholders that pre-v0.10.18 advertised host:port `7101` / `7102` / `7103` / `7107` in the operator's Telemetry deck but had no managed pool spec to back them, so a fresh install reported `reachable=false` for `memory` / `filesystem` / `sequential-thinking` / `chrome-devtools` indefinitely. The operator's testing-phase audit reported "26 reported / 21 reachable" against a 26-element catalog. v0.10.18 adds a `registerNpxMcpPool` seed alongside the existing v0.9.64 `registerWorkerPool` block in `MasterControlRuntime.cpp`, spawning the standard `@modelcontextprotocol/server-*` (and `chrome-devtools-mcp`) packages via the operator's nodejs install at `C:\Program Files\nodejs\npx.cmd`. Fresh installs reach 26/26 on first launch when nodejs is present.
+
+### Added
+
+- **`registerNpxMcpPool` seed lambda** in `src/MasterControlApp/MasterControlRuntime.cpp` next to the existing `registerWorkerPool` block. Same `ManagedEndpointPool` shape, different executable (npx instead of the in-tree baseline worker). Skipped at boot when `C:\Program Files\nodejs\npx.cmd` is absent — catalog placeholder remains visible with its `installHint`, preserving the honest-unavailable-sentinel contract.
+- **4 new seeded pools** registered unconditionally at boot when nodejs is present:
+  - `memory` → `npx -y @modelcontextprotocol/server-memory`
+  - `filesystem` → `npx -y @modelcontextprotocol/server-filesystem C:\Users\Public\Documents`
+  - `sequential-thinking` → `npx -y @modelcontextprotocol/server-sequential-thinking`
+  - `chrome-devtools` → `npx -y chrome-devtools-mcp`
+
+### Fixed
+
+- **Dashboard `mcpServerRuntimeStats.reachable=true` count** reaches **25/26** on a fresh install with nodejs present (up from 21/26). The remaining 1 — sqlite — is a known crash class deferred to a follow-up patch (captured in `knownIssuesDeferredToNextRelease`).
+- **Gateway `tools/list` count** grows by the union of tools exposed by the 4 new servers (≈+50 entries in live testing). Operators reach a richer LAN tool surface on first launch.
+
+### Notes
+
+- The seed runs on every boot via `workerSupervisor_->upsertPool(...)`, which is idempotent — operator-customized pool definitions for the same poolId will be re-seeded to the canonical values on the next service restart. This matches the existing v0.9.64 batch's behaviour and is documented in the seed's source comment.
+- Sqlite is deliberately omitted from this seed. `mcp-server-sqlite-npx` exits with code 1 within ~1 s of spawn under MCOS supervisor (same package initializes cleanly when invoked outside the supervisor process tree). Root cause TBD; the catalog placeholder continues to advertise the `installHint` so operators see the expected install path.
+- No breaking public-API change. Patch bump (0.10.17 → 0.10.18) per semver.
+- Live state after build + DEPLOY_LOCAL_LIVE verified against the reference host: `/api/version` = `0.10.18`, `/api/self-tests` = 35/35 passed, dashboard reaches 25/26 reachable with sqlite remaining placeholder.
+
+## [0.10.17] - 2026-05-15
+
+### Summary
+
+POST-body unknown-key visibility on `/api/clients`, `/api/pools`, and `/api/telemetry/heartbeat`. Pre-v0.10.17 a POST whose JSON body carried a field name the destination model did not recognise (operator typo such as `enabledFlag` for `enabled`) returned HTTP 200 with the default value applied and zero indication anything had been dropped. The third item from the v0.10.15 debugger sub-agent scan. v0.10.17 ships an additive diagnostic that includes a `droppedKeys` array in the response body when the input payload carried unknown fields. HTTP status codes are unchanged, the typed model still constructs cleanly, and pre-v0.10.17 clients ignoring the new field stay wire-compatible.
+
+### Added
+
+- **`include/MasterControl/JsonStrictness.h`** — header-only helper. `collectDroppedTopLevelKeys<T>(input, model)` round-trips the typed model through `nlohmann::json()` to discover its known keys, then lists input keys missing from the round-tripped set. `droppedKeysToJson(list)` serialises the list as a JSON array. Safe on non-object input — arrays, scalars, and `null` return an empty list rather than throwing.
+- **`droppedKeys` response field** on `/api/clients` (LanClient), `/api/pools` (ManagedEndpointPool), and `/api/telemetry/heartbeat` (ClientHeartbeat). Only emitted when the input payload carried top-level keys the destination model did not recognise.
+- **Four unit tests** in `tests/MasterControlOrchestrationServerTests.cpp`: `testJsonStrictnessDetectsTypo`, `testJsonStrictnessNoDropsWhenAllKeysKnown`, `testJsonStrictnessSafeOnNonObjectInput`, `testDroppedKeysToJsonShape`. All passing under `ctest --preset debug`.
+
+### Changed
+
+- `src/MasterControlApp/MasterControlRuntime.cpp` — three POST route handlers now snapshot the parsed JSON before passing the typed model to the service, run the dropped-key detection on the snapshot, and emit the `droppedKeys` array in the response body via the raw `HttpResponse` path (jsonResponse can't sidecar-merge a field).
+
+### Notes
+
+- HTTP status codes are unchanged. A POST that previously returned 200 still returns 200 with `droppedKeys` added when applicable; a POST that previously returned 400 still returns 400 with the same diagnostic. Patch bump (0.10.16 → 0.10.17) per semver.
+- Live state on the reference host: `/api/version` = `0.10.17`, `/api/self-tests` = 35/35 passed.
+
+## [0.10.16] - 2026-05-15
+
+### Summary
+
+SSE resume on `/api/events`. Pre-v0.10.16 the Server-Sent Events handler initialised its activity watermark to the empty string on every connection; a reconnecting browser `EventSource` client replayed from the current ring head and silently dropped any activity events that landed between disconnect and reconnect. v0.10.16 honors the standard `Last-Event-ID` request header (the value `EventSource` auto-echoes on reconnect) and additionally accepts the same `?since=` alias set v0.10.15 introduced. The handler now emits the SSE `id:` field on every activity event so `EventSource` can store it and echo it back automatically. Dashboard snapshot events stay un-id'd because they are not a resumable sequence.
+
+### Added
+
+- **SSE `id:` emission** on activity events. The `sendEvent` helper gained an optional `eventId` parameter; the activity-emission site passes `evt.id` from the global `ActivityEventRing`. The dashboard emission site does not (snapshots are not resumable).
+- **`Last-Event-ID` request header support** on `GET /api/events`. The handler reads it case-insensitively via the existing `findHeaderCaseInsensitive` helper and uses the value as the initial activity-ring watermark.
+- **`?since=` query-param support** on `GET /api/events`, including all v0.10.15 watermark aliases (`sinceId`, `after`, `from`, `cursor`, `lastEventId`). Lets `curl` / manual probes simulate a reconnect without the full SSE handshake.
+
+### Fixed
+
+- **`lastActivityId` initialisation** in the SSE streaming lambda now seeds from the resolved watermark instead of the empty string. Pre-v0.10.16 every reconnect replayed from the live ring head; any events that landed during the disconnect window were silently lost.
+
+### Notes
+
+- Wire-compatible. Clients that do not send `Last-Event-ID` or `?since=` continue to start from the live tail exactly as before. Patch bump (0.10.15 → 0.10.16) per semver.
+- Live verification: an SSE client that records `id:` and reconnects with `Last-Event-ID: <id>` now resumes from that watermark; manual probes via `curl -H "Last-Event-ID: <id>"` or `?since=<id>` produce the same resume.
+
+## [0.10.15] - 2026-05-15
+
+### Summary
+
+Operator-facing silent-ignore defect fix. Pre-v0.10.15 `/api/activity`, `/api/telemetry/events`, and `/api/client/activity` accepted only their canonical query-param names (`max=`, `since=`, `kind=`) and silently shipped the full 512-event ring (138 KB) when an operator typed a natural-language alias such as `?limit=N`. The route layer's bare `query.find()` calls also lacked name-boundary anchoring, so a future `?xmax=` param could have spuriously matched `?max=`. v0.10.15 ships a single boundary-aware helper, refactors the three handlers to use it, and grows `/api/client/activity` to mirror `/api/activity`'s pagination surface.
+
+### Added
+
+- **`include/MasterControl/QueryParamParse.h`** — header-only helper. `extractQueryParam(query, name)` does a single boundary-aware lookup; `extractQueryParamAny(query, {names...})` returns the first hit across an alias list (canonical first → canonical wins when both are present). Pure inline functions; no new translation unit, no link-target change.
+- **`/api/client/activity` pagination surface.** The route now accepts the same `max=` / `since=` / `kind=` parameters that `/api/activity` already exposed, plus their aliases. Pre-v0.10.15 the route returned the entire activity ring on every call.
+- **Five unit tests** in `tests/MasterControlOrchestrationServerTests.cpp`: `testQueryParamCanonicalParse`, `testQueryParamAliasFallback`, `testQueryParamBoundaryGuard`, `testQueryParamMissingReturnsEmpty`, `testQueryParamMultiPair`. All passing under `ctest --preset debug`.
+
+### Fixed
+
+- **`/api/activity?limit=N`** (and `count`, `n`, `top`) now caps the response at N events. Pre-v0.10.15 only `?max=N` was honored; any alias silently returned the full 512-event ring (138 KB).
+- **`/api/activity?after=` / `?sinceId=` / `?from=` / `?cursor=` / `?lastEventId=`** are now accepted as watermark aliases for `?since=`.
+- **`/api/activity?type=` / `?event=` / `?filter=` / `?category=`** are now accepted as kind-filter aliases for `?kind=` (wildcard suffix `*` preserved).
+- **`/api/telemetry/events?limit=N`** (and `count`, `n`, `top`) honored; previously silently capped at 1024.
+- **Name-boundary anchoring** for query-param extraction. A search for `max` no longer incidentally matches inside `xmax`; the helper requires the name to start at position 0 of the query string or immediately follow an `&`.
+
+### Changed
+
+- `src/MasterControlApp/MasterControlRuntime.cpp` — three route handlers (`/api/activity`, `/api/telemetry/events`, `/api/client/activity`) refactored to call the new helper instead of inline `query.find("name=")` patterns. Behaviour for callers using only canonical names is unchanged.
+
+### Notes
+
+- No breaking public-API change. Canonical wire names remain wire-compatible. Patch bump (0.10.14 → 0.10.15) per semver.
+- Live state after `cmake --build --preset debug --target DEPLOY_LOCAL_LIVE` + `scripts\Deploy-LocalLive.ps1 -RelaunchShell` on the reference host: `/api/version` = `0.10.15`, `/api/self-tests` = 35/35 passed, `/api/activity?limit=5` → 5 events, `/api/client/activity?max=3` → 3 events, `/api/activity?xmax=10` → still 512 (boundary guard fires).
 
 ## [0.10.14] - 2026-05-11
 
