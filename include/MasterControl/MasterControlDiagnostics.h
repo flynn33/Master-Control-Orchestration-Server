@@ -147,11 +147,54 @@ inline PersistentLogPaths resolvePersistentLogPaths(std::wstring_view componentN
     return paths;
 }
 
+// v0.10.21: size-based rotation threshold for the persistent log files.
+// runtime/telemetry.jsonl had grown to 25.7 MB / 101 K dashboard-snapshot
+// entries at audit time with no upper bound. The rotation pattern:
+// when a current file exceeds kLogRotationBytes, rename it to
+// "<name>.1.jsonl" (overwriting any prior .1.jsonl) and start a fresh
+// current file. Two-file rotation keeps the most recent
+// kLogRotationBytes of live data + roughly the same of historical
+// rotated data; total disk consumption per component caps at ~100 MB.
+// The threshold is intentionally generous so an operator running for
+// weeks doesn't lose recent forensics; tighten via the constant if
+// the host is disk-constrained.
+inline constexpr std::uintmax_t kLogRotationBytes = 50ull * 1024ull * 1024ull;
+
+inline void rotateIfOversizedLocked(const std::filesystem::path& filePath) {
+    std::error_code ec;
+    if (!std::filesystem::exists(filePath, ec)) {
+        return;
+    }
+    const auto fileSize = std::filesystem::file_size(filePath, ec);
+    if (ec || fileSize < kLogRotationBytes) {
+        return;
+    }
+    auto rotated = filePath;
+    rotated += ".1";
+    // Overwrite the prior rotated file if any. The file_size check
+    // above ensures we only rotate when the live file alone is at
+    // the threshold, so the prior rotated file (if any) was the
+    // result of a previous rotation when that file hit the
+    // threshold -- no live forensic loss from overwriting it.
+    std::filesystem::remove(rotated, ec);
+    ec.clear();
+    std::filesystem::rename(filePath, rotated, ec);
+    // If the rename fails (e.g. another reader holds the file),
+    // silently fall through and continue appending to the live
+    // file. The next rotation attempt will retry. Better an
+    // oversized log than a dropped event.
+}
+
 inline void appendJsonLine(const std::filesystem::path& filePath, const nlohmann::json& record) {
     static std::mutex writeMutex;
     std::lock_guard<std::mutex> lock(writeMutex);
 
     std::filesystem::create_directories(filePath.parent_path());
+
+    // v0.10.21: check rotation BEFORE opening the append stream so the
+    // rename target isn't held open by this process.
+    rotateIfOversizedLocked(filePath);
+
     std::ofstream output(filePath, std::ios::binary | std::ios::app);
     if (!output.is_open()) {
         return;
