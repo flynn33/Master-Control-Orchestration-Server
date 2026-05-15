@@ -43,7 +43,17 @@ function ConvertTo-MsiProductVersion {
         [Parameter(Mandatory=$true)] [string]$Version
     )
 
-    if ($Version -match '^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-rc\.(?<build>\d+))?$') {
+    # Windows Installer ProductVersion must be MAJOR.MINOR.PATCH.BUILD with all
+    # four parts numeric. We accept the canonical retail format MAJOR.MINOR.PATCH
+    # plus optional pre-release tags -alpha.N / -beta.N / -rc.N, capturing N as
+    # the BUILD ordinal. Retail builds pass through with BUILD = 0; pre-release
+    # builds preserve N so Windows Installer treats successive alphas / RCs as
+    # distinct upgrades inside the same MAJOR.MINOR.PATCH band. Note: a retail
+    # MAJOR.MINOR.PATCH (build 0) is "older" than alpha.N (build N) under
+    # Windows Installer's upgrade ordering; that is acceptable for an internal
+    # alpha that will be replaced by the next MAJOR.MINOR.PATCH bump rather
+    # than by a same-band retail build.
+    if ($Version -match '^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?:alpha|beta|rc)\.(?<build>\d+))?$') {
         $build = if ($Matches['build']) { $Matches['build'] } else { '0' }
         return "$($Matches['major']).$($Matches['minor']).$($Matches['patch']).$build"
     }

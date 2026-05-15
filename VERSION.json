@@ -1,16 +1,37 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.11.0",
-  "current_tag": "v0.11.0",
+  "current_version": "0.11.0-alpha.1",
+  "current_tag": "v0.11.0-alpha.1",
   "released_at": "2026-05-15",
-  "last_release_commit": "pending",
+  "last_release_commit": "94cad65c8713523038d5c12b61cee3913dc15de7",
   "history": [
+    {
+      "version": "0.11.0-alpha.1",
+      "tag": "v0.11.0-alpha.1",
+      "released_at": "2026-05-15",
+      "commit": "pending",
+      "summary": "First internal alpha cut of the v0.11.0 line. Packages the merged operator-audit work (closes items 1-7 from the operator's 2026-05-15 testing-phase audit; PHASE-14 Slice A diagnostics route surface; v0.10.21 supervisor env-block + telemetry persistence + log rotation; v0.10.15-20 query alias / SSE resume / JSON strictness / npx pool seeds / mcp-server-runtime route surface) as a signed-ready Windows Installer MSI for internal LAN distribution. No new runtime code beyond the v0.11.0 merge tip (94cad65). Internal alpha is intentionally MSI-only -- the zip-archive path still ships alongside as the headless / CI installer.",
+      "entries": [
+        "pkg(alpha): produce Windows Installer MSI at dist/packages/release/MasterControlOrchestrationServer-v0.11.0-alpha.1-win-x64.msi via scripts/Package-MasterControlOrchestrationServer.ps1 -Preset release -Version 0.11.0-alpha.1. MSI ProductVersion 0.11.0.1 (alpha BUILD ordinal 1).",
+        "build(msi): extend installer/Build-Msi.ps1 ConvertTo-MsiProductVersion regex to accept -alpha.N and -beta.N pre-release tags alongside the existing -rc.N. Pre-v0.11.0-alpha.1 the regex rejected anything but MAJOR.MINOR.PATCH(-rc.N)? so semver-correct alpha tags threw `Unsupported package version format`. Regex now: ^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?:-(?:alpha|beta|rc)\\.(?<build>\\d+))?$. Verified against 0.11.0 (.0), 0.11.0-alpha.1 (.1), 0.11.0-beta.3 (.3), 0.11.0-rc.7 (.7), and rejection of 0.11.0-alpha (no ordinal) / 0.11.0-zeta.1 (unknown prefix) / 0.11 (no patch).",
+        "docs(version): bump VERSION.json current_version 0.11.0 -> 0.11.0-alpha.1. Backfill the v0.11.0 history entry's commit field to the merge tip 94cad65c8713523038d5c12b61cee3913dc15de7 (replaces the pre-merge 'pending' placeholder).",
+        "docs(readme,changelog,manifest): add v0.11.0-alpha.1 entries to README badge + Current release block, CHANGELOG, and handoff/realignment/manifest.json. Add the v0.11.0-alpha.1 release report under handoff/realignment/."
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "PHASE-14 Slice B: mcos-bridge MCP plugin tools.",
+        "PHASE-14 Slice C: WinUI Shell DiagnosticsSectionControl + FileSavePicker.",
+        "PHASE-14 Slice D: Browser dashboard Diagnostics tab + Blob-download Export buttons.",
+        "PHASE-14 Slice E: SqliteDiagnosticsStore + tests + functional POST /api/diagnostics/clear (currently 501).",
+        "End-to-end client integration alpha test: drive a real ChatGPT / Claude Code / Codex / Grok session through http://<host>:8080/mcp from a LAN peer and verify the client appears in /api/clients with a fresh lastSeenUtc. Operator-driven; alpha-runtime is ready.",
+        "DNS-SD live presence confirmation from a LAN peer (Bonjour Browser / `dns-sd -B _mcos-mcp._tcp`). Beacon endpoint advertises dns-sd capability; field validation requires a second host."
+      ]
+    },
     {
       "version": "0.11.0",
       "tag": "v0.11.0",
       "released_at": "2026-05-15",
-      "commit": "pending",
+      "commit": "94cad65c8713523038d5c12b61cee3913dc15de7",
       "summary": "PHASE-14 Diagnostics module Slice A. Closes item 7 from the operator's 8-item testing-phase audit. Adds 5 operator-visible HTTP routes under /api/diagnostics/* that aggregate, query, and export events from the existing per-component events.jsonl persistent logs (runtime + supervisor + installer). Pre-v0.11.0 operators had no programmatic way to query, search, or export the persisted events; they had to manually concatenate files from C:\\Users\\Public\\Documents\\Master Control Orchestration Server\\logs\\<component>\\ on disk. Slice A delivers the operator-visible HTTP surface; the SqliteDiagnosticsStore + WinUI Shell DiagnosticsSectionControl + browser dashboard Diagnostics tab + mcos-bridge MCP plugin tools land in subsequent slices B-E per the PHASE-14 plan. Minor bump per the manifest's phase-scope convention.",
       "entries": [
         "feat(diagnostics): new GET /api/diagnostics/events route. Aggregates events from all per-component events.jsonl files under the diagnostics root (resolvePersistentLogPaths) plus their rotated .1.jsonl siblings (v0.10.21 rotation). Returns the merged stream sorted recent-first. Supports ?max= / ?severity= / ?source= filters via the v0.10.15 alias-aware extractor.",
