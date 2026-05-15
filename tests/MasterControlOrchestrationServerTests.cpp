@@ -8,6 +8,7 @@
 // later phases as privilege enforcement and config bundle issuance land.
 
 #include "MasterControl/AuthenticatedRequestContext.h"
+#include "MasterControl/DiagnosticsAggregator.h"
 #include "MasterControl/JsonStrictness.h"
 #include "MasterControl/LanClient.h"
 #include "MasterControl/MasterControlDefaults.h"
@@ -2092,6 +2093,178 @@ bool testQueryParamMultiPair() {
     return ok;
 }
 
+// v0.11.0 PHASE-14 Slice A diagnostics aggregator + markdown render tests.
+// Pre-v0.11.0 the aggregation lived as an inline lambda inside the
+// route handler so the custom bool-test runner could not cover the
+// new /api/diagnostics/* HTTP surface (no in-process HTTP fixture).
+// v0.11.0 extracted the file-walk + softCap + sort logic into
+// include/MasterControl/DiagnosticsAggregator.h; these tests cover
+// the testable helper against a synthetic logs directory.
+
+namespace {
+
+std::filesystem::path makeSyntheticLogsRoot(const std::string& suffix) {
+    auto base = std::filesystem::temp_directory_path() /
+                ("mcos-diag-test-" + suffix + "-" + std::to_string(
+                    std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(base);
+    return base;
+}
+
+void writeJsonlLines(const std::filesystem::path& path,
+                     const std::vector<nlohmann::json>& lines) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    for (const auto& line : lines) {
+        out << line.dump() << '\n';
+    }
+}
+
+nlohmann::json makeEvent(const std::string& capturedAtUtc,
+                         const std::string& component,
+                         const std::string& severity,
+                         const std::string& event,
+                         const std::string& message) {
+    return nlohmann::json{
+        { "capturedAtUtc", capturedAtUtc },
+        { "component",     component },
+        { "severity",      severity },
+        { "event",         event },
+        { "message",       message },
+        { "data",          nlohmann::json::object() }
+    };
+}
+
+} // namespace
+
+bool testDiagnosticsAggregator_emptyRoot() {
+    bool ok = true;
+    const auto root = makeSyntheticLogsRoot("empty");
+    std::filesystem::remove_all(root);
+    const auto events = MasterControl::aggregateDiagnosticsEventsFromRoot(root, 0);
+    ok &= expect(events.empty(),
+                 "aggregateDiagnosticsEventsFromRoot returns empty on nonexistent root.");
+    return ok;
+}
+
+bool testDiagnosticsAggregator_singleComponentSorted() {
+    bool ok = true;
+    const auto root = makeSyntheticLogsRoot("sorted");
+    const auto compDir = root / "runtime";
+    writeJsonlLines(compDir / "events.jsonl", {
+        makeEvent("2026-05-15T10:00:00Z", "runtime", "info",  "boot",         "boot ok"),
+        makeEvent("2026-05-15T12:00:00Z", "runtime", "error", "worker_event", "pool died"),
+        makeEvent("2026-05-15T11:00:00Z", "runtime", "warn",  "self_test_summary", "boot 39/40")
+    });
+    const auto events = MasterControl::aggregateDiagnosticsEventsFromRoot(root, 0);
+    std::filesystem::remove_all(root);
+    ok &= expect(events.size() == 3, "Three events read back.");
+    if (events.size() == 3) {
+        ok &= expect(events[0].value("capturedAtUtc", std::string()) == "2026-05-15T12:00:00Z",
+                     "Recent-first sort: 12:00 entry comes first.");
+        ok &= expect(events[1].value("capturedAtUtc", std::string()) == "2026-05-15T11:00:00Z",
+                     "Recent-first sort: 11:00 entry comes second.");
+        ok &= expect(events[2].value("capturedAtUtc", std::string()) == "2026-05-15T10:00:00Z",
+                     "Recent-first sort: 10:00 entry comes last.");
+    }
+    return ok;
+}
+
+bool testDiagnosticsAggregator_softCapEarlyExit() {
+    bool ok = true;
+    const auto root = makeSyntheticLogsRoot("softcap");
+    const auto compDir = root / "runtime";
+    // 100 live events should saturate softCap=5 (headroom 5*4+32=52).
+    std::vector<nlohmann::json> live;
+    for (int i = 0; i < 100; ++i) {
+        live.push_back(makeEvent(
+            "2026-05-15T12:" + (i < 10 ? std::string("0") : std::string()) + std::to_string(i) + ":00Z",
+            "runtime", "info", "tick", "tick " + std::to_string(i)));
+    }
+    writeJsonlLines(compDir / "events.jsonl", live);
+    // Rotated tier holds a sentinel event the test should NOT see when
+    // softCap is reached by live alone.
+    writeJsonlLines(compDir / "events.jsonl.1", {
+        makeEvent("2026-05-14T00:00:00Z", "runtime", "error", "sentinel_rotated_only", "DO NOT READ ME")
+    });
+
+    const auto events = MasterControl::aggregateDiagnosticsEventsFromRoot(root, 5);
+    std::filesystem::remove_all(root);
+
+    bool sawSentinel = false;
+    for (const auto& e : events) {
+        if (e.value("event", std::string()) == "sentinel_rotated_only") {
+            sawSentinel = true;
+            break;
+        }
+    }
+    ok &= expect(!sawSentinel,
+                 "softCap=5 with 100 live events skips the rotated .1.jsonl tier (sentinel not read).");
+    ok &= expect(events.size() >= 5,
+                 "softCap=5 still returns at least 5 events from the live tier.");
+    return ok;
+}
+
+bool testDiagnosticsAggregator_partialWriteTolerance() {
+    bool ok = true;
+    const auto root = makeSyntheticLogsRoot("partial");
+    const auto compDir = root / "runtime";
+    std::filesystem::create_directories(compDir);
+    // Mix valid + invalid lines.
+    std::ofstream out(compDir / "events.jsonl", std::ios::binary | std::ios::trunc);
+    out << "{\"capturedAtUtc\":\"2026-05-15T10:00:00Z\",\"component\":\"runtime\",\"severity\":\"info\"}\n";
+    out << "not-json-at-all\n";
+    out << "{\"capturedAtUtc\":\"2026-05-15T11:00:00Z\",\"component\":\"runtime\",\"severity\":\"error\"}\n";
+    out << "{\"capturedAtUtc\":\"2026-05-15T09:30:00Z\",\"" /* deliberately truncated */;
+    out.close();
+
+    const auto events = MasterControl::aggregateDiagnosticsEventsFromRoot(root, 0);
+    std::filesystem::remove_all(root);
+    ok &= expect(events.size() == 2,
+                 "Partial-write tolerance: 2 valid lines read; bad + truncated lines skipped.");
+    return ok;
+}
+
+bool testDiagnosticsMarkdownRender_warnWarningAlias() {
+    bool ok = true;
+    const std::vector<nlohmann::json> events = {
+        makeEvent("2026-05-15T12:00:00Z", "runtime", "warning", "tele_warn", "telemetry warning"),
+        makeEvent("2026-05-15T11:00:00Z", "runtime", "warn",    "boot_warn", "boot warn row"),
+        makeEvent("2026-05-15T10:00:00Z", "runtime", "info",    "boot",      "boot ok")
+    };
+    const auto md = MasterControl::renderDiagnosticsMarkdown(
+        events, "2026-05-15T13:00:00Z", "0.11.0");
+
+    // The warning section must include BOTH the "warning" event and
+    // the "warn" event under "## warning (2)".
+    ok &= expect(md.find("## warning (2)") != std::string::npos,
+                 "Warning section header counts BOTH warning + warn entries.");
+    ok &= expect(md.find("tele_warn") != std::string::npos,
+                 "Markdown export contains the 'warning'-severity event.");
+    ok &= expect(md.find("boot_warn") != std::string::npos,
+                 "Markdown export contains the 'warn'-severity event under the same warning section.");
+    return ok;
+}
+
+bool testDiagnosticsMarkdownRender_truncatesOver50() {
+    bool ok = true;
+    std::vector<nlohmann::json> events;
+    // 60 info events: section header should report (60) and the
+    // truncation note should mention 10 more.
+    for (int i = 0; i < 60; ++i) {
+        events.push_back(makeEvent(
+            "2026-05-15T12:" + (i < 10 ? std::string("0") : std::string()) + std::to_string(i) + ":00Z",
+            "runtime", "info", "tick", "tick " + std::to_string(i)));
+    }
+    const auto md = MasterControl::renderDiagnosticsMarkdown(
+        events, "2026-05-15T13:00:00Z", "0.11.0");
+    ok &= expect(md.find("## info (60)") != std::string::npos,
+                 "Section header reports the true total count even when truncated.");
+    ok &= expect(md.find("10 more info events truncated") != std::string::npos,
+                 "Truncation note mentions the suppressed count (60 - 50 = 10).");
+    return ok;
+}
+
 int main() {
     bool ok = true;
     ok &= testDefaultConfiguration();
@@ -2109,6 +2282,18 @@ int main() {
     ok &= testJsonStrictnessNoDropsWhenAllKeysKnown();
     ok &= testJsonStrictnessSafeOnNonObjectInput();
     ok &= testDroppedKeysToJsonShape();
+    // v0.11.0 PHASE-14 Slice A diagnostics aggregator + markdown
+    // render tests against the new include/MasterControl/Diagnostics
+    // Aggregator.h helpers. Covers the file-walk + softCap early-out
+    // + recent-first sort + partial-write tolerance + markdown
+    // warn/warning aliasing + 50-events/section truncation paths
+    // that back the new /api/diagnostics/* HTTP surface.
+    ok &= testDiagnosticsAggregator_emptyRoot();
+    ok &= testDiagnosticsAggregator_singleComponentSorted();
+    ok &= testDiagnosticsAggregator_softCapEarlyExit();
+    ok &= testDiagnosticsAggregator_partialWriteTolerance();
+    ok &= testDiagnosticsMarkdownRender_warnWarningAlias();
+    ok &= testDiagnosticsMarkdownRender_truncatesOver50();
     ok &= testLanClientDefaults();
     ok &= testLanClientRoundTrip();
     ok &= testAppConfigurationCarriesLanClients();

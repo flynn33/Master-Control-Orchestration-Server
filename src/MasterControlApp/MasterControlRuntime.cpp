@@ -25,6 +25,7 @@
 #include "MasterControl/MasterControlVersion.h"
 #include "MasterControl/QueryParamParse.h"  // v0.10.15: alias-aware ?param= extractor.
 #include "MasterControl/JsonStrictness.h"   // v0.10.17: dropped-top-level-keys diagnostic.
+#include "MasterControl/DiagnosticsAggregator.h"  // v0.11.0 Slice A: testable aggregator + markdown renderer.
 
 #include <bcrypt.h>
 #include <iomanip>
@@ -16112,269 +16113,7 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         // every registered pool has at least one healthy instance
         // AND zero pools quarantined AND activity-ring persistence
         // has zero errors AND telemetry sampler has run at least
-        // v0.11.0 PHASE-14 Slice A: Diagnostics HTTP surface. Five routes
-        // aggregated against the existing per-component events.jsonl
-        // persistent logs (runtime, supervisor, installer). Pre-v0.11.0
-        // operators had no programmatic way to query, search, or export
-        // the persisted events; they had to manually concatenate files
-        // from `<PUBLIC>\Documents\Master Control Orchestration Server\
-        // logs\<component>\` on disk. Slice A delivers the operator-
-        // visible HTTP surface; the SqliteDiagnosticsStore + WinUI
-        // Shell + browser UI + MCP plugin tools land in subsequent
-        // slices (B-E per PHASE-14 plan).
-        //
-        // The five routes:
-        //   GET  /api/diagnostics/events?max=N&severity=X&source=Y
-        //   GET  /api/diagnostics/summary
-        //   GET  /api/diagnostics/self-test
-        //   GET  /api/diagnostics/export?format=markdown|json
-        //   POST /api/diagnostics/clear     -> 501 in slice A (no
-        //                                      writeable store yet)
-        //
-        // Aggregation reads the live + rotated (.1.jsonl) jsonl files
-        // under the diagnostics root resolved via the same Diagnostics::
-        // resolvePersistentLogPaths helper. Each line is parsed; bad
-        // lines are silently skipped (resilient against partial writes).
-        if (request.method == "GET" &&
-            (request.path == "/api/diagnostics/events" ||
-             request.path == "/api/diagnostics/summary" ||
-             request.path == "/api/diagnostics/self-test" ||
-             request.path == "/api/diagnostics/export")) {
-
-            // v0.11.0 (Copilot review fix): the aggregator now accepts
-            // an optional soft cap so /api/diagnostics/events?max=N
-            // doesn't have to parse every live + rotated jsonl line on
-            // disk before truncating. With v0.10.21 rotation (50 MB
-            // live + 50 MB rotated per component), a naive read-all
-            // would parse hundreds of MB on a small max=5 query. The
-            // softCap path:
-            //   1. Reads live events.jsonl files first across all
-            //      components -- these are bounded at 50 MB but
-            //      typically much smaller (~10 KB at audit time).
-            //   2. Only descends into rotated .1.jsonl files if the
-            //      live pass didn't produce enough events to satisfy
-            //      the cap (with severity-filter headroom).
-            //   3. summary / export / unbounded queries pass softCap=0
-            //      to retain the original read-all semantics.
-            auto aggregateEvents = [&](std::size_t softCap) -> std::vector<nlohmann::json> {
-                std::vector<nlohmann::json> events;
-                const auto rootPaths = MasterControl::Diagnostics::resolvePersistentLogPaths(L"runtime");
-                const auto logsRoot = rootPaths.root;
-                std::error_code ec;
-                if (!std::filesystem::exists(logsRoot, ec)) return events;
-
-                // Headroom multiplier so post-filter truncation still
-                // hits the cap. 4x covers ?severity=error filtering
-                // against an info-dominated stream without surprises.
-                const std::size_t headroomCap = softCap == 0 ? 0 : softCap * 4 + 32;
-                auto haveEnough = [&]() {
-                    return headroomCap != 0 && events.size() >= headroomCap;
-                };
-
-                auto readJsonlLines = [&](const std::filesystem::path& p) {
-                    std::ifstream f(p, std::ios::binary);
-                    if (!f.is_open()) return;
-                    std::string line;
-                    while (std::getline(f, line)) {
-                        if (line.empty()) continue;
-                        try {
-                            auto parsed = nlohmann::json::parse(line);
-                            events.push_back(std::move(parsed));
-                        } catch (...) {
-                            // Partial-write tolerance: skip bad line.
-                        }
-                    }
-                };
-
-                // Pass 1: live events.jsonl across all components.
-                for (const auto& componentDir : std::filesystem::directory_iterator(logsRoot, ec)) {
-                    if (ec) break;
-                    if (!componentDir.is_directory(ec)) continue;
-                    const auto live = componentDir.path() / "events.jsonl";
-                    if (std::filesystem::exists(live, ec)) {
-                        readJsonlLines(live);
-                    }
-                }
-
-                // Pass 2: rotated events.jsonl.1 ONLY IF the live pass
-                // hasn't already covered the soft cap (with headroom).
-                if (!haveEnough()) {
-                    for (const auto& componentDir : std::filesystem::directory_iterator(logsRoot, ec)) {
-                        if (ec) break;
-                        if (!componentDir.is_directory(ec)) continue;
-                        const auto rotated = componentDir.path() / "events.jsonl.1";
-                        if (std::filesystem::exists(rotated, ec)) {
-                            readJsonlLines(rotated);
-                        }
-                        if (haveEnough()) break;
-                    }
-                }
-
-                // Sort recent-first by capturedAtUtc (ISO-8601 strings sort lexicographically).
-                std::sort(events.begin(), events.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
-                    const auto av = a.value("capturedAtUtc", std::string());
-                    const auto bv = b.value("capturedAtUtc", std::string());
-                    return av > bv;
-                });
-                return events;
-            };
-
-            auto applyFilters = [&](std::vector<nlohmann::json>& events) {
-                if (request.query.empty()) return;
-                const auto sevFilter = MasterControl::extractQueryParamAny(
-                    request.query, {"severity", "level"});
-                const auto srcFilter = MasterControl::extractQueryParamAny(
-                    request.query, {"source", "component"});
-                if (!sevFilter.empty()) {
-                    events.erase(std::remove_if(events.begin(), events.end(),
-                        [&](const nlohmann::json& e) {
-                            return e.value("severity", std::string()) != sevFilter;
-                        }), events.end());
-                }
-                if (!srcFilter.empty()) {
-                    events.erase(std::remove_if(events.begin(), events.end(),
-                        [&](const nlohmann::json& e) {
-                            return e.value("component", std::string()) != srcFilter;
-                        }), events.end());
-                }
-            };
-
-            if (request.path == "/api/diagnostics/events") {
-                // v0.11.0 (Copilot review fix): parse max= BEFORE
-                // aggregating so the aggregator can early-out on the
-                // rotated .1.jsonl files when only a small recent
-                // slice is requested.
-                std::size_t maxN = 200;
-                if (!request.query.empty()) {
-                    const auto maxValue = MasterControl::extractQueryParamAny(
-                        request.query, {"max", "limit", "count", "n", "top"});
-                    if (!maxValue.empty()) {
-                        try { maxN = static_cast<std::size_t>(std::stoull(maxValue)); } catch (...) {}
-                        if (maxN == 0) maxN = 200;
-                    }
-                }
-                auto events = aggregateEvents(maxN);
-                applyFilters(events);
-                if (events.size() > maxN) events.resize(maxN);
-                nlohmann::json body = { {"events", events}, {"count", events.size()} };
-                return HttpResponse{ 200, "application/json", body.dump() };
-            }
-
-            if (request.path == "/api/diagnostics/summary") {
-                // softCap=0 for unbounded read; summary needs accurate
-                // totals across the entire on-disk diagnostic history.
-                auto events = aggregateEvents(0);
-                std::map<std::string, std::size_t> bySeverity;
-                std::map<std::string, std::size_t> byComponent;
-                for (const auto& e : events) {
-                    ++bySeverity[e.value("severity", std::string("info"))];
-                    ++byComponent[e.value("component", std::string("unknown"))];
-                }
-                nlohmann::json latest = nlohmann::json::array();
-                for (std::size_t i = 0; i < (std::min<std::size_t>)(5, events.size()); ++i) {
-                    latest.push_back(events[i]);
-                }
-                nlohmann::json body;
-                body["totalEvents"] = events.size();
-                body["bySeverity"]  = bySeverity;
-                body["byComponent"] = byComponent;
-                body["latest5"]     = latest;
-                body["generatedAtUtc"] = timestampNowUtc();
-                return HttpResponse{ 200, "application/json", body.dump() };
-            }
-
-            if (request.path == "/api/diagnostics/self-test") {
-                const auto snapshot = getLastSelfTestSnapshot();
-                nlohmann::json body = snapshot;
-                body["queryAtUtc"] = timestampNowUtc();
-                return HttpResponse{ 200, "application/json", body.dump() };
-            }
-
-            // /api/diagnostics/export?format=markdown|json
-            const auto format = MasterControl::extractQueryParamAny(
-                request.query, {"format", "fmt", "type"});
-            const bool asMarkdown = (format == "markdown" || format == "md");
-            // softCap=0: export should serialise the full history.
-            auto events = aggregateEvents(0);
-            applyFilters(events);
-
-            if (asMarkdown) {
-                std::ostringstream md;
-                md << "# MCOS Diagnostics Snapshot\n\n";
-                md << "**Captured:** " << timestampNowUtc() << "  \n";
-                md << "**Version:** " << MASTERCONTROL_VERSION << "  \n";
-                md << "**Total events:** " << events.size() << "  \n\n";
-                // v0.11.0 (Copilot review fix): match BOTH `warning` and
-                // `warn` severities. TelemetrySeverity::Warning emits
-                // "warning" via to_string; boot self-test rows emit
-                // "warn". Pre-v0.11.0 the markdown export only iterated
-                // "warning" so any persisted "warn" entries were counted
-                // by /summary but silently omitted from the operator
-                // export. The aliasing happens here in the rendering
-                // layer rather than at aggregation so the on-disk
-                // jsonl files keep their producer-visible severity
-                // strings unchanged.
-                struct SeveritySection {
-                    const char* heading;
-                    std::vector<std::string> matchValues;
-                };
-                const std::vector<SeveritySection> severityOrder = {
-                    { "critical", {"critical"} },
-                    { "error",    {"error"} },
-                    { "warning",  {"warning", "warn"} },
-                    { "info",     {"info"} },
-                    { "debug",    {"debug"} }
-                };
-                auto matchesSection = [&](const std::string& sev, const std::vector<std::string>& matchValues) -> bool {
-                    for (const auto& m : matchValues) {
-                        if (sev == m) return true;
-                    }
-                    return false;
-                };
-                for (const auto& section : severityOrder) {
-                    std::size_t count = 0;
-                    for (const auto& e : events) {
-                        if (matchesSection(e.value("severity", std::string()), section.matchValues)) ++count;
-                    }
-                    if (count == 0) continue;
-                    md << "## " << section.heading << " (" << count << ")\n\n";
-                    std::size_t emitted = 0;
-                    for (const auto& e : events) {
-                        if (!matchesSection(e.value("severity", std::string()), section.matchValues)) continue;
-                        if (emitted >= 50) { md << "_…" << (count - emitted) << " more " << section.heading << " events truncated…_\n\n"; break; }
-                        md << "- **" << e.value("capturedAtUtc", std::string("?")) << "** "
-                           << "`" << e.value("component", std::string("?")) << "`"
-                           << " · `" << e.value("event", std::string("?")) << "` — "
-                           << e.value("message", std::string("(no message)")) << "\n";
-                        ++emitted;
-                    }
-                    md << "\n";
-                }
-                return HttpResponse{ 200, "text/markdown; charset=utf-8", md.str() };
-            }
-            // JSON export (default)
-            nlohmann::json body;
-            body["generatedAtUtc"] = timestampNowUtc();
-            body["version"]        = std::string{ MASTERCONTROL_VERSION };
-            body["totalEvents"]    = events.size();
-            body["events"]         = events;
-            return HttpResponse{ 200, "application/json", body.dump(2) };
-        }
-        if (request.method == "POST" && request.path == "/api/diagnostics/clear") {
-            // v0.11.0 PHASE-14 Slice A: deferred to a follow-up slice
-            // when the SqliteDiagnosticsStore lands. The current
-            // jsonl-aggregated path is read-only; clearing would
-            // require deleting per-component log files which has
-            // operator-side risk. Return 501 with a clear message
-            // so consumers don't silently retry.
-            return HttpResponse{ 501, "application/json",
-                nlohmann::json{
-                    {"ok", false},
-                    {"message", "Clearing diagnostics is not supported in this slice. The persistent log files at <PUBLIC>\\Documents\\Master Control Orchestration Server\\logs\\ remain operator-owned. A future slice with the SqliteDiagnosticsStore will support clear-with-retention."}
-                }.dump() };
-        }
-        // Pre-existing comment continuation: health summary requires the
-        // telemetry sampler to have run at least once (capturedAtUtc non-empty).
+        // once (capturedAtUtc non-empty).
         if (request.method == "GET" && request.path == "/api/health/summary") {
             nlohmann::json out;
             out["version"] = std::string{ MASTERCONTROL_VERSION };
@@ -16488,6 +16227,161 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
 
             return jsonResponse(out);
         }
+        // -------------------------------------------------------------------
+        // v0.11.0 PHASE-14 Slice A: Diagnostics HTTP surface. Five routes
+        // aggregated against the existing per-component events.jsonl
+        // persistent logs (runtime, supervisor, installer). Pre-v0.11.0
+        // operators had no programmatic way to query, search, or export
+        // the persisted events; they had to manually concatenate files
+        // from `<PUBLIC>\Documents\Master Control Orchestration Server\
+        // logs\<component>\` on disk. Slice A delivers the operator-
+        // visible HTTP surface; the SqliteDiagnosticsStore + WinUI
+        // Shell + browser UI + MCP plugin tools land in subsequent
+        // slices (B-E per PHASE-14 plan).
+        //
+        // The five routes:
+        //   GET  /api/diagnostics/events?max=N&severity=X&source=Y
+        //   GET  /api/diagnostics/summary
+        //   GET  /api/diagnostics/self-test
+        //   GET  /api/diagnostics/export?format=markdown|json
+        //   POST /api/diagnostics/clear     -> 501 in slice A (no
+        //                                      writeable store yet)
+        //
+        // Aggregation reads the live + rotated (.1.jsonl) jsonl files
+        // under the diagnostics root resolved via the same Diagnostics::
+        // resolvePersistentLogPaths helper. Each line is parsed; bad
+        // lines are silently skipped (resilient against partial writes).
+        if (request.method == "GET" &&
+            (request.path == "/api/diagnostics/events" ||
+             request.path == "/api/diagnostics/summary" ||
+             request.path == "/api/diagnostics/self-test" ||
+             request.path == "/api/diagnostics/export")) {
+
+            // v0.11.0 (Copilot review fix): the aggregator now defers
+            // to MasterControl::aggregateDiagnosticsEventsFromRoot in
+            // the testable header so unit tests can exercise the
+            // file-walk + softCap + sort behaviour against a synthetic
+            // logs directory. softCap > 0 caps the read: live
+            // events.jsonl files pass first, rotated .1.jsonl files
+            // only if the live pass didn't fill the cap (4x headroom
+            // for severity filtering). softCap == 0 retains the
+            // unbounded read-all semantics that summary + export need.
+            auto aggregateEvents = [&](std::size_t softCap) -> std::vector<nlohmann::json> {
+                const auto rootPaths = MasterControl::Diagnostics::resolvePersistentLogPaths(L"runtime");
+                return MasterControl::aggregateDiagnosticsEventsFromRoot(rootPaths.root, softCap);
+            };
+
+            auto applyFilters = [&](std::vector<nlohmann::json>& events) {
+                if (request.query.empty()) return;
+                const auto sevFilter = MasterControl::extractQueryParamAny(
+                    request.query, {"severity", "level"});
+                const auto srcFilter = MasterControl::extractQueryParamAny(
+                    request.query, {"source", "component"});
+                if (!sevFilter.empty()) {
+                    events.erase(std::remove_if(events.begin(), events.end(),
+                        [&](const nlohmann::json& e) {
+                            return e.value("severity", std::string()) != sevFilter;
+                        }), events.end());
+                }
+                if (!srcFilter.empty()) {
+                    events.erase(std::remove_if(events.begin(), events.end(),
+                        [&](const nlohmann::json& e) {
+                            return e.value("component", std::string()) != srcFilter;
+                        }), events.end());
+                }
+            };
+
+            if (request.path == "/api/diagnostics/events") {
+                // v0.11.0 (Copilot review fix): parse max= BEFORE
+                // aggregating so the aggregator can early-out on the
+                // rotated .1.jsonl files when only a small recent
+                // slice is requested.
+                std::size_t maxN = 200;
+                if (!request.query.empty()) {
+                    const auto maxValue = MasterControl::extractQueryParamAny(
+                        request.query, {"max", "limit", "count", "n", "top"});
+                    if (!maxValue.empty()) {
+                        try { maxN = static_cast<std::size_t>(std::stoull(maxValue)); } catch (...) {}
+                        if (maxN == 0) maxN = 200;
+                    }
+                }
+                auto events = aggregateEvents(maxN);
+                applyFilters(events);
+                if (events.size() > maxN) events.resize(maxN);
+                nlohmann::json body = { {"events", events}, {"count", events.size()} };
+                return HttpResponse{ 200, "application/json", body.dump() };
+            }
+
+            if (request.path == "/api/diagnostics/summary") {
+                // softCap=0 for unbounded read; summary needs accurate
+                // totals across the entire on-disk diagnostic history.
+                auto events = aggregateEvents(0);
+                std::map<std::string, std::size_t> bySeverity;
+                std::map<std::string, std::size_t> byComponent;
+                for (const auto& e : events) {
+                    ++bySeverity[e.value("severity", std::string("info"))];
+                    ++byComponent[e.value("component", std::string("unknown"))];
+                }
+                nlohmann::json latest = nlohmann::json::array();
+                for (std::size_t i = 0; i < (std::min<std::size_t>)(5, events.size()); ++i) {
+                    latest.push_back(events[i]);
+                }
+                nlohmann::json body;
+                body["totalEvents"] = events.size();
+                body["bySeverity"]  = bySeverity;
+                body["byComponent"] = byComponent;
+                body["latest5"]     = latest;
+                body["generatedAtUtc"] = timestampNowUtc();
+                return HttpResponse{ 200, "application/json", body.dump() };
+            }
+
+            if (request.path == "/api/diagnostics/self-test") {
+                const auto snapshot = getLastSelfTestSnapshot();
+                nlohmann::json body = snapshot;
+                body["queryAtUtc"] = timestampNowUtc();
+                return HttpResponse{ 200, "application/json", body.dump() };
+            }
+
+            // /api/diagnostics/export?format=markdown|json
+            const auto format = MasterControl::extractQueryParamAny(
+                request.query, {"format", "fmt", "type"});
+            const bool asMarkdown = (format == "markdown" || format == "md");
+            // softCap=0: export should serialise the full history.
+            auto events = aggregateEvents(0);
+            applyFilters(events);
+
+            if (asMarkdown) {
+                // v0.11.0: markdown rendering delegates to the testable
+                // helper in DiagnosticsAggregator.h. The helper handles
+                // the warning/warn severity alias + 50-events/section
+                // truncation note + per-section headings consistently
+                // across this route and unit tests.
+                std::string md = MasterControl::renderDiagnosticsMarkdown(
+                    events, timestampNowUtc(), std::string{MASTERCONTROL_VERSION});
+                return HttpResponse{ 200, "text/markdown; charset=utf-8", std::move(md) };
+            }
+            // JSON export (default)
+            nlohmann::json body;
+            body["generatedAtUtc"] = timestampNowUtc();
+            body["version"]        = std::string{ MASTERCONTROL_VERSION };
+            body["totalEvents"]    = events.size();
+            body["events"]         = events;
+            return HttpResponse{ 200, "application/json", body.dump(2) };
+        }
+        if (request.method == "POST" && request.path == "/api/diagnostics/clear") {
+            // v0.11.0 PHASE-14 Slice A: deferred to a follow-up slice
+            // when the SqliteDiagnosticsStore lands. The current
+            // jsonl-aggregated path is read-only; clearing would
+            // require deleting per-component log files which has
+            // operator-side risk. Return 501 with a clear message
+            // so consumers don't silently retry.
+            return HttpResponse{ 501, "application/json",
+                nlohmann::json{
+                    {"ok", false},
+                    {"message", "Clearing diagnostics is not supported in this slice. The persistent log files at <PUBLIC>\\Documents\\Master Control Orchestration Server\\logs\\ remain operator-owned. A future slice with the SqliteDiagnosticsStore will support clear-with-retention."}
+                }.dump() };
+        }
+        // -------------------------------------------------------------------
         // v0.9.4 (Fix #4): host telemetry surface. Pre-v0.9.4 the
         // discovery doc, the dashboard, and the realignment manifest
         // (PHASE-08 Real-Time Telemetry deliverable) all implied a

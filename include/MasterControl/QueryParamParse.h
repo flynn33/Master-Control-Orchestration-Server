@@ -76,24 +76,28 @@ inline std::string extractQueryParam(std::string_view query,
     return std::string(value);
 }
 
-// Try each candidate name in order and return the value of the first
-// match with a NON-EMPTY value. Returns an empty string when none
-// of the candidates appear, OR when every candidate that does appear
-// has an empty value (e.g. `?max=&limit=10` returns "10" because the
-// `max=` candidate has an empty value).
+// Try each candidate name in order; return the value of the FIRST
+// candidate that is PRESENT in the query string (including when its
+// value is empty). Returns an empty string when no candidate is
+// present at all.
 //
-// Empty-value semantics: a present-but-empty query parameter (`name=`
-// with nothing after the `=`) is treated as "fall through to the
-// next alias" rather than "present with empty value". This matches
-// the route-handler convention upstream of this helper, where every
-// caller already does `if (!value.empty()) { ... try parse ... } else
-// { fall through to default cap }`. A future helper variant that
-// distinguishes present-empty from absent could be added when the
-// route surface requires that distinction; today no route does.
+// Canonical-wins semantics (v0.11.0 hardening per Copilot review):
+// `?max=&limit=10` returns "" because the first candidate ("max")
+// is present in the query string -- even though its value is
+// empty. Pre-hardening behaviour skipped present-empty candidates
+// and fell through to aliases, which contradicted the documented
+// "canonical wins" contract. Route handlers already treat the
+// empty-string return as "fall through to default cap" via their
+// `if (!value.empty()) { ... try parse ... } else { default }`
+// pattern, so the net request-handling behaviour for the
+// `?max=&limit=10` case is "use the route's default cap" -- the
+// alias value is no longer accidentally promoted.
 //
 // Use when a canonical wire name has well-known operator-natural
-// aliases. List the canonical name first so callers that supply only
-// canonical (with a non-empty value) get canonical-wins semantics.
+// aliases. List the canonical name first; callers supplying ANY
+// value (or none) for the canonical name get canonical-wins
+// semantics, and aliases are consulted only when the canonical
+// name is genuinely absent from the query.
 //
 // Example:
 //   const auto maxValue = MasterControl::extractQueryParamAny(
@@ -101,11 +105,43 @@ inline std::string extractQueryParam(std::string_view query,
 inline std::string extractQueryParamAny(
     std::string_view query,
     std::initializer_list<std::string_view> candidates) {
+    if (query.empty()) return std::string();
     for (const auto& name : candidates) {
-        auto v = extractQueryParam(query, name);
-        if (!v.empty()) {
-            return v;
+        if (name.empty()) continue;
+        // Boundary-anchored presence check (same anchor as
+        // extractQueryParam): "<name>=" at position 0 OR
+        // "&<name>=" anywhere in the query string.
+        std::string needle;
+        needle.reserve(name.size() + 1);
+        needle.append(name.data(), name.size());
+        needle.push_back('=');
+        std::string_view::size_type valueStart = std::string_view::npos;
+        if (query.size() >= needle.size() &&
+            query.compare(0, needle.size(), needle) == 0) {
+            valueStart = needle.size();
+        } else {
+            std::string altNeedle;
+            altNeedle.reserve(needle.size() + 1);
+            altNeedle.push_back('&');
+            altNeedle.append(needle);
+            const auto p = query.find(altNeedle);
+            if (p != std::string_view::npos) {
+                valueStart = p + altNeedle.size();
+            }
         }
+        if (valueStart == std::string_view::npos) {
+            // Not present in the query string; try the next alias.
+            continue;
+        }
+        // Present (possibly with an empty value). Return the value
+        // verbatim -- empty string is a valid return that callers
+        // interpret as "fall through to default".
+        auto value = query.substr(valueStart);
+        const auto amp = value.find('&');
+        if (amp != std::string_view::npos) {
+            value = value.substr(0, amp);
+        }
+        return std::string(value);
     }
     return std::string();
 }
