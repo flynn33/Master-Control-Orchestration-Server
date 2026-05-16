@@ -459,6 +459,14 @@ winrt::Windows::Foundation::IAsyncAction SettingsSectionControl::ApplySettingsAs
 
     const auto instanceName = trimCopy(std::wstring(InstanceNameTextBox().Text().c_str()));
     const auto bindAddress = trimCopy(std::wstring(BindAddressTextBox().Text().c_str()));
+    // Capture on the UI thread. Reading a XAML element after
+    // co_await winrt::resume_background() marshals back to the UI thread,
+    // and that marshal can deadlock while the per-second snapshot tick is
+    // already touching this section -- Apply hangs indefinitely with status
+    // frozen on "Applying host settings...". Every other field on this
+    // surface is already captured into a local above; this toggle was the
+    // lone holdout.
+    const bool beaconEnabled = BeaconEnabledToggle().IsOn();
     if (instanceName.empty()) {
         SettingsStatusText().Text(L"Instance name is required.");
         co_return;
@@ -485,7 +493,7 @@ winrt::Windows::Foundation::IAsyncAction SettingsSectionControl::ApplySettingsAs
         bindAddress,
         static_cast<uint16_t>(*browserPort),
         static_cast<uint16_t>(*beaconPort),
-        BeaconEnabledToggle().IsOn(),
+        beaconEnabled,
         *cpuPercent,
         *memoryPercent,
         *bandwidthPercent,
