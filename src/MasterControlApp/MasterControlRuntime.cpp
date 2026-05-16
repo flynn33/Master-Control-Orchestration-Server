@@ -7742,18 +7742,30 @@ public:
         const std::string hostInUrl = bracketIpv6Host(gatewayHost);
         document.gateway.mcpUrl    = "http://" + hostInUrl + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.mcpPath;
         document.gateway.healthUrl = "http://" + hostInUrl + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.healthPath;
-        document.gateway.state = mcpGateway_ ? to_string(mcpGateway_->CurrentStatus().state) : "disabled";
+        const auto gatewayStatus = mcpGateway_ ? mcpGateway_->CurrentStatus()
+                                              : GatewayStatus{};
+        document.gateway.state = mcpGateway_ ? to_string(gatewayStatus.state) : "disabled";
 
-        // v0.11.0-alpha.2: when the gateway is configured for TLS dual-bind
-        // (cfg.mcpGateway.tlsEnabled), also advertise the HTTPS counterparts
-        // so strict clients (ChatGPT connector-edge, Claude.ai web, security-
-        // conscious browser extensions) that refuse plain HTTP get a working
-        // URL straight from the well-known doc. Empty strings stay otherwise
-        // so legacy clients don't see scheme drift.
-        document.gateway.tlsEnabled = gatewayConfig.tlsEnabled;
-        if (gatewayConfig.tlsEnabled) {
-            document.gateway.mcpUrlTls    = "https://" + hostInUrl + ":" + std::to_string(gatewayConfig.tlsListenPort) + gatewayConfig.mcpPath;
-            document.gateway.healthUrlTls = "https://" + hostInUrl + ":" + std::to_string(gatewayConfig.tlsListenPort) + gatewayConfig.healthPath;
+        // v0.11.0-alpha.2 (Copilot-review-hardened): gate the HTTPS TLS
+        // advertisement on the runtime tlsBound signal, not the bare
+        // cfg.mcpGateway.tlsEnabled flag. Pre-hardening Copilot flagged
+        // that we could publish an HTTPS URL the gateway knew was not
+        // serving -- e.g. when the URL prefix registered but no sslcert
+        // was bound, or when the operator left tlsCertThumbprint empty.
+        // tlsBound on GatewayStatus is set to true ONLY when:
+        //   * cfg.mcpGateway.tlsEnabled is true, AND
+        //   * the HTTPS URL prefix registered with HttpAddUrlToUrlGroup, AND
+        //   * cfg.mcpGateway.tlsCertThumbprint is non-empty (the operator's
+        //     "I bound a cert" signal from Configure-LocalServerCert.ps1)
+        // Strict clients following document.gateway.mcpUrlTls now get an
+        // URL the runtime believes is live; clients fall back to mcpUrl
+        // otherwise. tlsCertThumbprint is echoed so operators can verify
+        // the wired cert from the well-known doc.
+        document.gateway.tlsEnabled = gatewayStatus.tlsBound;
+        if (gatewayStatus.tlsBound) {
+            document.gateway.mcpUrlTls         = "https://" + hostInUrl + ":" + std::to_string(gatewayConfig.tlsListenPort) + gatewayConfig.mcpPath;
+            document.gateway.healthUrlTls      = "https://" + hostInUrl + ":" + std::to_string(gatewayConfig.tlsListenPort) + gatewayConfig.healthPath;
+            document.gateway.tlsCertThumbprint = gatewayStatus.tlsCertThumbprint;
         }
 
         document.onboarding.generic = adminBase + "/api/onboarding/generic";

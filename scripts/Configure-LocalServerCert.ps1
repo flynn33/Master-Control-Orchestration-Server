@@ -13,7 +13,8 @@
     Runs end-to-end on the host that runs the MCOS service. Designed for
     internal alpha distribution: self-signed per host (each LAN client must
     trust the exported .cer once). Upgrade paths to a local CA or BYO cert
-    are noted in `docs\implementation\tls-cert-options.md`.
+    are documented in the wiki:
+    https://github.com/flynn33/Master-Control-Orchestration-Server/wiki/TLS-and-HTTPS
 
     Steps:
       1. Generates a self-signed cert in Cert:\LocalMachine\My with SANs
@@ -136,28 +137,91 @@ Write-Host "    DNS SANs: $($dnsSans -join ', ')"
 Write-Host "    IP SANs:  $($ipSans -join ', ')"
 
 # -- 2. Generate self-signed cert in LocalMachine\My ----------------------
-# Reuse an existing cert with the same subject if one is already in the
-# store, otherwise mint a new one. We match by exact subject so re-running
-# the script with the same -CertSubject re-uses the cert (idempotent).
+# Reuse an existing cert with the same subject ONLY when it still covers
+# the current set of DNS + IP SANs AND has at least 90 days of validity
+# left. Pre-hardening (Copilot review) we reused any same-subject cert
+# blindly -- on hosts that gained a new LAN IP via DHCP / VPN / interface
+# change since the last run, that cert lacked the new IP SAN and strict
+# clients failed validation against `192.168.x.y is not in the SAN list`.
+# Re-mint whenever the SAN set drifts.
 $dn = "CN=$CertSubject"
 $existing = Get-ChildItem Cert:\LocalMachine\My -ErrorAction SilentlyContinue |
     Where-Object { $_.Subject -eq $dn }
 
+function Test-CertCoversRequiredSans {
+    param(
+        [Parameter(Mandatory=$true)] $Cert,
+        [Parameter(Mandatory=$true)] [System.Collections.Generic.List[string]]$RequiredDns,
+        [Parameter(Mandatory=$true)] [System.Collections.Generic.List[string]]$RequiredIp
+    )
+    $sanExt = $Cert.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' } | Select-Object -First 1
+    if (-not $sanExt) { return [pscustomobject]@{ Covers = $false; Reason = 'cert has no SAN extension'; CertDns = @(); CertIp = @() } }
+    # Format($true) returns multi-line text like:
+    #   DNS Name=localhost
+    #   DNS Name=MYHOST
+    #   IP Address=127.0.0.1
+    #   IP Address=192.168.1.7
+    $text = $sanExt.Format($true)
+    $certDns = @()
+    $certIp  = @()
+    foreach ($line in ($text -split "`r?`n")) {
+        $trim = $line.Trim()
+        if ($trim -match '^DNS Name=(.+)$') { $certDns += $matches[1].Trim() }
+        elseif ($trim -match '^IP Address=(.+)$') { $certIp += $matches[1].Trim() }
+    }
+    $missingDns = @($RequiredDns | Where-Object { $certDns -notcontains $_ })
+    $missingIp  = @($RequiredIp  | Where-Object { $certIp  -notcontains $_ })
+    if ($missingDns.Count -gt 0 -or $missingIp.Count -gt 0) {
+        $r = "missing SANs: "
+        if ($missingDns.Count -gt 0) { $r += "DNS=[$($missingDns -join ',')] " }
+        if ($missingIp.Count  -gt 0) { $r += "IP=[$($missingIp -join ',')]" }
+        return [pscustomobject]@{ Covers = $false; Reason = $r.Trim(); CertDns = $certDns; CertIp = $certIp }
+    }
+    return [pscustomobject]@{ Covers = $true; Reason = 'all SANs present'; CertDns = $certDns; CertIp = $certIp }
+}
+
+$reuseExisting = $false
+$reuseCert = $null
+$reuseRejectReason = $null
 if ($existing) {
-    $cert = $existing | Sort-Object NotAfter -Descending | Select-Object -First 1
-    Write-Host "==> Re-using existing cert $($cert.Thumbprint) (subject=$dn, expires $($cert.NotAfter))"
+    # Newest first; reuse the freshest cert that still passes validation.
+    foreach ($candidate in ($existing | Sort-Object NotAfter -Descending)) {
+        $daysLeft = ($candidate.NotAfter - (Get-Date)).TotalDays
+        if ($daysLeft -lt 90) {
+            $reuseRejectReason = "cert $($candidate.Thumbprint) expires in $([int]$daysLeft) days (< 90-day renewal threshold)"
+            continue
+        }
+        $sanCheck = Test-CertCoversRequiredSans -Cert $candidate -RequiredDns $dnsSans -RequiredIp $ipSans
+        if (-not $sanCheck.Covers) {
+            $reuseRejectReason = "cert $($candidate.Thumbprint) does not cover the current SANs: $($sanCheck.Reason)"
+            continue
+        }
+        $reuseExisting = $true
+        $reuseCert = $candidate
+        break
+    }
+}
+
+if ($reuseExisting) {
+    $cert = $reuseCert
+    Write-Host "==> Re-using existing cert $($cert.Thumbprint) (subject=$dn, expires $($cert.NotAfter), SANs match current host)"
 } else {
+    if ($existing -and $reuseRejectReason) {
+        Write-Host "==> Existing cert(s) with subject $dn rejected for reuse: $reuseRejectReason"
+        Write-Host "    Minting a fresh cert covering the current SAN set."
+    }
     $allSans = New-Object System.Collections.Generic.List[string]
     foreach ($d in $dnsSans) { $allSans.Add("DNS=$d") }
     foreach ($i in $ipSans)  { $allSans.Add("IPAddress=$i") }
-    # New-SelfSignedCertificate accepts -DnsName for the SAN set but it
-    # does NOT honor IPAddress entries via that parameter. Use
-    # -Extension manually so both DNS + IP SANs land in the cert.
-    # PowerShell 5.1 supports New-SelfSignedCertificate with -DnsName
-    # for DNS SANs; IP SANs require the explicit text extension below.
+    # New-SelfSignedCertificate's -DnsName parameter would auto-generate a
+    # Subject Alternative Name extension and conflict with the SAN we set
+    # via -TextExtension below ("DnsName parameter conflicts with supplied
+    # Subject Alternative Name extension"). We need IP SANs (clients
+    # connect to literal IPs and most TLS stacks won't match those against
+    # DNS-only SANs), so the TextExtension SAN is authoritative -- drop
+    # -DnsName entirely.
     $cert = New-SelfSignedCertificate `
         -Subject $dn `
-        -DnsName $dnsSans `
         -CertStoreLocation 'Cert:\LocalMachine\My' `
         -NotAfter (Get-Date).AddYears($ValidityYears) `
         -KeyUsage DigitalSignature, KeyEncipherment `

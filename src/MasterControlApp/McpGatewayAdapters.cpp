@@ -128,23 +128,13 @@ std::string composeHealthUrl(const McpGatewayConfiguration& configuration) {
     return stream.str();
 }
 
-// v0.11.0-alpha.2: HTTPS counterpart to composeHealthUrl. Returns empty
-// when TLS is off so callers can use emptiness as the disabled signal.
-std::string composeHealthUrlTls(const McpGatewayConfiguration& configuration) {
-    if (!configuration.tlsEnabled) {
-        return std::string();
-    }
-    const std::string host = configuration.listenHost.empty()
-        ? std::string("0.0.0.0")
-        : bracketIpv6Host(configuration.listenHost);
-    std::ostringstream stream;
-    stream << "https://"
-           << host
-           << ":"
-           << configuration.tlsListenPort
-           << ensureLeadingSlash(configuration.healthPath);
-    return stream.str();
-}
+// v0.11.0-alpha.2 (Copilot-review-hardened): the HTTPS health URL is
+// composed inline by the discovery emit (MasterControlRuntime.cpp)
+// using the runtime-resolved LAN IP host. We intentionally do NOT keep
+// a composeHealthUrlTls helper here because the only consumer needs
+// the LAN IP rather than configuration.listenHost (which is typically
+// the 0.0.0.0 wildcard). Carrying an unused helper invites drift
+// between the two compositions.
 
 } // namespace
 
@@ -554,17 +544,51 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
     serveThread_ = std::thread(&NativeHttpSysGatewayAdapter::serveLoop, this);
 
     status_.state = GatewayState::Running;
-    // v0.11.0-alpha.2: surface TLS dual-bind state in the operator-facing
-    // status message so /api/gateway/status and /api/health/summary make
-    // the HTTPS URL discoverable without an additional config GET.
+    // v0.11.0-alpha.2 (Copilot-review-hardened): tlsBound on the gateway
+    // status is the runtime signal that downstream surfaces gate on. It
+    // is true ONLY when:
+    //   1. cfg.mcpGateway.tlsEnabled == true
+    //   2. The HTTPS URL prefix successfully registered via
+    //      HttpAddUrlToUrlGroup (captured in the local `tlsBound` above)
+    //   3. The operator declared a cert by setting
+    //      cfg.mcpGateway.tlsCertThumbprint -- non-empty thumbprint
+    //
+    // Pre-hardening Copilot flagged that HTTP.sys returns NO_ERROR on
+    // URL-prefix registration even when no sslcert is bound; the prior
+    // emit would publish HTTPS URLs that any handshake would fail.
+    // Treating tlsCertThumbprint as the operator's "I bound a cert"
+    // signal (Configure-LocalServerCert.ps1 prints the thumbprint snippet
+    // for exactly this purpose) closes that gap without requiring the
+    // runtime to do its own TLS-handshake self-probe.
+    const bool tlsCertDeclared = !configuration_.tlsCertThumbprint.empty();
+    const bool tlsRuntimeReady = configuration_.tlsEnabled
+                                 && tlsBound
+                                 && tlsCertDeclared;
+    status_.tlsBound = tlsRuntimeReady;
+    if (tlsRuntimeReady) {
+        status_.mcpUrlTls = composeMcpUrlTls(configuration_);
+        status_.tlsCertThumbprint = configuration_.tlsCertThumbprint;
+    } else {
+        status_.mcpUrlTls.clear();
+        status_.tlsCertThumbprint.clear();
+    }
+
+    // Operator-facing status message: surface enough state to triage
+    // each failure mode (bind failed, cert missing, etc.) without
+    // requiring a /api/config GET.
     std::string runningMessage = "the in-process HTTP.sys adapter listening on " + status_.mcpUrl;
     if (configuration_.tlsEnabled) {
-        if (tlsBound) {
-            runningMessage += " (+ TLS dual-bind on "
-                + composeMcpUrlTls(configuration_) + ")";
-        } else {
-            runningMessage += " (TLS configured but bind FAILED: "
+        if (tlsRuntimeReady) {
+            runningMessage += " (+ TLS dual-bind on " + status_.mcpUrlTls + ")";
+        } else if (!tlsBound) {
+            runningMessage += " (TLS configured but URL prefix bind FAILED: "
                 + tlsBindError + ")";
+        } else if (!tlsCertDeclared) {
+            runningMessage += " (TLS configured + URL prefix registered, but "
+                              "cfg.mcpGateway.tlsCertThumbprint is empty -- "
+                              "run scripts\\Configure-LocalServerCert.ps1 and "
+                              "merge the printed snippet into mcos.config.json. "
+                              "HTTPS handshakes will fail until a cert is bound.)";
         }
     }
     runningMessage += ". MCP tools/list and tools/call routed through the supervisor + lease router.";

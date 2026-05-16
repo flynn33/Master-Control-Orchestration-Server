@@ -228,3 +228,17 @@ install(
     FILES "${CMAKE_SOURCE_DIR}/scripts/Register-McosControlPlugin.ps1"
     DESTINATION "."
 )
+
+# v0.11.0-alpha.2 (Copilot-review-hardened): ship the operator-side TLS
+# provisioning + rollback scripts in the MSI so post-install instructions
+# like `scripts\Configure-LocalServerCert.ps1` actually find the file under
+# `C:\Program Files\Master Control Orchestration Server\scripts\`.
+# Pre-hardening only Register-McosControlPlugin.ps1 was packaged; operators
+# of a clean alpha.2 install hit "command not found" when following the
+# wiki's TLS enable runbook.
+install(
+    FILES
+        "${CMAKE_SOURCE_DIR}/scripts/Configure-LocalServerCert.ps1"
+        "${CMAKE_SOURCE_DIR}/scripts/Remove-LocalServerCert.ps1"
+    DESTINATION "scripts"
+)

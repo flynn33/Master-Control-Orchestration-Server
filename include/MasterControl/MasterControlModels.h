@@ -773,10 +773,14 @@ struct McpGatewayConfiguration final {
     // cert directly -- HTTP.sys terminates SSL using whatever cert is bound
     // to the ip:port at the OS level.
     //
-    // `tlsCertThumbprint` is informational for the operator-facing surfaces
-    // (`/api/discovery`, `/api/health/summary`) so they can echo back which
-    // cert is bound. The runtime does not verify it -- the OS-level binding
-    // is authoritative.
+    // `tlsCertThumbprint` is the operator's signal that they ran
+    // Configure-LocalServerCert.ps1 (or otherwise bound a cert at
+    // ip:tlsListenPort via netsh). The runtime treats it as a precondition
+    // for advertising HTTPS via GatewayStatus.tlsBound -- empty means
+    // "no cert declared, do not advertise HTTPS URLs" even when the URL
+    // prefix registered. The thumbprint itself is echoed back via the
+    // /api/discovery gateway block (DiscoveryGateway.tlsCertThumbprint)
+    // so operators can verify which cert is wired without shell access.
     bool tlsEnabled = false;
     uint16_t tlsListenPort = 8443;
     std::string tlsCertThumbprint;
@@ -819,6 +823,16 @@ struct GatewayStatus final {
     std::string mcpUrl;              // empty until Running
     std::string startedAtUtc;
     std::string adapterType;         // "native" | "fake"
+    // v0.11.0-alpha.2 (Copilot-review-hardened): runtime TLS readiness
+    // signal. tlsBound == true iff the HTTPS URL prefix registered
+    // successfully AND the operator declared a cert by setting
+    // cfg.mcpGateway.tlsCertThumbprint. Discovery + onboarding gate on
+    // this rather than the bare config flag so we never advertise an
+    // HTTPS URL that the runtime knows is not actually usable. Empty
+    // mcpUrlTls / tlsCertThumbprint signal "no TLS active right now."
+    bool tlsBound = false;
+    std::string mcpUrlTls;
+    std::string tlsCertThumbprint;
 };
 
 struct GatewayHealth final {
@@ -1145,14 +1159,25 @@ struct DiscoveryGateway final {
     std::string mcpUrl;      // e.g. http://192.168.1.10:8080/mcp
     std::string healthUrl;   // e.g. http://192.168.1.10:8080/health
     std::string state;       // GatewayState slug
-    // v0.11.0-alpha.2: optional TLS dual-bind URLs. Populated only when
-    // McpGatewayConfiguration.tlsEnabled is true. Empty strings signal
-    // "TLS disabled on this host." Strict clients (ChatGPT connector,
-    // Claude.ai web, security-conscious browser extensions) that refuse
-    // plain HTTP should follow these URLs.
-    std::string mcpUrlTls;    // e.g. https://192.168.1.10:8443/mcp
-    std::string healthUrlTls; // e.g. https://192.168.1.10:8443/health
-    bool tlsEnabled = false;
+    // v0.11.0-alpha.2 (Copilot-review-hardened): optional TLS dual-bind
+    // URLs. These are populated only when the runtime's GatewayStatus
+    // reports tlsBound == true -- i.e., the HTTPS URL prefix successfully
+    // registered AND the operator declared a cert via
+    // cfg.mcpGateway.tlsCertThumbprint. Pre-hardening these fields were
+    // gated on the bare config flag, which could publish an HTTPS URL
+    // that the gateway knew was not actually serving (cert never bound,
+    // URL prefix failed under ERROR_ACCESS_DENIED, etc.). Strict clients
+    // (ChatGPT connector, Claude.ai web, security-conscious browser
+    // extensions) that follow `mcpUrlTls` now get a URL the runtime
+    // believes is live.
+    //
+    // tlsCertThumbprint is the SHA1 of the cert the operator declared
+    // for the binding -- echoed here so operators can verify the wired
+    // cert matches what they intended without shell access.
+    std::string mcpUrlTls;          // e.g. https://192.168.1.10:8443/mcp
+    std::string healthUrlTls;       // e.g. https://192.168.1.10:8443/health
+    bool tlsEnabled = false;        // runtime tlsBound, not config flag
+    std::string tlsCertThumbprint;  // SHA1 of the bound cert; empty when tlsEnabled=false
 };
 
 struct DiscoveryOnboarding final {
@@ -2166,7 +2191,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     message,
     mcpUrl,
     startedAtUtc,
-    adapterType)
+    adapterType,
+    tlsBound,
+    mcpUrlTls,
+    tlsCertThumbprint)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GatewayHealth,
@@ -2201,7 +2229,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     state,
     mcpUrlTls,
     healthUrlTls,
-    tlsEnabled)
+    tlsEnabled,
+    tlsCertThumbprint)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     DiscoveryOnboarding,

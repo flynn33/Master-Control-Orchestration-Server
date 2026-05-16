@@ -8,40 +8,6 @@ The release-management and doc-sync GitHub agents that previously generated part
 
 ### Deferred to v1.0.0+
 
-## [0.11.0-alpha.2] - 2026-05-15
-
-### Summary
-
-**LAN-trust TLS dual-bind on the MCP gateway.** Adds optional HTTPS support so strict clients (ChatGPT connector-edge, Claude.ai web, security-conscious browser extensions) that refuse plain HTTP can connect. When `cfg.mcpGateway.tlsEnabled=true`, `NativeHttpSysGatewayAdapter` registers a second URL prefix `https://+:tlsListenPort/` on the same HTTP.sys URL group + request queue alongside the existing `http://+:listenPort/`. The same handler serves both prefixes — no per-route plumbing changes.
-
-Cert binding is operator-managed out-of-band via `scripts\Configure-LocalServerCert.ps1` (self-signed cert generation + `netsh http add sslcert` + Windows Firewall rule + optional service restart). `/api/discovery` and onboarding profiles automatically emit the HTTPS URL when TLS is enabled, so `.mcp.json` snippets clients receive carry `https://` straight from the well-known doc.
-
-App-layer auth remains intentionally deferred to retail — transport TLS is a separate concern from authentication; LAN trust posture intact. HTTP fallback on the existing `listenPort` stays available for in-LAN curl / browser-dashboard debugging tooling.
-
-### Added
-
-- **`McpGatewayConfiguration.tlsEnabled` / `tlsListenPort` (default 8443) / `tlsCertThumbprint`** — three new persistable fields on the gateway config block. Default state is `tlsEnabled=false`, so existing installs stay HTTP-only without operator intervention.
-- **TLS dual-bind in `NativeHttpSysGatewayAdapter::Start()`** — second `HttpAddUrlToUrlGroup(https://+:tlsListenPort/)` call after the existing HTTP prefix succeeds. Bind failures (cert not bound, URL ACL missing) are recorded in the gateway status message but do not fail Start — HTTP fallback continues serving.
-- **`DiscoveryGateway.mcpUrlTls` / `healthUrlTls` / `tlsEnabled`** — three new fields on the discovery doc's gateway block. Populated only when TLS is enabled.
-- **HTTPS-aware onboarding profile builder** — `OnboardingService::profileFor()` prefers `document.gateway.mcpUrlTls` over `mcpUrl` when TLS is on. All five client types (`claude-code`, `codex`, `grok`, `chatgpt`, `generic`) emit `.mcp.json` snippets with `https://` URLs automatically.
-- **`scripts\Configure-LocalServerCert.ps1`** — idempotent self-signed cert provisioning. Generates cert with DNS + IP SANs in `Cert:\LocalMachine\My`, exports public key to `%PUBLIC%\Documents\Master Control Orchestration Server\certs\mcos-server-public.cer`, runs `netsh http add sslcert ipport=...`, opens firewall rule, optionally restarts the service. Prints the operator-facing `mcos.config.json` snippet.
-- **`scripts\Remove-LocalServerCert.ps1`** — companion rollback. Removes the binding, removes the firewall rule, optionally deletes the cert + exported `.cer`.
-- **`handoff/realignment/v0.11.0-alpha.2-tls-dual-bind.md`** — alpha.2 cut report covering scope, source changes, scripts, build pipeline notes, operator quickstart for HTTPS.
-
-### Changed
-
-- `VERSION.json` bumped 0.11.0-alpha.1 → 0.11.0-alpha.2. `last_release_commit` backfilled to the v0.11.0 merge commit `94cad65`. Two new `history[]` entries: alpha.2 at index 0, alpha.1 at index 1; v0.11.0 commit field backfilled to `94cad65`.
-- `vcpkg.json` `version-string` synced.
-- README version badge bumped to `v0.11.0--alpha.2`. The `Internal Alpha` channel badge moved up the alpha line.
-
-### Notes
-
-- **Admin HTTP listener (port 7300) stays HTTP-only this iteration.** It uses `SimpleHttpServer` (Winsock), not HTTP.sys, so adding TLS there requires an SChannel handshake rewrite — out of scope for alpha.2. Operator-facing surfaces (WinUI Shell, browser dashboard) typically run on the same trusted host as the service, so the practical impact is bounded.
-- **Self-signed cert means per-machine trust on every LAN client.** Distribute `mcos-server-public.cer` from `%PUBLIC%\Documents\Master Control Orchestration Server\certs\` and add it to each client's OS trust store (Windows: `certmgr.msc` → Trusted Root; macOS: `security add-trusted-cert`; Linux: `update-ca-trust`). A local-CA upgrade path is documented for the next iteration.
-- **`Build-Msi.ps1`'s regex** already accepts `-alpha.N` (shipped in alpha.1 / PR #8) — no installer change required for this cut.
-
-
-
 - CLU rebuild Phase 2 + Phase 3 (`enforceAction` wiring).
 - PHASE-14 `DiagnosticsSectionControl` with FileSavePicker export — plan file in place, implementation gated on maintainer approval.
 - Telemetry log rotation (size / age / count). v0.10.5 throttling defers the disk-fill horizon from weeks to many months but does not bound it.
@@ -54,6 +20,42 @@ App-layer auth remains intentionally deferred to retail — transport TLS is a s
 - PHASE-14 Slice C: WinUI Shell `DiagnosticsSectionControl` with `FileSavePicker` for native Export Markdown / Export JSON.
 - PHASE-14 Slice D: Browser dashboard Diagnostics tab + Blob-download Export buttons.
 - PHASE-14 Slice E: `SqliteDiagnosticsStore` (persistent ring + retention + schema migration) + tests + completion report. Required before `POST /api/diagnostics/clear` can move from 501 to functional.
+
+## [0.11.0-alpha.2] - 2026-05-15
+
+### Summary
+
+**LAN-trust TLS dual-bind on the MCP gateway.** Adds optional HTTPS support so strict clients (ChatGPT connector-edge, Claude.ai web, security-conscious browser extensions) that refuse plain HTTP can connect. When `cfg.mcpGateway.tlsEnabled=true` AND a cert thumbprint is declared, `NativeHttpSysGatewayAdapter` registers a second URL prefix `https://+:tlsListenPort/` on the same HTTP.sys URL group + request queue alongside the existing `http://+:listenPort/`. The same handler serves both prefixes — no per-route plumbing changes.
+
+Cert binding is operator-managed out-of-band via `scripts\Configure-LocalServerCert.ps1` (self-signed cert generation + `netsh http add sslcert` + Windows Firewall rule + optional service restart). `/api/discovery` and onboarding profiles emit the HTTPS URL only when the runtime confirms TLS is bound (HTTPS URL prefix registered AND `cfg.mcpGateway.tlsCertThumbprint` non-empty), so `.mcp.json` snippets clients receive carry `https://` straight from the well-known doc when — and only when — the gateway can actually serve them.
+
+App-layer auth remains intentionally deferred to retail — transport TLS is a separate concern from authentication; LAN trust posture intact. HTTP fallback on the existing `listenPort` stays available for in-LAN curl / browser-dashboard debugging tooling.
+
+### Added
+
+- **`McpGatewayConfiguration.tlsEnabled` / `tlsListenPort` (default 8443) / `tlsCertThumbprint`** — three new persistable fields on the gateway config block. Default state is `tlsEnabled=false`, so existing installs stay HTTP-only without operator intervention.
+- **TLS dual-bind in `NativeHttpSysGatewayAdapter::Start()`** — second `HttpAddUrlToUrlGroup(https://+:tlsListenPort/)` call after the existing HTTP prefix succeeds. Bind failures (URL ACL missing, prefix held by another process) are recorded in the gateway status message but do not fail Start — HTTP fallback continues serving.
+- **`GatewayStatus.tlsBound` / `mcpUrlTls` / `tlsCertThumbprint`** *(Copilot-review-hardened)* — runtime TLS readiness signal on the gateway status. `tlsBound=true` only when the HTTPS URL prefix registered AND `cfg.mcpGateway.tlsCertThumbprint` is non-empty (the operator's "I bound a cert" signal). Discovery + onboarding gate on this rather than the bare config flag.
+- **`DiscoveryGateway.mcpUrlTls` / `healthUrlTls` / `tlsEnabled` / `tlsCertThumbprint`** — four new fields on the discovery doc's gateway block. Populated only when `GatewayStatus.tlsBound` is true. The thumbprint is echoed so operators can verify the wired cert via `/.well-known/mcos.json`.
+- **HTTPS-aware onboarding profile builder** — `OnboardingService::profileFor()` prefers `document.gateway.mcpUrlTls` over `mcpUrl` when TLS is bound at runtime. All five client types (`claude-code`, `codex`, `grok`, `chatgpt`, `generic`) emit `.mcp.json` snippets with `https://` URLs automatically.
+- **`scripts\Configure-LocalServerCert.ps1`** — idempotent self-signed cert provisioning. Generates cert with DNS + IP SANs in `Cert:\LocalMachine\My`, exports public key to `%PUBLIC%\Documents\Master Control Orchestration Server\certs\mcos-server-public.cer`, runs `netsh http add sslcert ipport=...`, opens firewall rule, optionally restarts the service. Prints the operator-facing `mcos.config.json` snippet. *Copilot-review-hardened:* validates existing-cert SAN coverage + 90-day renewal headroom before reuse; re-mints when the SAN set has drifted (DHCP/VPN-induced IP change) or expiry is within the renewal window.
+- **`scripts\Remove-LocalServerCert.ps1`** — companion rollback. Removes the binding, removes the firewall rule, optionally deletes the cert + exported `.cer`. Success message clarified to point operators at the right re-enable steps.
+- **MSI install rules for the TLS scripts** *(Copilot-review-hardened)* — `CMakeLists.txt` now installs `Configure-LocalServerCert.ps1` and `Remove-LocalServerCert.ps1` under `scripts/` in the MSI payload. Pre-hardening the scripts existed only in the repo, so post-install `scripts\Configure-LocalServerCert.ps1` invocations failed with "command not found."
+- **Discovery JSON round-trip test coverage for the TLS fields** *(Copilot-review-hardened)* — `testDiscoveryDocumentJsonRoundTrip` now exercises `gateway.tlsEnabled`, `mcpUrlTls`, `healthUrlTls`, and `tlsCertThumbprint` in both the TLS-on and TLS-off shapes so future schema/serialization changes cannot silently drop them.
+- **`handoff/realignment/v0.11.0-alpha.2-tls-dual-bind.md`** — alpha.2 cut report covering scope, source changes, scripts, build pipeline notes, operator quickstart for HTTPS.
+
+### Changed
+
+- `installer/Build-Msi.ps1` — `ConvertTo-MsiProductVersion` regex extended from `-rc.N` only to `-(?:alpha|beta|rc)\.N`. This is the same change as PR #8; the two PRs overlap because PR #8 hadn't merged when this branch was cut. Either PR's commit cleanly subsumes the other.
+- `VERSION.json` bumped 0.11.0-alpha.1 → 0.11.0-alpha.2. `last_release_commit` backfilled to the v0.11.0 merge commit `94cad65`. Two new `history[]` entries: alpha.2 at index 0, alpha.1 at index 1; v0.11.0 commit field backfilled to `94cad65`.
+- `vcpkg.json` `version-string` synced.
+- README version badge bumped to `v0.11.0--alpha.2`. The `Internal Alpha` channel badge retained.
+
+### Notes
+
+- **Admin HTTP listener (port 7300) stays HTTP-only this iteration.** It uses `SimpleHttpServer` (Winsock), not HTTP.sys, so adding TLS there requires an SChannel handshake rewrite — out of scope for alpha.2. Operator-facing surfaces (WinUI Shell, browser dashboard) typically run on the same trusted host as the service, so the practical impact is bounded.
+- **Self-signed cert means per-machine trust on every LAN client.** Distribute `mcos-server-public.cer` from `%PUBLIC%\Documents\Master Control Orchestration Server\certs\` and add it to each client's OS trust store (Windows: `certmgr.msc` → Trusted Root; macOS: `security add-trusted-cert`; Linux: `update-ca-trust`). A local-CA upgrade path is on the roadmap; the wiki's TLS-and-HTTPS page documents both options.
+- **PR #9 vs PR #8 overlap on `installer/Build-Msi.ps1`.** Both PRs apply the same regex extension. The second-merger has a single-line trivial conflict; resolve by keeping either copy.
 
 ## [0.11.0] - 2026-05-15
 
