@@ -214,13 +214,24 @@ void TelemetrySectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
         std::to_wstring(liveMemory) + L"% live / " +
         std::to_wstring(snapshot.memoryAllocationPercent) + L"% cap"));
 
-    // Bandwidth: render live throughput (bytes/sec, human-formatted) in the
-    // value text. The bar stays bound to allocation because we have no
-    // saturation percentage to overlay.
-    const auto bwLiveText = formatTraffic(snapshot.bytesSentPerSecond, snapshot.bytesReceivedPerSecond);
+    // Bandwidth: render live throughput in the value text. Use formatRate()
+    // (KB/s/MB/s/GB/s unit scaling) per TX/RX rather than formatTraffic()
+    // which prints raw bytes. The bar stays bound to allocation because we
+    // have no saturation percentage to overlay -- PDH gives us bytes/sec,
+    // not a saturation ratio against an unknown link capacity.
+    //
+    // Copilot-review-hardened: pre-hardening this called formatTraffic()
+    // which renders "TX <raw bytes> B/s | RX <raw bytes> B/s" -- not the
+    // KB/s/MB/s the operator expects to see and not consistent with the
+    // adjacent TX/RX value tiles in the Live Traffic section. Switching
+    // to formatRate() per direction matches those tiles' formatting.
+    // Also drops a redundant std::wstring(...) copy on a value that is
+    // already std::wstring -- formatTraffic / formatRate both return by
+    // value, so concatenation works without an extra copy.
     BandwidthAllocationValueText().Text(winrt::hstring(
-        std::wstring(bwLiveText) + L" / " +
-        std::to_wstring(snapshot.bandwidthAllocationPercent) + L"% cap"));
+        L"TX " + formatRate(snapshot.bytesSentPerSecond) +
+        L" / RX " + formatRate(snapshot.bytesReceivedPerSecond) +
+        L" / " + std::to_wstring(snapshot.bandwidthAllocationPercent) + L"% cap"));
 
     StorageAllocationValueText().Text(winrt::hstring(
         std::to_wstring(liveStorage) + L"% live / " +
