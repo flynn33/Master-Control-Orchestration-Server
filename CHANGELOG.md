@@ -46,8 +46,7 @@ App-layer auth remains intentionally deferred to retail — transport TLS is a s
 
 ### Changed
 
-- `installer/Build-Msi.ps1` — `ConvertTo-MsiProductVersion` regex extended from `-rc.N` only to `-(?:alpha|beta|rc)\.N`. This is the same change as PR #8; the two PRs overlap because PR #8 hadn't merged when this branch was cut. Either PR's commit cleanly subsumes the other.
-- `VERSION.json` bumped 0.11.0-alpha.1 → 0.11.0-alpha.2. `last_release_commit` backfilled to the v0.11.0 merge commit `94cad65`. Two new `history[]` entries: alpha.2 at index 0, alpha.1 at index 1; v0.11.0 commit field backfilled to `94cad65`.
+- `VERSION.json` bumped 0.11.0-alpha.1 → 0.11.0-alpha.2. `last_release_commit` backfilled to the v0.11.0-alpha.1 cut commit (`d477571c...`). Two new `history[]` entries: alpha.2 at index 0, alpha.1 at index 1 with its commit field also backfilled to `d477571c...` post-PR-#8-merge.
 - `vcpkg.json` `version-string` synced.
 - README version badge bumped to `v0.11.0--alpha.2`. The `Internal Alpha` channel badge retained.
 
@@ -55,7 +54,31 @@ App-layer auth remains intentionally deferred to retail — transport TLS is a s
 
 - **Admin HTTP listener (port 7300) stays HTTP-only this iteration.** It uses `SimpleHttpServer` (Winsock), not HTTP.sys, so adding TLS there requires an SChannel handshake rewrite — out of scope for alpha.2. Operator-facing surfaces (WinUI Shell, browser dashboard) typically run on the same trusted host as the service, so the practical impact is bounded.
 - **Self-signed cert means per-machine trust on every LAN client.** Distribute `mcos-server-public.cer` from `%PUBLIC%\Documents\Master Control Orchestration Server\certs\` and add it to each client's OS trust store (Windows: `certmgr.msc` → Trusted Root; macOS: `security add-trusted-cert`; Linux: `update-ca-trust`). A local-CA upgrade path is on the roadmap; the wiki's TLS-and-HTTPS page documents both options.
-- **PR #9 vs PR #8 overlap on `installer/Build-Msi.ps1`.** Both PRs apply the same regex extension. The second-merger has a single-line trivial conflict; resolve by keeping either copy.
+
+## [0.11.0-alpha.1] - 2026-05-15
+
+### Summary
+
+First internal alpha cut of the v0.11.0 line. Packages the merged operator-audit work (closes items 1–7 from the operator's 2026-05-15 testing-phase audit) as a signed-ready Windows Installer MSI for internal LAN distribution. The MSI is the only operator-facing installer; the zip-archive path continues to ship alongside for headless / CI rollouts. No new runtime code beyond the v0.11.0 merge tip (`94cad65`). Channel: **Internal Alpha** — `auth=none, trust=lan` per the operator's secure-LAN directive; app-layer auth deferred to the retail build.
+
+### Added
+
+- **`MasterControlOrchestrationServer-v0.11.0-alpha.1-win-x64.msi`** under `dist/packages/release/` produced by `scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release -Version 0.11.0-alpha.1`. MSI ProductVersion `0.11.0.1` (alpha BUILD ordinal 1).
+- **`handoff/realignment/v0.11.0-alpha.1-internal-alpha.md`** — alpha cut report. Lists the runtime probes that gated the cut (32/32 pools healthy, 40/40 boot self-tests passed, MCP Gateway `tools/list` returning 126 tools on loopback + LAN IP, discovery beacon advertising the full capability set) and the deferred end-to-end client-integration and DNS-SD peer-probe steps the operator drives during alpha.
+- **`Internal Alpha` channel badge** in `README.md` next to the version badge so operators can spot the alpha cut at a glance.
+
+### Changed
+
+- **`installer/Build-Msi.ps1` `ConvertTo-MsiProductVersion`** — regex extended from `(?:-rc\.(?<build>\d+))?` to `(?:-(?:alpha|beta|rc)\.(?<build>\d+))?` so semver-correct `-alpha.N` and `-beta.N` pre-release tags map to MSI `MAJOR.MINOR.PATCH.N` the same way `-rc.N` did. Pre-fix the regex threw `Unsupported package version format` on anything but retail or `-rc.N`. Verified accepts: `0.11.0` (.0), `0.11.0-alpha.1` (.1), `0.11.0-beta.3` (.3), `0.11.0-rc.7` (.7). Verified rejects: `0.11.0-alpha` (no ordinal), `0.11.0-zeta.1` (unknown prefix), `0.11` (no patch).
+- **`VERSION.json`** — `current_version` bumped `0.11.0` → `0.11.0-alpha.1`, `current_tag` bumped `v0.11.0` → `v0.11.0-alpha.1`, `last_release_commit` backfilled from `"pending"` to `94cad65c8713523038d5c12b61cee3913dc15de7` (the v0.11.0 merge commit). New `history[0]` entry for `0.11.0-alpha.1`; existing `history[1]` (v0.11.0) commit field also backfilled to `94cad65...`.
+- **`README.md`** — version badge `v0.11.0` → `v0.11.0--alpha.1` (shields.io hyphen escape). Added blockquote callout below the badge row describing the alpha cut + linking to the alpha release report.
+- **`vcpkg.json`** — `version-string` bumped `0.11.0` → `0.11.0-alpha.1` via `Sync-RepositoryVersionBadges.ps1`.
+- **`handoff/realignment/manifest.json`** — release manifest updated with the alpha cut entry.
+
+### Notes
+
+- **MSI upgrade ordering caveat.** `0.11.0-alpha.1` carries MSI ProductVersion `0.11.0.1`; a future retail `v0.11.0` would carry `0.11.0.0` which Windows Installer treats as *older*. This is intentional for an internal alpha that gets replaced by a `0.11.1` or `0.12.0` retail bump rather than by a same-band retail rebuild. If a same-band retail rebuild is required later, it must bump to `0.11.0-rc.N` or `0.11.1` to upgrade cleanly.
+- **`.rc` VERSIONINFO unchanged.** `Sync-RepositoryVersionBadges.ps1` strips the `-alpha.N` suffix before writing the numeric `FILEVERSION`/`PRODUCTVERSION` 4-tuple, so the `.rc` blocks stay at `0,11,0,0` (matching the v0.11.0 cut). MSI ProductVersion (`0.11.0.1`) and the runtime's `MASTERCONTROL_VERSION` literal (`0.11.0-alpha.1`, generated by CMake from `VERSION.json`) carry the alpha ordinal; `.rc` is cosmetic-only for Explorer File-Properties tooltips and intentionally not surfaced for the alpha.
 
 ## [0.11.0] - 2026-05-15
 

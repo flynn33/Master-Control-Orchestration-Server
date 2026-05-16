@@ -9,6 +9,8 @@
 ![governance](https://img.shields.io/badge/governance-CLU%20%2B%20Forsetti-5a00e8?style=flat-square)
 ![license](https://img.shields.io/badge/license-Proprietary-031018?style=flat-square)
 
+> **v0.11.0-alpha.1 — first internal alpha.** Packages the merged v0.11.0 tree (commit `94cad65`) as a Windows Installer MSI for LAN distribution. Closes operator-audit items 1–7 (PHASE-14 Slice A diagnostics surface + v0.10.21 supervisor/telemetry/rotation hardening + v0.10.15-20 query alias / SSE resume / JSON strictness / npx pool seeds / mcp-server-runtime routes). LAN trust posture intact — `auth=none, trust=lan` per the operator's secure-LAN directive. App-layer auth lands in the retail build. See [`handoff/realignment/v0.11.0-alpha.1-internal-alpha.md`](handoff/realignment/v0.11.0-alpha.1-internal-alpha.md) for the alpha cut report.
+
 > **A Windows-native LAN MCP Gateway host.** External AI coding clients (Claude Code, Codex, Grok, ChatGPT, generic MCP) connect to one MCOS-advertised endpoint, consume server-generated onboarding profiles and CLU/Forsetti governance bundles, and operate against supervised MCP server and sub-agent worker pools. MCOS owns discovery, governance, telemetry, worker supervision, autoscaling, dashboarding, and Windows packaging.
 
 ---
