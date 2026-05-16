@@ -12,21 +12,47 @@
             <!-- Hero header -->
             <Border Style="{StaticResource ShellHeroCardStyle}">
                 <StackPanel Spacing="10">
-                    <!-- v0.11.0-alpha.2 follow-up: the eyebrow now carries the
-                         build version next to the section name. Populated at
+                    <TextBlock Text="MASTER CONTROL · OVERVIEW" Style="{StaticResource ShellEyebrowTextStyle}" />
+                    <!-- v0.11.0-alpha.2 follow-up (round 2): the running build
+                         version is displayed PROMINENTLY in the Overview hero.
+                         Pre-fix it was tucked next to the eyebrow at muted
+                         opacity, which the operator confirmed was not
+                         prominent enough. The Title row now puts the
+                         "Operational Summary" header and a version badge
+                         side-by-side, the badge styled with the accent-bordered
+                         status-chip style + hero-title-size text so it reads
+                         as a first-class element of the hero. Populated at
                          ctor time from MASTERCONTROL_VERSION (the CMake-
-                         generated literal that already drives /api/version)
-                         so the operator can correlate the running build with
-                         the artifact they installed without bouncing to
-                         Settings. -->
-                    <StackPanel Orientation="Horizontal" Spacing="12">
-                        <TextBlock Text="MASTER CONTROL · OVERVIEW" Style="{StaticResource ShellEyebrowTextStyle}" />
-                        <TextBlock x:Name="OverviewVersionText"
-                                   Style="{StaticResource ShellEyebrowTextStyle}"
-                                   Foreground="{StaticResource ShellTextMutedBrush}"
-                                   Text="" />
-                    </StackPanel>
-                    <TextBlock Text="Operational Summary" Style="{StaticResource ShellHeroTitleTextStyle}" />
+                         generated literal that already drives /api/version). -->
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0"
+                                   Text="Operational Summary"
+                                   Style="{StaticResource ShellHeroTitleTextStyle}"
+                                   VerticalAlignment="Center" />
+                        <Border Grid.Column="1"
+                                Background="#1000F6FF"
+                                BorderBrush="{StaticResource ShellAccentBrush}"
+                                BorderThickness="1"
+                                Padding="14,8"
+                                VerticalAlignment="Center">
+                            <StackPanel Orientation="Vertical" Spacing="2" HorizontalAlignment="Right">
+                                <TextBlock Text="SOFTWARE VERSION"
+                                           Style="{StaticResource ShellEyebrowTextStyle}"
+                                           Foreground="{StaticResource ShellAccentBrush}"
+                                           HorizontalAlignment="Right" />
+                                <TextBlock x:Name="OverviewVersionText"
+                                           Text="v0.0.0"
+                                           Style="{StaticResource ShellValueTextStyle}"
+                                           Foreground="{StaticResource ShellAccentBrush}"
+                                           HorizontalAlignment="Right"
+                                           FontWeight="SemiBold" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
                     <TextBlock
                         Style="{StaticResource ShellBodyTextStyle}"
                         Foreground="{StaticResource ShellTextMutedBrush}"

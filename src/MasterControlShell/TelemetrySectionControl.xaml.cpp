@@ -202,10 +202,46 @@ void TelemetrySectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
     const int liveMemory  = liveBound(snapshot.memoryPercent);
     const int liveStorage = liveBound(snapshot.diskPercent);
 
-    CpuAllocationProgressBar().Value(liveCpu);
-    MemoryAllocationProgressBar().Value(liveMemory);
+    // Operator-reported follow-up: changing the allocation in Settings
+    // wasn't visibly updating the gauges. Pre-fix, the bar's Maximum was
+    // the XAML default (100), so editing the cap only moved the trailing
+    // text -- the bar fill stayed identical (live% / 100% scale). The
+    // operator's stated intent was "live metric overlaid on the
+    // allocation ceiling" with the cap as the bar's ceiling, so binding
+    // Maximum to the live allocation cap makes the bar visually respond
+    // to Settings edits.
+    //
+    // When live exceeds cap, ProgressBar clamps Value to Maximum and the
+    // bar saturates at 100% fill -- detail text below surfaces the
+    // explicit breach number so the operator can read the actual
+    // overrun.
+    //
+    // Cap == 0 case ("governed launches blocked"): set Maximum to 100 +
+    // Value to 0 so the bar reads empty rather than NaN-dividing.
+    //
+    // Generic lambda (auto) because the XAML "ProgressBar" elements
+    // here are actually ProgressRing controls -- both inherit
+    // Maximum/Value from RangeBase so the same setter calls work,
+    // but a strict ProgressBar const& parameter would not.
+    auto setOverlayBar = [](auto const& bar, int live, int cap) {
+        if (cap > 0) {
+            bar.Maximum(static_cast<double>(cap));
+            bar.Value(static_cast<double>(live));
+        } else {
+            bar.Maximum(100.0);
+            bar.Value(0.0);
+        }
+    };
+    setOverlayBar(CpuAllocationProgressBar(), liveCpu, snapshot.cpuAllocationPercent);
+    setOverlayBar(MemoryAllocationProgressBar(), liveMemory, snapshot.memoryAllocationPercent);
+    setOverlayBar(StorageAllocationProgressBar(), liveStorage, snapshot.storageAllocationPercent);
+
+    // Bandwidth keeps its prior behavior: no live% available to overlay
+    // (PDH gives bytes/sec, not a saturation ratio), so the bar fills to
+    // the allocation cap on a 0-100 scale. Editing the cap moves both
+    // Value and visual extent.
+    BandwidthAllocationProgressBar().Maximum(100.0);
     BandwidthAllocationProgressBar().Value(snapshot.bandwidthAllocationPercent);
-    StorageAllocationProgressBar().Value(liveStorage);
 
     CpuAllocationValueText().Text(winrt::hstring(
         std::to_wstring(liveCpu) + L"% live / " +
