@@ -14,6 +14,11 @@
 #include "ExportsSectionControl.xaml.h"
 #include "ImportsSectionControl.xaml.h"
 #include "../../include/MasterControl/DeploymentLogPaths.h"
+// v0.11.0-alpha.2 follow-up: MASTERCONTROL_VERSION literal for the
+// Window-title-bar version suffix. GeneratedVersion.h is CMake-
+// generated next to MasterControlShell.vcxproj from VERSION.json at
+// configure time.
+#include "GeneratedVersion.h"
 #include "microsoft.ui.xaml.window.h"
 #include <shellapi.h>
 #include "OverviewSectionControl.xaml.h"
@@ -1081,6 +1086,23 @@ void MainWindow::ConfigureWindow() {
 
 void MainWindow::ConfigureCustomTitleBar() {
     Window window = *this;
+
+    // v0.11.0-alpha.2 follow-up: stamp the running build version onto the
+    // Window OS title bar so the operator can confirm at a glance which
+    // MCOS Shell build is in front of them. The XAML-attribute Title is
+    // a static literal ("Master Control Orchestration Server"); this
+    // override happens during the standard title-bar restoration so the
+    // version is visible by the time the operator interacts with the
+    // window. Set before the ExtendsContentIntoTitleBar call so the
+    // chrome picks up the new title on the same render pass.
+    try {
+        const std::wstring titleWithVersion =
+            std::wstring(L"Master Control Orchestration Server — v") +
+            L"" MASTERCONTROL_VERSION;
+        window.Title(winrt::hstring(titleWithVersion));
+    } catch (const winrt::hresult_error& error) {
+        writeShellLog(L"Window title version-stamp failed: " + std::wstring(error.message().c_str()));
+    }
 
     try {
         window.ExtendsContentIntoTitleBar(false);

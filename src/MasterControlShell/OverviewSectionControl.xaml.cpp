@@ -6,6 +6,12 @@
 
 #include "OverviewSectionControl.xaml.h"
 #include "ShellFormatting.h"
+// v0.11.0-alpha.2 follow-up: MASTERCONTROL_VERSION literal for the
+// hero-eyebrow version badge. GeneratedVersion.h is CMake-generated
+// next to MasterControlShell.vcxproj from VERSION.json at configure
+// time; the Shell-local include avoids needing AdditionalIncludeDirectories
+// to point at the runtime-side ${CMAKE_BINARY_DIR}/include tree.
+#include "GeneratedVersion.h"
 
 #if __has_include("OverviewSectionControl.g.cpp")
 #include "OverviewSectionControl.g.cpp"
@@ -27,6 +33,19 @@ namespace winrt::MasterControlShell::implementation {
 
 OverviewSectionControl::OverviewSectionControl() {
     InitializeComponent();
+    // v0.11.0-alpha.2 follow-up: surface the running build version in the
+    // hero eyebrow. Format mirrors the /api/version response so operators
+    // can confirm the Shell binary matches the service it is talking to
+    // without bouncing to Settings or curling the admin port.
+    try {
+        const std::wstring versionBadge = std::wstring(L"v") + L"" MASTERCONTROL_VERSION;
+        OverviewVersionText().Text(winrt::hstring(versionBadge));
+    } catch (...) {
+        // Generated XAML accessors throw if the visual tree is not yet
+        // realized. The element default-empty Text in XAML is the safe
+        // fallback -- losing the version badge is strictly cosmetic and
+        // must not crash the Overview ctor.
+    }
 }
 
 void OverviewSectionControl::AttachRuntime(::MasterControlShell::ShellRuntime* runtime) {

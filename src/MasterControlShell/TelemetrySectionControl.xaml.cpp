@@ -23,6 +23,11 @@
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
+
+// v0.11.0-alpha.2 follow-up: std::isfinite for the live-host-metric
+// liveBound() lambda below. pch.h may pull this in transitively via
+// WinRT headers but make the dependency explicit.
+#include <cmath>
 #include <winrt/Windows.Storage.Streams.h>
 #include <KnownFolders.h>
 #include <ShlObj.h>
@@ -177,18 +182,88 @@ void TelemetrySectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
     RxDetailText().Text(winrt::hstring(snapshot.primaryMacAddress.empty() ? L"Inbound network traffic." : L"MAC: " + snapshot.primaryMacAddress));
     TrafficDetailText().Text(winrt::hstring(snapshot.telemetryCapturedAtUtc.empty() ? L"Live traffic summary." : L"Captured: " + snapshot.telemetryCapturedAtUtc));
 
-    CpuAllocationProgressBar().Value(snapshot.cpuAllocationPercent);
-    MemoryAllocationProgressBar().Value(snapshot.memoryAllocationPercent);
+    // v0.11.0-alpha.2 follow-up: gauges now overlay LIVE host metric on the
+    // operator-configured allocation ceiling. Pre-fix the bars rendered the
+    // static allocation percent only, so they showed 50/50/50/50 forever and
+    // the operator could not tell whether the host was under load. Each bar
+    // now fills to the live host metric (cpuPercent / memoryPercent /
+    // diskPercent) and the value text spells out the live measurement plus
+    // the operator's allocation cap. Bandwidth has no host-percent metric
+    // available (the PDH counter exposes bytes/sec, not a saturation
+    // percentage against an unknown link capacity), so the bandwidth bar
+    // keeps the allocation as its fill and the value text shows live
+    // throughput alongside the cap.
+    auto liveBound = [](double v) -> int {
+        if (!std::isfinite(v) || v < 0.0) return 0;
+        if (v > 100.0) return 100;
+        return static_cast<int>(v + 0.5);
+    };
+    const int liveCpu     = liveBound(snapshot.cpuPercent);
+    const int liveMemory  = liveBound(snapshot.memoryPercent);
+    const int liveStorage = liveBound(snapshot.diskPercent);
+
+    CpuAllocationProgressBar().Value(liveCpu);
+    MemoryAllocationProgressBar().Value(liveMemory);
     BandwidthAllocationProgressBar().Value(snapshot.bandwidthAllocationPercent);
-    StorageAllocationProgressBar().Value(snapshot.storageAllocationPercent);
-    CpuAllocationValueText().Text(winrt::hstring(std::to_wstring(snapshot.cpuAllocationPercent) + L"%"));
-    MemoryAllocationValueText().Text(winrt::hstring(std::to_wstring(snapshot.memoryAllocationPercent) + L"%"));
-    BandwidthAllocationValueText().Text(winrt::hstring(std::to_wstring(snapshot.bandwidthAllocationPercent) + L"%"));
-    StorageAllocationValueText().Text(winrt::hstring(std::to_wstring(snapshot.storageAllocationPercent) + L"%"));
-    CpuAllocationDetailText().Text(winrt::hstring(snapshot.cpuAllocationPercent <= 0 ? L"Governed launches blocked." : L"Planner and worker CPU budget."));
-    MemoryAllocationDetailText().Text(winrt::hstring(snapshot.memoryAllocationPercent <= 0 ? L"Governed launches blocked." : L"Managed memory ceiling."));
-    BandwidthAllocationDetailText().Text(winrt::hstring(snapshot.bandwidthAllocationPercent <= 0 ? L"Network lanes blocked." : L"Network lane traffic budget."));
-    StorageAllocationDetailText().Text(winrt::hstring(snapshot.storageAllocationPercent <= 0 ? L"Artifact lanes blocked." : L"Exports and staging budget."));
+    StorageAllocationProgressBar().Value(liveStorage);
+
+    CpuAllocationValueText().Text(winrt::hstring(
+        std::to_wstring(liveCpu) + L"% live / " +
+        std::to_wstring(snapshot.cpuAllocationPercent) + L"% cap"));
+    MemoryAllocationValueText().Text(winrt::hstring(
+        std::to_wstring(liveMemory) + L"% live / " +
+        std::to_wstring(snapshot.memoryAllocationPercent) + L"% cap"));
+
+    // Bandwidth: render live throughput in the value text. Use formatRate()
+    // (KB/s/MB/s/GB/s unit scaling) per TX/RX rather than formatTraffic()
+    // which prints raw bytes. The bar stays bound to allocation because we
+    // have no saturation percentage to overlay -- PDH gives us bytes/sec,
+    // not a saturation ratio against an unknown link capacity.
+    //
+    // Copilot-review-hardened: pre-hardening this called formatTraffic()
+    // which renders "TX <raw bytes> B/s | RX <raw bytes> B/s" -- not the
+    // KB/s/MB/s the operator expects to see and not consistent with the
+    // adjacent TX/RX value tiles in the Live Traffic section. Switching
+    // to formatRate() per direction matches those tiles' formatting.
+    // Also drops a redundant std::wstring(...) copy on a value that is
+    // already std::wstring -- formatTraffic / formatRate both return by
+    // value, so concatenation works without an extra copy.
+    BandwidthAllocationValueText().Text(winrt::hstring(
+        L"TX " + formatRate(snapshot.bytesSentPerSecond) +
+        L" / RX " + formatRate(snapshot.bytesReceivedPerSecond) +
+        L" / " + std::to_wstring(snapshot.bandwidthAllocationPercent) + L"% cap"));
+
+    StorageAllocationValueText().Text(winrt::hstring(
+        std::to_wstring(liveStorage) + L"% live / " +
+        std::to_wstring(snapshot.storageAllocationPercent) + L"% cap"));
+
+    // Detail text: explain the overlay, and surface the "exceeding cap"
+    // case so the operator can act before lease routing blocks new work.
+    auto overlayDetail = [](int live, int cap, const std::wstring& baseline,
+                             const std::wstring& blockedText) -> std::wstring {
+        if (cap <= 0) return blockedText;
+        if (live > cap) {
+            return L"Live (" + std::to_wstring(live) + L"%) exceeds cap (" +
+                   std::to_wstring(cap) + L"%). " + baseline;
+        }
+        return baseline;
+    };
+    CpuAllocationDetailText().Text(winrt::hstring(overlayDetail(
+        liveCpu, snapshot.cpuAllocationPercent,
+        L"Planner and worker CPU budget.",
+        L"Governed launches blocked.")));
+    MemoryAllocationDetailText().Text(winrt::hstring(overlayDetail(
+        liveMemory, snapshot.memoryAllocationPercent,
+        L"Managed memory ceiling.",
+        L"Governed launches blocked.")));
+    BandwidthAllocationDetailText().Text(winrt::hstring(
+        snapshot.bandwidthAllocationPercent <= 0
+            ? L"Network lanes blocked."
+            : L"Live throughput shown; bar tracks operator allocation."));
+    StorageAllocationDetailText().Text(winrt::hstring(overlayDetail(
+        liveStorage, snapshot.storageAllocationPercent,
+        L"Exports and staging budget.",
+        L"Artifact lanes blocked.")));
 
     EndpointCountText().Text(winrt::hstring(formatCountValue(snapshot.endpointCount)));
     GovernanceFindingCountText().Text(winrt::hstring(formatCountValue(snapshot.governanceFindingCount)));
