@@ -52,7 +52,8 @@ function ConvertTo-MsiProductVersion {
     # MAJOR.MINOR.PATCH (build 0) is "older" than alpha.N (build N) under
     # Windows Installer's upgrade ordering; that is acceptable for an internal
     # alpha that will be replaced by the next MAJOR.MINOR.PATCH bump rather
-    # than by a same-band retail build.
+    # than by a same-band retail build. Unknown pre-release prefixes (e.g.
+    # -zeta.1) still throw.
     if ($Version -match '^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?:alpha|beta|rc)\.(?<build>\d+))?$') {
         $build = if ($Matches['build']) { $Matches['build'] } else { '0' }
         return "$($Matches['major']).$($Matches['minor']).$($Matches['patch']).$build"

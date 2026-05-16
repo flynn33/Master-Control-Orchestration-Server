@@ -1,16 +1,40 @@
 {
   "scheme": "semantic-versioning",
   "strategy": "minor-on-architecture-change",
-  "current_version": "0.11.0-alpha.1",
-  "current_tag": "v0.11.0-alpha.1",
+  "current_version": "0.11.0-alpha.2",
+  "current_tag": "v0.11.0-alpha.2",
   "released_at": "2026-05-15",
-  "last_release_commit": "94cad65c8713523038d5c12b61cee3913dc15de7",
+  "last_release_commit": "d477571ceb4cb7867d973e9df13106cb17788bfe",
   "history": [
+    {
+      "version": "0.11.0-alpha.2",
+      "tag": "v0.11.0-alpha.2",
+      "released_at": "2026-05-15",
+      "commit": "pending",
+      "summary": "LAN-trust TLS dual-bind on the MCP gateway. Adds optional HTTPS support so strict clients (ChatGPT connector-edge, Claude.ai web, security-conscious browser extensions) that refuse plain HTTP can connect. When cfg.mcpGateway.tlsEnabled=true AND cfg.mcpGateway.tlsCertThumbprint is non-empty, NativeHttpSysGatewayAdapter registers a second URL prefix https://+:tlsListenPort/ on the same URL group + request queue alongside the existing http://+:listenPort/. The same handler serves both. Cert binding is operator-managed out-of-band via scripts\\Configure-LocalServerCert.ps1 (self-signed cert generation + netsh http add sslcert + firewall rule + optional service restart). /api/discovery and onboarding profiles emit the HTTPS URL only when the runtime confirms TLS is bound (Copilot-review-hardened: gates on GatewayStatus.tlsBound, not the bare config flag). Admin HTTP listener (port 7300) stays HTTP-only this iteration: it uses Winsock SimpleHttpServer, not HTTP.sys, so adding TLS there requires an SChannel rewrite that is deferred. App-layer auth remains intentionally deferred to retail (transport TLS is a separate concern from authentication; LAN trust posture intact). HTTP fallback on the existing listenPort stays available for in-LAN curl / browser-dashboard debugging tooling.",
+      "entries": [
+        "feat(gateway): TLS dual-bind on the MCP gateway. New McpGatewayConfiguration fields: tlsEnabled (default false), tlsListenPort (default 8443), tlsCertThumbprint. NativeHttpSysGatewayAdapter::Start() now registers a second https://+:tlsListenPort/ URL prefix on the same HTTP.sys URL group when tlsEnabled. HTTP.sys multiplexes both prefixes to the same request queue + handler, so no per-route plumbing changes.",
+        "feat(gateway): new GatewayStatus.tlsBound + mcpUrlTls + tlsCertThumbprint runtime signals. tlsBound is true ONLY when the HTTPS URL prefix registered AND cfg.mcpGateway.tlsCertThumbprint is non-empty (the operator's 'I bound a cert' signal). Closes a Copilot-flagged gap where the runtime would advertise TLS purely on URL-prefix success even though HTTP.sys returns NO_ERROR when no sslcert is bound.",
+        "feat(discovery): /api/discovery DiscoveryGateway now carries mcpUrlTls + healthUrlTls + tlsEnabled + tlsCertThumbprint fields, all populated ONLY when GatewayStatus.tlsBound is true. Strict clients fetching /.well-known/mcos.json get an HTTPS URL the runtime believes is live.",
+        "feat(onboarding): OnboardingService::profileFor() prefers document.gateway.mcpUrlTls over mcpUrl when TLS is bound at runtime. Every onboarding profile (claude-code, codex, grok, chatgpt, generic) embeds the HTTPS URL in its .mcp.json snippet automatically. No per-client code change.",
+        "feat(scripts): new scripts\\Configure-LocalServerCert.ps1. Generates a self-signed cert with DNS + IP SANs (localhost, machine hostname, all non-loopback IPv4) in Cert:\\LocalMachine\\My, exports the public-key .cer to %PUBLIC%\\Documents\\Master Control Orchestration Server\\certs\\, runs netsh http add sslcert against 0.0.0.0:tlsListenPort, opens a Windows Firewall inbound rule named 'MCOS MCP Gateway TLS (<port>)'. Idempotent — re-running validates SAN coverage + 90-day expiry headroom and re-mints when the SAN set drifts (DHCP/VPN-induced IP change) or expiry is close. Prints the operator-facing config snippet at the end.",
+        "feat(scripts): new scripts\\Remove-LocalServerCert.ps1. Companion rollback. Removes the sslcert binding, removes the firewall rule, and optionally deletes the cert + the exported .cer.",
+        "build(installer): install(FILES) rules for both TLS scripts under DESTINATION 'scripts' so they ship in the MSI payload. Closes a Copilot-flagged gap where the scripts existed only in the repo, so post-install scripts\\Configure-LocalServerCert.ps1 invocations from C:\\Program Files\\... failed with 'command not found'.",
+        "test(discovery): testDiscoveryDocumentJsonRoundTrip extended to assert serialization + round-trip of gateway.tlsEnabled / mcpUrlTls / healthUrlTls / tlsCertThumbprint in both TLS-on and TLS-off shapes. Future schema/serialization changes cannot silently drop the HTTPS fields strict clients depend on.",
+        "docs(version): bump 0.11.0-alpha.1 -> 0.11.0-alpha.2. last_release_commit backfilled to the v0.11.0-alpha.1 cut commit (d477571c...). Continues the v0.11.0-alpha line."
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "Admin HTTP listener (port 7300) TLS support. SimpleHttpServer is Winsock-based, not HTTP.sys-based, so adding TLS there requires SChannel handshake code. Deferred — admin listener is operator-facing and typically reached from the same host (WinUI Shell, browser dashboard) where the trust boundary is local.",
+        "Cert auto-rotation. The self-signed cert generated by Configure-LocalServerCert.ps1 has 5-year validity. The reuse path now self-renews when expiry is within 90 days, but the script must be re-run for the renewal to happen. A renewal-cron PS job is a fit candidate for the next pass.",
+        "TLS for the UDP discovery beacon. The UDP-7301 beacon broadcasts an unencrypted JSON document. LAN trust posture treats this as acceptable; future iteration may sign the beacon payload.",
+        "PHASE-14 Slices B-E (MCP plugin tools, WinUI Shell DiagnosticsSectionControl, browser dashboard Diagnostics tab, SqliteDiagnosticsStore + clear-with-retention). Carried forward from v0.11.0-alpha.1 — unchanged scope."
+      ]
+    },
     {
       "version": "0.11.0-alpha.1",
       "tag": "v0.11.0-alpha.1",
       "released_at": "2026-05-15",
-      "commit": "pending",
+      "commit": "d477571ceb4cb7867d973e9df13106cb17788bfe",
       "summary": "First internal alpha cut of the v0.11.0 line. Packages the merged operator-audit work (closes items 1-7 from the operator's 2026-05-15 testing-phase audit; PHASE-14 Slice A diagnostics route surface; v0.10.21 supervisor env-block + telemetry persistence + log rotation; v0.10.15-20 query alias / SSE resume / JSON strictness / npx pool seeds / mcp-server-runtime route surface) as a signed-ready Windows Installer MSI for internal LAN distribution. No new runtime code beyond the v0.11.0 merge tip (94cad65). Internal alpha is intentionally MSI-only -- the zip-archive path still ships alongside as the headless / CI installer.",
       "entries": [
         "pkg(alpha): produce Windows Installer MSI at dist/packages/release/MasterControlOrchestrationServer-v0.11.0-alpha.1-win-x64.msi via scripts/Package-MasterControlOrchestrationServer.ps1 -Preset release -Version 0.11.0-alpha.1. MSI ProductVersion 0.11.0.1 (alpha BUILD ordinal 1).",

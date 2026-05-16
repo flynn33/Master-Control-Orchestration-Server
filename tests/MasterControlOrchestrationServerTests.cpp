@@ -1121,6 +1121,15 @@ bool testDiscoveryDocumentJsonRoundTrip() {
     original.gateway.mcpUrl = "http://192.168.1.10:8080/mcp";
     original.gateway.healthUrl = "http://192.168.1.10:8080/health";
     original.gateway.state = "running";
+    // v0.11.0-alpha.2 (Copilot-review-hardened): pin the TLS dual-bind
+    // fields on the discovery gateway block. Pre-hardening these fields
+    // round-tripped via NLOHMANN_DEFINE_TYPE but the test only asserted
+    // gateway.mcpUrl, leaving room for future serialization changes to
+    // silently drop the HTTPS fields that strict clients depend on.
+    original.gateway.mcpUrlTls = "https://192.168.1.10:8443/mcp";
+    original.gateway.healthUrlTls = "https://192.168.1.10:8443/health";
+    original.gateway.tlsEnabled = true;
+    original.gateway.tlsCertThumbprint = "0123456789ABCDEF0123456789ABCDEF01234567";
     original.onboarding.generic = "http://192.168.1.10:7300/api/onboarding/generic";
     original.onboarding.claudeCode = "http://192.168.1.10:7300/api/onboarding/claude-code";
     original.onboarding.codex = "http://192.168.1.10:7300/api/onboarding/codex";
@@ -1145,6 +1154,16 @@ bool testDiscoveryDocumentJsonRoundTrip() {
                  "Discovery JSON pins auth=none.");
     ok &= expect(serialized["gateway"]["mcpUrl"].get<std::string>() == "http://192.168.1.10:8080/mcp",
                  "Discovery JSON exposes gateway.mcpUrl.");
+    // v0.11.0-alpha.2: pin the TLS surface in the serialized form so
+    // strict clients can rely on the field names.
+    ok &= expect(serialized["gateway"]["tlsEnabled"].get<bool>() == true,
+                 "Discovery JSON exposes gateway.tlsEnabled (alpha.2 TLS dual-bind).");
+    ok &= expect(serialized["gateway"]["mcpUrlTls"].get<std::string>() == "https://192.168.1.10:8443/mcp",
+                 "Discovery JSON exposes gateway.mcpUrlTls (alpha.2 TLS dual-bind).");
+    ok &= expect(serialized["gateway"]["healthUrlTls"].get<std::string>() == "https://192.168.1.10:8443/health",
+                 "Discovery JSON exposes gateway.healthUrlTls (alpha.2 TLS dual-bind).");
+    ok &= expect(serialized["gateway"]["tlsCertThumbprint"].get<std::string>() == "0123456789ABCDEF0123456789ABCDEF01234567",
+                 "Discovery JSON exposes gateway.tlsCertThumbprint (alpha.2 TLS dual-bind).");
     ok &= expect(serialized["onboarding"]["claudeCode"].get<std::string>().find("/api/onboarding/claude-code") != std::string::npos,
                  "Discovery JSON exposes claudeCode onboarding URL.");
     ok &= expect(serialized["governance"]["bundleBaseUrl"].get<std::string>().find("/api/governance/bundles") != std::string::npos,
@@ -1155,6 +1174,15 @@ bool testDiscoveryDocumentJsonRoundTrip() {
     auto restored = serialized.get<MasterControl::DiscoveryDocument>();
     ok &= expect(restored.gateway.mcpUrl == original.gateway.mcpUrl,
                  "Discovery doc round-trips gateway.mcpUrl.");
+    // v0.11.0-alpha.2: round-trip the TLS dual-bind fields too.
+    ok &= expect(restored.gateway.tlsEnabled == original.gateway.tlsEnabled,
+                 "Discovery doc round-trips gateway.tlsEnabled.");
+    ok &= expect(restored.gateway.mcpUrlTls == original.gateway.mcpUrlTls,
+                 "Discovery doc round-trips gateway.mcpUrlTls.");
+    ok &= expect(restored.gateway.healthUrlTls == original.gateway.healthUrlTls,
+                 "Discovery doc round-trips gateway.healthUrlTls.");
+    ok &= expect(restored.gateway.tlsCertThumbprint == original.gateway.tlsCertThumbprint,
+                 "Discovery doc round-trips gateway.tlsCertThumbprint.");
     ok &= expect(restored.onboarding.codex == original.onboarding.codex,
                  "Discovery doc round-trips onboarding.codex.");
     ok &= expect(restored.governance.cluProfileUrl == original.governance.cluProfileUrl,
@@ -1163,6 +1191,22 @@ bool testDiscoveryDocumentJsonRoundTrip() {
                  "Discovery doc round-trips capabilities count.");
     ok &= expect(restored.instanceId == original.instanceId,
                  "Discovery doc round-trips instanceId.");
+
+    // v0.11.0-alpha.2 (Copilot-review-hardened): TLS-disabled default state
+    // serializes to empty/false on the dual-bind fields. This guards
+    // against a future change that accidentally publishes HTTPS URLs
+    // when TLS is off.
+    MasterControl::DiscoveryDocument tlsOff;
+    tlsOff.gateway.type = "native";
+    tlsOff.gateway.mcpUrl = "http://192.168.1.10:8080/mcp";
+    nlohmann::json tlsOffJson = tlsOff;
+    ok &= expect(tlsOffJson["gateway"]["tlsEnabled"].get<bool>() == false,
+                 "Default (TLS off) discovery JSON has gateway.tlsEnabled=false.");
+    ok &= expect(tlsOffJson["gateway"]["mcpUrlTls"].get<std::string>().empty(),
+                 "Default (TLS off) discovery JSON has empty gateway.mcpUrlTls.");
+    ok &= expect(tlsOffJson["gateway"]["tlsCertThumbprint"].get<std::string>().empty(),
+                 "Default (TLS off) discovery JSON has empty gateway.tlsCertThumbprint.");
+
     return ok;
 }
 

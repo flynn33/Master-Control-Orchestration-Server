@@ -7742,7 +7742,31 @@ public:
         const std::string hostInUrl = bracketIpv6Host(gatewayHost);
         document.gateway.mcpUrl    = "http://" + hostInUrl + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.mcpPath;
         document.gateway.healthUrl = "http://" + hostInUrl + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.healthPath;
-        document.gateway.state = mcpGateway_ ? to_string(mcpGateway_->CurrentStatus().state) : "disabled";
+        const auto gatewayStatus = mcpGateway_ ? mcpGateway_->CurrentStatus()
+                                              : GatewayStatus{};
+        document.gateway.state = mcpGateway_ ? to_string(gatewayStatus.state) : "disabled";
+
+        // v0.11.0-alpha.2 (Copilot-review-hardened): gate the HTTPS TLS
+        // advertisement on the runtime tlsBound signal, not the bare
+        // cfg.mcpGateway.tlsEnabled flag. Pre-hardening Copilot flagged
+        // that we could publish an HTTPS URL the gateway knew was not
+        // serving -- e.g. when the URL prefix registered but no sslcert
+        // was bound, or when the operator left tlsCertThumbprint empty.
+        // tlsBound on GatewayStatus is set to true ONLY when:
+        //   * cfg.mcpGateway.tlsEnabled is true, AND
+        //   * the HTTPS URL prefix registered with HttpAddUrlToUrlGroup, AND
+        //   * cfg.mcpGateway.tlsCertThumbprint is non-empty (the operator's
+        //     "I bound a cert" signal from Configure-LocalServerCert.ps1)
+        // Strict clients following document.gateway.mcpUrlTls now get an
+        // URL the runtime believes is live; clients fall back to mcpUrl
+        // otherwise. tlsCertThumbprint is echoed so operators can verify
+        // the wired cert from the well-known doc.
+        document.gateway.tlsEnabled = gatewayStatus.tlsBound;
+        if (gatewayStatus.tlsBound) {
+            document.gateway.mcpUrlTls         = "https://" + hostInUrl + ":" + std::to_string(gatewayConfig.tlsListenPort) + gatewayConfig.mcpPath;
+            document.gateway.healthUrlTls      = "https://" + hostInUrl + ":" + std::to_string(gatewayConfig.tlsListenPort) + gatewayConfig.healthPath;
+            document.gateway.tlsCertThumbprint = gatewayStatus.tlsCertThumbprint;
+        }
 
         document.onboarding.generic = adminBase + "/api/onboarding/generic";
         document.onboarding.claudeCode = adminBase + "/api/onboarding/claude-code";
@@ -10375,7 +10399,17 @@ public:
 
         OnboardingProfile profile;
         profile.clientType = normalized;
-        profile.gatewayMcpUrl = document.gateway.mcpUrl;
+        // v0.11.0-alpha.2: prefer the HTTPS gateway URL when TLS dual-bind
+        // is configured + advertised by the discovery doc. This is the URL
+        // strict clients (ChatGPT connector-edge, Claude.ai web,
+        // security-conscious browser extensions) will see embedded in their
+        // .mcp.json snippet -- they refuse plain HTTP and would otherwise
+        // hard-fail the connect. HTTP fallback stays available on the
+        // listenPort prefix for in-LAN curl / browser debugging tooling.
+        profile.gatewayMcpUrl = (document.gateway.tlsEnabled
+                                 && !document.gateway.mcpUrlTls.empty())
+            ? document.gateway.mcpUrlTls
+            : document.gateway.mcpUrl;
         profile.transport = "streamable_http";
         profile.authRequired = false;       // schema const; ADR-002 §1 invariant
         profile.trust = "lan";
