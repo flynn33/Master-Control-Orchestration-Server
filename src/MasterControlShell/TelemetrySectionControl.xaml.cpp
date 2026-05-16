@@ -216,8 +216,8 @@ void TelemetrySectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
     // explicit breach number so the operator can read the actual
     // overrun.
     //
-    // Cap == 0 case ("governed launches blocked"): set Maximum to 100 +
-    // Value to 0 so the bar reads empty rather than NaN-dividing.
+    // Cap == 0 case ("governed launches blocked"): set Maximum=100 and
+    // Value=0 so the bar reads empty instead of dividing by zero.
     //
     // Generic lambda (auto) because the XAML "ProgressBar" elements
     // here are actually ProgressRing controls -- both inherit

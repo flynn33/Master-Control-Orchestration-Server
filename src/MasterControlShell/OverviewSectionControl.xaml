@@ -17,11 +17,20 @@
                          version is displayed PROMINENTLY in the Overview hero.
                          Pre-fix it was tucked next to the eyebrow at muted
                          opacity, which the operator confirmed was not
-                         prominent enough. The Title row now puts the
-                         "Operational Summary" header and a version badge
-                         side-by-side, the badge styled with the accent-bordered
-                         status-chip style + hero-title-size text so it reads
-                         as a first-class element of the hero. Populated at
+                         prominent enough. The Title row puts the
+                         "Operational Summary" header (ShellHeroTitleTextStyle)
+                         on the left and a version badge on the right. The
+                         badge is a custom Border (low-alpha accent fill +
+                         ShellAccentBrush 1px border) holding two TextBlocks:
+                         a "SOFTWARE VERSION" eyebrow (ShellEyebrowTextStyle,
+                         accent foreground) and the version literal in
+                         ShellValueTextStyle (accent foreground, SemiBold) so
+                         it reads as a first-class hero element without
+                         claiming the full hero-title size. OverviewVersionText
+                         carries an empty default so a ctor-time failure to
+                         populate (visual tree not yet realized, generated
+                         accessor throws) leaves the badge blank rather than
+                         showing a plausible-but-wrong literal. Populated at
                          ctor time from MASTERCONTROL_VERSION (the CMake-
                          generated literal that already drives /api/version). -->
                     <Grid ColumnSpacing="16">
@@ -45,7 +54,7 @@
                                            Foreground="{StaticResource ShellAccentBrush}"
                                            HorizontalAlignment="Right" />
                                 <TextBlock x:Name="OverviewVersionText"
-                                           Text="v0.0.0"
+                                           Text=""
                                            Style="{StaticResource ShellValueTextStyle}"
                                            Foreground="{StaticResource ShellAccentBrush}"
                                            HorizontalAlignment="Right"
