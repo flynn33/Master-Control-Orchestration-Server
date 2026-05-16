@@ -12,7 +12,20 @@
             <!-- Hero header -->
             <Border Style="{StaticResource ShellHeroCardStyle}">
                 <StackPanel Spacing="10">
-                    <TextBlock Text="MASTER CONTROL · OVERVIEW" Style="{StaticResource ShellEyebrowTextStyle}" />
+                    <!-- v0.11.0-alpha.2 follow-up: the eyebrow now carries the
+                         build version next to the section name. Populated at
+                         ctor time from MASTERCONTROL_VERSION (the CMake-
+                         generated literal that already drives /api/version)
+                         so the operator can correlate the running build with
+                         the artifact they installed without bouncing to
+                         Settings. -->
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Text="MASTER CONTROL · OVERVIEW" Style="{StaticResource ShellEyebrowTextStyle}" />
+                        <TextBlock x:Name="OverviewVersionText"
+                                   Style="{StaticResource ShellEyebrowTextStyle}"
+                                   Foreground="{StaticResource ShellTextMutedBrush}"
+                                   Text="" />
+                    </StackPanel>
                     <TextBlock Text="Operational Summary" Style="{StaticResource ShellHeroTitleTextStyle}" />
                     <TextBlock
                         Style="{StaticResource ShellBodyTextStyle}"
