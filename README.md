@@ -199,7 +199,7 @@ The same toggle is on the WinUI desktop shell's **Overview** page. Either surfac
 
 ### Spawn the first MCP server / sub-agent pool
 
-`buildDefaultConfiguration()` ships with **no pools** — the maintainer chooses what to supervise. Bringing up a pool is two POSTs (upsert + scale). For copy-paste recipes that exercise both `kind=mcp-server` and `kind=sub-agent` against the official `@modelcontextprotocol/server-*` reference servers, see [docs/wiki/Worker-Pools.md §10 Verified working examples](docs/wiki/Worker-Pools.md).
+`buildDefaultConfiguration()` ships with **no pools** — the maintainer chooses what to supervise. Bringing up a pool is two POSTs (upsert + scale). For copy-paste recipes that exercise both `kind=mcp-server` and `kind=sub-agent` against the official `@modelcontextprotocol/server-*` reference servers, see [docs/wiki/Worker-Pools.md §10 Verified working examples](docs/wiki/Worker-Pools.md#10-verified-working-examples-npx-based-mcp-servers).
 
 ---
 

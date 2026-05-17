@@ -7,8 +7,7 @@
         "@modelcontextprotocol/server-memory"
       ],
       "env": {
-        "MEMORY_FILE_PATH": ".remember/memory.jsonl",
-        "PATH": "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows"
+        "MEMORY_FILE_PATH": ".remember/memory.jsonl"
       }
     },
     "sequential-thinking": {
@@ -16,10 +15,7 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-sequential-thinking"
-      ],
-      "env": {
-        "PATH": "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows"
-      }
+      ]
     },
     "filesystem": {
       "command": "npx",
@@ -27,10 +23,7 @@
         "-y",
         "@modelcontextprotocol/server-filesystem",
         "."
-      ],
-      "env": {
-        "PATH": "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows"
-      }
+      ]
     },
     "sqlite": {
       "command": "npx",
@@ -38,10 +31,7 @@
         "-y",
         "mcp-server-sqlite-npx",
         ".claude/mcp-state/mcos-orchestration.sqlite"
-      ],
-      "env": {
-        "PATH": "C:\\Program Files\\nodejs\\;C:\\Windows\\System32;C:\\Windows"
-      }
+      ]
     },
     "mcos-memory": {
       "command": "py",
