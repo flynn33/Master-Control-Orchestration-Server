@@ -141,7 +141,7 @@ FrameworkElement BuildSetupWizardEntryView(
     root.Children().Append(makeTitle(L"Start Here"));
     root.Children().Append(makeBody(
         L"Choose how you want to set up Master Control. All three paths lead to "
-        L"the same outcome \u2014 a configured, ready orchestration instance."));
+        L"the same outcome - a configured, ready orchestration instance."));
 
     // Three entry cards in a vertical stack (simpler than a grid, always works)
     root.Children().Append(buildEntryCard(
@@ -150,6 +150,9 @@ FrameworkElement BuildSetupWizardEntryView(
         L"Step-by-step assistant. Add MCP servers, create specialists, "
         L"pick a starter workflow, and review readiness.",
         [callbacks]() {
+            if (callbacks.startSetupMode) {
+                callbacks.startSetupMode(L"guided");
+            }
             // Route to the runtime surface with the guided MCP server workflow.
             if (callbacks.startGuidedWorkflow) {
                 callbacks.startGuidedWorkflow(L"new-mcp");
@@ -162,6 +165,12 @@ FrameworkElement BuildSetupWizardEntryView(
         L"Go straight to the full operator surface and configure each section "
         L"yourself. Open Setup Readiness when done to review.",
         [callbacks]() {
+            if (callbacks.startSetupMode) {
+                callbacks.startSetupMode(L"manual");
+            }
+            if (callbacks.dismissSetup) {
+                callbacks.dismissSetup();
+            }
             if (callbacks.navigateToDestination) {
                 callbacks.navigateToDestination(L"overview");
             }
@@ -173,6 +182,9 @@ FrameworkElement BuildSetupWizardEntryView(
         L"Restore from an existing package, repository, or zip bundle. "
         L"We validate it, surface any gaps, and route you to fix them.",
         [callbacks]() {
+            if (callbacks.startSetupMode) {
+                callbacks.startSetupMode(L"import-existing");
+            }
             if (callbacks.startGuidedWorkflow) {
                 callbacks.startGuidedWorkflow(L"guided-import");
             }
@@ -195,15 +207,20 @@ FrameworkElement BuildSetupReadinessView(
     root.Children().Append(makeEyebrow(L"SETUP READINESS"));
     root.Children().Append(makeTitle(
         firstRunCompleted ? L"Setup Complete" : L"Review and Complete Setup"));
+    root.Children().Append(makeBody(
+        std::wstring(L"Mode: ") + snapshot.setupMode
+        + L" | Current step: " + snapshot.setupCurrentStep
+        + L" | Security: " + snapshot.setupSecurityPosture));
 
-    // Count readiness from the snapshot data. MCP readiness uses the online
-    // status on the shared endpoint catalog.
-    int mcpReady = 0, mcpMissing = 0;
-    for (const auto& endpoint : snapshot.endpoints) {
-        const auto& kindStr = endpoint.kind;
-        if (kindStr == L"mcp_server" || kindStr == L"MCP_Server" || kindStr == L"MCPServer") {
-            if (endpoint.status == L"online" || endpoint.status == L"Online") { ++mcpReady; }
-            else { ++mcpMissing; }
+    int mcpReady = snapshot.setupMcpReadyCount;
+    int mcpMissing = snapshot.setupMcpMissingCount;
+    if (mcpReady == 0 && mcpMissing == 0) {
+        for (const auto& endpoint : snapshot.endpoints) {
+            const auto& kindStr = endpoint.kind;
+            if (kindStr == L"mcp_server" || kindStr == L"MCP_Server" || kindStr == L"MCPServer") {
+                if (endpoint.status == L"online" || endpoint.status == L"Online") { ++mcpReady; }
+                else { ++mcpMissing; }
+            }
         }
     }
 
@@ -217,7 +234,29 @@ FrameworkElement BuildSetupReadinessView(
     StackPanel tiles;
     tiles.Spacing(8);
     tiles.Children().Append(buildReadinessTile(L"MCP Servers", mcpReady, mcpMissing, L"runtime", fixHandler));
+    tiles.Children().Append(buildReadinessTile(
+        L"Specialists",
+        snapshot.setupSpecialistsReadyCount,
+        snapshot.setupSpecialistsMissingCount,
+        L"runtime",
+        fixHandler));
+    tiles.Children().Append(buildReadinessTile(
+        L"Workflows",
+        snapshot.setupWorkflowsReadyCount,
+        snapshot.setupWorkflowsMissingCount,
+        L"setup-wizard",
+        fixHandler));
     root.Children().Append(tiles);
+
+    if (!snapshot.setupReadinessIssues.empty()) {
+        StackPanel issues;
+        issues.Spacing(4);
+        issues.Children().Append(makeEyebrow(L"READINESS ISSUES"));
+        for (const auto& issue : snapshot.setupReadinessIssues) {
+            issues.Children().Append(makeBody(issue));
+        }
+        root.Children().Append(issues);
+    }
 
     // Complete / Reset buttons
     StackPanel buttonRow;
@@ -227,13 +266,21 @@ FrameworkElement BuildSetupReadinessView(
     if (!firstRunCompleted) {
         Button completeBtn = makeButton(L"Mark Setup Complete");
         completeBtn.Click([callbacks](auto&&, auto&&) {
-            if (callbacks.refreshData) {
-                // The actual POST to /api/setup/complete is done via the ShellRuntime.
-                // For now, trigger a refresh which will show the updated state.
+            if (callbacks.completeSetup) {
+                callbacks.completeSetup();
+            } else if (callbacks.refreshData) {
                 callbacks.refreshData();
             }
         });
         buttonRow.Children().Append(completeBtn);
+
+        Button dismissBtn = makeButton(L"Continue Setup Later");
+        dismissBtn.Click([callbacks](auto&&, auto&&) {
+            if (callbacks.dismissSetup) {
+                callbacks.dismissSetup();
+            }
+        });
+        buttonRow.Children().Append(dismissBtn);
     }
 
     root.Children().Append(buttonRow);

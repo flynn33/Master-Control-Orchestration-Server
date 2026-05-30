@@ -53,6 +53,7 @@ constexpr wchar_t kBootstrapperLogDirectoryEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_
 constexpr wchar_t kBootstrapperServiceNameEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_SERVICE_NAME";
 constexpr wchar_t kBootstrapperUninstallRegistryKeyEnv[] = L"MASTERCONTROL_BOOTSTRAPPER_UNINSTALL_KEY";
 constexpr wchar_t kLegacyInstallLeaf[] = L"Master Control Program";
+constexpr DWORD kBootstrapperChildProcessTimeoutMs = 5 * 60 * 1000;
 
 #include "MasterControl/MasterControlVersion.h"
 #ifndef MASTERCONTROL_BOOTSTRAPPER_VERSION
@@ -646,14 +647,24 @@ int runProcess(std::wstring commandLine,
         return static_cast<int>(GetLastError());
     }
 
-    // PHASE-10 known-issue: this site uses WaitForSingleObject(..., INFINITE)
-    // without a timeout-and-kill path. Acceptable today because the
-    // bootstrapper invokes only short-lived child commands (icacls, regsvr32,
-    // etc.) with no captured stdout/stderr — there is no pipe-buffer deadlock
-    // risk because no pipes are wired. A future maintenance phase should
-    // adopt the runHostedExecutable pattern at MasterControlRuntime.cpp:914.
-    // FORBIDDEN-CONTRACT §6.4 documents this exemption.
-    WaitForSingleObject(processInformation.hProcess, INFINITE);
+    const DWORD waitResult = WaitForSingleObject(
+        processInformation.hProcess,
+        kBootstrapperChildProcessTimeoutMs);
+    if (waitResult == WAIT_TIMEOUT) {
+        TerminateProcess(processInformation.hProcess, ERROR_TIMEOUT);
+        WaitForSingleObject(processInformation.hProcess, 5000);
+        CloseHandle(processInformation.hThread);
+        CloseHandle(processInformation.hProcess);
+        return static_cast<int>(ERROR_TIMEOUT);
+    }
+    if (waitResult == WAIT_FAILED) {
+        const DWORD lastError = GetLastError();
+        TerminateProcess(processInformation.hProcess, lastError);
+        WaitForSingleObject(processInformation.hProcess, 5000);
+        CloseHandle(processInformation.hThread);
+        CloseHandle(processInformation.hProcess);
+        return static_cast<int>(lastError);
+    }
 
     DWORD exitCode = 1;
     GetExitCodeProcess(processInformation.hProcess, &exitCode);
@@ -706,28 +717,54 @@ ProcessCaptureResult runProcessCapture(std::wstring commandLine,
     CloseHandle(processInformation.hThread);
     CloseHandle(writePipe);
 
-    // PHASE-10 known-issue: classic Windows pipe deadlock risk.
-    //   WaitForSingleObject(..., INFINITE) before draining the captured
-    //   pipe means that if the child writes more than the pipe buffer
-    //   (typically 4 KB) before exiting, the child blocks on WriteFile and
-    //   the parent blocks here forever. The bootstrapper preflight only
-    //   captures short outputs (icacls, registry queries, etc.) so the
-    //   risk is theoretical in practice, but the right fix is the
-    //   concurrent-drain pattern at MasterControlRuntime.cpp:1059. A future
-    //   maintenance phase should adopt that shape here. FORBIDDEN-CONTRACT
-    //   §6.4 documents this exemption.
-    WaitForSingleObject(processInformation.hProcess, INFINITE);
+    auto drainAvailableOutput = [&]() {
+        std::array<char, 4096> buffer{};
+        while (true) {
+            DWORD bytesAvailable = 0;
+            if (PeekNamedPipe(readPipe, nullptr, 0, nullptr, &bytesAvailable, nullptr) == 0 ||
+                bytesAvailable == 0) {
+                break;
+            }
+            const DWORD bytesToRead = (std::min)(
+                bytesAvailable,
+                static_cast<DWORD>(buffer.size()));
+            DWORD bytesRead = 0;
+            if (ReadFile(readPipe, buffer.data(), bytesToRead, &bytesRead, nullptr) == 0 ||
+                bytesRead == 0) {
+                break;
+            }
+            result.output.append(buffer.data(), static_cast<size_t>(bytesRead));
+        }
+    };
 
-    std::array<char, 4096> buffer{};
-    DWORD bytesRead = 0;
-    while (ReadFile(readPipe, buffer.data(), static_cast<DWORD>(buffer.size()), &bytesRead, nullptr) != 0 &&
-           bytesRead > 0) {
-        result.output.append(buffer.data(), static_cast<size_t>(bytesRead));
+    const ULONGLONG deadline = GetTickCount64() + kBootstrapperChildProcessTimeoutMs;
+    bool timedOut = false;
+    while (true) {
+        drainAvailableOutput();
+        const DWORD waitResult = WaitForSingleObject(processInformation.hProcess, 50);
+        if (waitResult == WAIT_OBJECT_0) {
+            break;
+        }
+        if (waitResult == WAIT_FAILED) {
+            result.output.append("\n[process wait failed]\n");
+            break;
+        }
+        if (GetTickCount64() >= deadline) {
+            timedOut = true;
+            TerminateProcess(processInformation.hProcess, ERROR_TIMEOUT);
+            WaitForSingleObject(processInformation.hProcess, 5000);
+            break;
+        }
     }
+    drainAvailableOutput();
 
     DWORD exitCode = 1;
     GetExitCodeProcess(processInformation.hProcess, &exitCode);
     result.exitCode = static_cast<int>(exitCode);
+    if (timedOut) {
+        result.exitCode = static_cast<int>(ERROR_TIMEOUT);
+        result.output.append("\n[process timed out and was terminated]\n");
+    }
 
     CloseHandle(processInformation.hProcess);
     CloseHandle(readPipe);

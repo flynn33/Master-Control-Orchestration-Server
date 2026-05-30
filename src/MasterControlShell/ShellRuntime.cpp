@@ -585,7 +585,7 @@ std::string dashboardHostFromBindAddress(const std::string& bindAddress) {
 }
 
 std::pair<std::string, uint16_t> adminApiEndpoint(const std::filesystem::path& configurationFile) {
-    std::string bindAddress = "0.0.0.0";
+    std::string bindAddress = "127.0.0.1";
     uint16_t browserPort = 7300;
 
     if (const auto configurationText = readFileUtf8(configurationFile); configurationText.has_value()) {
@@ -639,6 +639,9 @@ ShellRuntimeEndpoint runtimeEndpointFromJson(const JsonObject& object) {
     endpoint.description = wideFromUtf8(jsonStringOr(object, L"description", ""));
     endpoint.routePath = wideFromUtf8(jsonStringOr(object, L"routePath", ""));
     endpoint.specialization = wideFromUtf8(jsonStringOr(object, L"specialization", ""));
+    endpoint.requiredCapabilities = jsonStringArrayOr(object, L"requiredCapabilities");
+    endpoint.risk = wideFromUtf8(jsonStringOr(object, L"risk", ""));
+    endpoint.highRisk = jsonBoolOr(object, L"highRisk", false);
     endpoint.userDefined = jsonBoolOr(object, L"userDefined", false);
     return endpoint;
 }
@@ -664,9 +667,9 @@ ShellSubAgentGroupDefinition subAgentGroupFromJson(const JsonObject& object) {
 ShellSecuritySettings securityFromJson(const JsonObject& object) {
     ShellSecuritySettings settings;
     settings.enableTls = jsonBoolOr(object, L"enableTls", false);
-    settings.enableAuthentication = jsonBoolOr(object, L"enableAuthentication", false);
+    settings.enableAuthentication = jsonBoolOr(object, L"enableAuthentication", true);
     settings.allowTroubleshootingBypass = jsonBoolOr(object, L"allowTroubleshootingBypass", false);
-    settings.allowOpenLanAccess = jsonBoolOr(object, L"allowOpenLanAccess", true);
+    settings.allowOpenLanAccess = jsonBoolOr(object, L"allowOpenLanAccess", false);
     settings.securityProtocolsEnabled = jsonBoolOr(object, L"securityProtocolsEnabled", true);
     settings.trustedRemoteHosts = jsonStringArrayOr(object, L"trustedRemoteHosts");
     return settings;
@@ -771,6 +774,13 @@ JsonObject runtimeEndpointToJson(const ShellRuntimeEndpoint& endpoint) {
     object.SetNamedValue(L"description", JsonValue::CreateStringValue(endpoint.description));
     object.SetNamedValue(L"routePath", JsonValue::CreateStringValue(endpoint.routePath));
     object.SetNamedValue(L"specialization", JsonValue::CreateStringValue(endpoint.specialization));
+    JsonArray capabilities;
+    for (const auto& capability : endpoint.requiredCapabilities) {
+        capabilities.Append(JsonValue::CreateStringValue(capability));
+    }
+    object.SetNamedValue(L"requiredCapabilities", capabilities);
+    object.SetNamedValue(L"risk", JsonValue::CreateStringValue(endpoint.risk));
+    object.SetNamedValue(L"highRisk", JsonValue::CreateBooleanValue(endpoint.highRisk));
     object.SetNamedValue(L"userDefined", JsonValue::CreateBooleanValue(true));
     return object;
 }
@@ -1052,6 +1062,18 @@ std::wstring runtimeEndpointRow(const ShellRuntimeEndpoint& endpoint) {
         stream << L"logical lane";
     }
     stream << L"  |  " << (endpoint.status.empty() ? L"unknown" : endpoint.status);
+    if (endpoint.highRisk || !endpoint.requiredCapabilities.empty()) {
+        stream << L"  |  risk=" << (endpoint.risk.empty() ? L"high" : endpoint.risk);
+        if (!endpoint.requiredCapabilities.empty()) {
+            stream << L"  |  requires=";
+            for (std::size_t i = 0; i < endpoint.requiredCapabilities.size(); ++i) {
+                if (i != 0) {
+                    stream << L",";
+                }
+                stream << endpoint.requiredCapabilities[i];
+            }
+        }
+    }
     if (endpoint.userDefined) {
         stream << L"  |  custom";
     }
@@ -1527,18 +1549,18 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
     snapshot.canStopService = service.state == ServiceState::Running || service.state == ServiceState::StartPending;
 
     std::string instanceName = "Master Control Orchestration Server";
-    std::string bindAddress = "0.0.0.0";
+    std::string bindAddress = "127.0.0.1";
     uint16_t browserPort = 7300;
     uint16_t beaconPort = 7301;
     std::string environmentName = "Pending service snapshot";
     std::string preferredBindAddress = "127.0.0.1";
     std::string macAddress = "n/a";
-    bool beaconEnabled = true;
+    bool beaconEnabled = false;
     bool aiAutonomyEnabled = false;
     bool advancedMode = false;          // WS5 parity with browser
     bool firstRunCompleted = false;     // WS1 parity with browser
     bool securityProtocolsEnabled = true;
-    bool openLanAccess = true;
+    bool openLanAccess = false;
     ShellSecuritySettings securitySettings;
     std::vector<ShellRuntimeEndpoint> endpoints;
     std::vector<ShellSubAgentGroupDefinition> subAgentGroups;
@@ -1976,6 +1998,42 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
                    << L"Dashboard URL: " << snapshot.dashboardUrl << L'\n'
                    << L"Config path: " << snapshot.configPath << L'\n'
                    << L"Data directory: " << snapshot.dataDirectory;
+
+    {
+        std::wstring errorMessage;
+        const auto setupState = httpGet(
+            dashboardHostFromBindAddress(bindAddress),
+            browserPort,
+            L"/api/setup/state",
+            errorMessage);
+        if (setupState.has_value() && setupState->statusCode == 200) {
+            if (const auto setupJson = parseJsonObject(setupState->body); setupJson.has_value()) {
+                snapshot.setupMode = wideFromUtf8(jsonStringOr(*setupJson, L"mode", "guided"));
+                snapshot.setupCurrentStep = wideFromUtf8(jsonStringOr(*setupJson, L"currentStep", "welcome"));
+                snapshot.setupSecurityPosture = wideFromUtf8(jsonStringOr(*setupJson, L"securityPosture", "local-only"));
+                if (setupJson->HasKey(L"readiness")) {
+                    const auto readiness = setupJson->GetNamedObject(L"readiness", JsonObject());
+                    firstRunCompleted = jsonBoolOr(readiness, L"firstRunCompleted", firstRunCompleted);
+                    snapshot.setupMcpReadyCount = static_cast<int>(jsonNumberOr(readiness, L"mcpReadyCount"));
+                    snapshot.setupMcpMissingCount = static_cast<int>(jsonNumberOr(readiness, L"mcpMissingCount"));
+                    snapshot.setupWorkflowsReadyCount = static_cast<int>(jsonNumberOr(readiness, L"workflowsReadyCount"));
+                    snapshot.setupWorkflowsMissingCount = static_cast<int>(jsonNumberOr(readiness, L"workflowsMissingCount"));
+                    snapshot.setupSpecialistsReadyCount = static_cast<int>(jsonNumberOr(readiness, L"specialistsReadyCount"));
+                    snapshot.setupSpecialistsMissingCount = static_cast<int>(jsonNumberOr(readiness, L"specialistsMissingCount"));
+                    snapshot.setupReadinessIssues.clear();
+                    for (const auto& value : readiness.GetNamedArray(L"blockingIssues", JsonArray())) {
+                        if (value.ValueType() != JsonValueType::Object) {
+                            continue;
+                        }
+                        const auto issue = value.GetObject();
+                        const auto severity = wideFromUtf8(jsonStringOr(issue, L"severity", "info"));
+                        const auto title = wideFromUtf8(jsonStringOr(issue, L"title", jsonStringOr(issue, L"id", "Readiness issue")));
+                        snapshot.setupReadinessIssues.push_back(severity + L": " + title);
+                    }
+                }
+            }
+        }
+    }
 
     std::wostringstream environmentStream;
     environmentStream << L"Environment: " << wideFromUtf8(environmentName) << L'\n'
@@ -2463,6 +2521,35 @@ ShellOperationResult ShellRuntime::RemoveSubAgentGroup(const std::wstring& group
         L"/api/runtime/subagent-groups/remove",
         payload,
         L"Unable to remove the sub-agent group through the local admin API.");
+}
+
+ShellOperationResult ShellRuntime::BeginSetup(const std::wstring& mode) const {
+    JsonObject payload;
+    payload.SetNamedValue(L"mode", JsonValue::CreateStringValue(mode.empty() ? L"guided" : mode));
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/setup/start",
+        payload,
+        L"Unable to start setup through the local admin API.");
+}
+
+ShellOperationResult ShellRuntime::CompleteSetup() const {
+    JsonObject payload;
+    payload.SetNamedValue(L"confirm", JsonValue::CreateBooleanValue(true));
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/setup/complete",
+        payload,
+        L"Unable to complete setup through the local admin API.");
+}
+
+ShellOperationResult ShellRuntime::DismissSetup() const {
+    JsonObject payload;
+    return postJsonObjectToAdminApi(
+        ResolveConfigurationFile(),
+        L"/api/setup/dismiss",
+        payload,
+        L"Unable to dismiss setup through the local admin API.");
 }
 
 

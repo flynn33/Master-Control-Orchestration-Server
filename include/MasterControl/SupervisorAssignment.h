@@ -99,7 +99,7 @@ struct SupervisorAssignment {
     std::vector<std::string> allowedCapabilities;
     std::string auditCorrelationId;
     std::string lastErrorMessage;  // empty unless state == Error
-    std::string tokenRef;          // mcos-supervisor-token:CFG-...
+    std::string tokenRef;          // short-lived unpredictable token reference
     std::string serverFingerprint; // sha256 hash of issuance host context
 };
 
@@ -133,7 +133,7 @@ struct SupervisorConnectionClaim {
     std::string clientId;
     std::vector<std::string> capabilities;
     std::string fingerprint;
-    std::string token;            // optional: full bearer if not using ref-only flow
+    std::string token;            // tokenRef from the generated config; required on confirm
 };
 
 struct SupervisorConnectionResult {

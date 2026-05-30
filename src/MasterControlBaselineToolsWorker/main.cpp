@@ -47,6 +47,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -59,6 +60,8 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+
+#include "MasterControl/MasterControlVersion.h"
 
 #if defined(_WIN32)
 // We use Win32 host-info APIs (GetComputerNameExW, GetVersionExW via
@@ -262,11 +265,7 @@ nlohmann::json hostInfo() {
     out["operatingSystem"] = "non-windows";
 #endif
     out["worker"] = "mcos-baseline-tools-worker";
-    // v0.9.4: bump workerVersion in lockstep with MASTERCONTROL_VERSION.
-    // Pre-v0.9.4 this string was hand-edited per release; consider
-    // wiring it to a generated header in a future cleanup so the worker
-    // can't drift from the rest of the tree.
-    out["workerVersion"] = "0.9.4";
+    out["workerVersion"] = MASTERCONTROL_VERSION;
     return out;
 }
 
@@ -299,6 +298,61 @@ std::wstring utf8ToWide(const std::string& utf8) {
                         utf8.c_str(), static_cast<int>(utf8.size()),
                         out.data(), length);
     return out;
+}
+
+std::string trimAscii(std::string value) {
+    value.erase(
+        value.begin(),
+        std::find_if(
+            value.begin(),
+            value.end(),
+            [](unsigned char character) { return std::isspace(character) == 0; }));
+    value.erase(
+        std::find_if(
+            value.rbegin(),
+            value.rend(),
+            [](unsigned char character) { return std::isspace(character) == 0; })
+            .base(),
+        value.end());
+    return value;
+}
+
+std::string environmentString(const char* name) {
+    char* raw = nullptr;
+    size_t length = 0;
+    if (_dupenv_s(&raw, &length, name) != 0 || raw == nullptr) {
+        return {};
+    }
+    std::string value(raw, length > 0 ? length - 1 : 0);
+    std::free(raw);
+    return trimAscii(std::move(value));
+}
+
+std::string trimTrailingUrlSlash(std::string value) {
+    while (!value.empty() && (value.back() == '/' || value.back() == '\\')) {
+        value.pop_back();
+    }
+    return value;
+}
+
+std::string adminBaseUrl() {
+    auto configured = trimTrailingUrlSlash(environmentString("MCOS_ADMIN_BASE_URL"));
+    if (!configured.empty()) {
+        return configured;
+    }
+    const auto configuredPort = environmentString("MCOS_ADMIN_PORT");
+    const auto port = configuredPort.empty() ? std::string("7300") : configuredPort;
+    return std::string("http://127.0.0.1:") + port;
+}
+
+std::string adminUrl(const std::string& path) {
+    if (path.empty()) {
+        return adminBaseUrl();
+    }
+    if (path.front() == '/') {
+        return adminBaseUrl() + path;
+    }
+    return adminBaseUrl() + "/" + path;
 }
 
 ProcessRunResult runProcessCaptured(const std::wstring& commandLine,
@@ -540,9 +594,8 @@ nlohmann::json gitRun(const std::vector<std::string>& args,
     return out;
 }
 
-// v0.9.62: search.grep — try ripgrep first (fast, structured JSON
-// output via --json), fall back to PowerShell Select-String if rg is
-// not on PATH. Either way, parse the output into a uniform
+// v0.9.62: search.grep — use ripgrep (fast, structured JSON output via
+// --json) and parse the output into a uniform
 // {file,line,text} array so downstream consumers don't care which
 // implementation ran. Returns an honest result on launchFailed --
 // no fake matches.
@@ -610,56 +663,22 @@ nlohmann::json searchGrep(const std::string& pattern,
             } catch (...) { /* skip malformed line */ }
         }
     } else {
-        // Fall back to PowerShell Select-String when rg isn't on PATH
-        // (launchFailed) or it bailed unexpectedly. This won't be as
-        // fast but is universally available on Windows 10+.
-        ranFallback = true;
-        toolUsed = "powershell-select-string";
-        // Build a PowerShell command. Use Get-ChildItem -Recurse to
-        // walk and pipe to Select-String. Pattern is treated as a
-        // regex by Select-String; literal-string searches need to
-        // escape regex metacharacters, but for v0.9.62 we'll trust
-        // operator-supplied patterns are intentional.
-        std::ostringstream psBody;
-        psBody << "Get-ChildItem -Path '" << searchRoot << "'";
-        if (!glob.empty()) psBody << " -Filter '" << glob << "'";
-        psBody << " -Recurse -File -ErrorAction SilentlyContinue | "
-               << "Select-String -Pattern '" << pattern
-               << "' -ErrorAction SilentlyContinue | "
-               << "Select-Object -First " << maxMatches
-               << " | ForEach-Object { '{0}|{1}|{2}' -f $_.Path,$_.LineNumber,$_.Line }";
-        std::wstring psCmd = L"powershell -NoProfile -ExecutionPolicy Bypass -Command "
-                             + quoteArg(utf8ToWide(psBody.str()));
-        const auto psResult = runProcessCaptured(psCmd, std::wstring(),
-                                                 static_cast<DWORD>(timeoutMs));
-        if (psResult.launchFailed) {
-            return nlohmann::json{
-                { "tool",     "none" },
-                { "matches",  matches },
-                { "error",    "Neither rg nor powershell were launchable on this host." },
-                { "rgError",  rgResult.launchError },
-                { "psError",  psResult.launchError }
-            };
-        }
-        std::istringstream iss(psResult.stdoutText);
-        std::string line;
-        while (std::getline(iss, line) && static_cast<int>(matches.size()) < maxMatches) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            const auto p1 = line.find('|');
-            if (p1 == std::string::npos) continue;
-            const auto p2 = line.find('|', p1 + 1);
-            if (p2 == std::string::npos) continue;
-            std::string file = line.substr(0, p1);
-            std::string lineStr = line.substr(p1 + 1, p2 - p1 - 1);
-            std::string text = line.substr(p2 + 1);
-            int lineNumber = 0;
-            try { lineNumber = std::stoi(lineStr); } catch (...) {}
-            matches.push_back({
-                { "file", file },
-                { "line", lineNumber },
-                { "text", text }
-            });
-        }
+        toolUsed = "ripgrep";
+        return nlohmann::json{
+            { "tool",       toolUsed },
+            { "ranFallback", ranFallback },
+            { "pattern",    pattern },
+            { "path",       searchRoot },
+            { "glob",       glob },
+            { "maxMatches", maxMatches },
+            { "matchCount", 0 },
+            { "matches",    matches },
+            { "error",      "ripgrep (rg.exe) is required for search.grep and was not available or returned an execution error." },
+            { "rgExitCode", rgResult.exitCode },
+            { "rgTimedOut", rgResult.timedOut },
+            { "rgError",    rgResult.launchError },
+            { "rgStderr",   rgResult.stderrText }
+        };
     }
 
     return nlohmann::json{
@@ -763,7 +782,7 @@ nlohmann::json clientTrackerCatalog() {
     return nlohmann::json::array({
         nlohmann::json{
             { "name", "clients.list" },
-            { "description", "List the LAN AI clients currently registered with MCOS. Bridges to GET /api/clients on the MCOS admin port (http://localhost:7300). Returns the full client roster with ip / clientType / sessionId / lastHeartbeat fields. Read-only." },
+            { "description", "List the LAN AI clients currently registered with MCOS. Bridges to GET /api/clients through MCOS_ADMIN_BASE_URL. Returns the full client roster with ip / clientType / sessionId / lastHeartbeat fields. Read-only." },
             { "inputSchema", {
                 { "type", "object" },
                 { "properties", nlohmann::json::object() }
@@ -797,7 +816,7 @@ nlohmann::json fileSearchCatalog() {
     return nlohmann::json::array({
         nlohmann::json{
             { "name", "search.grep" },
-            { "description", "Substring search for `pattern` across files under `path`. Uses ripgrep (rg.exe) if available on PATH for speed; otherwise falls back to PowerShell Select-String. Returns matches as a JSON array of {file, line, text}. maxMatches caps the result count (default 200, max 5000)." },
+            { "description", "Substring search for `pattern` across files under `path`. Uses ripgrep (rg.exe) on PATH and returns matches as a JSON array of {file, line, text}. maxMatches caps the result count (default 200, max 5000)." },
             { "inputSchema", {
                 { "type", "object" },
                 { "properties", {
@@ -2261,8 +2280,14 @@ nlohmann::json httpBridgeGet(const std::string& url, int timeoutMsRequested) {
     // tail we can split off, then the URL.
     const int timeoutSec = (timeoutMs + 999) / 1000;
     std::wstring cmd = L"curl.exe -s -m " + std::to_wstring(timeoutSec)
-                     + L" -w \"\\n__MCOS_HTTP_STATUS__:%{http_code}\" "
-                     + quoteArg(utf8ToWide(url));
+                     + L" -w \"\\n__MCOS_HTTP_STATUS__:%{http_code}\"";
+    const auto token = environmentString("MCOS_ADMIN_TOKEN");
+    if (!token.empty()) {
+        cmd += L" -H ";
+        cmd += quoteArg(L"X-MCOS-Admin-Token: " + utf8ToWide(token));
+    }
+    cmd.push_back(L' ');
+    cmd += quoteArg(utf8ToWide(url));
     auto runResult = runProcessCaptured(cmd, std::wstring(),
                                         static_cast<DWORD>(timeoutMs + 1000));
     nlohmann::json out;
@@ -2360,15 +2385,15 @@ nlohmann::json dispatchToolCall(const std::string& toolName,
         return makeResult(id, textContent(result.dump(2)));
     }
     if (gSpecialization == Specialization::ClientTracker && toolName == "clients.list") {
-        nlohmann::json result = httpBridgeGet("http://localhost:7300/api/clients", 5000);
+        nlohmann::json result = httpBridgeGet(adminUrl("/api/clients"), 5000);
         return makeResult(id, textContent(result.dump(2)));
     }
     if (gSpecialization == Specialization::Metrics && toolName == "metrics.host") {
-        nlohmann::json result = httpBridgeGet("http://localhost:7300/api/host/telemetry", 5000);
+        nlohmann::json result = httpBridgeGet(adminUrl("/api/host/telemetry"), 5000);
         return makeResult(id, textContent(result.dump(2)));
     }
     if (gSpecialization == Specialization::Metrics && toolName == "metrics.gateway") {
-        nlohmann::json result = httpBridgeGet("http://localhost:7300/api/telemetry/gateway", 5000);
+        nlohmann::json result = httpBridgeGet(adminUrl("/api/telemetry/gateway"), 5000);
         return makeResult(id, textContent(result.dump(2)));
     }
     if (gSpecialization == Specialization::CodeExecutionRepl && toolName == "repl.exec") {
@@ -2685,28 +2710,27 @@ nlohmann::json dispatchToolCall(const std::string& toolName,
     if (gSpecialization == Specialization::AgentSentinel) {
         if (toolName == "sentinel.list_rules") {
             return makeResult(id, textContent(httpBridgeGet(
-                "http://localhost:7300/api/forsetti/surface", 5000).dump(2)));
+                adminUrl("/api/forsetti/surface"), 5000).dump(2)));
         }
         if (toolName == "sentinel.recent_activity") {
             const int max = arguments.is_object() ? arguments.value("max", 50) : 50;
             const int clamped = (max < 1) ? 1 : (max > 500 ? 500 : max);
-            const std::string url = "http://localhost:7300/api/activity?max="
-                                  + std::to_string(clamped);
+            const std::string url = adminUrl("/api/activity?max=" + std::to_string(clamped));
             return makeResult(id, textContent(httpBridgeGet(url, 5000).dump(2)));
         }
         if (toolName == "sentinel.health_summary") {
             return makeResult(id, textContent(httpBridgeGet(
-                "http://localhost:7300/api/health/summary", 5000).dump(2)));
+                adminUrl("/api/health/summary"), 5000).dump(2)));
         }
     }
     if (gSpecialization == Specialization::AgentArchitect) {
         if (toolName == "architect.list_phases") {
             return makeResult(id, textContent(httpBridgeGet(
-                "http://localhost:7300/api/forsetti/surface", 5000).dump(2)));
+                adminUrl("/api/forsetti/surface"), 5000).dump(2)));
         }
         if (toolName == "architect.discovery_doc") {
             return makeResult(id, textContent(httpBridgeGet(
-                "http://localhost:7300/.well-known/mcos.json", 5000).dump(2)));
+                adminUrl("/.well-known/mcos.json"), 5000).dump(2)));
         }
         if (toolName == "architect.draft_adr") {
             const std::string title    = arguments.is_object() ? arguments.value("title",   std::string("(set title)")) : "(set title)";
@@ -2724,7 +2748,7 @@ nlohmann::json dispatchToolCall(const std::string& toolName,
     if (gSpecialization == Specialization::AgentForge) {
         if (toolName == "forge.list_pools") {
             return makeResult(id, textContent(httpBridgeGet(
-                "http://localhost:7300/api/pools", 5000).dump(2)));
+                adminUrl("/api/pools"), 5000).dump(2)));
         }
         if (toolName == "forge.suggest_pool_template") {
             if (!arguments.is_object() || !arguments.contains("poolId")
@@ -2861,51 +2885,50 @@ nlohmann::json dispatchToolCall(const std::string& toolName,
         }
         if (toolName == "scribe.version_state") {
             return makeResult(id, textContent(httpBridgeGet(
-                "http://localhost:7300/api/version", 5000).dump(2)));
+                adminUrl("/api/version"), 5000).dump(2)));
         }
     }
     if (gSpecialization == Specialization::AgentRecon) {
         if (toolName == "recon.dashboard") {
             return makeResult(id, textContent(httpBridgeGet(
-                "http://localhost:7300/api/dashboard", 10000).dump(2)));
+                adminUrl("/api/dashboard"), 10000).dump(2)));
         }
         if (toolName == "recon.diagnostics") {
             return makeResult(id, textContent(httpBridgeGet(
-                "http://localhost:7300/api/diagnostics/runtime-stats", 5000).dump(2)));
+                adminUrl("/api/diagnostics/runtime-stats"), 5000).dump(2)));
         }
         if (toolName == "recon.gateway_tools") {
             return makeResult(id, textContent(httpBridgeGet(
-                "http://localhost:7300/api/gateway/tools", 5000).dump(2)));
+                adminUrl("/api/gateway/tools"), 5000).dump(2)));
         }
     }
     if (gSpecialization == Specialization::AgentNexus) {
         if (toolName == "nexus.health_summary") {
             return makeResult(id, textContent(httpBridgeGet(
-                "http://localhost:7300/api/health/summary", 5000).dump(2)));
+                adminUrl("/api/health/summary"), 5000).dump(2)));
         }
         if (toolName == "nexus.discovery") {
             return makeResult(id, textContent(httpBridgeGet(
-                "http://localhost:7300/api/discovery", 5000).dump(2)));
+                adminUrl("/api/discovery"), 5000).dump(2)));
         }
         if (toolName == "nexus.list_clients") {
             return makeResult(id, textContent(httpBridgeGet(
-                "http://localhost:7300/api/clients", 5000).dump(2)));
+                adminUrl("/api/clients"), 5000).dump(2)));
         }
     }
     if (gSpecialization == Specialization::AgentWatchtower) {
         if (toolName == "watchtower.health_summary") {
             return makeResult(id, textContent(httpBridgeGet(
-                "http://localhost:7300/api/health/summary", 5000).dump(2)));
+                adminUrl("/api/health/summary"), 5000).dump(2)));
         }
         if (toolName == "watchtower.gateway_status") {
             return makeResult(id, textContent(httpBridgeGet(
-                "http://localhost:7300/api/gateway/status", 5000).dump(2)));
+                adminUrl("/api/gateway/status"), 5000).dump(2)));
         }
         if (toolName == "watchtower.activity_tail") {
             const int max = arguments.is_object() ? arguments.value("max", 50) : 50;
             const int clamped = (max < 1) ? 1 : (max > 500 ? 500 : max);
-            const std::string url = "http://localhost:7300/api/activity?max="
-                                  + std::to_string(clamped);
+            const std::string url = adminUrl("/api/activity?max=" + std::to_string(clamped));
             return makeResult(id, textContent(httpBridgeGet(url, 5000).dump(2)));
         }
     }
@@ -3045,7 +3068,7 @@ nlohmann::json handleEnvelope(const nlohmann::json& request) {
             { "protocolVersion", "2025-03-26" },
             { "serverInfo", {
                 { "name", "MCOS " + gSpecializationName + " Worker" },
-                { "version", "0.9.61" }
+                { "version", MASTERCONTROL_VERSION }
             } },
             { "capabilities", {
                 { "tools", { { "listChanged", false } } }

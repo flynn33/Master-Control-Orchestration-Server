@@ -64,6 +64,7 @@ jobs:
       # demands a `success` conclusion. If no run exists or the run failed,
       # the release is refused. This is the no-bypass enforcement.
       - name: Verify same-SHA Windows product gate succeeded
+        id: product_gate
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
@@ -95,7 +96,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $runId = (gh api "/repos/$($env:GITHUB_REPOSITORY)/actions/workflows/windows-build-test-package.yml/runs?head_sha=$($env:GITHUB_SHA)" | ConvertFrom-Json).workflow_runs[0].id
+          $runId = '${{ steps.product_gate.outputs.gate_run_id }}'
+          if (-not $runId) {
+            Write-Error "Verified Windows product gate run id was not produced. Release refused."
+            exit 1
+          }
           $stage = Join-Path $env:GITHUB_WORKSPACE 'release-stage'
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           gh run download $runId --name mastercontrol-release-package --dir $stage

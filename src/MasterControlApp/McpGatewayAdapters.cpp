@@ -128,8 +128,8 @@ std::string composeHealthUrl(const McpGatewayConfiguration& configuration) {
     return stream.str();
 }
 
-// v0.11.0-alpha.2 (Copilot-review-hardened): the HTTPS health URL is
-// composed inline by the discovery emit (MasterControlRuntime.cpp)
+// The HTTPS health URL is composed inline by the discovery emit
+// (MasterControlRuntime.cpp)
 // using the runtime-resolved LAN IP host. We intentionally do NOT keep
 // a composeHealthUrlTls helper here because the only consumer needs
 // the LAN IP rather than configuration.listenHost (which is typically
@@ -544,8 +544,7 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
     serveThread_ = std::thread(&NativeHttpSysGatewayAdapter::serveLoop, this);
 
     status_.state = GatewayState::Running;
-    // v0.11.0-alpha.2 (Copilot-review-hardened): tlsBound on the gateway
-    // status is the runtime signal that downstream surfaces gate on. It
+    // tlsBound on the gateway status is the runtime signal that downstream surfaces gate on. It
     // is true ONLY when:
     //   1. cfg.mcpGateway.tlsEnabled == true
     //   2. The HTTPS URL prefix successfully registered via
@@ -553,8 +552,8 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
     //   3. The operator declared a cert by setting
     //      cfg.mcpGateway.tlsCertThumbprint -- non-empty thumbprint
     //
-    // Pre-hardening Copilot flagged that HTTP.sys returns NO_ERROR on
-    // URL-prefix registration even when no sslcert is bound; the prior
+    // HTTP.sys returns NO_ERROR on URL-prefix registration even when no
+    // sslcert is bound; the prior
     // emit would publish HTTPS URLs that any handshake would fail.
     // Treating tlsCertThumbprint as the operator's "I bound a cert"
     // signal (Configure-LocalServerCert.ps1 prints the thumbprint snippet
@@ -766,6 +765,14 @@ void NativeHttpSysGatewayAdapter::AttachWorkerBridge(
     leaseRouter_ = std::move(leaseRouter);
 }
 
+void NativeHttpSysGatewayAdapter::AttachCapabilityResolver(
+    CapabilityResolver resolver,
+    CapabilityDenialAuditSink auditSink) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    capabilityResolver_ = std::move(resolver);
+    capabilityDenialAuditSink_ = std::move(auditSink);
+}
+
 // PHASE-12 follow-up (v0.6.10): walk every pool, find its first Ready
 // instance, ask it tools/list via the stdio bridge, and merge the results
 // into a fresh catalog. Each tool entry is tagged with serverName=poolId
@@ -881,6 +888,10 @@ std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::refreshToolCatalogLo
                 if (tool.contains("inputSchema") && tool["inputSchema"].is_object()) {
                     descriptor.inputSchemaJson = tool["inputSchema"].dump();
                 }
+                descriptor.requiredCapabilities =
+                    requiredCapabilitiesForMcpTool(descriptor.serverName, descriptor.toolName);
+                descriptor.risk = highestCapabilityRisk(descriptor.requiredCapabilities);
+                descriptor.highRisk = !descriptor.requiredCapabilities.empty();
                 aggregated.push_back(std::move(descriptor));
             }
         } catch (const std::exception&) {
@@ -955,10 +966,41 @@ std::string buildJsonRpcError(int code, const std::string& message,
 }
 } // namespace
 
+CapabilityAuthorizationContext NativeHttpSysGatewayAdapter::resolveCapabilities(
+    const std::string& clientId,
+    const std::string& clientIpAddress) const {
+    CapabilityResolver resolver;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        resolver = capabilityResolver_;
+    }
+    if (!resolver) {
+        CapabilityAuthorizationContext context;
+        context.actor = clientId.empty() ? std::string("anonymous") : clientId;
+        context.clientId = clientId;
+        context.denialReason = "MCP capability resolver is not configured.";
+        return context;
+    }
+    return resolver(clientId, clientIpAddress);
+}
+
+void NativeHttpSysGatewayAdapter::auditCapabilityDenial(
+    const CapabilityDenialAuditEvent& event) const {
+    CapabilityDenialAuditSink auditSink;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auditSink = capabilityDenialAuditSink_;
+    }
+    if (auditSink) {
+        auditSink(event);
+    }
+}
+
 std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& path,
                                                           const std::string& body,
                                                           const std::string& clientIpAddress,
-                                                          const std::string& clientType) {
+                                                          const std::string& clientType,
+                                                          const std::string& clientId) {
     // path is reserved for v0.6.11 path-based pool scoping (/mcp/{poolId}).
     // v0.6.10 routes by `params.name` -> cached toolCatalog -> serverName.
     // v0.7.2: clientIpAddress + clientType are best-effort attribution
@@ -1089,8 +1131,12 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
             std::lock_guard<std::mutex> lock(mutex_);
             catalog = refreshToolCatalogLocked();
         }
+        const auto capabilityContext = resolveCapabilities(clientId, clientIpAddress);
         nlohmann::json toolsArray = nlohmann::json::array();
         for (const auto& descriptor : catalog) {
+            if (!hasAllCapabilities(capabilityContext.capabilities, descriptor.requiredCapabilities)) {
+                continue;
+            }
             // Each tool is exposed as `{poolName}__{toolName}` so AI
             // clients have unambiguous routing across multiple pools that
             // happen to expose the same local tool name. tools/call
@@ -1120,7 +1166,10 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
             toolsArray.push_back({
                 { "name", qualifiedName },
                 { "description", descriptor.description },
-                { "inputSchema", std::move(inputSchema) }
+                { "inputSchema", std::move(inputSchema) },
+                { "requiredCapabilities", descriptor.requiredCapabilities },
+                { "risk", descriptor.risk },
+                { "highRisk", descriptor.highRisk }
             });
         }
         nlohmann::json envelope = {
@@ -1171,6 +1220,7 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
         // Resolve poolId from the cached catalog.
         std::string poolId;
         std::string localToolName = requestedName;
+        std::vector<std::string> requiredCapabilities;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             // Pass 1: look for an exact qualified-name match.
@@ -1179,6 +1229,7 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
                 if (qualified == requestedName) {
                     poolId        = descriptor.serverName;
                     localToolName = descriptor.toolName;
+                    requiredCapabilities = descriptor.requiredCapabilities;
                     break;
                 }
             }
@@ -1194,6 +1245,8 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
                             break;
                         }
                         foundPool = descriptor.serverName;
+                        localToolName = descriptor.toolName;
+                        requiredCapabilities = descriptor.requiredCapabilities;
                     }
                 }
                 if (collision) {
@@ -1218,6 +1271,7 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
                     if (qualified == requestedName || descriptor.toolName == requestedName) {
                         poolId        = descriptor.serverName;
                         localToolName = descriptor.toolName;
+                        requiredCapabilities = descriptor.requiredCapabilities;
                         break;
                     }
                 }
@@ -1228,6 +1282,32 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
                 "tools/call: tool '" + requestedName
                 + "' not found in any supervised pool. Call tools/list to see "
                   "the current catalog.", id);
+        }
+
+        const auto capabilityContext = resolveCapabilities(clientId, clientIpAddress);
+        if (!hasAllCapabilities(capabilityContext.capabilities, requiredCapabilities)) {
+            std::string required = requiredCapabilities.empty()
+                ? std::string("none")
+                : requiredCapabilities.front();
+            for (std::size_t i = 1; i < requiredCapabilities.size(); ++i) {
+                required += ", " + requiredCapabilities[i];
+            }
+            const auto reason = capabilityContext.denialReason.empty()
+                ? std::string("Required capability missing: ") + required + "."
+                : capabilityContext.denialReason;
+            auditCapabilityDenial(CapabilityDenialAuditEvent{
+                capabilityContext.actor,
+                capabilityContext.clientId,
+                clientIpAddress,
+                method,
+                requestedName,
+                requiredCapabilities,
+                reason
+            });
+            return buildJsonRpcError(
+                -32001,
+                "Capability denied for tool '" + requestedName + "': " + reason,
+                id);
         }
 
         // Acquire a lease for the resolved pool.
@@ -1432,6 +1512,7 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
             }
         }
 
+        std::string clientId;
         std::string clientType;
         // Walk the unknown-headers list (HTTP.sys puts custom X- headers
         // here) and the User-Agent slot in known-headers.
@@ -1445,10 +1526,14 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
             for (char c : name) {
                 lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
             }
-            if (lower == "x-mcos-client-type" || lower == "x-mcos-client-id") {
+            if (lower == "x-mcos-client-id") {
+                clientId.assign(uh.pRawValue, uh.RawValueLength);
+            } else if (lower == "x-mcos-client-type") {
                 clientType.assign(uh.pRawValue, uh.RawValueLength);
-                break;
             }
+        }
+        if (clientType.empty() && !clientId.empty()) {
+            clientType = clientId;
         }
         if (clientType.empty()) {
             const auto& uaHeader = request->Headers.KnownHeaders[HttpHeaderUserAgent];
@@ -1546,7 +1631,7 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
                 // 500 with a generic JSON-RPC error envelope and the
                 // gateway thread keeps going."
                 try {
-                    responseBody = handleMcpRequest(path, body, clientIpAddress, clientType);
+                    responseBody = handleMcpRequest(path, body, clientIpAddress, clientType, clientId);
                 } catch (const std::exception& ex) {
                     statusCode = 500;
                     reason = "Internal Server Error";
