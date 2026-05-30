@@ -2,16 +2,15 @@
 
 Workstream ID: `WS0`
 Workstream name: `Preflight, branch discipline, and proof baseline`
-Run/date: `2026-05-29`
-Branch: `codex/mcos-remediation-2026-05-29`
+Remediation date: `2026-05-29`
 Commit SHA before: `5597a2d91c114bd8893c4f00ba656e036519f390`
 Commit SHA after: `5597a2d91c114bd8893c4f00ba656e036519f390`
 
 ## Scope completed
 
 - [x] Created a remediation branch from current `main`.
-- [x] Read the complete remediation package, including hidden `.codex` files, docs, JSON manifests, scripts, templates, and evidence files.
-- [x] Recorded current `VERSION.json`, current branch, commit SHA, and detected build environment.
+- [x] Read the complete remediation package, including hidden package metadata files, docs, JSON manifests, scripts, templates, and evidence files.
+- [x] Recorded current `VERSION.json`, baseline commit SHA, and detected build environment.
 - [x] Ran existing build/test and compliance commands before source edits.
 - [x] Created `docs/remediation/preflight-report.md` before any source edits.
 

@@ -2,8 +2,7 @@
 
 Workstream ID: `WS7`
 Workstream name: `UI/UX productization and progressive disclosure`
-Codex run/date: `2026-05-29`
-Branch: `codex/mcos-remediation-2026-05-29`
+Remediation date: `2026-05-29`
 Commit SHA before: `5597a2d91c114bd8893c4f00ba656e036519f390`
 Commit SHA after: captured in the PR branch history
 
@@ -42,8 +41,8 @@ Commit SHA after: captured in the PR branch history
 | Command | Result | Notes/log path |
 |---|---|---|
 | `.\scripts\Build-MasterControlOrchestrationServer.ps1 -Preset debug` | PASS | Debug build completed; CTest 4/4 passed. The shell project still emits existing warnings in `OverviewSectionControl.xaml.cpp` for C4130 and C4456. |
-| `powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Users\james\Downloads\MCOS_Codex_Remediation_Package_2026-05-29\MCOS_Codex_Remediation_Package_2026-05-29\scripts\Test-MCOSSecurityDefaults.ps1 -RepoRoot D:\Master-Control-Orchestration-Server -LogDirectory D:\Master-Control-Orchestration-Server\artifacts\mcos-remediation-WS7` | PASS | Safe default static checks remain green. |
-| `powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Users\james\Downloads\MCOS_Codex_Remediation_Package_2026-05-29\MCOS_Codex_Remediation_Package_2026-05-29\scripts\Test-MCOSStaticGates.ps1 -RepoRoot D:\Master-Control-Orchestration-Server -LogDirectory D:\Master-Control-Orchestration-Server\artifacts\mcos-remediation-WS7` | PASS | All known-bad literals are absent. |
+| `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <remediation-package>\scripts\Test-MCOSSecurityDefaults.ps1 -RepoRoot D:\Master-Control-Orchestration-Server -LogDirectory D:\Master-Control-Orchestration-Server\artifacts\mcos-remediation-WS7` | PASS | Safe default static checks remain green. |
+| `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <remediation-package>\scripts\Test-MCOSStaticGates.ps1 -RepoRoot D:\Master-Control-Orchestration-Server -LogDirectory D:\Master-Control-Orchestration-Server\artifacts\mcos-remediation-WS7` | PASS | All known-bad literals are absent. |
 | `node --check resources\web\app.js` | PASS | Browser JavaScript parsed successfully. |
 | `git diff --check` | PASS | No whitespace errors; Git reported line-ending normalization warnings only. |
 

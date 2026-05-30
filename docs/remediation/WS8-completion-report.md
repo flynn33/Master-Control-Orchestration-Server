@@ -2,8 +2,7 @@
 
 Workstream ID: `WS8`
 Workstream name: `Version, CI, release, and final validation`
-Codex run/date: `2026-05-29`
-Branch: `codex/mcos-remediation-2026-05-29`
+Remediation date: `2026-05-29`
 Commit SHA before: `5597a2d91c114bd8893c4f00ba656e036519f390`
 Commit SHA after: captured in the PR branch history
 
@@ -17,7 +16,7 @@ Commit SHA after: captured in the PR branch history
 - [x] Tightened release artifact download to use the same verified Windows product-gate run ID, preventing a second API lookup from selecting a different same-SHA run.
 - [x] Added repo-local remediation gate scripts so final static validation can be run from the branch itself.
 - [x] Ran debug build/CTest, release package validation, MSI generation, static gates, Forsetti compliance, version sync, JS syntax, stale-version grep, and whitespace checks.
-- [x] Completed `docs/remediation/CODEX_COMPLETION_REPORT.md`.
+- [x] Completed `docs/remediation/FINAL_COMPLETION_REPORT.md`.
 
 ## Files changed
 
@@ -36,7 +35,7 @@ Commit SHA after: captured in the PR branch history
 | `scripts/Test-MCOSSecurityDefaults.ps1` | Added repo-local security default static gate. | Keeps package static checks available in-repo. |
 | `scripts/Test-MCOSStaticGates.ps1` | Added repo-local known-bad-literal static gate. | Keeps package static checks available in-repo. |
 | `docs/remediation/WS8-completion-report.md` | Added this report. | Records WS8 scope and proof. |
-| `docs/remediation/CODEX_COMPLETION_REPORT.md` | Added final remediation completion report. | Maps every finding and gate to evidence. |
+| `docs/remediation/FINAL_COMPLETION_REPORT.md` | Added final remediation completion report. | Maps every finding and gate to evidence. |
 
 ## Gates run
 
@@ -45,7 +44,7 @@ Commit SHA after: captured in the PR branch history
 | `GATE-REL-001` | PASS | `VERSION.json` read by CMake; generated headers used by runtime/shell/worker/bootstrapper/resources; `Sync-RepositoryVersionBadges.ps1 -CheckOnly` passed; tracked stale-version grep returned no matches. |
 | `GATE-REL-002` | PASS | `.github/workflows/windows-build-test-package.yml` and `.github/workflows/release.yml` have no `workflow_dispatch`; release downloads from verified `product_gate` run ID. |
 | `GATE-REL-003` | PASS | Release package command produced MSI and ZIP under `artifacts/mcos-remediation-WS8-package`; preflight reports `ready: true`. |
-| `GATE-FINAL-001` | PASS | Final report at `docs/remediation/CODEX_COMPLETION_REPORT.md`; WS0-WS8 reports present. |
+| `GATE-FINAL-001` | PASS | Final report at `docs/remediation/FINAL_COMPLETION_REPORT.md`; WS0-WS8 reports present. |
 
 ## Tests run
 

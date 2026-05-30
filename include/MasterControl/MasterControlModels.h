@@ -887,9 +887,8 @@ struct GatewayStatus final {
     std::string mcpUrl;              // empty until Running
     std::string startedAtUtc;
     std::string adapterType;         // "native" | "fake"
-    // v0.11.0-alpha.2 (Copilot-review-hardened): runtime TLS readiness
-    // signal. tlsBound == true iff the HTTPS URL prefix registered
-    // successfully AND the operator declared a cert by setting
+    // Runtime TLS readiness signal. tlsBound == true iff the HTTPS URL
+    // prefix registered successfully AND the operator declared a cert by setting
     // cfg.mcpGateway.tlsCertThumbprint. Discovery + onboarding gate on
     // this rather than the bare config flag so we never advertise an
     // HTTPS URL that the runtime knows is not actually usable. Empty
@@ -1223,12 +1222,11 @@ struct DiscoveryGateway final {
     std::string mcpUrl;      // e.g. http://192.168.1.10:8080/mcp
     std::string healthUrl;   // e.g. http://192.168.1.10:8080/health
     std::string state;       // GatewayState slug
-    // v0.11.0-alpha.2 (Copilot-review-hardened): optional TLS dual-bind
-    // URLs. These are populated only when the runtime's GatewayStatus
+    // Optional TLS dual-bind URLs. These are populated only when the runtime's GatewayStatus
     // reports tlsBound == true -- i.e., the HTTPS URL prefix successfully
     // registered AND the operator declared a cert via
-    // cfg.mcpGateway.tlsCertThumbprint. Pre-hardening these fields were
-    // gated on the bare config flag, which could publish an HTTPS URL
+    // cfg.mcpGateway.tlsCertThumbprint. Earlier versions gated these
+    // fields on the bare config flag, which could publish an HTTPS URL
     // that the gateway knew was not actually serving (cert never bound,
     // URL prefix failed under ERROR_ACCESS_DENIED, etc.). Strict clients
     // (ChatGPT connector, Claude.ai web, security-conscious browser

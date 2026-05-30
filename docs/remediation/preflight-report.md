@@ -1,7 +1,6 @@
 # MCOS Remediation Preflight Report
 
 Date: `2026-05-29`
-Branch: `codex/mcos-remediation-2026-05-29`
 Commit SHA: `5597a2d91c114bd8893c4f00ba656e036519f390`
 Repo path: `D:\Master-Control-Orchestration-Server`
 
@@ -31,7 +30,7 @@ Repo path: `D:\Master-Control-Orchestration-Server`
 
 | Command | Result | Notes/log path |
 |---|---|---|
-| `git switch -c codex/mcos-remediation-2026-05-29` | PASS | Created remediation branch from `main` at `5597a2d91c114bd8893c4f00ba656e036519f390`. |
+| `git switch -c <remediation-branch>` | PASS | Created remediation branch from `main` at `5597a2d91c114bd8893c4f00ba656e036519f390`. |
 | `.\scripts\Build-MasterControlOrchestrationServer.ps1 -Preset debug` | PASS | Configure, build, and `ctest --preset debug` completed. 4/4 tests passed. Build emitted 3 existing warnings in `src\MasterControlShell`. Log: `artifacts\mcos-remediation-preflight\baseline-build-debug.log`. |
 | `.\scripts\check-mastercontrol-forsetti.ps1` | PASS | `Master Control Forsetti checks passed.` Log: `artifacts\mcos-remediation-preflight\baseline-forsetti-compliance.log`. |
 | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <package>\scripts\Invoke-MCOSRemediationGates.ps1 -RepoRoot . -LogDirectory artifacts\mcos-remediation-preflight -SkipBuild` | FAIL as expected for audit baseline | `Test-MCOSSecurityDefaults.ps1` failed with 9 unsafe default findings; `Test-MCOSStaticGates.ps1` failed with 14 known-bad literal findings. Logs: `artifacts\mcos-remediation-preflight\Invoke-MCOSRemediationGates-20260529-161006.log`, `Test-MCOSSecurityDefaults.ps1-20260529-161006.log`, `Test-MCOSStaticGates.ps1-20260529-161007.log`. |

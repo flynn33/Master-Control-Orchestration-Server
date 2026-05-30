@@ -6,6 +6,14 @@
 
 #include <nlohmann/json.hpp>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Windows.h>
+#include <bcrypt.h>
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -123,17 +131,44 @@ std::string compactUtcStamp() {
     return out.str();
 }
 
-// 4-byte hex random suffix so concurrent select calls within one
-// second can't collide on the same id.
-std::string randomHexSuffix(size_t bytes) {
-    static thread_local std::mt19937_64 rng{ std::random_device{}() };
-    std::uniform_int_distribution<uint32_t> dist(0, 255);
+std::string randomHexBytes(size_t bytes) {
+    std::vector<uint8_t> data(bytes);
+    bool filled = data.empty();
+#if defined(_WIN32)
+    if (!data.empty()) {
+        filled = BCryptGenRandom(nullptr,
+                                 data.data(),
+                                 static_cast<ULONG>(data.size()),
+                                 BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
+    }
+#endif
+    if (!filled) {
+        std::random_device rd;
+        for (auto& byte : data) {
+            byte = static_cast<uint8_t>(rd());
+        }
+    }
     std::ostringstream out;
     out << std::hex << std::setfill('0');
-    for (size_t i = 0; i < bytes; ++i) {
-        out << std::setw(2) << dist(rng);
+    for (const auto byte : data) {
+        out << std::setw(2) << static_cast<unsigned int>(byte);
     }
     return out.str();
+}
+
+// Hex random suffix so concurrent select calls within one second do
+// not collide on the same id.
+std::string randomHexSuffix(size_t bytes) {
+    return randomHexBytes(bytes);
+}
+
+std::string supervisorTokenRef() {
+    return std::string("mcos-supervisor-token:") + randomHexBytes(32);
+}
+
+bool isLegacyDerivedTokenRef(const SupervisorAssignment& assignment) {
+    return !assignment.configId.empty()
+        && assignment.tokenRef == std::string("mcos-supervisor-token:") + assignment.configId;
 }
 
 // Stable-ish fingerprint hash. Not cryptographic, but distinct enough
@@ -229,7 +264,7 @@ public:
         fresh.issuedAtUtc = issuedAt;
         fresh.expiresAtUtc = expiresAt;
         fresh.allowedCapabilities = capabilitiesForMode(fresh.mode);
-        fresh.tokenRef = std::string("mcos-supervisor-token:") + fresh.configId;
+        fresh.tokenRef = supervisorTokenRef();
         fresh.serverFingerprint = fingerprint(context_.fingerprintSeed
             + "|" + fresh.assignmentId + "|" + fresh.configId);
         fresh.auditCorrelationId = std::string("AUD-") + randomHexSuffix(4);
@@ -261,7 +296,7 @@ public:
         assignment_.issuedAtUtc = issuedAt;
         assignment_.expiresAtUtc = addSecondsIso8601(issuedAt,
             static_cast<int64_t>(context_.defaultConfigTtl.count()));
-        assignment_.tokenRef = std::string("mcos-supervisor-token:") + assignment_.configId;
+        assignment_.tokenRef = supervisorTokenRef();
         assignment_.state = SupervisorState::ConfigGenerated;
         assignment_.connectedAtUtc.clear();
         assignment_.lastHeartbeatUtc.clear();
@@ -741,12 +776,23 @@ private:
             // persist the cleaned record so the on-disk file converges
             // to the new shape without waiting for the next operator
             // mutation.
-            const bool needsMigrationPersist =
+            bool needsMigrationPersist =
                 (loaded.state == SupervisorState::Off
                  || loaded.state == SupervisorState::Revoked)
                 && !loaded.lastErrorMessage.empty();
             if (needsMigrationPersist) {
                 loaded.lastErrorMessage.clear();
+            }
+            if (loaded.state != SupervisorState::Off
+                && loaded.state != SupervisorState::Revoked
+                && isLegacyDerivedTokenRef(loaded)) {
+                loaded.tokenRef = supervisorTokenRef();
+                loaded.state = SupervisorState::ConfigGenerated;
+                loaded.clientId.clear();
+                loaded.connectedAtUtc.clear();
+                loaded.lastHeartbeatUtc.clear();
+                loaded.lastErrorMessage = "Supervisor assignment token was rotated; regenerate config.";
+                needsMigrationPersist = true;
             }
             assignment_ = loaded;
             if (needsMigrationPersist) {

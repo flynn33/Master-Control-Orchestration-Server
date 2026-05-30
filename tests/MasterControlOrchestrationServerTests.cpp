@@ -1211,8 +1211,8 @@ bool testDiscoveryDocumentJsonRoundTrip() {
     original.gateway.mcpUrl = "http://192.168.1.10:8080/mcp";
     original.gateway.healthUrl = "http://192.168.1.10:8080/health";
     original.gateway.state = "running";
-    // v0.11.0-alpha.2 (Copilot-review-hardened): pin the TLS dual-bind
-    // fields on the discovery gateway block. Pre-hardening these fields
+    // Pin the TLS dual-bind fields on the discovery gateway block.
+    // Pre-hardening these fields
     // round-tripped via NLOHMANN_DEFINE_TYPE but the test only asserted
     // gateway.mcpUrl, leaving room for future serialization changes to
     // silently drop the HTTPS fields that strict clients depend on.
@@ -1284,8 +1284,8 @@ bool testDiscoveryDocumentJsonRoundTrip() {
     ok &= expect(restored.instanceId == original.instanceId,
                  "Discovery doc round-trips instanceId.");
 
-    // v0.11.0-alpha.2 (Copilot-review-hardened): TLS-disabled default state
-    // serializes to empty/false on the dual-bind fields. This guards
+    // TLS-disabled default state serializes to empty/false on the
+    // dual-bind fields. This guards
     // against a future change that accidentally publishes HTTPS URLs
     // when TLS is off.
     MasterControl::DiscoveryDocument tlsOff;
@@ -1900,9 +1900,16 @@ bool testSupervisorSelectAndIssueChatGpt() {
         ok &= expect(parsed["server"]["mcpEndpoint"].get<std::string>().find("/mcp") != std::string::npos,
                      "Server endpoint carries the gateway path.");
         ok &= expect(parsed["auth"]["mode"].get<std::string>() == "token_reference",
-                     "Auth mode is token_reference, not raw bearer.");
+                      "Auth mode is token_reference, not raw bearer.");
+        const auto tokenRef = parsed["auth"]["tokenRef"].get<std::string>();
+        ok &= expect(tokenRef.rfind("mcos-supervisor-token:", 0) == 0,
+                     "Auth tokenRef uses the expected supervisor token prefix.");
+        ok &= expect(tokenRef != std::string("mcos-supervisor-token:") + issue.assignment.configId,
+                     "Auth tokenRef is not derived from configId.");
+        ok &= expect(tokenRef == issue.assignment.tokenRef,
+                     "Generated config tokenRef matches the persisted assignment token.");
         ok &= expect(parsed["server"]["networkMode"].get<std::string>() == "local-only",
-                     "Generated config explicitly states local-only network mode.");
+                      "Generated config explicitly states local-only network mode.");
         ok &= expect(parsed["server"]["endpointAdvertisement"]["lanModeEnabled"].get<bool>() == false,
                      "Generated config states LAN advertisement is disabled.");
         ok &= expect(parsed["capabilities"].is_array() && parsed["capabilities"].size() >= 8,
@@ -2078,8 +2085,13 @@ bool testSupervisorRegenerateClearsStaleErrorMessage() {
                  "Pre-regenerate status carries the rejection error message.");
 
     // Regenerate should clear the leftover message and re-issue a fresh config.
+    const auto previousTokenRef = issue.assignment.tokenRef;
     const auto regen = svc->regenerateConfig();
     ok &= expect(regen.ok, "regenerateConfig succeeds on active assignment.");
+    ok &= expect(regen.assignment.tokenRef != previousTokenRef,
+                 "regenerateConfig mints a fresh supervisor token.");
+    ok &= expect(regen.assignment.tokenRef != std::string("mcos-supervisor-token:") + regen.assignment.configId,
+                 "regenerateConfig token is not derived from configId.");
 
     auto post = svc->getStatus();
     ok &= expect(post.state == MasterControl::SupervisorState::ConfigGenerated,
@@ -2133,6 +2145,59 @@ bool testSupervisorConfirmRejectsTokenMismatch() {
     ok &= expect(!result.ok, "Token mismatch is rejected.");
     ok &= expect(result.errorMessage.find("token") != std::string::npos,
                  "Token mismatch rejection names the token failure.");
+    return ok;
+}
+
+bool testSupervisorLegacyDerivedTokenRotatesOnLoad() {
+    auto dir = makeTempSupervisorDir("legacy-derived-token-rotates");
+    const auto file = dir / "supervisor-assignment.json";
+    nlohmann::json legacy = {
+        {"assignmentId",       "SUP-LEGACY-ACTIVE"},
+        {"providerId",         "claude"},
+        {"clientId",           "legacy-client"},
+        {"mode",               "autonomous_supervisor"},
+        {"exclusive",          true},
+        {"state",              "connected"},
+        {"configId",           "CFG-LEGACY-ACTIVE"},
+        {"issuedAtUtc",        "2026-05-10T00:00:00Z"},
+        {"expiresAtUtc",       "2099-05-10T03:00:00Z"},
+        {"connectedAtUtc",     "2026-05-10T00:05:00Z"},
+        {"lastHeartbeatUtc",   "2026-05-10T00:06:00Z"},
+        {"revokedAtUtc",       ""},
+        {"revocationReason",   ""},
+        {"tokenRef",           "mcos-supervisor-token:CFG-LEGACY-ACTIVE"},
+        {"serverFingerprint",  "sha256:legacy"},
+        {"auditCorrelationId", "AUD-legacy"},
+        {"lastErrorMessage",   ""},
+        {"allowedCapabilities", nlohmann::json::array({"supervisor.get_context"})}
+    };
+    {
+        std::ofstream out(file, std::ios::binary | std::ios::trunc);
+        out << legacy.dump(2);
+    }
+
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    const auto current = svc->getCurrentAssignment();
+    bool ok = true;
+    ok &= expect(current.state == MasterControl::SupervisorState::ConfigGenerated,
+                 "Legacy deterministic token load returns assignment to ConfigGenerated.");
+    ok &= expect(current.tokenRef.rfind("mcos-supervisor-token:", 0) == 0,
+                 "Rotated legacy token keeps the supervisor token prefix.");
+    ok &= expect(current.tokenRef != "mcos-supervisor-token:CFG-LEGACY-ACTIVE",
+                 "Legacy deterministic token is replaced with an unpredictable token.");
+    ok &= expect(current.clientId.empty() && current.connectedAtUtc.empty() && current.lastHeartbeatUtc.empty(),
+                 "Legacy deterministic token rotation clears connected client state.");
+
+    MasterControl::SupervisorConnectionClaim claim;
+    claim.provider = MasterControl::SupervisorProvider::Claude;
+    claim.configId = current.configId;
+    claim.clientId = "legacy-client";
+    claim.capabilities = { "supervisor.get_context" };
+    claim.fingerprint = current.serverFingerprint;
+    claim.token = "mcos-supervisor-token:CFG-LEGACY-ACTIVE";
+    const auto rejected = svc->confirmConnection(claim);
+    ok &= expect(!rejected.ok,
+                 "Old deterministic token cannot confirm after load-time rotation.");
     return ok;
 }
 
@@ -2800,6 +2865,7 @@ int main() {
     ok &= testSupervisorRegenerateClearsStaleErrorMessage();
     ok &= testSupervisorConfirmConnectionHappyPath();
     ok &= testSupervisorConfirmRejectsTokenMismatch();
+    ok &= testSupervisorLegacyDerivedTokenRotatesOnLoad();
     ok &= testSupervisorConfirmRejectsForbiddenCapability();
     ok &= testSupervisorConfirmRejectsProviderMismatch();
     ok &= testSupervisorPersistenceSurvivesServiceRecreation();

@@ -17,7 +17,7 @@ Implement the safe local-only default posture and remove the unauthenticated ope
 - Updated unit expectations for safe defaults, local bootstrap context, gateway defaults, and discovery JSON.
 
 ## Validation
-- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Users\james\Downloads\MCOS_Codex_Remediation_Package_2026-05-29\MCOS_Codex_Remediation_Package_2026-05-29\scripts\Test-MCOSSecurityDefaults.ps1 -RepoRoot D:\Master-Control-Orchestration-Server -LogDirectory D:\Master-Control-Orchestration-Server\artifacts\mcos-remediation-WS1` passed.
+- `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <remediation-package>\scripts\Test-MCOSSecurityDefaults.ps1 -RepoRoot D:\Master-Control-Orchestration-Server -LogDirectory D:\Master-Control-Orchestration-Server\artifacts\mcos-remediation-WS1` passed.
 - `.\scripts\Build-MasterControlOrchestrationServer.ps1 -Preset debug` passed, including all 4 CTest tests.
 - `Test-MCOSStaticGates.ps1` now passes the WS1 static literals and still reports 9 expected failures for later workstreams.
 

@@ -1,14 +1,13 @@
-# Codex Final Completion Report -- MCOS Remediation
+# Final Completion Report -- MCOS Remediation
 
 Date: `2026-05-29`
-Branch: `codex/mcos-remediation-2026-05-29`
 Starting commit: `5597a2d91c114bd8893c4f00ba656e036519f390`
 Final remediation commit: captured in the PR branch history
 Observed VERSION.json after remediation: `0.11.0-alpha.2`
 
 ## Executive summary
 
-The remediation package has been implemented across WS0-WS8. The branch now defaults to local-only security posture, rejects unknown remote privilege fallback, capability-gates high-risk tools and mutating routes, drives shell/browser setup from a shared state machine, persists source-neutral workflows, hardens worker execution and bootstrapper process handling, aligns supervisor/discovery endpoint advertisement, productizes the setup UX, and closes release/version consistency gaps.
+The remediation package has been implemented across WS0-WS8. The implementation now defaults to local-only security posture, rejects unknown remote privilege fallback, capability-gates high-risk tools and mutating routes, drives shell/browser setup from a shared state machine, persists source-neutral workflows, hardens worker execution and bootstrapper process handling, aligns supervisor/discovery endpoint advertisement, productizes the setup UX, and closes release/version consistency gaps.
 
 Final local proof includes debug build + CTest 4/4, release build/test/package, MSI and ZIP artifacts, bootstrapper preflight `ready: true`, Forsetti compliance, package static gates, repo-local static gates, version sync, browser JS syntax check, stale-version/manual-dispatch grep, and whitespace check. The only live limitation is supervisor reachability against the currently running local listener: port 7300 is occupied by a process that does not expose the new supervisor/discovery routes, and port 8080 has no MCP listener.
 

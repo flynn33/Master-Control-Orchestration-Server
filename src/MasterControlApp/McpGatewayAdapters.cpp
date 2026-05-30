@@ -128,8 +128,8 @@ std::string composeHealthUrl(const McpGatewayConfiguration& configuration) {
     return stream.str();
 }
 
-// v0.11.0-alpha.2 (Copilot-review-hardened): the HTTPS health URL is
-// composed inline by the discovery emit (MasterControlRuntime.cpp)
+// The HTTPS health URL is composed inline by the discovery emit
+// (MasterControlRuntime.cpp)
 // using the runtime-resolved LAN IP host. We intentionally do NOT keep
 // a composeHealthUrlTls helper here because the only consumer needs
 // the LAN IP rather than configuration.listenHost (which is typically
@@ -544,8 +544,7 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
     serveThread_ = std::thread(&NativeHttpSysGatewayAdapter::serveLoop, this);
 
     status_.state = GatewayState::Running;
-    // v0.11.0-alpha.2 (Copilot-review-hardened): tlsBound on the gateway
-    // status is the runtime signal that downstream surfaces gate on. It
+    // tlsBound on the gateway status is the runtime signal that downstream surfaces gate on. It
     // is true ONLY when:
     //   1. cfg.mcpGateway.tlsEnabled == true
     //   2. The HTTPS URL prefix successfully registered via
@@ -553,8 +552,8 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
     //   3. The operator declared a cert by setting
     //      cfg.mcpGateway.tlsCertThumbprint -- non-empty thumbprint
     //
-    // Pre-hardening Copilot flagged that HTTP.sys returns NO_ERROR on
-    // URL-prefix registration even when no sslcert is bound; the prior
+    // HTTP.sys returns NO_ERROR on URL-prefix registration even when no
+    // sslcert is bound; the prior
     // emit would publish HTTPS URLs that any handshake would fail.
     // Treating tlsCertThumbprint as the operator's "I bound a cert"
     // signal (Configure-LocalServerCert.ps1 prints the thumbprint snippet

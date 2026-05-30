@@ -8074,12 +8074,11 @@ public:
         document.gateway.healthUrl = advertisement.mcpHealthEndpoint;
         document.gateway.state = mcpGateway_ ? to_string(gatewayStatus.state) : "disabled";
 
-        // v0.11.0-alpha.2 (Copilot-review-hardened): gate the HTTPS TLS
-        // advertisement on the runtime tlsBound signal, not the bare
-        // cfg.mcpGateway.tlsEnabled flag. Pre-hardening Copilot flagged
-        // that we could publish an HTTPS URL the gateway knew was not
-        // serving -- e.g. when the URL prefix registered but no sslcert
-        // was bound, or when the operator left tlsCertThumbprint empty.
+        // Gate HTTPS TLS advertisement on the runtime tlsBound signal,
+        // not the bare cfg.mcpGateway.tlsEnabled flag. Otherwise this
+        // path could publish an HTTPS URL the gateway knew was not
+        // serving, for example when the URL prefix registered but no
+        // sslcert was bound or when the operator left tlsCertThumbprint empty.
         // tlsBound on GatewayStatus is set to true ONLY when:
         //   * cfg.mcpGateway.tlsEnabled is true, AND
         //   * the HTTPS URL prefix registered with HttpAddUrlToUrlGroup, AND
@@ -16958,8 +16957,7 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
              request.path == "/api/diagnostics/self-test" ||
              request.path == "/api/diagnostics/export")) {
 
-            // v0.11.0 (Copilot review fix): the aggregator now defers
-            // to MasterControl::aggregateDiagnosticsEventsFromRoot in
+            // The aggregator defers to MasterControl::aggregateDiagnosticsEventsFromRoot in
             // the testable header so unit tests can exercise the
             // file-walk + softCap + sort behaviour against a synthetic
             // logs directory. softCap > 0 caps the read: live
@@ -16993,8 +16991,7 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             };
 
             if (request.path == "/api/diagnostics/events") {
-                // v0.11.0 (Copilot review fix): parse max= BEFORE
-                // aggregating so the aggregator can early-out on the
+                // Parse max= before aggregating so the aggregator can early-out on the
                 // rotated .1.jsonl files when only a small recent
                 // slice is requested.
                 std::size_t maxN = 200;
