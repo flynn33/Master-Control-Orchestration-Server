@@ -183,6 +183,7 @@ class SupervisorAssignmentServiceImpl final : public ISupervisorAssignmentServic
 public:
     explicit SupervisorAssignmentServiceImpl(SupervisorAssignmentServiceContext context)
         : context_(std::move(context)) {
+        normalizeEndpointPlanContext();
         loadFromDisk();
     }
 
@@ -329,6 +330,22 @@ public:
             persistLocked();
             return result;
         }
+        if (claim.token.empty() || claim.token != assignment_.tokenRef) {
+            result.ok = false;
+            result.newState = assignment_.state;
+            result.errorMessage = "Supervisor assignment token is missing or does not match the active assignment.";
+            assignment_.lastErrorMessage = result.errorMessage;
+            persistLocked();
+            return result;
+        }
+        if (!claim.fingerprint.empty() && claim.fingerprint != assignment_.serverFingerprint) {
+            result.ok = false;
+            result.newState = assignment_.state;
+            result.errorMessage = "Server fingerprint does not match the active assignment.";
+            assignment_.lastErrorMessage = result.errorMessage;
+            persistLocked();
+            return result;
+        }
         if (assignment_.expiresAtUtc <= nowIso8601Utc()) {
             result.ok = false;
             result.newState = SupervisorState::Error;
@@ -398,17 +415,16 @@ public:
         persistLocked();
     }
 
-    void setEndpoints(const std::string& mcpEndpoint,
-                      const std::string& discoveryEndpoint,
+    void setEndpoints(const AdvertisedEndpointPlan& plan,
                       const std::string& fingerprintSeed) override {
-        // v0.10.8: late-binding endpoint refresh. Called by the route layer
-        // before each select/generate/confirm so the values stamped into
-        // the generated config carry a URL a remote supervisor client can
-        // actually reach. Only non-empty inputs overwrite -- the caller can
-        // refresh just the field it knows changed.
+        // Late-binding endpoint refresh. Called by the route layer before
+        // select/generate/confirm so supervisor configs use the same active
+        // advertisement decision as discovery.
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!mcpEndpoint.empty()) context_.mcpEndpoint = mcpEndpoint;
-        if (!discoveryEndpoint.empty()) context_.discoveryEndpoint = discoveryEndpoint;
+        context_.endpointPlan = plan;
+        if (!plan.mcpEndpoint.empty()) context_.mcpEndpoint = plan.mcpEndpoint;
+        if (!plan.discoveryEndpoint.empty()) context_.discoveryEndpoint = plan.discoveryEndpoint;
+        normalizeEndpointPlanContext();
         if (!fingerprintSeed.empty()) context_.fingerprintSeed = fingerprintSeed;
     }
 
@@ -459,6 +475,22 @@ public:
     }
 
 private:
+    void normalizeEndpointPlanContext() {
+        if (context_.endpointPlan.mcpEndpoint.empty()) {
+            context_.endpointPlan.mcpEndpoint = context_.mcpEndpoint;
+        }
+        if (context_.endpointPlan.discoveryEndpoint.empty()) {
+            context_.endpointPlan.discoveryEndpoint = context_.discoveryEndpoint;
+        }
+        if (context_.endpointPlan.networkMode.empty()) {
+            context_.endpointPlan.networkMode = "local-only";
+        }
+        if (context_.endpointPlan.reason.empty()) {
+            context_.endpointPlan.reason =
+                "Endpoint advertisement plan was not supplied; using configured endpoints.";
+        }
+    }
+
     std::vector<std::string> capabilitiesForMode(SupervisorMode mode) const {
         if (mode == SupervisorMode::AutonomousSupervisor) {
             return defaultAutonomousSupervisorCapabilities();
@@ -504,6 +536,18 @@ private:
         server["mcpEndpoint"] = context_.mcpEndpoint;
         server["discoveryEndpoint"] = context_.discoveryEndpoint;
         server["fingerprint"] = a.serverFingerprint;
+        server["networkMode"] = context_.endpointPlan.networkMode.empty()
+            ? std::string("local-only")
+            : context_.endpointPlan.networkMode;
+        server["endpointAdvertisement"] = nlohmann::json{
+            { "lanModeEnabled", context_.endpointPlan.lanModeEnabled },
+            { "gatewayRunning", context_.endpointPlan.gatewayRunning },
+            { "adminLanAdvertised", context_.endpointPlan.adminLanAdvertised },
+            { "mcpLanAdvertised", context_.endpointPlan.mcpLanAdvertised },
+            { "adminBaseUrl", context_.endpointPlan.adminBaseUrl },
+            { "mcpHealthEndpoint", context_.endpointPlan.mcpHealthEndpoint },
+            { "reason", context_.endpointPlan.reason }
+        };
         doc["server"] = server;
 
         nlohmann::json supervisor = nlohmann::json::object();
@@ -571,7 +615,8 @@ private:
             first = false;
             curl << "\"" << cap << "\"";
         }
-        curl << "],\"fingerprint\":\"" << a.serverFingerprint << "\"}'";
+        curl << "],\"fingerprint\":\"" << a.serverFingerprint << "\","
+             << "\"token\":\"" << a.tokenRef << "\"}'";
         return curl.str();
     }
 

@@ -121,58 +121,24 @@ if ($vcpkgVersionDrift) {
     )
 }
 
-# Keep the EXE VERSIONINFO blocks in lock-step with VERSION.json. The .rc
-# files for Shell / ServiceHost / Bootstrapper hardcode FILEVERSION,
-# PRODUCTVERSION, and the FileVersion / ProductVersion string values; we
-# rewrite all four on each version bump rather than threading a generated
-# header through the WinUI MSBuild project (which has its own include path
-# resolution that doesn't see the CMake binary tree).
+# Keep the EXE VERSIONINFO blocks on generated VERSION.json-derived macros.
+# CMake emits MasterControlVersion.h for CMake-built targets and
+# src\MasterControlShell\GeneratedVersion.h for the WinUI MSBuild target; this
+# script now treats numeric VERSIONINFO literals as drift instead of rewriting
+# them, because the product version should flow through generated headers.
 $rcPaths = @(
     (Join-Path $repoRoot 'src\MasterControlShell\MasterControlShell.rc'),
     (Join-Path $repoRoot 'src\MasterControlServiceHost\MasterControlServiceHost.rc'),
     (Join-Path $repoRoot 'src\MasterControlBootstrapper\MasterControlBootstrapper.rc')
 )
-$rcCommaVersion = ($current -replace '-.*$', '') -replace '\.', ',' # 0.6.3 -> 0,6,3
-$rcDotVersion   = ($current -replace '-.*$', '')                    # 0.6.3
-# Ensure four numeric components for FILEVERSION (MAJOR,MINOR,PATCH,BUILD).
-if (($rcCommaVersion -split ',').Count -lt 4) {
-    $rcCommaVersion = $rcCommaVersion + ',0' * (4 - ($rcCommaVersion -split ',').Count)
-}
-if (($rcDotVersion -split '\.').Count -lt 4) {
-    $rcDotVersion = $rcDotVersion + '.0' * (4 - ($rcDotVersion -split '\.').Count)
-}
-$rcChanges = @{}
-# Replacement strings here are LITERAL — no $ interpolation, no backreferences.
-# Earlier this code used capture groups + ${1} backreferences plus
-# Escape-RegexReplacement, which doubled the $ in ${1} and broke the whole
-# substitution (rendering "${1}0,6,4,0" verbatim into the .rc files). Match
-# the entire keyword and rewrite it whole-cloth instead.
+$rcLiteralDrift = @()
 foreach ($rcPath in $rcPaths) {
     if (-not (Test-Path $rcPath)) { continue }
     $rcRaw = [System.IO.File]::ReadAllText($rcPath)
-    $rcUpdated = $rcRaw
-    $rcUpdated = [regex]::Replace(
-        $rcUpdated,
-        'FILEVERSION\s+\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+',
-        "FILEVERSION    $rcCommaVersion"
-    )
-    $rcUpdated = [regex]::Replace(
-        $rcUpdated,
-        'PRODUCTVERSION\s+\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+',
-        "PRODUCTVERSION $rcCommaVersion"
-    )
-    $rcUpdated = [regex]::Replace(
-        $rcUpdated,
-        'VALUE\s+"FileVersion",\s+"[0-9.]+"',
-        ('VALUE "FileVersion",      "' + $rcDotVersion + '"')
-    )
-    $rcUpdated = [regex]::Replace(
-        $rcUpdated,
-        'VALUE\s+"ProductVersion",\s+"[0-9.]+"',
-        ('VALUE "ProductVersion",   "' + $rcDotVersion + '"')
-    )
-    if ($rcUpdated -ne $rcRaw) {
-        $rcChanges[$rcPath] = $rcUpdated
+    if ($rcRaw -match 'FILEVERSION\s+\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+' -or
+        $rcRaw -match 'PRODUCTVERSION\s+\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+' -or
+        $rcRaw -match 'VALUE\s+"(?:FileVersion|ProductVersion)",\s+"[0-9.]+"') {
+        $rcLiteralDrift += (Split-Path -Leaf $rcPath)
     }
 }
 
@@ -180,7 +146,7 @@ if ($CheckOnly) {
     $drift = @()
     if ($readmeChanged) { $drift += 'README.md badge or current-release line' }
     if ($vcpkgVersionDrift) { $drift += 'vcpkg.json version-string' }
-    if ($rcChanges.Count -gt 0) { $drift += "$($rcChanges.Count) .rc VERSIONINFO block(s)" }
+    if ($rcLiteralDrift.Count -gt 0) { $drift += ('numeric .rc VERSIONINFO literal(s): ' + ($rcLiteralDrift -join ', ')) }
     if ($drift.Count -gt 0) {
         Write-Error ("Version drift detected in: " + ($drift -join ', ') + ". Run Sync-RepositoryVersionBadges.ps1 to fix.")
         exit 1
@@ -197,10 +163,9 @@ if ($vcpkgVersionDrift) {
     [System.IO.File]::WriteAllText($vcpkgPath, $vcpkgUpdated, $utf8NoBom)
     Write-Host "Updated vcpkg.json version-string to $current"
 }
-foreach ($rcPath in $rcChanges.Keys) {
-    [System.IO.File]::WriteAllText($rcPath, $rcChanges[$rcPath], $utf8NoBom)
-    Write-Host ("Updated VERSIONINFO in " + (Split-Path -Leaf $rcPath))
+if ($rcLiteralDrift.Count -gt 0) {
+    throw ('Numeric VERSIONINFO literals remain in .rc files: ' + ($rcLiteralDrift -join ', ') + '. Replace them with generated version macros.')
 }
-if (-not $readmeChanged -and -not $vcpkgVersionDrift -and $rcChanges.Count -eq 0) {
+if (-not $readmeChanged -and -not $vcpkgVersionDrift -and $rcLiteralDrift.Count -eq 0) {
     Write-Host "Already in sync ($current)."
 }

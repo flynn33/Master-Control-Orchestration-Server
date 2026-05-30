@@ -185,6 +185,12 @@ struct SectionMetadata final {
 };
 
 std::wstring labelForDestination(const std::wstring& destinationId) {
+    if (destinationId == kSetupWizardDestination) {
+        return L"Start Here";
+    }
+    if (destinationId == kSetupReadinessDestination) {
+        return L"Setup Readiness";
+    }
     if (destinationId == kTelemetryDestination) {
         return L"Telemetry";
     }
@@ -210,6 +216,12 @@ std::wstring labelForDestination(const std::wstring& destinationId) {
 }
 
 std::wstring destinationForViewId(const std::wstring& viewId) {
+    if (viewId == kSetupWizardView) {
+        return kSetupWizardDestination;
+    }
+    if (viewId == kSetupReadinessView) {
+        return kSetupReadinessDestination;
+    }
     if (viewId == kTelemetryView) {
         return kTelemetryDestination;
     }
@@ -235,26 +247,32 @@ std::wstring destinationForViewId(const std::wstring& viewId) {
 }
 
 SectionMetadata metadataForDestination(const std::wstring& destinationId, const std::wstring& title) {
+    if (destinationId == kSetupWizardDestination) {
+        return { L"START", title, L"Choose Guided Setup, Manual Setup, or Import Existing Configuration before operating raw infrastructure surfaces." };
+    }
+    if (destinationId == kSetupReadinessDestination) {
+        return { L"START", title, L"Review MCP servers, specialists, workflows, and blocking issues with Fix Now actions tied to the setup state machine." };
+    }
     if (destinationId == kTelemetryDestination) {
-        return { L"TELEMETRY", title, L"Use the dense monitoring deck to keep live host pressure, governed resource budgets, runtime activity, and environment discovery visible at a glance." };
+        return { L"OPERATE", title, L"Use the dense monitoring deck to keep live host pressure, governed resource budgets, runtime activity, and environment discovery visible at a glance." };
     }
     if (destinationId == kRuntimeDestination) {
-        return { L"RUNTIME", title, L"Inspect MCP runtime lanes, platform gateway inventory, Apple remote hosts, and the current operational map exposed by the service." };
+        return { L"OPERATE", title, L"Inspect configured MCP runtime lanes, platform gateway inventory, Apple remote hosts, and the current operational map exposed by the service." };
     }
     if (destinationId == kCluDestination) {
-        return { L"CLU", title, L"Inspect the Command Logic Unit governance profile, launch guided setup wizards, and manage Apple production operations plus operator-visible control rules." };
+        return { L"OPERATE", title, L"Inspect the Command Logic Unit governance profile, launch guided setup wizards, and manage Apple production operations plus operator-visible control rules." };
     }
     if (destinationId == kImportsDestination) {
-        return { L"IMPORTS", title, L"Audit installer provenance, trusted-source flows, and the current software onboarding trail." };
+        return { L"ADVANCED", title, L"Audit installer provenance, trusted-source flows, and the current software onboarding trail." };
     }
     if (destinationId == kExportsDestination) {
-        return { L"EXPORTS", title, L"Review exported agent artifacts, browser handoff endpoints, and downstream integration material." };
+        return { L"ADVANCED", title, L"Review exported agent artifacts, browser handoff endpoints, and downstream integration material after direct setup flows have been considered." };
     }
     if (destinationId == kSecurityDestination) {
-        return { L"SECURITY", title, L"Inspect bind policy, browser access posture, beacon state, AI autonomy, and operator-sensitive toggles." };
+        return { L"ADVANCED", title, L"Inspect bind policy, browser access posture, beacon state, AI autonomy, and operator-sensitive toggles." };
     }
     if (destinationId == kSettingsDestination) {
-        return { L"SETTINGS", title, L"Trace configuration files, data paths, and the current resource envelope that shapes the host runtime." };
+        return { L"ADVANCED", title, L"Trace configuration files, data paths, and the current resource envelope that shapes the host runtime." };
     }
     return { L"OVERVIEW", title, L"Forsetti surface navigation is hosting the current command deck instead of a hardcoded shell page map." };
 }
@@ -280,26 +298,29 @@ std::wstring guidedFollowThroughForDestination(const std::wstring& destinationId
 
 std::vector<::MasterControlShell::ShellNavigationPointer> bootstrapNavigationPointers() {
     return {
-        { L"overview-nav", L"Overview", kOverviewDestination },
-        { L"telemetry-nav", L"Telemetry", kTelemetryDestination },
-        { L"runtime-nav", L"Runtime", kRuntimeDestination },
-        { L"clu-nav", L"CLU", kCluDestination },
-        { L"imports-nav", L"Imports", kImportsDestination },
-        { L"exports-nav", L"Exports", kExportsDestination },
-        { L"security-nav", L"Security", kSecurityDestination },
-        { L"settings-nav", L"Settings", kSettingsDestination }
+        { L"setup-start-nav", L"Start / Start Here", kSetupWizardDestination },
+        { L"setup-readiness-nav", L"Start / Readiness", kSetupReadinessDestination },
+        { L"overview-nav", L"Start / Overview", kOverviewDestination },
+        { L"telemetry-nav", L"Operate / Telemetry", kTelemetryDestination },
+        { L"runtime-nav", L"Operate / Runtime", kRuntimeDestination },
+        { L"clu-nav", L"Operate / Governance", kCluDestination },
+        { L"imports-nav", L"Advanced / Imports", kImportsDestination },
+        { L"exports-nav", L"Advanced / Exports", kExportsDestination },
+        { L"security-nav", L"Advanced / Security", kSecurityDestination },
+        { L"settings-nav", L"Advanced / Settings", kSettingsDestination }
     };
 }
 
 std::vector<::MasterControlShell::ShellToolbarItem> bootstrapToolbarItems() {
     return {
-        { L"dashboard-home", L"Overview", L"network", ::MasterControlShell::ShellToolbarActionKind::Navigate, kOverviewDestination },
-        { L"dashboard-telemetry", L"Telemetry", L"trackers", ::MasterControlShell::ShellToolbarActionKind::Navigate, kTelemetryDestination },
-        { L"dashboard-runtime", L"Runtime", L"globe", ::MasterControlShell::ShellToolbarActionKind::Navigate, kRuntimeDestination },
-        { L"dashboard-clu", L"CLU", L"shield", ::MasterControlShell::ShellToolbarActionKind::Navigate, kCluDestination },
-        { L"dashboard-import", L"Imports", L"arrow.down", ::MasterControlShell::ShellToolbarActionKind::OpenOverlay, L"imports-overlay" },
-        { L"dashboard-export", L"Exports", L"share", ::MasterControlShell::ShellToolbarActionKind::OpenOverlay, L"exports-overlay" },
-        { L"dashboard-settings", L"Settings", L"gear", ::MasterControlShell::ShellToolbarActionKind::OpenOverlay, L"settings-overlay" }
+        { L"setup-start", L"Start Here", L"network", ::MasterControlShell::ShellToolbarActionKind::Navigate, kSetupWizardDestination },
+        { L"setup-readiness", L"Fix Readiness", L"shield", ::MasterControlShell::ShellToolbarActionKind::Navigate, kSetupReadinessDestination },
+        { L"operate-runtime", L"Operate: Runtime", L"globe", ::MasterControlShell::ShellToolbarActionKind::Navigate, kRuntimeDestination },
+        { L"operate-telemetry", L"Operate: Telemetry", L"trackers", ::MasterControlShell::ShellToolbarActionKind::Navigate, kTelemetryDestination },
+        { L"dashboard-clu", L"Operate: Governance", L"shield", ::MasterControlShell::ShellToolbarActionKind::Navigate, kCluDestination },
+        { L"advanced-import", L"Advanced: Imports", L"arrow.down", ::MasterControlShell::ShellToolbarActionKind::OpenOverlay, L"imports-overlay" },
+        { L"advanced-export", L"Advanced: Exports", L"share", ::MasterControlShell::ShellToolbarActionKind::OpenOverlay, L"exports-overlay" },
+        { L"advanced-settings", L"Advanced: Settings", L"gear", ::MasterControlShell::ShellToolbarActionKind::OpenOverlay, L"settings-overlay" }
     };
 }
 
@@ -1543,6 +1564,38 @@ FrameworkElement MainWindow::CreateViewForViewId(const std::wstring& viewId, con
                     self->StartGuidedWorkflow(workflowId);
                 }
             },
+            [weakThis](const std::wstring& mode) {
+                if (const auto self = weakThis.get()) {
+                    const auto result = self->runtime_.BeginSetup(mode);
+                    self->UpdateStatusBar(
+                        winrt::hstring(result.message),
+                        result.succeeded ? InfoBarSeverity::Informational : InfoBarSeverity::Warning);
+                    if (result.succeeded) {
+                        self->RefreshAsync();
+                    }
+                }
+            },
+            [weakThis]() {
+                if (const auto self = weakThis.get()) {
+                    const auto result = self->runtime_.CompleteSetup();
+                    self->UpdateStatusBar(
+                        winrt::hstring(result.message),
+                        result.succeeded ? InfoBarSeverity::Success : InfoBarSeverity::Warning);
+                    self->RefreshAsync();
+                }
+            },
+            [weakThis]() {
+                if (const auto self = weakThis.get()) {
+                    const auto result = self->runtime_.DismissSetup();
+                    self->UpdateStatusBar(
+                        winrt::hstring(result.message),
+                        result.succeeded ? InfoBarSeverity::Informational : InfoBarSeverity::Warning);
+                    if (result.succeeded) {
+                        self->firstRunWizardDismissed_ = true;
+                        self->RefreshAsync();
+                    }
+                }
+            },
             [weakThis]() {
                 if (const auto self = weakThis.get()) {
                     self->RefreshAsync();
@@ -2671,6 +2724,9 @@ IAsyncAction MainWindow::ShowSubAgentGroupWizardAsync() {
             label += L"  |  " + endpoint.description;
         } else if (!endpoint.kind.empty()) {
             label += L"  |  " + endpoint.kind;
+        }
+        if (endpoint.highRisk || !endpoint.requiredCapabilities.empty()) {
+            label += L"  |  risk=" + (endpoint.risk.empty() ? std::wstring(L"high") : endpoint.risk);
         }
         item.Content(box_value(winrt::hstring(label)));
         item.Tag(box_value(winrt::hstring(endpoint.id)));
@@ -4727,12 +4783,29 @@ IAsyncAction MainWindow::ShowRuntimeMaintenanceWizardAsync() {
     const auto refreshRecordSelector = [&]() {
         recordSelector.Items().Clear();
         const auto kind = currentKind();
+        const auto riskSuffix = [](const ::MasterControlShell::ShellRuntimeEndpoint& endpoint) {
+            if (!endpoint.highRisk && endpoint.requiredCapabilities.empty()) {
+                return std::wstring{};
+            }
+            std::wstring suffix = L"  |  risk=" + (endpoint.risk.empty() ? std::wstring(L"high") : endpoint.risk);
+            if (!endpoint.requiredCapabilities.empty()) {
+                suffix += L"  |  requires=";
+                for (std::size_t i = 0; i < endpoint.requiredCapabilities.size(); ++i) {
+                    if (i != 0) {
+                        suffix += L",";
+                    }
+                    suffix += endpoint.requiredCapabilities[i];
+                }
+            }
+            return suffix;
+        };
         if (kind == L"mcp") {
             for (const auto& endpoint : customMcpServers) {
                 ComboBoxItem item;
-                const auto label = endpoint.routePath.empty()
+                auto label = endpoint.routePath.empty()
                     ? endpoint.displayName
                     : (endpoint.displayName + L"  |  " + endpoint.routePath);
+                label += riskSuffix(endpoint);
                 item.Content(box_value(winrt::hstring(label)));
                 item.Tag(box_value(winrt::hstring(endpoint.id)));
                 recordSelector.Items().Append(item);
@@ -4740,9 +4813,10 @@ IAsyncAction MainWindow::ShowRuntimeMaintenanceWizardAsync() {
         } else if (kind == L"subagent") {
             for (const auto& endpoint : customSubAgents) {
                 ComboBoxItem item;
-                const auto label = endpoint.specialization.empty()
+                auto label = endpoint.specialization.empty()
                     ? endpoint.displayName
                     : (endpoint.displayName + L"  |  " + endpoint.specialization);
+                label += riskSuffix(endpoint);
                 item.Content(box_value(winrt::hstring(label)));
                 item.Tag(box_value(winrt::hstring(endpoint.id)));
                 recordSelector.Items().Append(item);

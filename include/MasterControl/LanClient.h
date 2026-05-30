@@ -62,6 +62,7 @@ struct LanClient final {
     std::string networkAddress;    // informational, last observed
     bool enabled = true;
     LanClientPrivileges privileges{};
+    std::vector<std::string> capabilities; // explicit high-risk capability allow-list
     bool autonomousMode = false;   // Phase 7 ties this into CLU bypass for create actions
     std::string createdAtUtc;
     std::string lastSeenUtc;
@@ -77,6 +78,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     networkAddress,
     enabled,
     privileges,
+    capabilities,
     autonomousMode,
     createdAtUtc,
     lastSeenUtc,

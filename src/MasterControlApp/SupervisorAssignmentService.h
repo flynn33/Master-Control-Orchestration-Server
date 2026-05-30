@@ -34,6 +34,7 @@
 
 #pragma once
 
+#include "MasterControl/EndpointAdvertisement.h"
 #include "MasterControl/SupervisorAssignment.h"
 
 // nlohmann's json type is a template alias under an inline-namespace
@@ -83,20 +84,11 @@ public:
     // (the supervisor never connected; the timeout doesn't apply).
     virtual bool expireConnectionIfStale(std::chrono::seconds threshold) = 0;
 
-    // v0.10.8: late-binding endpoint refresh. The supervisor service is
-    // constructed early in initialize() -- before the snapshot tick has
-    // run and before the primary IPv4 LAN address is auto-detected --
-    // so the initial mcpEndpoint / discoveryEndpoint in the context are
-    // necessarily a fallback (typically 127.0.0.1 + browserPort). The
-    // route layer calls this just before selectAndIssue / regenerateConfig
-    // / confirmConnection with the freshly-resolved LAN-routable values
-    // taken from the same logic the DiscoveryDocument uses, so the
-    // generated config carries a URL a remote supervisor client can
-    // actually reach (LAN IP + gateway port + /mcp instead of 127.0.0.1
-    // + browser admin port). fingerprintSeed is also refreshed so the
-    // server fingerprint reflects the now-known LAN identity.
-    virtual void setEndpoints(const std::string& mcpEndpoint,
-                              const std::string& discoveryEndpoint,
+    // Late-binding endpoint refresh. The route layer passes the same
+    // advertisement plan used by discovery, so generated supervisor
+    // configs reflect active runtime state rather than desired settings
+    // alone.
+    virtual void setEndpoints(const AdvertisedEndpointPlan& plan,
                               const std::string& fingerprintSeed) = 0;
 };
 
@@ -110,6 +102,7 @@ struct SupervisorAssignmentServiceContext {
     std::filesystem::path dataDirectory;
     std::string mcpEndpoint;
     std::string discoveryEndpoint;
+    AdvertisedEndpointPlan endpointPlan;
     std::string serverDisplayName;
     std::string fingerprintSeed;
     std::chrono::seconds defaultConfigTtl{ 3 * 60 * 60 };  // 3 hours

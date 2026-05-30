@@ -9,6 +9,7 @@
 
 #include "MasterControl/AuthenticatedRequestContext.h"
 #include "MasterControl/DiagnosticsAggregator.h"
+#include "MasterControl/EndpointAdvertisement.h"
 #include "MasterControl/JsonStrictness.h"
 #include "MasterControl/LanClient.h"
 #include "MasterControl/MasterControlDefaults.h"
@@ -17,6 +18,7 @@
 #include "MasterControl/McpGatewayAdapters.h"
 #include "MasterControl/QueryParamParse.h"
 #include "MasterControl/SupervisorAssignment.h"
+#include "MasterControl/WorkflowReadiness.h"
 // v0.9.76: Supervisor Agent Assignment Wizard backend tests use the
 // service implementation directly. The header lives next to the .cpp
 // in src/MasterControlApp/; the relative include matches the
@@ -52,8 +54,20 @@ bool testDefaultConfiguration() {
                  "Default browser port remains 7300.");
     ok &= expect(configuration.beaconPort == 7301,
                  "Default beacon port remains 7301.");
+    ok &= expect(configuration.bindAddress == "127.0.0.1",
+                 "Default admin listener binds loopback only.");
+    ok &= expect(configuration.beaconEnabled == false,
+                 "Default UDP beacon is disabled.");
     ok &= expect(configuration.aiAutonomyEnabled == false,
                  "Global AI autonomy is off by default.");
+    ok &= expect(configuration.security.enableAuthentication == true,
+                 "Default admin authentication is enabled.");
+    ok &= expect(configuration.security.allowTroubleshootingBypass == false,
+                 "Default troubleshooting bypass is disabled.");
+    ok &= expect(configuration.security.allowOpenLanAccess == false,
+                 "Default LAN exposure is disabled.");
+    ok &= expect(configuration.security.securityPosture == "local-only",
+                 "Default security posture is local-only.");
     ok &= expect(configuration.lanClients.empty(),
                  "Fresh installs start with an empty LAN client roster.");
     return ok;
@@ -77,6 +91,10 @@ bool testLanClientRoundTrip() {
     original.networkAddress = "192.168.1.42";
     original.enabled = true;
     original.privileges = LanClientPrivileges{};
+    original.capabilities = {
+        MasterControl::kCapabilityProcessExec,
+        MasterControl::kCapabilityFilesystemWrite
+    };
     original.autonomousMode = false;
     original.createdAtUtc = "2026-04-25T00:00:00Z";
     original.lastSeenUtc = "2026-04-25T00:01:00Z";
@@ -88,6 +106,8 @@ bool testLanClientRoundTrip() {
                  "LanClient JSON round-trip preserves clientId.");
     ok &= expect(serialized["enabled"].get<bool>() == true,
                  "LanClient JSON round-trip preserves enabled.");
+    ok &= expect(serialized["capabilities"].is_array() && serialized["capabilities"].size() == 2,
+                 "LanClient JSON round-trip preserves explicit capabilities.");
     ok &= expect(serialized["autonomousMode"].get<bool>() == false,
                  "LanClient JSON round-trip preserves autonomousMode default.");
 
@@ -104,6 +124,8 @@ bool testLanClientRoundTrip() {
                  "LanClient deserializes networkAddress.");
     ok &= expect(restored.enabled == original.enabled,
                  "LanClient deserializes enabled.");
+    ok &= expect(restored.capabilities == original.capabilities,
+                 "LanClient deserializes explicit capabilities.");
     ok &= expect(restored.autonomousMode == original.autonomousMode,
                  "LanClient deserializes autonomousMode.");
     ok &= expect(restored.createdAtUtc == original.createdAtUtc,
@@ -122,6 +144,8 @@ bool testLanClientDefaults() {
                  "New LanClient is non-autonomous by default.");
     ok &= expect(client.clientId.empty(),
                  "New LanClient has no clientId until assigned.");
+    ok &= expect(client.capabilities.empty(),
+                 "New LanClient has no high-risk capabilities until assigned.");
     return ok;
 }
 
@@ -181,8 +205,8 @@ bool testLanClientPrivilegesRoundTrip() {
 
 // Phase 6 - authenticated request context. The resolver lives inside the
 // runtime translation unit and is exercised by integration tests; here we
-// pin the publicly observable invariants of the context type and the
-// makeOperatorContext fallback factory.
+// pin the publicly observable invariants of the context type and the local
+// setup/bootstrap factory.
 bool testAuthenticatedRequestContextDefaults() {
     MasterControl::AuthenticatedRequestContext context;
     bool ok = true;
@@ -192,40 +216,102 @@ bool testAuthenticatedRequestContextDefaults() {
                  "Default context grants no privileges.");
     ok &= expect(context.autonomousMode == false,
                  "Default context is non-autonomous.");
-    ok &= expect(context.actor == "operator",
-                 "Default context attributes work to the operator placeholder.");
-    ok &= expect(context.isOperatorFallback == true,
-                 "Default context is the operator fallback flag-true.");
+    ok &= expect(context.actor == "anonymous",
+                 "Default context attributes work to anonymous.");
+    ok &= expect(context.remoteAddress.empty(),
+                 "Default context has no remote address.");
+    ok &= expect(context.isLocalRequest == false,
+                 "Default context is not local.");
+    ok &= expect(context.isLocalBootstrap == false,
+                 "Default context is not local bootstrap.");
     return ok;
 }
 
-bool testOperatorFallbackGrantsAllPrivileges() {
-    auto context = MasterControl::makeOperatorContext();
+bool testCapabilityMatrixDefaults() {
+    MasterControl::LanClient client;
+    bool ok = true;
+    ok &= expect(MasterControl::capabilitiesForClient(client).empty(),
+                 "New clients have no derived capabilities.");
+
+    client.capabilities = { MasterControl::kCapabilityFilesystemWrite };
+    const auto writeCaps = MasterControl::capabilitiesForClient(client);
+    ok &= expect(MasterControl::hasCapability(writeCaps, MasterControl::kCapabilityFilesystemWrite),
+                 "Explicit filesystem.write is preserved.");
+    ok &= expect(MasterControl::hasCapability(writeCaps, MasterControl::kCapabilityFilesystemRead),
+                 "filesystem.write implies filesystem.read.");
+
+    MasterControl::LanClient legacy;
+    legacy.privileges.canManageModules = true;
+    legacy.privileges.canManageClients = true;
+    const auto legacyCaps = MasterControl::capabilitiesForClient(legacy);
+    ok &= expect(MasterControl::hasCapability(legacyCaps, MasterControl::kCapabilityInstallPackage),
+                 "Legacy module privilege maps to install.package.");
+    ok &= expect(MasterControl::hasCapability(legacyCaps, MasterControl::kCapabilityClientsManage),
+                 "Legacy client privilege maps to clients.manage.");
+    return ok;
+}
+
+bool testMcpToolCapabilityMatrix() {
+    bool ok = true;
+    auto requiresCapability = [](const std::string& server, const std::string& tool, const std::string& capability) {
+        return MasterControl::hasCapability(
+            MasterControl::requiredCapabilitiesForMcpTool(server, tool),
+            capability);
+    };
+    ok &= expect(requiresCapability("terminal-shell", "shell.exec", MasterControl::kCapabilityProcessExec),
+                 "shell.exec requires process.exec.");
+    ok &= expect(requiresCapability("code-execution-repl", "repl.exec", MasterControl::kCapabilityProcessExec),
+                 "repl.exec requires process.exec.");
+    ok &= expect(requiresCapability("file-search", "search.grep", MasterControl::kCapabilityFilesystemRead),
+                 "search.grep requires filesystem.read.");
+    ok &= expect(requiresCapability("persistent-context", "ctx.set", MasterControl::kCapabilityFilesystemWrite),
+                 "ctx.set requires filesystem.write.");
+    ok &= expect(requiresCapability("desktop-control", "desktop.focus", MasterControl::kCapabilityDesktopControl),
+                 "desktop.focus requires desktop.control.");
+    ok &= expect(requiresCapability("keyboard-mouse-control", "input.keyboard", MasterControl::kCapabilityInputSynthesize),
+                 "input.keyboard requires input.synthesize.");
+    ok &= expect(requiresCapability("screen-capture-vision", "screen.capture", MasterControl::kCapabilityScreenCapture),
+                 "screen.capture requires screen.capture.");
+    ok &= expect(MasterControl::requiredCapabilitiesForMcpTool("baseline-tools", "mcos.echo").empty(),
+                 "mcos.echo remains available without high-risk capabilities.");
+    return ok;
+}
+
+bool testLocalBootstrapGrantsAllPrivileges() {
+    auto context = MasterControl::makeLocalOperatorContext("127.0.0.1");
     bool ok = true;
     ok &= expect(context.privileges.canCreateMcpServers,
-                 "Operator fallback grants canCreateMcpServers.");
+                 "Local bootstrap grants canCreateMcpServers.");
     ok &= expect(context.privileges.canModifyMcpServers,
-                 "Operator fallback grants canModifyMcpServers.");
+                 "Local bootstrap grants canModifyMcpServers.");
     ok &= expect(context.privileges.canRemoveMcpServers,
-                 "Operator fallback grants canRemoveMcpServers.");
+                 "Local bootstrap grants canRemoveMcpServers.");
     ok &= expect(context.privileges.canCreateSubAgents,
-                 "Operator fallback grants canCreateSubAgents.");
+                 "Local bootstrap grants canCreateSubAgents.");
     ok &= expect(context.privileges.canModifySubAgents,
-                 "Operator fallback grants canModifySubAgents.");
+                 "Local bootstrap grants canModifySubAgents.");
     ok &= expect(context.privileges.canRemoveSubAgents,
-                 "Operator fallback grants canRemoveSubAgents.");
+                 "Local bootstrap grants canRemoveSubAgents.");
     ok &= expect(context.privileges.canManageClients,
-                 "Operator fallback grants canManageClients.");
+                 "Local bootstrap grants canManageClients.");
     ok &= expect(context.privileges.canManageModules,
-                 "Operator fallback grants canManageModules.");
+                 "Local bootstrap grants canManageModules.");
     ok &= expect(context.privileges.canChangeGovernancePolicy,
-                 "Operator fallback grants canChangeGovernancePolicy.");
+                 "Local bootstrap grants canChangeGovernancePolicy.");
+    ok &= expect(MasterControl::hasCapability(context.capabilities, MasterControl::kCapabilityProcessExec),
+                 "Local bootstrap carries process.exec.");
+    ok &= expect(MasterControl::hasCapability(context.capabilities, MasterControl::kCapabilitySupervisorAssign),
+                 "Local bootstrap carries supervisor.assign.");
     ok &= expect(context.autonomousMode == true,
-                 "Operator fallback is autonomous (so create paths bypass).");
-    ok &= expect(context.actor == "operator",
-                 "Operator fallback identifies itself as 'operator'.");
-    ok &= expect(context.isOperatorFallback == true,
-                 "Operator fallback flag is true.");
+                 "Local bootstrap is autonomous for setup-only create paths.");
+    ok &= expect(context.actor == "local-operator",
+                 "Local bootstrap identifies itself as local-operator.");
+    ok &= expect(context.remoteAddress == "127.0.0.1",
+                 "Local bootstrap records its remote address.");
+    ok &= expect(context.isLocalRequest == true,
+                 "Local bootstrap marks local requests.");
+    ok &= expect(context.isLocalBootstrap == true,
+                 "Local bootstrap flag is true.");
     return ok;
 }
 
@@ -292,16 +378,18 @@ bool testGatewayConfigurationDefaults() {
     bool ok = true;
     ok &= expect(configuration.mcpGateway.type == MasterControl::GatewayType::Native,
                  "Default gateway type is Native.");
-    ok &= expect(configuration.mcpGateway.enabled == true,
-                 "Default gateway is enabled (auto-starts at boot).");
+    ok &= expect(configuration.mcpGateway.enabled == false,
+                 "Default gateway is disabled until setup enables LAN posture.");
+    ok &= expect(configuration.mcpGateway.listenHost == "127.0.0.1",
+                 "Default gateway host binds loopback only.");
     ok &= expect(configuration.mcpGateway.listenPort == 8080,
                  "Default gateway port is 8080 (distinct from admin 7300).");
     ok &= expect(configuration.mcpGateway.mcpPath == "/mcp",
                  "Default gateway MCP path is /mcp.");
     ok &= expect(configuration.mcpGateway.healthPath == "/health",
                  "Default gateway health path is /health.");
-    ok &= expect(configuration.mcpGateway.mode == "lan-trusted",
-                 "Default gateway mode is lan-trusted.");
+    ok &= expect(configuration.mcpGateway.mode == "local-only",
+                 "Default gateway mode is local-only.");
     return ok;
 }
 
@@ -1105,10 +1193,12 @@ bool testDiscoveryDocumentDefaultShape() {
                  "DiscoveryDocument default product is MCOS.");
     ok &= expect(doc.role == "mcp-gateway-host",
                  "DiscoveryDocument default role is mcp-gateway-host.");
-    ok &= expect(doc.trust == "lan",
-                 "DiscoveryDocument default trust is lan.");
-    ok &= expect(doc.auth == "none",
-                 "DiscoveryDocument default auth is none.");
+    ok &= expect(doc.trust == "local-only",
+                 "DiscoveryDocument default trust is local-only.");
+    ok &= expect(doc.auth == "required",
+                 "DiscoveryDocument default auth is required.");
+    ok &= expect(doc.securityPosture == "local-only",
+                 "DiscoveryDocument default security posture is local-only.");
     return ok;
 }
 
@@ -1148,10 +1238,12 @@ bool testDiscoveryDocumentJsonRoundTrip() {
                  "Discovery JSON pins product=MCOS.");
     ok &= expect(serialized["role"].get<std::string>() == "mcp-gateway-host",
                  "Discovery JSON pins role=mcp-gateway-host.");
-    ok &= expect(serialized["trust"].get<std::string>() == "lan",
-                 "Discovery JSON pins trust=lan.");
-    ok &= expect(serialized["auth"].get<std::string>() == "none",
-                 "Discovery JSON pins auth=none.");
+    ok &= expect(serialized["trust"].get<std::string>() == "local-only",
+                 "Discovery JSON pins trust=local-only.");
+    ok &= expect(serialized["auth"].get<std::string>() == "required",
+                 "Discovery JSON pins auth=required.");
+    ok &= expect(serialized["securityPosture"].get<std::string>() == "local-only",
+                 "Discovery JSON pins securityPosture=local-only.");
     ok &= expect(serialized["gateway"]["mcpUrl"].get<std::string>() == "http://192.168.1.10:8080/mcp",
                  "Discovery JSON exposes gateway.mcpUrl.");
     // v0.11.0-alpha.2: pin the TLS surface in the serialized form so
@@ -1359,6 +1451,165 @@ bool testAppConfigurationCarriesLanClients() {
     return ok;
 }
 
+bool testSetupStateJsonContract() {
+    MasterControl::SetupStateSnapshot state;
+    state.mode = "manual";
+    state.currentStep = "manual-setup";
+    state.securityPosture = "local-only";
+    state.lanModeEnabled = false;
+    state.beaconEnabled = false;
+    state.mcpGatewayAdvertised = false;
+    state.lastUpdatedUtc = "2026-05-29T12:00:00Z";
+    state.steps.push_back(MasterControl::SetupStepState{
+        "manual-setup",
+        "Manual setup",
+        "active",
+        {},
+        "Use the operator console"
+    });
+    MasterControl::SetupOverrideRecord overrideRecord;
+    overrideRecord.stepId = "readiness-review";
+    overrideRecord.issueId = "workflow.none-ready";
+    overrideRecord.reason = "Operator accepted manual workflow import.";
+    overrideRecord.createdAtUtc = "2026-05-29T12:01:00Z";
+    state.overrides.push_back(overrideRecord);
+
+    const nlohmann::json serialized = state;
+    bool ok = true;
+    ok &= expect(serialized.contains("setupVersion"),
+                 "Setup state JSON exposes setupVersion.");
+    ok &= expect(serialized["mode"] == "manual",
+                 "Setup state JSON exposes the selected mode.");
+    ok &= expect(serialized["currentStep"] == "manual-setup",
+                 "Setup state JSON exposes the current step.");
+    ok &= expect(serialized.contains("steps") && serialized["steps"].is_array(),
+                 "Setup state JSON exposes step array.");
+    ok &= expect(serialized.contains("readiness") && serialized["readiness"].is_object(),
+                 "Setup state JSON embeds readiness.");
+    ok &= expect(serialized.contains("securityPosture"),
+                 "Setup state JSON exposes securityPosture.");
+    ok &= expect(serialized["overrides"].size() == 1,
+                 "Setup state JSON exposes persisted overrides.");
+
+    const auto restored = serialized.get<MasterControl::SetupStateSnapshot>();
+    ok &= expect(restored.mode == "manual",
+                 "Setup state mode round-trips.");
+    ok &= expect(restored.steps.size() == 1 && restored.steps.front().id == "manual-setup",
+                 "Setup state steps round-trip.");
+    ok &= expect(restored.overrides.size() == 1 && restored.overrides.front().issueId == "workflow.none-ready",
+                 "Setup override records round-trip.");
+    return ok;
+}
+
+bool testAppConfigurationCarriesSetupState() {
+    MasterControl::AppConfiguration configuration;
+    configuration.setupMode = "import-existing";
+    configuration.setupCurrentStep = "import-existing";
+    configuration.setupDismissedAtUtc = "2026-05-29T12:00:00Z";
+    MasterControl::SetupOverrideRecord overrideRecord;
+    overrideRecord.stepId = "readiness-review";
+    overrideRecord.issueId = "mcp.none-ready";
+    overrideRecord.reason = "Accepted for offline local testing.";
+    overrideRecord.createdAtUtc = "2026-05-29T12:01:00Z";
+    configuration.setupOverrides.push_back(overrideRecord);
+
+    const nlohmann::json serialized = configuration;
+    bool ok = true;
+    ok &= expect(serialized["setupMode"] == "import-existing",
+                 "AppConfiguration JSON carries setup mode.");
+    ok &= expect(serialized["setupCurrentStep"] == "import-existing",
+                 "AppConfiguration JSON carries setup current step.");
+    ok &= expect(serialized["setupOverrides"].size() == 1,
+                 "AppConfiguration JSON carries setup overrides.");
+
+    const auto restored = serialized.get<MasterControl::AppConfiguration>();
+    ok &= expect(restored.setupMode == "import-existing",
+                 "AppConfiguration setup mode round-trips.");
+    ok &= expect(restored.setupOverrides.size() == 1
+                 && restored.setupOverrides.front().reason == "Accepted for offline local testing.",
+                 "AppConfiguration setup overrides round-trip.");
+    return ok;
+}
+
+MasterControl::WorkflowDefinition makeReadyWorkflow(const std::string& workflowId,
+                                                    const std::string& source) {
+    MasterControl::WorkflowDefinition workflow;
+    workflow.workflowId = workflowId;
+    workflow.displayName = workflowId;
+    workflow.source = source;
+    workflow.enabled = true;
+    workflow.steps.push_back(MasterControl::WorkflowStepDefinition{
+        "operator-review",
+        "approval",
+        "operator.readiness-review",
+        nlohmann::json::object(),
+        true
+    });
+    return workflow;
+}
+
+bool testWorkflowDefinitionJsonContract() {
+    const auto workflow = makeReadyWorkflow("manual-workflow", "manual");
+    const nlohmann::json serialized = workflow;
+    bool ok = true;
+    ok &= expect(serialized["workflowId"] == "manual-workflow",
+                 "Workflow JSON exposes workflowId.");
+    ok &= expect(serialized["source"] == "manual",
+                 "Workflow JSON exposes source.");
+    ok &= expect(serialized["enabled"] == true,
+                 "Workflow JSON exposes enabled.");
+    ok &= expect(serialized["steps"].is_array() && serialized["steps"].size() == 1,
+                 "Workflow JSON exposes steps.");
+
+    const auto restored = serialized.get<MasterControl::WorkflowDefinition>();
+    ok &= expect(restored.workflowId == "manual-workflow",
+                 "Workflow id round-trips.");
+    ok &= expect(restored.steps.size() == 1 && restored.steps.front().kind == "approval",
+                 "Workflow steps round-trip.");
+    return ok;
+}
+
+bool testWorkflowReadinessCountsSources() {
+    std::vector<MasterControl::WorkflowDefinition> workflows{
+        makeReadyWorkflow("manual-workflow", "manual"),
+        makeReadyWorkflow("imported-workflow", "imported"),
+        makeReadyWorkflow("starter-workflow", "starter-template")
+    };
+
+    const auto counts = MasterControl::workflowReadinessCounts(workflows);
+    bool ok = true;
+    ok &= expect(counts.ready == 3,
+                 "Manual, imported, and starter-template workflows all count as ready.");
+    ok &= expect(counts.missing == 0,
+                 "Ready workflows clear the missing count.");
+    return ok;
+}
+
+bool testWorkflowReadinessRejectsInvalidDisabledDeleted() {
+    std::vector<MasterControl::WorkflowDefinition> workflows;
+
+    auto invalid = makeReadyWorkflow("bad-workflow", "manual");
+    invalid.steps.clear();
+    workflows.push_back(invalid);
+
+    auto disabled = makeReadyWorkflow("disabled-workflow", "imported");
+    disabled.enabled = false;
+    workflows.push_back(disabled);
+
+    // Deleted workflows are represented by absence from the durable list.
+    const auto counts = MasterControl::workflowReadinessCounts(workflows);
+    bool ok = true;
+    ok &= expect(counts.ready == 0,
+                 "Invalid and disabled workflows do not count as ready.");
+    ok &= expect(counts.invalid == 1,
+                 "Invalid enabled workflow is counted as invalid.");
+    ok &= expect(counts.disabled == 1,
+                 "Disabled workflow is counted as disabled.");
+    ok &= expect(counts.missing >= 1,
+                 "No ready workflows leaves readiness missing.");
+    return ok;
+}
+
 }
 
 // Phase 7 - governance enums and deferred-action shape. CLU enforcement
@@ -1466,14 +1717,109 @@ MasterControl::SupervisorAssignmentServiceContext makeSupervisorContext(
         const std::filesystem::path& dir) {
     MasterControl::SupervisorAssignmentServiceContext ctx;
     ctx.dataDirectory = dir;
-    ctx.mcpEndpoint = "http://192.168.1.7:7300/mcp";
-    ctx.discoveryEndpoint = "http://192.168.1.7:7300/.well-known/mcos.json";
+    ctx.mcpEndpoint = "http://127.0.0.1:8080/mcp";
+    ctx.discoveryEndpoint = "http://127.0.0.1:7300/.well-known/mcos.json";
+    ctx.endpointPlan.lanModeEnabled = false;
+    ctx.endpointPlan.gatewayRunning = false;
+    ctx.endpointPlan.adminLanAdvertised = false;
+    ctx.endpointPlan.mcpLanAdvertised = false;
+    ctx.endpointPlan.adminHost = "127.0.0.1";
+    ctx.endpointPlan.mcpHost = "127.0.0.1";
+    ctx.endpointPlan.adminBaseUrl = "http://127.0.0.1:7300";
+    ctx.endpointPlan.discoveryEndpoint = ctx.discoveryEndpoint;
+    ctx.endpointPlan.mcpEndpoint = ctx.mcpEndpoint;
+    ctx.endpointPlan.mcpHealthEndpoint = "http://127.0.0.1:8080/health";
+    ctx.endpointPlan.networkMode = "local-only";
+    ctx.endpointPlan.reason = "LAN mode is disabled; generated endpoints are local-only.";
     ctx.serverDisplayName = "Master Control Orchestration Server";
     ctx.fingerprintSeed = "test-seed";
     ctx.defaultConfigTtl = std::chrono::seconds(3600);
     return ctx;
 }
+
+void applySupervisorAuthClaim(MasterControl::SupervisorConnectionClaim& claim,
+                              const MasterControl::SupervisorAssignment& assignment) {
+    claim.token = assignment.tokenRef;
+    claim.fingerprint = assignment.serverFingerprint;
+}
 } // namespace
+
+bool testAdvertisedEndpointPlanLocalOnlyDoesNotAdvertiseLan() {
+    auto cfg = MasterControl::buildDefaultConfiguration();
+    cfg.security.allowOpenLanAccess = false;
+    cfg.bindAddress = "0.0.0.0";
+    cfg.activeProfile.preferredBindAddress = "192.168.1.7";
+    cfg.mcpGateway.listenHost = "0.0.0.0";
+    cfg.mcpGateway.listenPort = 8080;
+    cfg.mcpGateway.mcpPath = "/mcp";
+    cfg.mcpGateway.healthPath = "/health";
+    MasterControl::GatewayStatus gateway;
+    gateway.state = MasterControl::GatewayState::Running;
+
+    const auto plan = MasterControl::buildAdvertisedEndpointPlan(cfg, gateway, "192.168.1.50");
+    bool ok = true;
+    ok &= expect(plan.networkMode == "local-only",
+                 "Endpoint plan reports local-only when LAN mode is disabled.");
+    ok &= expect(plan.adminHost == "127.0.0.1",
+                 "Local-only endpoint plan keeps admin discovery on loopback.");
+    ok &= expect(plan.mcpHost == "127.0.0.1",
+                 "Local-only endpoint plan keeps MCP on loopback.");
+    ok &= expect(!plan.adminLanAdvertised && !plan.mcpLanAdvertised,
+                 "Local-only endpoint plan does not advertise LAN endpoints.");
+    ok &= expect(plan.discoveryEndpoint.find("192.168.1.7") == std::string::npos,
+                 "Local-only discovery URL does not contain the preferred LAN IP.");
+    ok &= expect(plan.mcpEndpoint.find("192.168.1.7") == std::string::npos,
+                 "Local-only MCP URL does not contain the preferred LAN IP.");
+    return ok;
+}
+
+bool testAdvertisedEndpointPlanRequiresGatewayRunningForLanMcp() {
+    auto cfg = MasterControl::buildDefaultConfiguration();
+    cfg.security.allowOpenLanAccess = true;
+    cfg.bindAddress = "0.0.0.0";
+    cfg.activeProfile.preferredBindAddress = "192.168.1.7";
+    cfg.mcpGateway.listenHost = "0.0.0.0";
+    cfg.mcpGateway.listenPort = 8080;
+    MasterControl::GatewayStatus gateway;
+    gateway.state = MasterControl::GatewayState::Stopped;
+
+    const auto plan = MasterControl::buildAdvertisedEndpointPlan(cfg, gateway, "192.168.1.50");
+    bool ok = true;
+    ok &= expect(plan.networkMode == "trusted-lan",
+                 "Endpoint plan reports trusted-lan when LAN mode is enabled.");
+    ok &= expect(plan.adminLanAdvertised,
+                 "Admin discovery may advertise LAN when LAN mode and wildcard bind are enabled.");
+    ok &= expect(!plan.mcpLanAdvertised,
+                 "MCP endpoint does not advertise LAN when the gateway is not running.");
+    ok &= expect(plan.mcpHost == "127.0.0.1",
+                 "Stopped gateway keeps MCP endpoint local-only.");
+    return ok;
+}
+
+bool testAdvertisedEndpointPlanLanWhenEnabledAndGatewayRunning() {
+    auto cfg = MasterControl::buildDefaultConfiguration();
+    cfg.security.allowOpenLanAccess = true;
+    cfg.bindAddress = "0.0.0.0";
+    cfg.activeProfile.preferredBindAddress = "192.168.1.7";
+    cfg.mcpGateway.listenHost = "0.0.0.0";
+    cfg.mcpGateway.listenPort = 8080;
+    MasterControl::GatewayStatus gateway;
+    gateway.state = MasterControl::GatewayState::Running;
+
+    const auto plan = MasterControl::buildAdvertisedEndpointPlan(cfg, gateway, "192.168.1.50");
+    bool ok = true;
+    ok &= expect(plan.adminHost == "192.168.1.7",
+                 "LAN endpoint plan uses the preferred bind address for admin discovery.");
+    ok &= expect(plan.mcpHost == "192.168.1.7",
+                 "LAN endpoint plan uses the preferred bind address for MCP.");
+    ok &= expect(plan.adminLanAdvertised && plan.mcpLanAdvertised,
+                 "LAN endpoint plan advertises both admin and MCP when both listeners are viable.");
+    ok &= expect(plan.discoveryEndpoint.find("192.168.1.7") != std::string::npos,
+                 "LAN discovery URL contains the preferred LAN IP.");
+    ok &= expect(plan.mcpEndpoint.find("192.168.1.7") != std::string::npos,
+                 "LAN MCP URL contains the preferred LAN IP.");
+    return ok;
+}
 
 bool testSupervisorProviderRoundTrip() {
     bool ok = true;
@@ -1555,6 +1901,10 @@ bool testSupervisorSelectAndIssueChatGpt() {
                      "Server endpoint carries the gateway path.");
         ok &= expect(parsed["auth"]["mode"].get<std::string>() == "token_reference",
                      "Auth mode is token_reference, not raw bearer.");
+        ok &= expect(parsed["server"]["networkMode"].get<std::string>() == "local-only",
+                     "Generated config explicitly states local-only network mode.");
+        ok &= expect(parsed["server"]["endpointAdvertisement"]["lanModeEnabled"].get<bool>() == false,
+                     "Generated config states LAN advertisement is disabled.");
         ok &= expect(parsed["capabilities"].is_array() && parsed["capabilities"].size() >= 8,
                      "Capabilities array carries the 8 autonomous capabilities.");
     } catch (const std::exception&) {
@@ -1756,10 +2106,33 @@ bool testSupervisorConfirmConnectionHappyPath() {
         "supervisor.list_pending_decisions",
         "supervisor.submit_decision"
     };
+    applySupervisorAuthClaim(claim, issue.assignment);
     const auto result = svc->confirmConnection(claim);
     ok &= expect(result.ok, "Valid claim is accepted.");
     ok &= expect(result.newState == MasterControl::SupervisorState::Connected,
                  "State transitions to Connected.");
+    return ok;
+}
+
+bool testSupervisorConfirmRejectsTokenMismatch() {
+    auto dir = makeTempSupervisorDir("confirm-token-mismatch");
+    auto svc = MasterControl::createSupervisorAssignmentService(makeSupervisorContext(dir));
+    MasterControl::SupervisorSelectRequest req;
+    req.provider = MasterControl::SupervisorProvider::Claude;
+    const auto issue = svc->selectAndIssue(req);
+
+    MasterControl::SupervisorConnectionClaim claim;
+    claim.provider = MasterControl::SupervisorProvider::Claude;
+    claim.configId = issue.assignment.configId;
+    claim.clientId = "claude-desktop-flynn-main";
+    claim.capabilities = { "supervisor.get_context" };
+    claim.fingerprint = issue.assignment.serverFingerprint;
+    claim.token = "mcos-supervisor-token:wrong-config";
+    const auto result = svc->confirmConnection(claim);
+    bool ok = true;
+    ok &= expect(!result.ok, "Token mismatch is rejected.");
+    ok &= expect(result.errorMessage.find("token") != std::string::npos,
+                 "Token mismatch rejection names the token failure.");
     return ok;
 }
 
@@ -1778,6 +2151,7 @@ bool testSupervisorConfirmRejectsForbiddenCapability() {
     // SECURITY_AND_CAPABILITY_MODEL.md. Even if the supervisor client
     // tries to negotiate it on connect, the server-side check denies.
     claim.capabilities = { "supervisor.get_context", "worker.run_shell" };
+    applySupervisorAuthClaim(claim, issue.assignment);
     const auto result = svc->confirmConnection(claim);
     bool ok = true;
     ok &= expect(!result.ok, "Forbidden capability is rejected at connect.");
@@ -1798,6 +2172,7 @@ bool testSupervisorConfirmRejectsProviderMismatch() {
     claim.configId = issue.assignment.configId;
     claim.clientId = "claude-desktop-flynn-main";
     claim.capabilities = { "supervisor.get_context" };
+    applySupervisorAuthClaim(claim, issue.assignment);
     const auto result = svc->confirmConnection(claim);
     return expect(!result.ok, "Provider mismatch is rejected.");
 }
@@ -1923,6 +2298,7 @@ bool testSupervisorConfirmDefaultDenyOnEmptyAllowedSet() {
     // is empty. The fix rejects it with "Capability not allowed in
     // current mode".
     claim.capabilities = { "supervisor.get_context" };
+    applySupervisorAuthClaim(claim, current);
     const auto result = svc->confirmConnection(claim);
     bool ok = true;
     ok &= expect(!result.ok,
@@ -1946,6 +2322,7 @@ bool testSupervisorHeartbeatWatchdogFlipsConnectedToDisconnected() {
     claim.configId = issue.assignment.configId;
     claim.clientId = "grok-desktop-flynn-main";
     claim.capabilities = { "supervisor.get_context" };
+    applySupervisorAuthClaim(claim, issue.assignment);
     const auto result = svc->confirmConnection(claim);
     bool ok = expect(result.ok, "confirmConnection succeeds for watchdog setup.");
     // The watchdog with a 0s threshold should immediately flip the
@@ -2341,10 +2718,17 @@ int main() {
     ok &= testLanClientDefaults();
     ok &= testLanClientRoundTrip();
     ok &= testAppConfigurationCarriesLanClients();
+    ok &= testSetupStateJsonContract();
+    ok &= testAppConfigurationCarriesSetupState();
+    ok &= testWorkflowDefinitionJsonContract();
+    ok &= testWorkflowReadinessCountsSources();
+    ok &= testWorkflowReadinessRejectsInvalidDisabledDeleted();
     ok &= testLanClientPrivilegesDefaults();
     ok &= testLanClientPrivilegesRoundTrip();
+    ok &= testCapabilityMatrixDefaults();
+    ok &= testMcpToolCapabilityMatrix();
     ok &= testAuthenticatedRequestContextDefaults();
-    ok &= testOperatorFallbackGrantsAllPrivileges();
+    ok &= testLocalBootstrapGrantsAllPrivileges();
     ok &= testLanClientConfigBundleShape();
     ok &= testGovernanceActionKindRoundTrip();
     ok &= testGovernanceDecisionOutcomeRoundTrip();
@@ -2399,6 +2783,10 @@ int main() {
     ok &= testClientHeartbeatJsonRoundTrip();
     ok &= testClientPresenceShape();
     ok &= testGatewayTrafficSnapshotShape();
+    // WS6 endpoint advertisement gates.
+    ok &= testAdvertisedEndpointPlanLocalOnlyDoesNotAdvertiseLan();
+    ok &= testAdvertisedEndpointPlanRequiresGatewayRunningForLanMcp();
+    ok &= testAdvertisedEndpointPlanLanWhenEnabledAndGatewayRunning();
     // v0.9.76 Supervisor Agent Assignment Wizard backend tests.
     ok &= testSupervisorProviderRoundTrip();
     ok &= testSupervisorStateRoundTrip();
@@ -2411,6 +2799,7 @@ int main() {
     ok &= testSupervisorLoadDropsStaleErrorOnTerminalState();
     ok &= testSupervisorRegenerateClearsStaleErrorMessage();
     ok &= testSupervisorConfirmConnectionHappyPath();
+    ok &= testSupervisorConfirmRejectsTokenMismatch();
     ok &= testSupervisorConfirmRejectsForbiddenCapability();
     ok &= testSupervisorConfirmRejectsProviderMismatch();
     ok &= testSupervisorPersistenceSurvivesServiceRecreation();

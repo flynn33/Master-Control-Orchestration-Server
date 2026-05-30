@@ -2,6 +2,7 @@
 // Copyright (c) 2026 James Daley. All Rights Reserved.
 // Proprietary and Confidential.
 
+#include "MasterControl/CapabilityAuthorization.h"
 #include "MasterControl/MasterControlDefaults.h"
 
 #include <winsock2.h>
@@ -505,6 +506,9 @@ std::vector<RuntimeEndpoint> buildDefaultSeededEndpointsForHost(std::string host
         auto endpoint = makeEndpoint(seed.id, seed.displayName, EndpointKind::MCPServer,
                                      host, seed.port, "/", seed.description);
         endpoint.specialization = seed.specialization;
+        endpoint.requiredCapabilities = requiredCapabilitiesForMcpTool(seed.id, "");
+        endpoint.risk = highestCapabilityRisk(endpoint.requiredCapabilities);
+        endpoint.highRisk = !endpoint.requiredCapabilities.empty();
         endpoints.push_back(std::move(endpoint));
     }
 
@@ -554,17 +558,18 @@ AppConfiguration buildDefaultConfiguration() {
     AppConfiguration configuration;
     configuration.instanceName = "Master Control Orchestration Server";
     configuration.instanceId = generateInstanceIdUtf8();
-    configuration.bindAddress = "0.0.0.0";
+    configuration.bindAddress = "127.0.0.1";
     configuration.browserPort = 7300;
     configuration.beaconPort = 7301;
     configuration.beaconBroadcastIntervalSeconds = 15;
-    configuration.beaconEnabled = true;
+    configuration.beaconEnabled = false;
     configuration.aiAutonomyEnabled = false;
     configuration.security.enableTls = false;
-    configuration.security.enableAuthentication = false;
-    configuration.security.allowTroubleshootingBypass = true;
-    configuration.security.allowOpenLanAccess = true;
+    configuration.security.enableAuthentication = true;
+    configuration.security.allowTroubleshootingBypass = false;
+    configuration.security.allowOpenLanAccess = false;
     configuration.security.securityProtocolsEnabled = true;
+    configuration.security.securityPosture = "local-only";
     configuration.activeProfile.environmentName = environment.hostName + " - " + environment.operatingSystem;
     configuration.activeProfile.preferredBindAddress = environment.preferredBindAddress;
     configuration.activeProfile.macAddress = environment.macAddress;
@@ -575,19 +580,19 @@ AppConfiguration buildDefaultConfiguration() {
     // and the gateway port (default 8080) is reachable from LAN clients.
     // The gateway URL is logically distinct from the admin port (7300).
     // v0.9.0: the in-process HTTP.sys adapter support dropped, native HTTP.sys substrate is the
-    // only option. type=Native and enabled=true so a fresh install
-    // self-hosts its MCP gateway out of the box. binaryPath /
+    // only option. Fresh installs keep the gateway local/off until setup
+    // explicitly validates LAN posture. binaryPath /
     // databasePath stay set to empty for back-compat schema rather than
     // being silently dropped.
     configuration.mcpGateway.type = GatewayType::Native;
-    configuration.mcpGateway.enabled = true;
+    configuration.mcpGateway.enabled = false;
     configuration.mcpGateway.binaryPath = "";
-    configuration.mcpGateway.listenHost = "0.0.0.0";
+    configuration.mcpGateway.listenHost = "127.0.0.1";
     configuration.mcpGateway.listenPort = 8080;
     configuration.mcpGateway.mcpPath = "/mcp";
     configuration.mcpGateway.healthPath = "/health";
     configuration.mcpGateway.databasePath = "";
-    configuration.mcpGateway.mode = "lan-trusted";
+    configuration.mcpGateway.mode = "local-only";
 
     return configuration;
 }

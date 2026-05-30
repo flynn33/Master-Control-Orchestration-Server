@@ -19,11 +19,13 @@
 #include "MasterControl/MasterControlDiagnostics.h"
 #include "ForsettiPlatform/DefaultPlatformServices.h"
 #include "MasterControl/AuthenticatedRequestContext.h"
+#include "MasterControl/EndpointAdvertisement.h"
 #include "MasterControl/ILanClientAccessService.h"
 #include "MasterControl/MasterControlDefaults.h"
 #include "MasterControl/MasterControlModules.h"
 #include "MasterControl/MasterControlVersion.h"
 #include "MasterControl/QueryParamParse.h"  // v0.10.15: alias-aware ?param= extractor.
+#include "MasterControl/WorkflowReadiness.h"
 #include "MasterControl/JsonStrictness.h"   // v0.10.17: dropped-top-level-keys diagnostic.
 #include "MasterControl/DiagnosticsAggregator.h"  // v0.11.0 Slice A: testable aggregator + markdown renderer.
 
@@ -56,6 +58,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <limits>
@@ -265,6 +268,8 @@ std::string substituteWildcardHostInUrl(const std::string& raw,
 // WS1 / WS4 / WS6 — Setup helpers
 // ---------------------------------------------------------------------------
 
+std::string trimCopy(std::string value);
+
 // Readiness snapshot assembly. Reduced to MCP and sub-agent catalogs after the
 // AI provider stack was removed per ADR-001. Phase 3+ reintroduces a readiness
 // path for LAN client registration.
@@ -273,6 +278,9 @@ ReadinessSnapshot computeReadinessSnapshot(const DashboardSnapshot& snapshot,
     ReadinessSnapshot result;
     result.setupStarted = !config.firstRunStartedAtUtc.empty() || config.firstRunCompleted;
     result.firstRunCompleted = config.firstRunCompleted;
+    result.securityPosture = config.security.securityPosture.empty()
+        ? std::string("local-only")
+        : config.security.securityPosture;
 
     for (const auto& endpoint : snapshot.endpoints) {
         if (endpoint.kind != EndpointKind::MCPServer) {
@@ -291,8 +299,9 @@ ReadinessSnapshot computeReadinessSnapshot(const DashboardSnapshot& snapshot,
         ++result.specialistsReadyCount;
     }
 
-    result.workflowsReadyCount = 0;
-    result.workflowsMissingCount = 1;
+    const auto workflowCounts = workflowReadinessCounts(config.workflows);
+    result.workflowsReadyCount = workflowCounts.ready;
+    result.workflowsMissingCount = workflowCounts.missing;
 
     if (result.mcpReadyCount == 0) {
         result.blockingIssues.push_back(ReadinessIssue{
@@ -302,6 +311,22 @@ ReadinessSnapshot computeReadinessSnapshot(const DashboardSnapshot& snapshot,
             "runtime", "Add MCP server"
         });
         result.recommendedNextStep = "add-mcp";
+    } else if (result.workflowsReadyCount == 0) {
+        result.blockingIssues.push_back(ReadinessIssue{
+            "workflow.none-ready", "workflows", "warning",
+            "No workflows ready",
+            "Create or import at least one enabled valid workflow before completing setup.",
+            "workflows", "Create workflow"
+        });
+        result.recommendedNextStep = "create-starter-workflow";
+    } else if (workflowCounts.invalid > 0) {
+        result.blockingIssues.push_back(ReadinessIssue{
+            "workflow.invalid", "workflows", "warning",
+            "Workflow validation issues",
+            "One or more enabled workflows are invalid and do not count toward readiness.",
+            "workflows", "Review workflows"
+        });
+        result.recommendedNextStep = "create-starter-workflow";
     } else if (!result.firstRunCompleted) {
         result.recommendedNextStep = "review";
     } else {
@@ -310,6 +335,206 @@ ReadinessSnapshot computeReadinessSnapshot(const DashboardSnapshot& snapshot,
 
     result.updatedAtUtc = timestampNowUtc();
     return result;
+}
+
+bool isValidSetupMode(const std::string& mode) {
+    return mode == "guided" || mode == "manual" || mode == "import-existing";
+}
+
+std::string normalizedSetupMode(std::string mode) {
+    mode = trimCopy(std::move(mode));
+    return isValidSetupMode(mode) ? mode : std::string("guided");
+}
+
+std::string setupEntryStepForMode(const std::string& mode) {
+    if (mode == "manual") {
+        return "manual-setup";
+    }
+    if (mode == "import-existing") {
+        return "import-existing";
+    }
+    return "guided-setup";
+}
+
+bool isSetupCompletionBlockingIssue(const ReadinessIssue& issue) {
+    return issue.severity == "critical" || issue.severity == "blocking";
+}
+
+std::vector<ReadinessIssue> completionBlockingIssues(const ReadinessSnapshot& readiness) {
+    std::vector<ReadinessIssue> issues;
+    for (const auto& issue : readiness.blockingIssues) {
+        if (isSetupCompletionBlockingIssue(issue)) {
+            issues.push_back(issue);
+        }
+    }
+    return issues;
+}
+
+bool setupOverrideCoversIssue(const std::vector<SetupOverrideRecord>& overrides,
+                              const ReadinessIssue& issue) {
+    return std::any_of(overrides.begin(), overrides.end(),
+        [&issue](const SetupOverrideRecord& overrideRecord) {
+            return overrideRecord.issueId == issue.id
+                && !trimCopy(overrideRecord.reason).empty();
+        });
+}
+
+std::vector<std::string> parseSetupStringArrayStrict(const nlohmann::json& body,
+                                                     const char* propertyName) {
+    std::vector<std::string> values;
+    if (!body.contains(propertyName) || body[propertyName].is_null()) {
+        return values;
+    }
+    if (!body[propertyName].is_array()) {
+        throw std::invalid_argument(std::string(propertyName) + " must be an array of strings.");
+    }
+    for (const auto& entry : body[propertyName]) {
+        if (!entry.is_string()) {
+            throw std::invalid_argument(std::string(propertyName) + " must contain only strings.");
+        }
+        values.push_back(trimCopy(entry.get<std::string>()));
+    }
+    return values;
+}
+
+std::vector<SetupOverrideRecord> parseSetupOverridesStrict(const nlohmann::json& body) {
+    std::vector<SetupOverrideRecord> overrides;
+    if (!body.contains("overrides") || body["overrides"].is_null()) {
+        return overrides;
+    }
+    if (!body["overrides"].is_array()) {
+        throw std::invalid_argument("overrides must be an array.");
+    }
+    for (const auto& entry : body["overrides"]) {
+        if (!entry.is_object()) {
+            throw std::invalid_argument("Each override must be an object.");
+        }
+        SetupOverrideRecord record;
+        if (entry.contains("stepId") && !entry["stepId"].is_null()) {
+            if (!entry["stepId"].is_string()) {
+                throw std::invalid_argument("override.stepId must be a string.");
+            }
+            record.stepId = trimCopy(entry["stepId"].get<std::string>());
+        }
+        if (!entry.contains("issueId") || !entry["issueId"].is_string()) {
+            throw std::invalid_argument("override.issueId is required.");
+        }
+        if (!entry.contains("reason") || !entry["reason"].is_string()) {
+            throw std::invalid_argument("override.reason is required.");
+        }
+        record.issueId = trimCopy(entry["issueId"].get<std::string>());
+        record.reason = trimCopy(entry["reason"].get<std::string>());
+        if (record.issueId.empty()) {
+            throw std::invalid_argument("override.issueId cannot be empty.");
+        }
+        if (record.reason.empty()) {
+            throw std::invalid_argument("override.reason cannot be empty.");
+        }
+        overrides.push_back(std::move(record));
+    }
+    return overrides;
+}
+
+std::vector<std::string> readinessIssueIdsForCategory(const ReadinessSnapshot& readiness,
+                                                      const std::string& category) {
+    std::vector<std::string> ids;
+    for (const auto& issue : readiness.blockingIssues) {
+        if (issue.category == category) {
+            ids.push_back(issue.id);
+        }
+    }
+    return ids;
+}
+
+bool categoryHasCompletionBlocker(const ReadinessSnapshot& readiness,
+                                  const std::string& category) {
+    for (const auto& issue : readiness.blockingIssues) {
+        if (issue.category == category && isSetupCompletionBlockingIssue(issue)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+SetupStepState makeSetupStep(const std::string& id,
+                             const std::string& label,
+                             const AppConfiguration& config,
+                             const ReadinessSnapshot& readiness,
+                             std::vector<std::string> blockers = {},
+                             std::string recommendedAction = {}) {
+    SetupStepState step;
+    step.id = id;
+    step.label = label;
+    step.blockers = std::move(blockers);
+    step.recommendedAction = std::move(recommendedAction);
+
+    if (config.firstRunCompleted) {
+        step.state = "ready";
+        return step;
+    }
+    if (id == config.setupCurrentStep) {
+        step.state = "active";
+    } else {
+        step.state = "pending";
+    }
+    if (!step.blockers.empty()) {
+        step.state = categoryHasCompletionBlocker(readiness, id) ? "blocked" : "manual-action-required";
+    }
+    return step;
+}
+
+SetupStateSnapshot computeSetupStateSnapshot(const DashboardSnapshot& snapshot,
+                                             const AppConfiguration& config) {
+    const auto readiness = computeReadinessSnapshot(snapshot, config);
+    SetupStateSnapshot state;
+    state.mode = normalizedSetupMode(config.setupMode);
+    state.currentStep = trimCopy(config.setupCurrentStep).empty()
+        ? setupEntryStepForMode(state.mode)
+        : config.setupCurrentStep;
+    state.readiness = readiness;
+    state.securityPosture = readiness.securityPosture;
+    state.lanModeEnabled = config.security.allowOpenLanAccess;
+    state.beaconEnabled = config.beaconEnabled;
+    state.mcpGatewayAdvertised = config.mcpGateway.enabled && config.security.allowOpenLanAccess;
+    state.dismissedAtUtc = config.setupDismissedAtUtc;
+    state.lastUpdatedUtc = readiness.updatedAtUtc;
+    state.overrides = config.setupOverrides;
+
+    const auto mcpBlockers = readinessIssueIdsForCategory(readiness, "mcp");
+    const auto workflowBlockers = readinessIssueIdsForCategory(readiness, "workflows");
+    const auto specialistBlockers = readinessIssueIdsForCategory(readiness, "specialists");
+    const auto criticalIssues = completionBlockingIssues(readiness);
+    std::vector<std::string> reviewBlockers;
+    for (const auto& issue : criticalIssues) {
+        reviewBlockers.push_back(issue.id);
+    }
+
+    state.steps = {
+        makeSetupStep("welcome", "Choose setup path", config, readiness),
+        makeSetupStep("guided-setup", "Guided setup", config, readiness),
+        makeSetupStep("manual-setup", "Manual setup", config, readiness),
+        makeSetupStep("import-existing", "Import existing configuration", config, readiness),
+        makeSetupStep("local-preflight", "Local preflight", config, readiness),
+        makeSetupStep("security-posture", "Security posture", config, readiness),
+        makeSetupStep("lan-discovery", "LAN discovery and gateway", config, readiness),
+        makeSetupStep("dependencies", "Dependency detection", config, readiness),
+        makeSetupStep("mcp", "MCP server enablement", config, readiness, mcpBlockers, "Add MCP server"),
+        makeSetupStep("specialists", "Sub-agent specialist creation", config, readiness, specialistBlockers, "Create specialist"),
+        makeSetupStep("workflows", "Workflow creation or import", config, readiness, workflowBlockers, "Create starter workflow"),
+        makeSetupStep("readiness-review", "Readiness review", config, readiness, reviewBlockers, "Resolve critical blockers")
+    };
+
+    SetupStepState completeStep;
+    completeStep.id = "complete";
+    completeStep.label = "Complete setup";
+    completeStep.state = config.firstRunCompleted ? "ready" : "pending";
+    if (!reviewBlockers.empty() && !config.firstRunCompleted) {
+        completeStep.state = "blocked";
+        completeStep.blockers = reviewBlockers;
+        completeStep.recommendedAction = "Resolve or override critical readiness blockers";
+    }
+    state.steps.push_back(std::move(completeStep));
+    return state;
 }
 
 // Supported-dependency catalog. Ordered by dependency: nodejs has no
@@ -337,7 +562,144 @@ std::vector<SupportedDependency> buildSupportedDependencyCatalog() {
 
 // Starter workflow template catalog.
 std::vector<StarterWorkflowTemplate> buildStarterWorkflowTemplates() {
-    return {};
+    StarterWorkflowTemplate localMcp;
+    localMcp.id = "local-mcp-health";
+    localMcp.displayName = "Local MCP Health Review";
+    localMcp.description = "Verify the shared MCP lane and require an operator readiness review.";
+    localMcp.requiresMcp = 0;
+    localMcp.steps = {
+        WorkflowStepDefinition{
+            "review-gateway",
+            "approval",
+            "operator.readiness-review",
+            nlohmann::json::object(),
+            true
+        },
+        WorkflowStepDefinition{
+            "check-mcp-health",
+            "mcp-tool",
+            "gateway.health",
+            nlohmann::json::object(),
+            false
+        }
+    };
+
+    StarterWorkflowTemplate specialistReview;
+    specialistReview.id = "specialist-readiness-review";
+    specialistReview.displayName = "Specialist Readiness Review";
+    specialistReview.description = "Route readiness notes through an enabled sub-agent specialist.";
+    specialistReview.requiresSpecialists = 1;
+    specialistReview.steps = {
+        WorkflowStepDefinition{
+            "specialist-review",
+            "sub-agent",
+            "readiness.specialist",
+            nlohmann::json::object(),
+            false
+        },
+        WorkflowStepDefinition{
+            "operator-approval",
+            "approval",
+            "operator.readiness-review",
+            nlohmann::json::object(),
+            true
+        }
+    };
+
+    StarterWorkflowTemplate notificationOnly;
+    notificationOnly.id = "manual-import-check";
+    notificationOnly.displayName = "Manual Import Check";
+    notificationOnly.description = "Record manual/imported setup evidence and notify the operator.";
+    notificationOnly.steps = {
+        WorkflowStepDefinition{
+            "record-evidence",
+            "notification",
+            "operator.import-evidence",
+            nlohmann::json::object(),
+            false
+        }
+    };
+
+    return { localMcp, specialistReview, notificationOnly };
+}
+
+std::string normalizedWorkflowSource(std::string source) {
+    source = trimCopy(std::move(source));
+    return isWorkflowSourceValid(source) ? source : std::string("manual");
+}
+
+WorkflowDefinition normalizeWorkflowDefinition(WorkflowDefinition workflow,
+                                               const std::string& defaultSource,
+                                               const std::string& nowUtc) {
+    workflow.workflowId = trimCopy(workflow.workflowId);
+    workflow.displayName = trimCopy(workflow.displayName);
+    workflow.description = trimCopy(workflow.description);
+    workflow.source = workflow.source.empty()
+        ? normalizedWorkflowSource(defaultSource)
+        : normalizedWorkflowSource(workflow.source);
+    if (workflow.createdAtUtc.empty()) {
+        workflow.createdAtUtc = nowUtc;
+    }
+    workflow.updatedAtUtc = nowUtc;
+    for (auto& step : workflow.steps) {
+        step.stepId = trimCopy(step.stepId);
+        step.kind = trimCopy(step.kind);
+        step.target = trimCopy(step.target);
+        if (step.arguments.is_null()) {
+            step.arguments = nlohmann::json::object();
+        }
+    }
+    return workflow;
+}
+
+nlohmann::json workflowValidationIssuesJson(const WorkflowDefinition& workflow) {
+    nlohmann::json issues = nlohmann::json::array();
+    for (const auto& issue : validateWorkflowDefinition(workflow)) {
+        issues.push_back({
+            { "id", issue.id },
+            { "message", issue.message }
+        });
+    }
+    return issues;
+}
+
+nlohmann::json workflowListDocument(const AppConfiguration& config) {
+    const auto counts = workflowReadinessCounts(config.workflows);
+    nlohmann::json workflows = nlohmann::json::array();
+    for (const auto& workflow : config.workflows) {
+        nlohmann::json item = workflow;
+        item["ready"] = isWorkflowReady(workflow);
+        item["validationIssues"] = workflowValidationIssuesJson(workflow);
+        workflows.push_back(std::move(item));
+    }
+    return nlohmann::json{
+        { "workflows", workflows },
+        { "readyCount", counts.ready },
+        { "missingCount", counts.missing },
+        { "invalidCount", counts.invalid },
+        { "disabledCount", counts.disabled }
+    };
+}
+
+std::optional<size_t> findWorkflowIndex(const std::vector<WorkflowDefinition>& workflows,
+                                        const std::string& workflowId) {
+    for (size_t index = 0; index < workflows.size(); ++index) {
+        if (workflows[index].workflowId == workflowId) {
+            return index;
+        }
+    }
+    return std::nullopt;
+}
+
+std::string nextStarterWorkflowId(const AppConfiguration& config,
+                                  const std::string& templateId) {
+    for (int suffix = 1; suffix < 10000; ++suffix) {
+        const auto candidate = templateId + "-" + std::to_string(suffix);
+        if (!findWorkflowIndex(config.workflows, candidate).has_value()) {
+            return candidate;
+        }
+    }
+    return templateId + "-9999";
 }
 
 std::string extractHostFromUrl(const std::string& source) {
@@ -1472,6 +1834,19 @@ std::string lowercase(std::string value) {
         value.begin(),
         [](const unsigned char character) { return static_cast<char>(std::tolower(character)); });
     return value;
+}
+
+bool isLoopbackAddress(std::string address) {
+    address = lowercase(trimCopy(std::move(address)));
+    const auto zone = address.find('%');
+    if (zone != std::string::npos) {
+        address.erase(zone);
+    }
+    return address == "localhost" ||
+           address == "::1" ||
+           address == "[::1]" ||
+           startsWith(address, "127.") ||
+           startsWith(address, "::ffff:127.");
 }
 
 bool isBlank(const std::string& value) {
@@ -3073,6 +3448,7 @@ nlohmann::json composeLanClientConfigBundle(const LanClient& client,
         { "value", client.clientId }
     };
     bundle["privileges"] = client.privileges;
+    bundle["capabilities"] = capabilitiesForClient(client);
     bundle["autonomousMode"] = client.autonomousMode;
     bundle["catalogs"] = nlohmann::json{
         { "mcpServers", "/api/client/mcp-servers" },
@@ -3088,8 +3464,8 @@ nlohmann::json composeLanClientConfigBundle(const LanClient& client,
     bundle["rules"] = nlohmann::json::array({
         "All MCP servers registered with MCOS are available for use by every LAN client.",
         "All sub-agents registered with MCOS are available for use by every LAN client.",
-        "Creation, modification, and removal of MCP servers and sub-agents are governed by the privileges listed above.",
-        "Autonomous mode (when enabled) allows unlimited creation of MCP servers and sub-agents. All other actions remain privilege-gated.",
+        "High-risk MCP tools and mutating admin routes require the capabilities listed above.",
+        "Autonomous mode (when enabled) grants the legacy process execution capability for MCP server and sub-agent creation.",
         "Every action is recorded in the MCOS activity stream and evaluated by CLU per Forsetti governance."
     });
     bundle["instructions"] = nlohmann::json{
@@ -7670,52 +8046,13 @@ public:
     DiscoveryDocument currentDocument() const override {
         const auto configuration = configurationService_->current();
         const auto snapshot = telemetryService_->captureSnapshot();
-
-        // v0.9.3: precedence chain for the LAN IP advertised in the
-        // discovery doc. The order matters because the listen socket
-        // and the advertised URL must agree -- a discovery doc that
-        // advertises 10.0.0.5 while the listen socket is bound only to
-        // 192.168.1.7 sends clients somewhere they can't reach.
-        //
-        //   1. bindAddress (when not wildcard) -- where MCOS is
-        //      DEFINITELY listening. If the operator pinned the listen
-        //      socket to a specific address, that's the address LAN
-        //      clients must use; nothing else can be right.
-        //   2. preferredBindAddress (operator-overridden advertise IP).
-        //      Used when bindAddress is wildcard (0.0.0.0 / ::).
-        //   3. primaryIpAddress (auto-detected, IPv4-first as of
-        //      v0.9.3 Fix #2).
-        //   4. configuration.bindAddress as last-resort literal.
-        //   5. 127.0.0.1.
-        std::string lanIp;
-        const std::string& bindAddress = configuration.bindAddress;
-        const std::string& preferred =
-            configuration.activeProfile.preferredBindAddress;
-        if (!bindAddress.empty()
-            && bindAddress != "0.0.0.0"
-            && bindAddress != "::"
-            && bindAddress != "[::]") {
-            lanIp = bindAddress;
-        }
-        if ((lanIp.empty() || lanIp == "0.0.0.0")
-            && !preferred.empty() && preferred != "0.0.0.0") {
-            lanIp = preferred;
-        }
-        if (lanIp.empty() || lanIp == "0.0.0.0") {
-            lanIp = snapshot.primaryIpAddress;
-        }
-        if (lanIp.empty() || lanIp == "0.0.0.0") {
-            lanIp = configuration.bindAddress;
-        }
-        if (lanIp.empty() || lanIp == "0.0.0.0") {
-            lanIp = "127.0.0.1";
-        }
-
-        // v0.9.3: every host->URL composition uses the bracketIpv6Host
-        // helper hoisted at the top of this TU so adminBase + the gateway
-        // URL builder + downstream onboarding profiles all stay in
-        // lockstep on RFC 3986 IPv6 bracketing.
-        const std::string adminBase = "http://" + bracketIpv6Host(lanIp) + ":" + std::to_string(configuration.browserPort);
+        const auto gatewayStatus = mcpGateway_ ? mcpGateway_->CurrentStatus()
+                                              : GatewayStatus{};
+        const auto advertisement = buildAdvertisedEndpointPlan(
+            configuration,
+            gatewayStatus,
+            snapshot.primaryIpAddress);
+        const std::string adminBase = advertisement.adminBaseUrl;
 
         DiscoveryDocument document;
         document.product = "MCOS";
@@ -7725,25 +8062,16 @@ public:
             ? std::string("mcos-unidentified")
             : configuration.instanceId;
         document.instanceName = configuration.instanceName;
-        document.trust = "lan";
-        document.auth = "none";
+        document.trust = configuration.security.securityPosture.empty()
+            ? std::string("local-only")
+            : configuration.security.securityPosture;
+        document.auth = configuration.security.enableAuthentication ? "required" : "disabled";
+        document.securityPosture = document.trust;
 
         const auto& gatewayConfig = configuration.mcpGateway;
-        std::string gatewayHost = gatewayConfig.listenHost;
-        if (gatewayHost.empty() || gatewayHost == "0.0.0.0" || gatewayHost == "::" || gatewayHost == "[::]") {
-            gatewayHost = lanIp;
-        }
         document.gateway.type = mcpGateway_ ? mcpGateway_->AdapterType() : to_string(gatewayConfig.type);
-        // v0.9.0: always compose mcpUrl + healthUrl from the resolved
-        // gatewayHost (LAN IP) rather than the adapter's literal
-        // composeMcpUrl(listenHost) which would carry through the
-        // wildcard '0.0.0.0'. v0.9.3: shares bracketIpv6Host with
-        // adminBase + onboarding URL builders.
-        const std::string hostInUrl = bracketIpv6Host(gatewayHost);
-        document.gateway.mcpUrl    = "http://" + hostInUrl + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.mcpPath;
-        document.gateway.healthUrl = "http://" + hostInUrl + ":" + std::to_string(gatewayConfig.listenPort) + gatewayConfig.healthPath;
-        const auto gatewayStatus = mcpGateway_ ? mcpGateway_->CurrentStatus()
-                                              : GatewayStatus{};
+        document.gateway.mcpUrl = advertisement.mcpEndpoint;
+        document.gateway.healthUrl = advertisement.mcpHealthEndpoint;
         document.gateway.state = mcpGateway_ ? to_string(gatewayStatus.state) : "disabled";
 
         // v0.11.0-alpha.2 (Copilot-review-hardened): gate the HTTPS TLS
@@ -7763,8 +8091,9 @@ public:
         // the wired cert from the well-known doc.
         document.gateway.tlsEnabled = gatewayStatus.tlsBound;
         if (gatewayStatus.tlsBound) {
-            document.gateway.mcpUrlTls         = "https://" + hostInUrl + ":" + std::to_string(gatewayConfig.tlsListenPort) + gatewayConfig.mcpPath;
-            document.gateway.healthUrlTls      = "https://" + hostInUrl + ":" + std::to_string(gatewayConfig.tlsListenPort) + gatewayConfig.healthPath;
+            const auto tlsHost = bracketAdvertisementHost(advertisement.mcpHost);
+            document.gateway.mcpUrlTls         = "https://" + tlsHost + ":" + std::to_string(gatewayConfig.tlsListenPort) + ensureAdvertisementPath(gatewayConfig.mcpPath, "/mcp");
+            document.gateway.healthUrlTls      = "https://" + tlsHost + ":" + std::to_string(gatewayConfig.tlsListenPort) + ensureAdvertisementPath(gatewayConfig.healthPath, "/health");
             document.gateway.tlsCertThumbprint = gatewayStatus.tlsCertThumbprint;
         }
 
@@ -7813,7 +8142,7 @@ public:
             // version they want.
             "mcp-2025-03-26"
         };
-        document.serverIpAddress = lanIp;
+        document.serverIpAddress = advertisement.adminHost;
         document.generatedAtUtc = timestampNowUtc();
         return document;
     }
@@ -7849,8 +8178,11 @@ public:
         txt["config_path"] = "/api/onboarding";
         txt["governance_path"] = "/api/governance/bundles";
         txt["protovers"] = "2025-03-26";
-        txt["auth"] = "none";
-        txt["trust"] = "lan";
+        txt["auth"] = configuration.security.enableAuthentication ? "required" : "disabled";
+        txt["trust"] = configuration.security.securityPosture.empty()
+            ? std::string("local-only")
+            : configuration.security.securityPosture;
+        txt["security_posture"] = txt["trust"];
         txt["clu"] = "true";
         txt["forsetti"] = "true";
         return txt;
@@ -8041,8 +8373,8 @@ private:
 // upsert/remove/ensureMin/drain/shutdown surface. PHASE-07 layers leases
 // + autoscale; PHASE-08 wires per-instance telemetry. Empty pools and
 // pools whose template is missing must NOT spawn children -- ADR-002 §9
-// ("no fake live infrastructure"). The supervised-mock path reports
-// supervised=false and statusMessage="Supervised-mock mode".
+// ("no fake live infrastructure"). Missing templates now transition the
+// requested instance to Failed with supervised=false.
 
 // v0.9.8: forward declarations so WorkerSupervisor::drainAndEmit
 // SupervisorEvents can append pool death/respawn/quarantine events
@@ -8073,7 +8405,8 @@ void appendSupervisorWedgeActivity(const std::string& message,
 
 class WorkerSupervisor final : public IWorkerSupervisor {
 public:
-    WorkerSupervisor() {
+    explicit WorkerSupervisor(std::shared_ptr<IConfigurationService> configurationService = {})
+        : configurationService_(std::move(configurationService)) {
         // v0.9.6: start the background watchdog. The watchdog calls
         // reapDeadInstancesLocked every kWatchdogIntervalMs so a pool
         // whose only worker died while no LAN-client traffic was
@@ -8139,7 +8472,7 @@ public:
     // the runtime composition root so the supervisor can emit
     // pool-lifecycle events without the runtime having to poll.
     // Leaving it null (the default) keeps the supervisor aggregator-
-    // agnostic for tests and the supervised-mock path.
+    // agnostic for tests and missing-worker failure paths.
     void setTelemetryAggregator(std::shared_ptr<ITelemetryAggregator> aggregator) {
         std::lock_guard<std::mutex> lock(mutex_);
         telemetryAggregator_ = std::move(aggregator);
@@ -8462,9 +8795,9 @@ private:
         // owns the read-end of the child's stdout (`childStdoutRead`) and the
         // write-end of the child's stdin (`childStdinWrite`). The other ends
         // are inherited by the child via STARTUPINFO and closed in the parent
-        // immediately after CreateProcessW. Both handles are nullptr on the
-        // supervised-mock path or if pipe creation failed (the child still
-        // runs; tools/call against it returns -32603 with a clear message).
+        // immediately after CreateProcessW. Both handles are nullptr when
+        // pipe creation fails (the child still runs; tools/call against it
+        // returns -32603 with a clear message).
         // `stdioMutex` serializes concurrent JSON-RPC requests to the SAME
         // instance (multiple LAN clients hitting the same lease, or one
         // client issuing parallel calls). It is heap-allocated so this
@@ -8508,6 +8841,38 @@ private:
         bool active = false;
     };
 
+    static std::wstring readWorkerEnvironmentVariable(const wchar_t* name) {
+        const DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
+        if (required == 0) {
+            return {};
+        }
+        std::wstring buffer(static_cast<size_t>(required), L'\0');
+        const DWORD copied = GetEnvironmentVariableW(name, buffer.data(), required);
+        if (copied == 0) {
+            return {};
+        }
+        buffer.resize(static_cast<size_t>(copied));
+        return buffer;
+    }
+
+    std::map<std::wstring, std::wstring> workerSupervisorEnvironment() const {
+        AppConfiguration configuration;
+        if (configurationService_) {
+            configuration = configurationService_->current();
+        }
+        const std::string host = bracketIpv6Host(resolveMcosServerHost(configuration));
+        const std::string adminBase =
+            std::string("http://") + host + ":" + std::to_string(configuration.browserPort);
+        const std::string instanceId = configuration.instanceId.empty()
+            ? std::string("mcos-unidentified")
+            : configuration.instanceId;
+        return {
+            { L"MCOS_ADMIN_BASE_URL", wideFromUtf8(adminBase) },
+            { L"MCOS_ADMIN_TOKEN", readWorkerEnvironmentVariable(L"MCOS_ADMIN_TOKEN") },
+            { L"MCOS_INSTANCE_ID", wideFromUtf8(instanceId) }
+        };
+    }
+
     EndpointInstance startInstanceLocked(ManagedEndpointPool& pool) {
         EndpointInstance instance;
         instance.poolId = pool.poolId;
@@ -8519,13 +8884,9 @@ private:
 
         if (pool.template_.executable.empty()
             || !std::filesystem::exists(std::filesystem::path(pool.template_.executable))) {
-            // Supervised-mock path. State machine still advances so callers
-            // can exercise the contract; the instance reports supervised=false
-            // until a real binary is configured. Honors ADR-002 §9 by NOT
-            // claiming live process infrastructure when none exists.
             instance.supervised = false;
-            transitionInstanceLocked(instance, EndpointInstanceState::Ready,
-                                     "Supervised-mock mode (no binary configured).");
+            transitionInstanceLocked(instance, EndpointInstanceState::Failed,
+                                     "Pool template executable is missing; no worker process was spawned.");
             return instance;
         }
 
@@ -8533,11 +8894,20 @@ private:
         ChildProcess child;
         child.stdioMutex = std::make_unique<std::mutex>();
         child.jobObject = CreateJobObjectW(nullptr, nullptr);
-        if (child.jobObject != nullptr) {
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            SetInformationJobObject(child.jobObject, JobObjectExtendedLimitInformation,
-                                    &limits, sizeof(limits));
+        if (child.jobObject == nullptr) {
+            transitionInstanceLocked(instance, EndpointInstanceState::Failed,
+                                     "CreateJobObjectW failed; refusing to start an unsupervised worker.");
+            return instance;
+        }
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(child.jobObject, JobObjectExtendedLimitInformation,
+                                     &limits, sizeof(limits))) {
+            CloseHandle(child.jobObject);
+            child.jobObject = nullptr;
+            transitionInstanceLocked(instance, EndpointInstanceState::Failed,
+                                     "SetInformationJobObject failed; refusing to start an unsupervised worker.");
+            return instance;
         }
 
         // PHASE-12 follow-up (v0.6.10): stdio bridge. Create two anonymous
@@ -8579,9 +8949,10 @@ private:
             if (parentStdinWrite) { CloseHandle(parentStdinWrite); parentStdinWrite = nullptr; }
         }
 
-        std::wstring commandLine = L"\"" + wideFromUtf8(pool.template_.executable) + L"\"";
+        std::wstring commandLine = quoteWindowsArgument(wideFromUtf8(pool.template_.executable));
         for (const auto& arg : pool.template_.args) {
-            commandLine += L" " + wideFromUtf8(arg);
+            commandLine.push_back(L' ');
+            commandLine += quoteWindowsArgument(wideFromUtf8(arg));
         }
         std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
         mutableCommandLine.push_back(L'\0');
@@ -8610,10 +8981,10 @@ private:
         // existing runOneShotProcess env-block pattern around line
         // 1006-1039.
         LPWCH environmentBlock = nullptr;
-        if (!pool.template_.environment.empty()) {
+        {
+            std::map<std::wstring, std::wstring> variables;
             const LPWCH currentEnvironment = GetEnvironmentStringsW();
             if (currentEnvironment != nullptr) {
-                std::map<std::wstring, std::wstring> variables;
                 for (const wchar_t* cursor = currentEnvironment; *cursor != L'\0'; cursor += wcslen(cursor) + 1) {
                     std::wstring entry(cursor);
                     const auto separator = entry.find(L'=');
@@ -8623,24 +8994,39 @@ private:
                     variables[entry.substr(0, separator)] = entry.substr(separator + 1);
                 }
                 FreeEnvironmentStringsW(currentEnvironment);
-                for (const auto& [name, value] : pool.template_.environment) {
-                    variables[wideFromUtf8(name)] = wideFromUtf8(value);
-                }
-                std::wstring flatEnvironment;
-                for (const auto& [name, value] : variables) {
-                    flatEnvironment += name;
-                    flatEnvironment += L'=';
-                    flatEnvironment += value;
-                    flatEnvironment.push_back(L'\0');
-                }
-                flatEnvironment.push_back(L'\0');
-                environmentBlock = static_cast<LPWCH>(HeapAlloc(GetProcessHeap(), 0,
-                    (flatEnvironment.size() + 1) * sizeof(wchar_t)));
-                if (environmentBlock != nullptr) {
-                    memcpy(environmentBlock, flatEnvironment.data(),
-                           flatEnvironment.size() * sizeof(wchar_t));
-                }
             }
+            for (const auto& [name, value] : pool.template_.environment) {
+                variables[wideFromUtf8(name)] = wideFromUtf8(value);
+            }
+            for (const auto& [name, value] : workerSupervisorEnvironment()) {
+                variables[name] = value;
+            }
+            std::wstring flatEnvironment;
+            for (const auto& [name, value] : variables) {
+                flatEnvironment += name;
+                flatEnvironment += L'=';
+                flatEnvironment += value;
+                flatEnvironment.push_back(L'\0');
+            }
+            flatEnvironment.push_back(L'\0');
+            environmentBlock = static_cast<LPWCH>(HeapAlloc(GetProcessHeap(), 0,
+                (flatEnvironment.size() + 1) * sizeof(wchar_t)));
+            if (environmentBlock != nullptr) {
+                memcpy(environmentBlock, flatEnvironment.data(),
+                       flatEnvironment.size() * sizeof(wchar_t));
+            }
+        }
+        if (environmentBlock == nullptr) {
+            if (child.jobObject) {
+                CloseHandle(child.jobObject);
+            }
+            if (parentStdoutRead) CloseHandle(parentStdoutRead);
+            if (childStdoutWrite) CloseHandle(childStdoutWrite);
+            if (childStdinRead)   CloseHandle(childStdinRead);
+            if (parentStdinWrite) CloseHandle(parentStdinWrite);
+            transitionInstanceLocked(instance, EndpointInstanceState::Failed,
+                                     "Failed to allocate worker environment block.");
+            return instance;
         }
 
         PROCESS_INFORMATION processInfo{};
@@ -8672,8 +9058,19 @@ private:
                                      "CreateProcessW failed for the configured pool template.");
             return instance;
         }
-        if (child.jobObject) {
-            AssignProcessToJobObject(child.jobObject, processInfo.hProcess);
+        if (!AssignProcessToJobObject(child.jobObject, processInfo.hProcess)) {
+            TerminateProcess(processInfo.hProcess, ERROR_NOT_SUPPORTED);
+            if (parentStdoutRead) CloseHandle(parentStdoutRead);
+            if (childStdoutWrite) CloseHandle(childStdoutWrite);
+            if (childStdinRead)   CloseHandle(childStdinRead);
+            if (parentStdinWrite) CloseHandle(parentStdinWrite);
+            CloseHandle(processInfo.hThread);
+            CloseHandle(processInfo.hProcess);
+            CloseHandle(child.jobObject);
+            child.jobObject = nullptr;
+            transitionInstanceLocked(instance, EndpointInstanceState::Failed,
+                                     "AssignProcessToJobObject failed; worker was terminated before entering Ready.");
+            return instance;
         }
         ResumeThread(processInfo.hThread);
         child.processInfo = processInfo;
@@ -9164,6 +9561,7 @@ private:
 
     mutable std::mutex mutex_;
     std::map<std::string, ManagedEndpointPool> pools_;
+    std::shared_ptr<IConfigurationService> configurationService_;
     // children_ is mutable because refreshInstanceLoadLocked() updates
     // the per-PID FILETIME baseline on every read of pool state. The
     // sampling state is incidental cache, not part of the supervised
@@ -9317,8 +9715,8 @@ private:
 
     // Walk a pool snapshot's instances, refreshing telemetry from the
     // live ChildProcess sample state. Skips instances whose ChildProcess
-    // is not in the supervisor's children_ map (supervised-mock instances,
-    // or instances that have been reaped). The persistent FILETIME
+    // is not in the supervisor's children_ map (failed launches, missing
+    // workers, or instances that have been reaped). The persistent FILETIME
     // baseline lives in children_ (which is mutable), so the next call
     // re-samples and re-writes into the fresh snapshot. Caller holds
     // mutex_.
@@ -9385,7 +9783,7 @@ StdioBridgeResult WorkerSupervisor::sendStdioJsonRpc(const std::string& instance
             return result;
         }
         if (child.childStdinWrite == nullptr || child.childStdoutRead == nullptr) {
-            result.errorMessage = "stdio bridge unavailable on this instance (pipe creation failed at spawn, or supervised-mock mode)";
+            result.errorMessage = "stdio bridge unavailable on this instance (pipe creation failed at spawn or worker launch failed)";
             return result;
         }
         if (!child.stdioMutex) {
@@ -11239,7 +11637,7 @@ private:
     // completes. The dashboard never blocks again.
     //
     // The synchronous-probe-on-miss path is only taken when the
-    // prober is NOT running (test mode, supervised-mock paths).
+    // prober is NOT running (test mode or unavailable-prober paths).
     bool probeReachabilityCached(const std::string& host,
                                  uint16_t port,
                                  std::string& outHostPort,
@@ -11966,6 +12364,7 @@ struct HttpRequest final {
     std::string query; // v0.9.50: portion after '?', no leading '?'.
     std::unordered_map<std::string, std::string> headers;
     std::string body;
+    std::string remoteAddress;
 };
 
 struct HttpResponse final {
@@ -11995,6 +12394,26 @@ struct HttpResponse final {
     bool streamMode = false;
     std::function<void(SOCKET, std::atomic<bool>* /*serverRunning*/)> streamHandler;
 };
+
+std::string peerAddressForSocket(SOCKET client) {
+    sockaddr_storage storage{};
+    int length = sizeof(storage);
+    if (getpeername(client, reinterpret_cast<sockaddr*>(&storage), &length) != 0) {
+        return {};
+    }
+
+    char host[NI_MAXHOST]{};
+    if (getnameinfo(reinterpret_cast<sockaddr*>(&storage),
+                    length,
+                    host,
+                    static_cast<DWORD>(sizeof(host)),
+                    nullptr,
+                    0,
+                    NI_NUMERICHOST) != 0) {
+        return {};
+    }
+    return host;
+}
 
 // ---------------------------------------------------------------------------
 // ActivityEventRing — fixed-capacity, thread-safe, monotonically-indexed in-
@@ -12412,9 +12831,15 @@ void SimpleHttpServer::stop() {
 std::string SimpleHttpServer::reasonPhrase(const int statusCode) {
     switch (statusCode) {
         case 200: return "OK";
+        case 204: return "No Content";
         case 400: return "Bad Request";
+        case 401: return "Unauthorized";
+        case 403: return "Forbidden";
         case 404: return "Not Found";
+        case 405: return "Method Not Allowed";
+        case 409: return "Conflict";
         case 500: return "Internal Server Error";
+        case 503: return "Service Unavailable";
         default: return "OK";
     }
 }
@@ -12487,7 +12912,7 @@ void SimpleHttpServer::sendResponse(SOCKET client, const HttpResponse& response)
     // cross-origin XHR/fetch calls without a 404 on preflight.
     stream << "Access-Control-Allow-Origin: *\r\n";
     stream << "Access-Control-Allow-Methods: GET, HEAD, POST, OPTIONS\r\n";
-    stream << "Access-Control-Allow-Headers: Content-Type, X-MCOS-Client-Id, X-MCOS-Client-Type\r\n";
+    stream << "Access-Control-Allow-Headers: Content-Type, Authorization, X-MCOS-Admin-Token, X-MCOS-Client-Id, X-MCOS-Client-Type\r\n";
     stream << "Access-Control-Max-Age: 86400\r\n";
     // v0.9.28: emit any additional response-specific headers
     // (e.g. Allow on a 405) before terminating the header block.
@@ -12662,6 +13087,7 @@ void SimpleHttpServer::handleClient(SOCKET client) {
     }
 
     auto request = parseRequest(requestBuffer);
+    request.remoteAddress = peerAddressForSocket(client);
 
     // v0.9.27: OPTIONS preflight short-circuit. Browser-based
     // dashboards from a different origin (e.g. an operator running
@@ -13354,15 +13780,9 @@ private:
     OperationResult manageForsettiModule(const std::string& moduleId, const std::string& action);
     HttpResponse handleHttpRequest(const HttpRequest& request);
     HttpResponse staticFileResponse(std::string path) const;
-    // v0.10.8: resolve the supervisor service's mcpEndpoint /
-    // discoveryEndpoint / fingerprintSeed against the current
-    // configuration + telemetry snapshot, and push them into
-    // supervisorAssignmentService_ via setEndpoints(). Called by the
-    // route layer before any select/generate/confirm so the JSON the
-    // operator hands to a remote supervisor client carries a URL the
-    // remote can actually reach (LAN-routable IPv4 + gateway port +
-    // /mcp), matching the same resolution chain DiscoveryService uses
-    // for the well-known discovery doc.
+    // Resolve supervisor endpoint metadata from the same active
+    // advertisement plan used by DiscoveryService and push it into the
+    // supervisor assignment service before select/generate/confirm.
     void refreshSupervisorEndpoints();
     // v0.6.8: mirror WorkerSupervisor::pools_ into AppConfiguration.pools
     // and persist to disk. Called from /api/pools POST and /api/pools/{id}/remove
@@ -13585,7 +14005,7 @@ bool MasterControlApplication::Impl::initialize() {
     // so pool definitions survive service restart and MSI MajorUpgrade.
     // Through v0.6.7 the supervisor came up empty, the operator's
     // registered pools were memory-only, and every restart wiped them.
-    workerSupervisor_ = std::make_shared<WorkerSupervisor>();
+    workerSupervisor_ = std::make_shared<WorkerSupervisor>(configurationService_);
     {
         const auto bootCfg = configurationService_->current();
         for (const auto& persistedPool : bootCfg.pools) {
@@ -13990,9 +14410,9 @@ bool MasterControlApplication::Impl::initialize() {
     // would still return [] on a fresh install because no instance is
     // Ready to be queried via the stdio bridge. ensureMinInstances is
     // idempotent so this is safe to run after every boot. Failures
-    // (missing binary, CreateProcessW error) leave the pool in a
-    // supervised-mock or Failed state -- exactly the honest reporting
-    // contract from ADR-002 §9; the dashboard surfaces the real state.
+    // (missing binary, CreateProcessW error) leave the pool in a Failed
+    // state -- exactly the honest reporting contract from ADR-002 §9; the
+    // dashboard surfaces the real state.
     {
         const auto livePools = workerSupervisor_->listPools();
         for (const auto& pool : livePools) {
@@ -14019,6 +14439,61 @@ bool MasterControlApplication::Impl::initialize() {
     if (auto nativeAdapter =
             std::dynamic_pointer_cast<NativeHttpSysGatewayAdapter>(mcpGateway_)) {
         nativeAdapter->AttachWorkerBridge(workerSupervisor_, leaseRouter_);
+        nativeAdapter->AttachCapabilityResolver(
+            [this](const std::string& clientId,
+                   const std::string& remoteAddress) -> CapabilityAuthorizationContext {
+                CapabilityAuthorizationContext auth;
+                auth.clientId = trimCopy(clientId);
+                auth.actor = auth.clientId.empty() ? std::string("anonymous") : auth.clientId;
+                auth.localRequest = isLoopbackAddress(remoteAddress);
+                if (!auth.clientId.empty() && lanClientAccessService_) {
+                    const auto client = lanClientAccessService_->getClient(auth.clientId);
+                    if (!client.has_value()) {
+                        auth.denialReason = "Unknown LAN client identity.";
+                        return auth;
+                    }
+                    if (!client->enabled) {
+                        auth.actor = client->clientId;
+                        auth.clientId = client->clientId;
+                        auth.denialReason = "LAN client is disabled: " + client->clientId;
+                        return auth;
+                    }
+                    auth.actor = client->clientId;
+                    auth.clientId = client->clientId;
+                    auth.authenticated = true;
+                    auth.capabilities = capabilitiesForClient(*client);
+                    lanClientAccessService_->touchClient(client->clientId, remoteAddress);
+                    return auth;
+                }
+                if (auth.clientId.empty() && auth.localRequest) {
+                    auth.actor = "local-operator";
+                    auth.localBootstrap = true;
+                    auth.authenticated = true;
+                    auth.capabilities = allOperatorCapabilities();
+                    return auth;
+                }
+                auth.denialReason = "Authenticated LAN client identity is required for high-risk MCP tools.";
+                return auth;
+            },
+            [](const CapabilityDenialAuditEvent& event) {
+                ActivityEvent activity;
+                activity.kind = "capability_denied";
+                activity.actor = event.actor;
+                activity.method = event.method;
+                activity.target = event.toolName;
+                activity.statusCode = 403;
+                activity.message = "Denied " + event.toolName + " for missing capability.";
+                activity.detail = nlohmann::json{
+                    { "actor", event.actor },
+                    { "clientId", event.clientId },
+                    { "remoteAddress", event.remoteAddress },
+                    { "method", event.method },
+                    { "toolName", event.toolName },
+                    { "requiredCapabilities", event.requiredCapabilities },
+                    { "reason", event.reason }
+                }.dump();
+                globalActivityRing().append(activity);
+            });
     }
 
     // PHASE-08 (ADR-002 §9): construct the telemetry aggregator that
@@ -14151,14 +14626,14 @@ bool MasterControlApplication::Impl::initialize() {
     }
     activateDefaultModules();
 
-    if (discoveryService_) {
+    const auto currentConfiguration = configurationService_->current();
+    if (discoveryService_ && currentConfiguration.security.allowOpenLanAccess) {
         discoveryService_->start();
     }
-    if (configurationService_->current().beaconEnabled) {
+    if (currentConfiguration.beaconEnabled) {
         beaconService_->start();
     }
 
-    const auto currentConfiguration = configurationService_->current();
     httpServer_ = std::make_unique<SimpleHttpServer>(
         currentConfiguration.bindAddress == "0.0.0.0" ? "0.0.0.0" : currentConfiguration.bindAddress,
         currentConfiguration.browserPort,
@@ -14875,6 +15350,7 @@ static std::vector<std::string> supportedMethodsForPath(const std::string& path)
         {"/api/dashboard", {"GET"}},
         {"/api/config", {"GET", "POST"}},
         {"/api/exports", {"GET"}},
+        {"/api/workflows", {"GET", "POST"}},
         {"/api/clu", {"GET"}},
         {"/api/clu/tools", {"GET"}},
         {"/api/clu/apple-operations", {"GET"}},
@@ -14906,8 +15382,10 @@ static std::vector<std::string> supportedMethodsForPath(const std::string& path)
         {"/api/client/heartbeat", {"POST"}},
         {"/api/clients", {"GET", "POST"}},
         // Setup / install
+        {"/api/setup/state", {"GET"}},
         {"/api/setup/start", {"POST"}},
         {"/api/setup/complete", {"POST"}},
+        {"/api/setup/dismiss", {"POST"}},
         {"/api/setup/reset", {"POST"}},
         {"/api/setup/dependencies", {"GET"}},
         {"/api/setup/workflow-templates", {"GET"}},
@@ -14977,6 +15455,7 @@ static std::vector<std::string> supportedMethodsForPath(const std::string& path)
         {"/api/pools/", {"GET", "POST"}},
         {"/api/telemetry/events", {"GET"}},
         {"/api/activity", {"GET"}},
+        {"/api/workflows/", {"GET", "POST", "DELETE"}},
         {"/mcp/gateway/", {"GET"}},
         {"/mcp/governance/", {"GET", "POST"}},
         // v0.9.73: prefix route for fetching individual Forsetti
@@ -15026,96 +15505,238 @@ static std::string buildAllowHeader(const std::vector<std::string>& methods) {
     return allow;
 }
 
+static bool isMutatingMethod(const std::string& method) {
+    return method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE";
+}
+
+static std::vector<std::string> requiredCapabilitiesForRoute(const std::string& method,
+                                                             const std::string& path) {
+    if (!isMutatingMethod(method)) {
+        return {};
+    }
+
+    if (path == "/api/config" ||
+        path == "/api/governance/decisions" ||
+        path == "/api/client/governance/decisions" ||
+        path == "/api/clu/execute" ||
+        path == "/api/clu/apple-operations/cancel" ||
+        path == "/api/forsetti/modules/state" ||
+        path == "/api/platform-services/apple-hosts" ||
+        path == "/api/platform-services/apple-hosts/remove" ||
+        startsWith(path, "/mcp/governance/")) {
+        return { kCapabilityGovernanceModify };
+    }
+
+    if (path == "/api/gateway/start" ||
+        path == "/api/gateway/stop" ||
+        path == "/api/gateway/restart") {
+        return { kCapabilityNetworkAdmin };
+    }
+
+    if (path == "/api/clients" ||
+        startsWith(path, "/api/clients/")) {
+        return { kCapabilityClientsManage };
+    }
+
+    if (path == "/api/setup/start" ||
+        path == "/api/setup/complete" ||
+        path == "/api/setup/dismiss" ||
+        path == "/api/setup/reset" ||
+        startsWith(path, "/api/setup/workflow-templates/") ||
+        path == "/api/settings/advanced-mode" ||
+        path == "/api/self-tests/run") {
+        return { kCapabilitySetupLocalOrAdmin };
+    }
+
+    if (startsWith(path, "/api/setup/dependencies/") ||
+        path == "/api/install/package" ||
+        path == "/api/install/repo" ||
+        path == "/api/install/zip" ||
+        path == "/api/claude-plugin/toggle") {
+        return { kCapabilityInstallPackage };
+    }
+
+    if (path == "/api/pools" ||
+        startsWith(path, "/api/pools/") ||
+        startsWith(path, "/api/leases/") ||
+        path == "/api/runtime/mcp-servers" ||
+        path == "/api/runtime/mcp-servers/remove" ||
+        path == "/api/runtime/subagents" ||
+        path == "/api/runtime/subagents/remove" ||
+        path == "/api/runtime/subagent-groups" ||
+        path == "/api/runtime/subagent-groups/remove" ||
+        path == "/api/workflows" ||
+        startsWith(path, "/api/workflows/")) {
+        return { kCapabilityProcessExec };
+    }
+
+    if (path == "/api/supervisor/assignment/select" ||
+        path == "/api/supervisor/assignment/revoke" ||
+        path == "/api/supervisor/config/generate" ||
+        path == "/api/supervisor/connect/confirm" ||
+        path == "/api/supervisor/heartbeat") {
+        return { kCapabilitySupervisorAssign };
+    }
+
+    return {};
+}
+
+static bool contextHasRequiredCapabilities(const AuthenticatedRequestContext& context,
+                                           const std::vector<std::string>& requiredCapabilities) {
+    if (requiredCapabilities.empty()) return true;
+    if (context.isLocalBootstrap) {
+        return true;
+    }
+    for (const auto& capability : requiredCapabilities) {
+        if (capability == kCapabilitySetupLocalOrAdmin) {
+            if (!context.client.has_value()) {
+                return false;
+            }
+            continue;
+        }
+        if (!hasCapability(context.capabilities, capability)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static std::string joinCapabilities(const std::vector<std::string>& capabilities) {
+    std::string joined;
+    for (const auto& capability : capabilities) {
+        if (!joined.empty()) {
+            joined += ", ";
+        }
+        joined += capability;
+    }
+    return joined;
+}
+
 void MasterControlApplication::Impl::refreshSupervisorEndpoints() {
-    // v0.10.8: mirror DiscoveryService::currentDocument() precedence chain
-    // so the supervisor config carries the same LAN-routable URL the
-    // well-known discovery doc advertises. Run on-demand from the route
-    // layer because the supervisor service is constructed in
-    // initialize() -- before the first telemetry capture -- and the
-    // initial mcpEndpoint stamped into the context is necessarily a
-    // 127.0.0.1 fallback. By the time the operator clicks "Generate
-    // Config" the snapshot tick has run and the primary IPv4 LAN
-    // address is known, so we refresh just-in-time.
+    // Mirror DiscoveryService::currentDocument() so supervisor configs
+    // advertise the same active endpoints as the well-known document.
     if (!supervisorAssignmentService_) return;
     if (!configurationService_) return;
 
     const auto cfg = configurationService_->current();
-    std::string lanIp;
-    const std::string& bindAddress = cfg.bindAddress;
-    const std::string& preferred = cfg.activeProfile.preferredBindAddress;
-    if (!bindAddress.empty()
-        && bindAddress != "0.0.0.0"
-        && bindAddress != "::"
-        && bindAddress != "[::]") {
-        lanIp = bindAddress;
-    }
-    if ((lanIp.empty() || lanIp == "0.0.0.0")
-        && !preferred.empty() && preferred != "0.0.0.0") {
-        lanIp = preferred;
-    }
-    if ((lanIp.empty() || lanIp == "0.0.0.0") && telemetryService_) {
+    const auto gatewayStatus = mcpGateway_ ? mcpGateway_->CurrentStatus() : GatewayStatus{};
+    std::string runtimePrimaryIp;
+    if (telemetryService_) {
         try {
             const auto snap = telemetryService_->captureSnapshot();
-            if (!snap.primaryIpAddress.empty()) {
-                lanIp = snap.primaryIpAddress;
-            }
+            runtimePrimaryIp = snap.primaryIpAddress;
         } catch (...) {
-            // telemetry capture is best-effort here; fall through to
-            // the bind/loopback fallbacks below.
+            // Telemetry capture is best-effort here; endpoint planning
+            // still has bind/preferred-address fallbacks.
         }
     }
-    if (lanIp.empty() || lanIp == "0.0.0.0") {
-        lanIp = cfg.bindAddress;
-    }
-    if (lanIp.empty() || lanIp == "0.0.0.0") {
-        lanIp = "127.0.0.1";
-    }
-
-    const auto hostInUrl = bracketIpv6Host(lanIp);
-    const auto adminBase = std::string("http://") + hostInUrl + ":" + std::to_string(cfg.browserPort);
-    const auto gatewayMcpPath = cfg.mcpGateway.mcpPath.empty() ? std::string("/mcp") : cfg.mcpGateway.mcpPath;
-    const auto gatewayBase = std::string("http://") + hostInUrl + ":" + std::to_string(cfg.mcpGateway.listenPort);
-    const auto mcpEndpoint = gatewayBase + gatewayMcpPath;
-    const auto discoveryEndpoint = adminBase + "/.well-known/mcos.json";
+    const auto advertisement = buildAdvertisedEndpointPlan(cfg, gatewayStatus, runtimePrimaryIp);
     const auto serverName = cfg.instanceName.empty()
         ? std::string("Master Control Orchestration Server")
         : cfg.instanceName;
-    const auto fingerprintSeed = lanIp + ":" + std::to_string(cfg.browserPort) + "|" + serverName;
+    const auto fingerprintSeed = advertisement.adminHost + ":" + std::to_string(cfg.browserPort)
+        + "|" + serverName + "|" + advertisement.networkMode;
 
-    supervisorAssignmentService_->setEndpoints(mcpEndpoint, discoveryEndpoint, fingerprintSeed);
+    supervisorAssignmentService_->setEndpoints(advertisement, fingerprintSeed);
 }
 
 HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest& request) {
-    // Phase 6 - resolve the per-request authentication context. Identity is
-    // by header alone (the LAN is trusted per ADR-001); a missing or unknown
-    // header yields the operator-fallback context so the dashboard and
-    // ad-hoc curl keep working. A disabled client's id is rejected up front.
-    AuthenticatedRequestContext context = makeOperatorContext();
-    const auto headerClientId = findHeaderCaseInsensitive(request.headers, "X-MCOS-Client-Id");
+    AuthenticatedRequestContext context;
+    context.remoteAddress = request.remoteAddress;
+    context.isLocalRequest = isLoopbackAddress(request.remoteAddress);
+    std::optional<HttpResponse> identityFailure;
+    const auto headerClientId = trimCopy(findHeaderCaseInsensitive(request.headers, "X-MCOS-Client-Id"));
     if (!headerClientId.empty() && lanClientAccessService_) {
         const auto resolved = lanClientAccessService_->getClient(headerClientId);
         if (resolved.has_value()) {
             if (!resolved->enabled) {
-                return HttpResponse{
+                identityFailure = HttpResponse{
                     403,
                     "application/json",
                     nlohmann::json{
                         { "succeeded", false },
-                        { "errorMessage", "LAN client is disabled: " + resolved->clientId }
+                        { "errorMessage", "LAN client is disabled: " + resolved->clientId },
+                        { "actor", resolved->clientId },
+                        { "remoteAddress", request.remoteAddress }
                     }.dump()
                 };
+            } else {
+                context.client = resolved;
+                context.capabilities = capabilitiesForClient(*resolved);
+                context.privileges = privilegesWithCapabilities(resolved->privileges, context.capabilities);
+                context.autonomousMode = resolved->autonomousMode;
+                context.actor = resolved->clientId;
+                context.isLocalBootstrap = false;
+                // Hot-path liveness update; touchClient deliberately skips disk
+                // write to avoid thrash on every request. Phase 9 may add a
+                // periodic flush if last-seen survival becomes a hard requirement.
+                lanClientAccessService_->touchClient(resolved->clientId, std::string{});
             }
-            context.client = resolved;
-            context.privileges = resolved->privileges;
-            context.autonomousMode = resolved->autonomousMode;
-            context.actor = resolved->clientId;
-            context.isOperatorFallback = false;
-            // Hot-path liveness update; touchClient deliberately skips disk
-            // write to avoid thrash on every request. Phase 9 may add a
-            // periodic flush if last-seen survival becomes a hard requirement.
-            lanClientAccessService_->touchClient(resolved->clientId, std::string{});
+        } else {
+            identityFailure = HttpResponse{
+                403,
+                "application/json",
+                nlohmann::json{
+                    { "succeeded", false },
+                    { "errorMessage", "Unknown LAN client identity." },
+                    { "actor", "anonymous" },
+                    { "remoteAddress", request.remoteAddress }
+                }.dump()
+            };
         }
+    } else if (!headerClientId.empty()) {
+        identityFailure = HttpResponse{
+            503,
+            "application/json",
+            nlohmann::json{
+                { "succeeded", false },
+                { "errorMessage", "LAN client registry is unavailable." },
+                { "actor", "anonymous" },
+                { "remoteAddress", request.remoteAddress }
+            }.dump()
+        };
+    } else if (context.isLocalRequest) {
+        context = makeLocalOperatorContext(request.remoteAddress);
     }
+
+    auto authorizeMutatingRequest = [&]() -> std::optional<HttpResponse> {
+        if (!isMutatingMethod(request.method)) {
+            return std::nullopt;
+        }
+        if (identityFailure.has_value()) {
+            return identityFailure;
+        }
+        if (!context.client.has_value() && !context.isLocalBootstrap) {
+            return HttpResponse{
+                401,
+                "application/json",
+                nlohmann::json{
+                    { "succeeded", false },
+                    { "errorMessage", "Authentication is required for mutating requests." },
+                    { "actor", context.actor },
+                    { "remoteAddress", request.remoteAddress },
+                    { "localRequest", context.isLocalRequest }
+                }.dump()
+            };
+        }
+        const auto requiredCapabilities = requiredCapabilitiesForRoute(request.method, request.path);
+        if (!contextHasRequiredCapabilities(context, requiredCapabilities)) {
+            const auto required = joinCapabilities(requiredCapabilities);
+            return HttpResponse{
+                403,
+                "application/json",
+                nlohmann::json{
+                    { "succeeded", false },
+                    { "errorMessage", "Required capability missing: " + required + "." },
+                    { "actor", context.actor },
+                    { "requiredCapabilities", requiredCapabilities },
+                    { "remoteAddress", request.remoteAddress },
+                    { "localRequest", context.isLocalRequest }
+                }.dump()
+            };
+        }
+        return std::nullopt;
+    };
 
     // v0.9.71: real-time push channel. /api/events upgrades to a
     // Server-Sent Events stream that emits the current dashboard
@@ -15406,110 +16027,146 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         return HttpResponse{ 200, "application/json", body.dump() };
     }
     if (request.method == "GET" && request.path == "/api/supervisor/reachability-check") {
-        // v0.10.13: probe MCOS's own endpoints from inside the runtime.
-        // The same five URLs the cloud connection-test report tried,
-        // plus the matching loopback variants for a side-by-side
-        // comparison. The response gives the operator a definitive
-        // server-side reachability answer that's orthogonal to a
-        // remote client's network configuration.
         if (!configurationService_) {
             return HttpResponse{ 503, "application/json",
                 nlohmann::json{ {"ok", false}, {"errorMessage", "Configuration service not initialized."} }.dump() };
         }
-        // Compute the same LAN IP precedence chain refreshSupervisorEndpoints
-        // uses, so this endpoint probes the addresses MCOS would actually
-        // advertise. Loopback probes always use 127.0.0.1.
         const auto cfg = configurationService_->current();
-        std::string lanIp;
-        const std::string& bindAddress = cfg.bindAddress;
-        const std::string& preferred = cfg.activeProfile.preferredBindAddress;
-        if (!bindAddress.empty()
-            && bindAddress != "0.0.0.0"
-            && bindAddress != "::"
-            && bindAddress != "[::]") {
-            lanIp = bindAddress;
-        }
-        if ((lanIp.empty() || lanIp == "0.0.0.0")
-            && !preferred.empty() && preferred != "0.0.0.0") {
-            lanIp = preferred;
-        }
-        if ((lanIp.empty() || lanIp == "0.0.0.0") && telemetryService_) {
+        const auto gatewayStatus = mcpGateway_ ? mcpGateway_->CurrentStatus() : GatewayStatus{};
+        std::string runtimePrimaryIp;
+        if (telemetryService_) {
             try {
                 const auto snap = telemetryService_->captureSnapshot();
-                if (!snap.primaryIpAddress.empty()) {
-                    lanIp = snap.primaryIpAddress;
-                }
+                runtimePrimaryIp = snap.primaryIpAddress;
             } catch (...) {}
         }
-        if (lanIp.empty() || lanIp == "0.0.0.0") {
-            lanIp = "127.0.0.1";
-        }
+        const auto advertisement = buildAdvertisedEndpointPlan(cfg, gatewayStatus, runtimePrimaryIp);
 
-        const auto gatewayMcpPath = cfg.mcpGateway.mcpPath.empty()
-            ? std::string("/mcp") : cfg.mcpGateway.mcpPath;
-        const auto adminPort = std::to_string(cfg.browserPort);
-        const auto gatewayPort = std::to_string(cfg.mcpGateway.listenPort);
-        const auto lanAdminBase = "http://" + bracketIpv6Host(lanIp) + ":" + adminPort;
-        const auto lanGatewayBase = "http://" + bracketIpv6Host(lanIp) + ":" + gatewayPort;
-        const auto loopAdminBase = std::string("http://127.0.0.1:") + adminPort;
-        const auto loopGatewayBase = std::string("http://127.0.0.1:") + gatewayPort;
-
-        // The admin server (SimpleHttpServer) handling THIS request is
-        // single-threaded -- a self-probe via WinHTTP back to its own
-        // listen socket would deadlock until the WinHTTP timeout fires
-        // because the accept loop is stuck waiting for this handler to
-        // return. Two consequences:
-        //   1. We skip the loopback + LAN-IP admin-port probes here.
-        //      The fact that this very response is reaching the caller
-        //      already proves the admin listener is alive on the
-        //      browserPort -- it's tautological. We surface a synthetic
-        //      "self" probe entry so the JSON shape is still useful.
-        //   2. Probing the gateway port (cfg.mcpGateway.listenPort, a
-        //      different HTTP.sys-based listener on a different port)
-        //      is safe and meaningful. We do all four gateway probes
-        //      (loopback + LAN IP, mcpPath + a known non-route to test
-        //      404 vs refusal).
         std::vector<EndpointProbeResult> probes;
 
-        // Synthetic admin self-probe -- proven alive by the fact this
-        // response is being served. The "synthetic" interpretation
-        // tells the operator this is a tautological proof rather than
-        // an actual outbound HTTP call.
-        EndpointProbeResult adminLoopSelf;
-        adminLoopSelf.url = loopAdminBase + "/api/supervisor/reachability-check";
-        adminLoopSelf.method = "GET";
-        adminLoopSelf.ok = true;
-        adminLoopSelf.statusCode = 200;
-        adminLoopSelf.interpretation = "Tautological: this very HTTP 200 response is being served on the admin port, so the listener is alive. The single-threaded admin server cannot probe itself via WinHTTP from inside a route handler without deadlocking, so we skip the recursive outbound probe.";
-        probes.push_back(adminLoopSelf);
+        EndpointProbeResult adminSelf;
+        adminSelf.url = advertisement.discoveryEndpoint;
+        adminSelf.method = "GET";
+        adminSelf.ok = true;
+        adminSelf.statusCode = 200;
+        adminSelf.interpretation =
+            "Synthetic self-check: this admin route is serving the request, so the admin listener is active. The single-threaded admin server does not recursively call itself from inside the route handler.";
+        probes.push_back(adminSelf);
 
-        EndpointProbeResult adminLanSelf = adminLoopSelf;
-        adminLanSelf.url = lanAdminBase + "/api/supervisor/reachability-check";
-        adminLanSelf.interpretation = "Tautological on loopback; on the LAN IP, the bind on 0.0.0.0 (verified at startup via 'netstat -ano | findstr :' " + adminPort + ") makes both loopback and LAN-IP variants point at the same listening socket. If a remote client reports connection_refused against the LAN IP, the cause is almost certainly upstream of MCOS (cloud Linux runtime cannot route to RFC-1918, perimeter firewall, NAT misconfiguration), not the bind itself.";
-        probes.push_back(adminLanSelf);
-
-        // Real outbound probes: gateway port (different listener, safe
-        // from the admin handler thread).
-        probes.push_back(probeEndpoint(loopGatewayBase + gatewayMcpPath));
-        probes.push_back(probeEndpoint(lanGatewayBase + gatewayMcpPath));
-        probes.push_back(probeEndpoint(loopGatewayBase + "/health"));
-        probes.push_back(probeEndpoint(lanGatewayBase + "/health"));
-
-        bool allReachable = true;
-        for (const auto& r : probes) {
-            if (!r.ok) { allReachable = false; break; }
+        std::optional<EndpointProbeResult> mcpProbe;
+        std::optional<EndpointProbeResult> mcpHealthProbe;
+        if (gatewayStatus.state == GatewayState::Running) {
+            mcpProbe = probeEndpoint(advertisement.mcpEndpoint);
+            mcpHealthProbe = probeEndpoint(advertisement.mcpHealthEndpoint);
+            probes.push_back(*mcpProbe);
+            probes.push_back(*mcpHealthProbe);
         }
+
+        const bool adminBound = true;
+        const bool adminReachable = true;
+        std::string adminFailureMode;
+        std::string adminRecommendedAction =
+            "Admin listener served this diagnostic request. Confirm Windows URL ACLs and firewall rules if a different host cannot reach the advertised URL.";
+        if (!advertisement.lanModeEnabled) {
+            adminFailureMode = "lan-disabled";
+            adminRecommendedAction =
+                "LAN mode is disabled, so supervisor discovery is intentionally advertised on 127.0.0.1. Enable trusted LAN mode before expecting remote clients to reach it.";
+        } else if (!advertisement.adminLanAdvertised) {
+            adminFailureMode = "wrong-bind-address";
+            adminRecommendedAction =
+                "LAN mode is enabled but the admin listener resolves to loopback. Set bindAddress or preferredBindAddress to a LAN-routable address and verify the URL ACL/firewall.";
+        }
+
+        const bool mcpBound = gatewayStatus.state == GatewayState::Running;
+        const bool mcpReachable = mcpBound &&
+            ((mcpProbe.has_value() && mcpProbe->ok) ||
+             (mcpHealthProbe.has_value() && mcpHealthProbe->ok));
+        std::string mcpFailureMode;
+        std::string mcpRecommendedAction =
+            "MCP gateway accepted a server-side probe on the advertised endpoint.";
+        if (!mcpBound) {
+            mcpFailureMode = "listener-not-bound";
+            mcpRecommendedAction =
+                "Start the MCP gateway and inspect HTTP.sys URL ACLs for the gateway listen port.";
+        } else if (!mcpReachable) {
+            if (!advertisement.lanModeEnabled) {
+                mcpFailureMode = "lan-disabled";
+                mcpRecommendedAction =
+                    "LAN mode is disabled; MCP remains local-only. Enable trusted LAN mode for remote supervisors.";
+            } else if (!advertisement.mcpLanAdvertised) {
+                mcpFailureMode = "wrong-bind-address";
+                mcpRecommendedAction =
+                    "Gateway is running but not advertised on a LAN-routable host. Check mcpGateway.listenHost and URL ACLs.";
+            } else {
+                mcpFailureMode = "connection-refused";
+                mcpRecommendedAction =
+                    "Gateway is running but the advertised URL did not accept a probe. Check Get-NetTCPConnection, firewall rules, URL ACLs, and HTTP.sys SSL bindings.";
+            }
+        } else if (!advertisement.mcpLanAdvertised && advertisement.lanModeEnabled) {
+            mcpFailureMode = "wrong-bind-address";
+            mcpRecommendedAction =
+                "Gateway responded locally, but LAN mode is enabled and the gateway is not LAN-advertised. Use a LAN-routable mcpGateway.listenHost.";
+        }
+
+        const auto adminPort = std::to_string(cfg.browserPort);
+        const auto gatewayPort = std::to_string(cfg.mcpGateway.listenPort);
 
         nlohmann::json body;
         body["ok"] = true;
-        body["allReachable"] = allReachable;
-        body["resolvedLanIp"] = lanIp;
+        body["allReachable"] = adminReachable && mcpReachable;
+        body["resolvedLanIp"] = runtimePrimaryIp;
+        body["networkMode"] = advertisement.networkMode;
+        body["endpointPlanReason"] = advertisement.reason;
         body["adminPort"] = cfg.browserPort;
         body["gatewayPort"] = cfg.mcpGateway.listenPort;
         body["generatedAtUtc"] = timestampNowUtc();
-        body["interpretation"] = allReachable
-            ? std::string("Every probe completed: MCOS is reachable on both loopback and the LAN IP from inside the runtime. A remote client that still sees 'connection refused' against the LAN IP is either on a network that cannot route to RFC-1918 private addresses (cloud-hosted ChatGPT runtime is the canonical case) or being blocked by a perimeter firewall outside this host. Use a LAN tunnel (Tailscale, ngrok, Cloudflare Tunnel) to publish the MCOS endpoint to clients that cannot reach the LAN IP directly.")
-            : std::string("At least one server-side probe failed. The listener for the failing URL did not accept the TCP connection from inside the runtime, which is the smallest-blast-radius MCOS bug condition. Check bindAddress, listenPort, and HTTP.sys URL ACLs.");
+        body["interpretation"] = body["allReachable"].get<bool>()
+            ? std::string("Advertised admin and MCP endpoints are internally reachable for the current runtime posture.")
+            : std::string("At least one advertised endpoint is not internally reachable. Use diagnostics.commands to distinguish absent listener, wrong bind address, firewall, URL ACL, and HTTP.sys SSL binding issues.");
+        body["admin"] = nlohmann::json{
+            { "advertisedUrl", advertisement.discoveryEndpoint },
+            { "bound", adminBound },
+            { "reachable", adminReachable },
+            { "failureMode", adminFailureMode },
+            { "recommendedAction", adminRecommendedAction },
+            { "lanAdvertised", advertisement.adminLanAdvertised }
+        };
+        body["mcp"] = nlohmann::json{
+            { "advertisedUrl", advertisement.mcpEndpoint },
+            { "healthUrl", advertisement.mcpHealthEndpoint },
+            { "bound", mcpBound },
+            { "reachable", mcpReachable },
+            { "failureMode", mcpFailureMode },
+            { "recommendedAction", mcpRecommendedAction },
+            { "lanAdvertised", advertisement.mcpLanAdvertised },
+            { "gatewayState", to_string(gatewayStatus.state) },
+            { "gatewayMessage", gatewayStatus.message }
+        };
+        body["diagnostics"] = nlohmann::json{
+            { "serviceStatus", "Admin service handled this request; MCP gateway state is " + to_string(gatewayStatus.state) + "." },
+            { "bindAddress", cfg.bindAddress },
+            { "preferredBindAddress", cfg.activeProfile.preferredBindAddress },
+            { "mcpListenHost", cfg.mcpGateway.listenHost },
+            { "mcpGatewayEnabled", cfg.mcpGateway.enabled },
+            { "tlsEnabledConfigured", cfg.mcpGateway.tlsEnabled },
+            { "tlsBound", gatewayStatus.tlsBound },
+            { "tlsListenPort", cfg.mcpGateway.tlsListenPort },
+            { "urlAclState", "Inspect with netsh http show urlacl for admin and MCP prefixes." },
+            { "firewallExposure", "Inspect with Get-NetFirewallRule/Get-NetFirewallPortFilter for the admin and MCP ports." },
+            { "httpSysSslBinding", "Inspect with netsh http show sslcert when TLS is enabled." },
+            { "advertisedUrls", {
+                { "adminDiscovery", advertisement.discoveryEndpoint },
+                { "mcp", advertisement.mcpEndpoint },
+                { "mcpHealth", advertisement.mcpHealthEndpoint }
+            } },
+            { "commands", nlohmann::json::array({
+                "Get-Service | Where-Object { $_.Name -like '*MCOS*' -or $_.DisplayName -like '*Master Control*' }",
+                "Get-NetTCPConnection -State Listen -LocalPort " + adminPort + "," + gatewayPort,
+                "Get-NetFirewallRule | Get-NetFirewallPortFilter | Where-Object { $_.LocalPort -in @(" + adminPort + "," + gatewayPort + ") }",
+                "netsh http show urlacl",
+                "netsh http show sslcert"
+            }) }
+        };
         nlohmann::json probesArray = nlohmann::json::array();
         for (const auto& r : probes) probesArray.push_back(probeResultToJson(r));
         body["probes"] = probesArray;
@@ -15734,6 +16391,7 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             return HttpResponse{ 400, "application/json",
                 nlohmann::json{ {"ok", false}, {"errorMessage", err} }.dump() };
         }
+        refreshSupervisorEndpoints();
         const auto result = supervisorAssignmentService_->confirmConnection(claim);
         {
             ActivityEvent evt;
@@ -15762,6 +16420,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     { "configId", claim.configId },
                     { "clientId", claim.clientId },
                     { "capabilities", claim.capabilities },
+                    { "tokenProvided", !claim.token.empty() },
+                    { "fingerprintProvided", !claim.fingerprint.empty() },
+                    { "authState", result.ok ? "validated" : "rejected" },
                     { "actor", context.actor }
                 });
         }
@@ -15904,13 +16565,15 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
     }
 
     // Capture every inbound admin API request into the live activity ring.
-    // Shell's own poll targets (/api/dashboard, /api/config) are skipped so
-    // the poll loop doesn't thrash the ring.
+    // Shell's own read-only poll targets are skipped so the poll loop doesn't
+    // thrash the ring. Mutating requests, including POST /api/config, remain
+    // auditable.
     const auto requestStart = std::chrono::steady_clock::now();
     const bool skipActivity =
-        request.path == "/api/dashboard" ||
-        request.path == "/api/config" ||
-        request.path == "/api/health";
+        request.method == "GET" &&
+        (request.path == "/api/dashboard" ||
+         request.path == "/api/config" ||
+         request.path == "/api/health");
 
     // Phase 6 - privilege gate helper. Returns nullopt when the predicate
     // is satisfied, or a 403 HttpResponse otherwise. Captures the resolved
@@ -15983,6 +16646,10 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
 
     const auto response = ([&]() -> HttpResponse {
     try {
+        if (auto denied = authorizeMutatingRequest()) {
+            return *denied;
+        }
+
         const auto gateways = platformServiceCatalogService_
             ? platformServiceCatalogService_->listGateways()
             : std::vector<PlatformGatewayDescriptor>{};
@@ -16575,62 +17242,32 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                             (void)removeClaudePluginJunction(claudeState.target, claudeErr);
                             (void)setClaudeMcosPluginEnabled(claudeState.profileDir, false);
                         }
-                        // Compose connector config using the same LAN-IP
-                        // precedence chain that refreshSupervisorEndpoints
-                        // uses. Field names mirror that helper exactly so
-                        // a future refactor can lift the resolver into a
-                        // shared private method.
+                        // Compose connector config using the same endpoint
+                        // advertisement plan as discovery and supervisor
+                        // config generation.
                         if (!configurationService_) {
                             ok = false;
                             err = "configuration service unavailable";
                         } else {
                             const auto cfg = configurationService_->current();
-                            std::string lanIp;
-                            const std::string& bindAddress = cfg.bindAddress;
-                            const std::string& preferred = cfg.activeProfile.preferredBindAddress;
-                            if (!bindAddress.empty()
-                                && bindAddress != "0.0.0.0"
-                                && bindAddress != "::"
-                                && bindAddress != "[::]") {
-                                lanIp = bindAddress;
-                            }
-                            if ((lanIp.empty() || lanIp == "0.0.0.0")
-                                && !preferred.empty() && preferred != "0.0.0.0") {
-                                lanIp = preferred;
-                            }
-                            if ((lanIp.empty() || lanIp == "0.0.0.0") && telemetryService_) {
+                            const auto gatewayStatus = mcpGateway_
+                                ? mcpGateway_->CurrentStatus()
+                                : GatewayStatus{};
+                            std::string runtimePrimaryIp;
+                            if (telemetryService_) {
                                 try {
                                     const auto snap = telemetryService_->captureSnapshot();
-                                    if (!snap.primaryIpAddress.empty()) {
-                                        lanIp = snap.primaryIpAddress;
-                                    }
+                                    runtimePrimaryIp = snap.primaryIpAddress;
                                 } catch (...) {
                                     // best-effort; fall through
                                 }
                             }
-                            if (lanIp.empty() || lanIp == "0.0.0.0") {
-                                lanIp = cfg.bindAddress;
-                            }
-                            if (lanIp.empty() || lanIp == "0.0.0.0") {
-                                lanIp = "127.0.0.1";
-                            }
-                            const auto hostInUrl = bracketIpv6Host(lanIp);
-                            const auto gatewayMcpPath = cfg.mcpGateway.mcpPath.empty()
-                                ? std::string("/mcp")
-                                : cfg.mcpGateway.mcpPath;
-                            const std::string mcpEndpoint =
-                                std::string("http://") + hostInUrl + ":"
-                                + std::to_string(cfg.mcpGateway.listenPort)
-                                + gatewayMcpPath;
-                            const std::string adminBase =
-                                std::string("http://") + hostInUrl + ":"
-                                + std::to_string(cfg.browserPort);
-                            const std::string discoveryEndpoint =
-                                adminBase + "/.well-known/mcos.json";
+                            const auto advertisement =
+                                buildAdvertisedEndpointPlan(cfg, gatewayStatus, runtimePrimaryIp);
                             const std::string healthEndpoint =
-                                adminBase + "/api/health";
+                                advertisement.adminBaseUrl + "/api/health";
                             // The supervisor fingerprint uses a SHA-256
-                            // over <lanIp>:<browserPort>|<serverName>; we
+                            // over the advertised admin host; we
                             // borrow the same seed string so the connector
                             // file's fingerprint matches the supervisor
                             // config's for any provider that uses both.
@@ -16638,8 +17275,8 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                                 ? std::string("Master Control Orchestration Server")
                                 : cfg.instanceName;
                             const std::string fingerprintSeed =
-                                lanIp + ":" + std::to_string(cfg.browserPort)
-                                + "|" + serverName;
+                                advertisement.adminHost + ":" + std::to_string(cfg.browserPort)
+                                + "|" + serverName + "|" + advertisement.networkMode;
                             // Compact non-cryptographic digest so the file
                             // carries a stable id without depending on
                             // openssl/wincrypt for an actual SHA-256. The
@@ -16652,7 +17289,7 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                             const std::string fingerprint =
                                 std::string("sha256:") + digest.str();
                             const auto body = composeDirectAIPluginConfigBody(
-                                providerId, mcpEndpoint, discoveryEndpoint,
+                                providerId, advertisement.mcpEndpoint, advertisement.discoveryEndpoint,
                                 healthEndpoint, fingerprint);
                             ok = writeDirectAIPluginConfig(before.target, body, err);
                         }
@@ -16711,6 +17348,90 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         if (request.method == "GET" && request.path == "/api/exports") {
             return jsonResponse(exportService_->generateExports());
+        }
+        if (request.method == "GET" && request.path == "/api/workflows") {
+            return jsonResponse(workflowListDocument(configurationService_->current()));
+        }
+        if (request.method == "POST" && request.path == "/api/workflows") {
+            try {
+                const auto body = nlohmann::json::parse(request.body);
+                if (!body.is_object()) {
+                    return jsonResponse(OperationResult{ false, false, "Workflow body must be a JSON object." }, 400);
+                }
+                WorkflowDefinition workflow = body.contains("workflow")
+                    ? body.at("workflow").get<WorkflowDefinition>()
+                    : body.get<WorkflowDefinition>();
+                const auto source = body.value("source", workflow.source.empty() ? std::string("manual") : workflow.source);
+                workflow = normalizeWorkflowDefinition(std::move(workflow), source, timestampNowUtc());
+                const auto issues = validateWorkflowDefinition(workflow);
+                if (!issues.empty()) {
+                    return jsonResponse(nlohmann::json{
+                        { "succeeded", false },
+                        { "message", "Workflow validation failed." },
+                        { "validationIssues", workflowValidationIssuesJson(workflow) },
+                        { "workflow", workflow }
+                    }, 400);
+                }
+                auto cfg = configurationService_->current();
+                if (const auto index = findWorkflowIndex(cfg.workflows, workflow.workflowId); index.has_value()) {
+                    workflow.createdAtUtc = cfg.workflows[*index].createdAtUtc.empty()
+                        ? workflow.createdAtUtc
+                        : cfg.workflows[*index].createdAtUtc;
+                    cfg.workflows[*index] = workflow;
+                } else {
+                    cfg.workflows.push_back(workflow);
+                }
+                const auto update = configurationService_->update(cfg, false);
+                if (!update.succeeded) {
+                    return jsonResponse(update, 400);
+                }
+                return jsonResponse(nlohmann::json{
+                    { "succeeded", true },
+                    { "message", "Workflow saved." },
+                    { "workflow", workflow },
+                    { "readiness", computeReadinessSnapshot(adminApiService_->snapshot(), cfg) }
+                });
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false, std::string("Invalid workflow JSON: ") + ex.what() }, 400);
+            }
+        }
+        if (startsWith(request.path, "/api/workflows/")) {
+            const auto prefix = std::string("/api/workflows/");
+            const auto suffix = request.path.substr(prefix.size());
+            const auto slash = suffix.find('/');
+            const auto workflowId = slash == std::string::npos ? suffix : suffix.substr(0, slash);
+            const auto action = slash == std::string::npos ? std::string{} : suffix.substr(slash + 1);
+            auto cfg = configurationService_->current();
+            const auto index = findWorkflowIndex(cfg.workflows, workflowId);
+            if (!index.has_value()) {
+                return jsonResponse(OperationResult{ false, false, "Workflow not found." }, 404);
+            }
+            if (request.method == "GET" && action.empty()) {
+                nlohmann::json document = cfg.workflows[*index];
+                document["ready"] = isWorkflowReady(cfg.workflows[*index]);
+                document["validationIssues"] = workflowValidationIssuesJson(cfg.workflows[*index]);
+                return jsonResponse(document);
+            }
+            if (request.method == "DELETE" && action.empty()) {
+                cfg.workflows.erase(cfg.workflows.begin() + static_cast<std::ptrdiff_t>(*index));
+                const auto update = configurationService_->update(cfg, false);
+                return jsonResponse(update, update.succeeded ? 200 : 400);
+            }
+            if (request.method == "POST" && (action == "disable" || action == "enable")) {
+                cfg.workflows[*index].enabled = action == "enable";
+                cfg.workflows[*index].updatedAtUtc = timestampNowUtc();
+                const auto update = configurationService_->update(cfg, false);
+                if (!update.succeeded) {
+                    return jsonResponse(update, 400);
+                }
+                return jsonResponse(nlohmann::json{
+                    { "succeeded", true },
+                    { "message", action == "enable" ? "Workflow enabled." : "Workflow disabled." },
+                    { "workflow", cfg.workflows[*index] },
+                    { "readiness", computeReadinessSnapshot(adminApiService_->snapshot(), cfg) }
+                });
+            }
+            return jsonResponse(OperationResult{ false, false, "Workflow route supports GET, DELETE, enable, or disable." }, 400);
         }
         if (request.method == "GET" && request.path == "/api/clu") {
             return jsonResponse(commandLogicUnitService_->currentGovernance());
@@ -17373,12 +18094,19 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                                                  bool ok) {
             ActivityEvent ringEvt;
             ringEvt.kind    = "gateway_lifecycle";
-            ringEvt.actor   = "admin-api";
+            ringEvt.actor   = context.actor;
             ringEvt.target  = route;
             ringEvt.method  = request.method;
             ringEvt.statusCode = ok ? 200 : 500;
             ringEvt.message = "Gateway " + route + " -> state=" + to_string(status.state)
                             + " (" + status.message + ")";
+            ringEvt.detail = nlohmann::json{
+                { "actor", context.actor },
+                { "remoteAddress", request.remoteAddress },
+                { "localRequest", context.isLocalRequest },
+                { "localBootstrap", context.isLocalBootstrap },
+                { "authenticated", context.client.has_value() }
+            }.dump();
             globalActivityRing().append(ringEvt);
             if (telemetryAggregator_) {
                 TelemetryEvent evt;
@@ -17611,63 +18339,189 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             return HttpResponse{ 202, "application/json", body.dump() };
         }
         if (request.method == "POST" && request.path == "/api/client/heartbeat") {
-            // Marks the calling client as live. The operator-fallback
-            // context has no clientId so heartbeats from anonymous callers
-            // are accepted but no-ops on the roster.
+            // Marks the calling client as live. Local bootstrap requests are
+            // accepted but do not update the LAN client roster.
             if (context.client.has_value() && lanClientAccessService_) {
                 lanClientAccessService_->touchClient(context.client->clientId, std::string{});
             }
             nlohmann::json body = {
                 { "succeeded", true },
                 { "clientId", context.actor },
-                { "isOperatorFallback", context.isOperatorFallback }
+                { "authenticated", context.client.has_value() },
+                { "localBootstrap", context.isLocalBootstrap }
             };
             return jsonResponse(body);
         }
         // -------------------------------------------------------------------
-        // WS1 — Readiness and setup lifecycle
+        // WS1/WS3 - Readiness and setup lifecycle
         // -------------------------------------------------------------------
         if (request.method == "GET" && request.path == "/api/readiness") {
             const auto snap = adminApiService_->snapshot();
             const auto cfg = configurationService_->current();
             return jsonResponse(computeReadinessSnapshot(snap, cfg));
         }
+        if (request.method == "GET" && request.path == "/api/setup/state") {
+            const auto snap = adminApiService_->snapshot();
+            const auto cfg = configurationService_->current();
+            return jsonResponse(computeSetupStateSnapshot(snap, cfg));
+        }
         if (request.method == "POST" && request.path == "/api/setup/start") {
             auto cfg = configurationService_->current();
+            std::string mode = normalizedSetupMode(cfg.setupMode);
+            if (!request.body.empty()) {
+                try {
+                    const auto body = nlohmann::json::parse(request.body);
+                    if (!body.is_object()) {
+                        return jsonResponse(OperationResult{ false, false, "Setup start body must be a JSON object." }, 400);
+                    }
+                    if (body.contains("mode")) {
+                        if (!body["mode"].is_string() || !isValidSetupMode(body["mode"].get<std::string>())) {
+                            return jsonResponse(OperationResult{ false, false, "Setup mode must be guided, manual, or import-existing." }, 400);
+                        }
+                        mode = body["mode"].get<std::string>();
+                    }
+                    if (body.contains("currentStep")) {
+                        if (!body["currentStep"].is_string()) {
+                            return jsonResponse(OperationResult{ false, false, "Setup currentStep must be a string." }, 400);
+                        }
+                        cfg.setupCurrentStep = trimCopy(body["currentStep"].get<std::string>());
+                    }
+                } catch (const std::exception& ex) {
+                    return jsonResponse(OperationResult{ false, false, std::string("Invalid setup start JSON: ") + ex.what() }, 400);
+                }
+            }
+            cfg.setupMode = mode;
+            if (trimCopy(cfg.setupCurrentStep).empty() || cfg.setupCurrentStep == "welcome") {
+                cfg.setupCurrentStep = setupEntryStepForMode(mode);
+            }
             if (cfg.firstRunStartedAtUtc.empty()) {
                 cfg.firstRunStartedAtUtc = timestampNowUtc();
-                const auto result = configurationService_->update(cfg, false);
-                if (!result.succeeded) {
-                    return jsonResponse(result, 400);
-                }
             }
-            return jsonResponse(OperationResult{ true, false, "Setup started." });
-        }
-        if (request.method == "POST" && request.path == "/api/setup/complete") {
-            std::vector<std::string> skippedSteps;
-            try {
-                if (!request.body.empty()) {
-                    const auto body = nlohmann::json::parse(request.body);
-                    if (body.contains("skippedSteps") && body["skippedSteps"].is_array()) {
-                        for (const auto& entry : body["skippedSteps"]) {
-                            if (entry.is_string()) {
-                                skippedSteps.push_back(entry.get<std::string>());
-                            }
-                        }
-                    }
-                }
-            } catch (const std::exception&) {
-                // Body is optional — treat parse errors as empty body.
-            }
-            auto cfg = configurationService_->current();
-            cfg.firstRunCompleted = true;
-            cfg.firstRunCompletedAtUtc = timestampNowUtc();
-            cfg.firstRunSkippedSteps = skippedSteps;
             const auto result = configurationService_->update(cfg, false);
             if (!result.succeeded) {
                 return jsonResponse(result, 400);
             }
-            return jsonResponse(OperationResult{ true, false, "Setup marked complete." });
+            const auto snap = adminApiService_->snapshot();
+            nlohmann::json body = result;
+            body["setup"] = computeSetupStateSnapshot(snap, cfg);
+            return jsonResponse(body);
+        }
+        if (request.method == "POST" && request.path == "/api/setup/complete") {
+            if (request.body.empty()) {
+                return jsonResponse(OperationResult{ false, false, "Setup completion requires JSON with confirm set to true." }, 400);
+            }
+            nlohmann::json body;
+            try {
+                body = nlohmann::json::parse(request.body);
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false, std::string("Invalid setup completion JSON: ") + ex.what() }, 400);
+            }
+            if (!body.is_object()) {
+                return jsonResponse(OperationResult{ false, false, "Setup completion body must be a JSON object." }, 400);
+            }
+            if (!body.contains("confirm") || !body["confirm"].is_boolean() || !body["confirm"].get<bool>()) {
+                return jsonResponse(OperationResult{ false, false, "Setup completion requires confirm set to true." }, 400);
+            }
+
+            std::vector<std::string> skippedSteps;
+            std::vector<SetupOverrideRecord> overrides;
+            try {
+                skippedSteps = parseSetupStringArrayStrict(body, "skippedSteps");
+                overrides = parseSetupOverridesStrict(body);
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false, ex.what() }, 400);
+            }
+
+            auto cfg = configurationService_->current();
+            const auto readinessSnapshot = computeReadinessSnapshot(adminApiService_->snapshot(), cfg);
+            const auto criticalIssues = completionBlockingIssues(readinessSnapshot);
+            std::vector<ReadinessIssue> unacceptedIssues;
+            for (const auto& issue : criticalIssues) {
+                if (!setupOverrideCoversIssue(overrides, issue)) {
+                    unacceptedIssues.push_back(issue);
+                }
+            }
+
+            if (!unacceptedIssues.empty()) {
+                nlohmann::json response = {
+                    { "succeeded", false },
+                    { "requiresConfirmation", false },
+                    { "message", "Setup readiness has critical blockers." },
+                    { "errorMessage", "Provide an override reason for each critical readiness issue before completing setup." },
+                    { "blockingIssues", unacceptedIssues },
+                    { "readiness", readinessSnapshot },
+                    { "setup", computeSetupStateSnapshot(adminApiService_->snapshot(), cfg) }
+                };
+                return jsonResponse(response, 409);
+            }
+
+            const auto completedAtUtc = timestampNowUtc();
+            for (auto& overrideRecord : overrides) {
+                if (overrideRecord.stepId.empty()) {
+                    overrideRecord.stepId = "readiness-review";
+                }
+                overrideRecord.createdAtUtc = completedAtUtc;
+            }
+
+            const bool confirmedComplete = body.value("confirm", false);
+            cfg.firstRunCompleted = confirmedComplete;
+            cfg.firstRunCompletedAtUtc = completedAtUtc;
+            cfg.firstRunSkippedSteps = skippedSteps;
+            cfg.setupCurrentStep = "complete";
+            cfg.setupOverrides.insert(cfg.setupOverrides.end(), overrides.begin(), overrides.end());
+            const auto result = configurationService_->update(cfg, false);
+            if (!result.succeeded) {
+                return jsonResponse(result, 400);
+            }
+
+            for (const auto& stepId : skippedSteps) {
+                if (stepId.empty()) {
+                    continue;
+                }
+                ActivityEvent event;
+                event.kind = "setup_step_skipped";
+                event.actor = context.actor;
+                event.method = request.method;
+                event.target = stepId;
+                event.statusCode = 200;
+                event.message = "Setup step skipped with explicit completion request.";
+                globalActivityRing().append(event);
+            }
+            for (const auto& overrideRecord : overrides) {
+                ActivityEvent event;
+                event.kind = "setup_override";
+                event.actor = context.actor;
+                event.method = request.method;
+                event.target = overrideRecord.issueId;
+                event.statusCode = 200;
+                event.message = "Setup critical readiness issue overridden.";
+                event.detail = nlohmann::json{
+                    { "stepId", overrideRecord.stepId },
+                    { "issueId", overrideRecord.issueId },
+                    { "reason", overrideRecord.reason },
+                    { "createdAtUtc", overrideRecord.createdAtUtc }
+                }.dump();
+                globalActivityRing().append(event);
+            }
+
+            const auto snap = adminApiService_->snapshot();
+            nlohmann::json response = result;
+            response["message"] = "Setup marked complete.";
+            response["readiness"] = computeReadinessSnapshot(snap, cfg);
+            response["setup"] = computeSetupStateSnapshot(snap, cfg);
+            return jsonResponse(response);
+        }
+        if (request.method == "POST" && request.path == "/api/setup/dismiss") {
+            auto cfg = configurationService_->current();
+            cfg.setupDismissedAtUtc = timestampNowUtc();
+            const auto result = configurationService_->update(cfg, false);
+            if (!result.succeeded) {
+                return jsonResponse(result, 400);
+            }
+            const auto snap = adminApiService_->snapshot();
+            nlohmann::json body = result;
+            body["setup"] = computeSetupStateSnapshot(snap, cfg);
+            return jsonResponse(body);
         }
         if (request.method == "POST" && request.path == "/api/setup/reset") {
             auto cfg = configurationService_->current();
@@ -17675,11 +18529,19 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             cfg.firstRunStartedAtUtc.clear();
             cfg.firstRunCompletedAtUtc.clear();
             cfg.firstRunSkippedSteps.clear();
+            cfg.setupMode = "guided";
+            cfg.setupCurrentStep = "welcome";
+            cfg.setupDismissedAtUtc.clear();
+            cfg.setupOverrides.clear();
             const auto result = configurationService_->update(cfg, false);
             if (!result.succeeded) {
                 return jsonResponse(result, 400);
             }
-            return jsonResponse(OperationResult{ true, false, "Setup reset." });
+            const auto snap = adminApiService_->snapshot();
+            nlohmann::json body = result;
+            body["message"] = "Setup reset.";
+            body["setup"] = computeSetupStateSnapshot(snap, cfg);
+            return jsonResponse(body);
         }
         // -------------------------------------------------------------------
         // WS4 — Host-side dependency installer (e.g., Claude Code CLI)
@@ -18010,15 +18872,78 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "POST"
             && startsWith(request.path, "/api/setup/workflow-templates/")
             && endsWith(request.path, "/instantiate")) {
-            // Starter workflow instantiation was provider-driven. After the
-            // provider stack was removed per ADR-001 the template catalog is
-            // empty. A replacement LAN-client workflow experience lands in a
-            // later remediation phase.
+            const auto prefix = std::string("/api/setup/workflow-templates/");
+            const auto suffix = request.path.substr(prefix.size());
+            const auto slash = suffix.find('/');
+            const auto templateId = slash == std::string::npos ? suffix : suffix.substr(0, slash);
+            const auto templates = buildStarterWorkflowTemplates();
+            const auto found = std::find_if(templates.begin(), templates.end(),
+                [&templateId](const StarterWorkflowTemplate& entry) {
+                    return entry.id == templateId;
+                });
+            if (found == templates.end()) {
+                StarterWorkflowInstantiateResult response;
+                response.succeeded = false;
+                response.message = "Unknown starter workflow template id.";
+                return jsonResponse(response, 404);
+            }
+
+            auto cfg = configurationService_->current();
+            const auto readiness = computeReadinessSnapshot(adminApiService_->snapshot(), cfg);
+            const int enabledClients = static_cast<int>(std::count_if(
+                cfg.lanClients.begin(),
+                cfg.lanClients.end(),
+                [](const LanClient& client) { return client.enabled; }));
+            if (enabledClients < found->requiresClients ||
+                readiness.mcpReadyCount < found->requiresMcp ||
+                readiness.specialistsReadyCount < found->requiresSpecialists) {
+                StarterWorkflowInstantiateResult response;
+                response.succeeded = false;
+                response.message = "Starter workflow requirements are not met.";
+                return jsonResponse(response);
+            }
+
+            StarterWorkflowInstantiateRequest instantiateRequest;
+            if (!request.body.empty()) {
+                try {
+                    const auto body = nlohmann::json::parse(request.body);
+                    if (body.is_object()) {
+                        instantiateRequest = body.get<StarterWorkflowInstantiateRequest>();
+                    }
+                } catch (const std::exception& ex) {
+                    return jsonResponse(OperationResult{ false, false, std::string("Invalid starter workflow JSON: ") + ex.what() }, 400);
+                }
+            }
+
+            WorkflowDefinition workflow;
+            workflow.workflowId = nextStarterWorkflowId(cfg, found->id);
+            workflow.displayName = trimCopy(instantiateRequest.displayNameOverride).empty()
+                ? found->displayName
+                : trimCopy(instantiateRequest.displayNameOverride);
+            workflow.description = found->description;
+            workflow.source = "starter-template";
+            workflow.enabled = true;
+            workflow.requiredCapabilities = found->requiredCapabilities;
+            workflow.steps = found->steps;
+            workflow = normalizeWorkflowDefinition(std::move(workflow), "starter-template", timestampNowUtc());
+            const auto issues = validateWorkflowDefinition(workflow);
+            if (!issues.empty()) {
+                return jsonResponse(nlohmann::json{
+                    { "succeeded", false },
+                    { "message", "Starter workflow template produced an invalid workflow." },
+                    { "validationIssues", workflowValidationIssuesJson(workflow) }
+                }, 400);
+            }
+            cfg.workflows.push_back(workflow);
+            const auto update = configurationService_->update(cfg, false);
+            if (!update.succeeded) {
+                return jsonResponse(update, 400);
+            }
             StarterWorkflowInstantiateResult response;
-            response.succeeded = false;
-            response.message = "Starter workflow templates are temporarily unavailable "
-                               "while the LAN client control plane rebuild is in progress.";
-            return jsonResponse(response, 503);
+            response.succeeded = true;
+            response.workflowId = workflow.workflowId;
+            response.message = "Starter workflow instantiated.";
+            return jsonResponse(response);
         }
         if (request.method == "GET" && request.path == "/api/platform-services") {
             return jsonResponse(nlohmann::json{
@@ -18886,7 +19811,7 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 std::chrono::steady_clock::now() - requestStart).count());
         ActivityEvent event;
         event.kind = "admin_api_request";
-        event.actor = "admin-api";
+        event.actor = context.actor;
         event.method = request.method;
         event.target = request.path;
         event.statusCode = response.statusCode;
@@ -18894,6 +19819,13 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         event.message = request.method + " " + request.path
             + " -> " + std::to_string(response.statusCode)
             + " (" + std::to_string(latency) + "ms)";
+        event.detail = nlohmann::json{
+            { "actor", context.actor },
+            { "remoteAddress", request.remoteAddress },
+            { "localRequest", context.isLocalRequest },
+            { "localBootstrap", context.isLocalBootstrap },
+            { "authenticated", context.client.has_value() }
+        }.dump();
         globalActivityRing().append(event);
     }
 

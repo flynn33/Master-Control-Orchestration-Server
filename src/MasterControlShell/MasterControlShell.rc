@@ -9,13 +9,12 @@
 
 // VERSIONINFO -- baked into the EXE so Properties -> Details and
 // PowerShell's Get-Item.VersionInfo report the live VERSION.json value.
-// Version literals are kept in sync with VERSION.json by
-// scripts\Sync-RepositoryVersionBadges.ps1.
 #include <winres.h>
+#include "GeneratedVersion.h"
 
 1 VERSIONINFO
- FILEVERSION    0,11,0,0
- PRODUCTVERSION 0,11,0,0
+ FILEVERSION    MASTERCONTROL_VERSION_RC
+ PRODUCTVERSION MASTERCONTROL_VERSION_RC
  FILEFLAGSMASK  0x3fL
  FILEFLAGS      0x0L
  FILEOS         VOS_NT_WINDOWS32
@@ -28,12 +27,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "James Daley"
             VALUE "FileDescription",  "Master Control Orchestration Server -- Desktop Shell"
-            VALUE "FileVersion",      "0.11.0.0"
+            VALUE "FileVersion",      MASTERCONTROL_VERSION_RC_STRING
             VALUE "InternalName",     "MasterControlShell"
             VALUE "LegalCopyright",   "Copyright (c) 2026 James Daley. All Rights Reserved."
             VALUE "OriginalFilename", "MasterControlShell.exe"
             VALUE "ProductName",      "Master Control Orchestration Server"
-            VALUE "ProductVersion",   "0.11.0.0"
+            VALUE "ProductVersion",   MASTERCONTROL_VERSION_RC_STRING
         END
     END
     BLOCK "VarFileInfo"

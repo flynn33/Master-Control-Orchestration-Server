@@ -133,7 +133,7 @@ struct SupervisorConnectionClaim {
     std::string clientId;
     std::vector<std::string> capabilities;
     std::string fingerprint;
-    std::string token;            // optional: full bearer if not using ref-only flow
+    std::string token;            // tokenRef from the generated config; required on confirm
 };
 
 struct SupervisorConnectionResult {

@@ -37,6 +37,9 @@ struct ShellRuntimeEndpoint final {
     std::wstring routePath;
     std::wstring specialization;
     bool userDefined = false;
+    std::vector<std::wstring> requiredCapabilities;
+    std::wstring risk;
+    bool highRisk = false;
 };
 
 
@@ -190,9 +193,9 @@ struct ShellSelfTestSnapshot final {
 
 struct ShellSecuritySettings final {
     bool enableTls = false;
-    bool enableAuthentication = false;
+    bool enableAuthentication = true;
     bool allowTroubleshootingBypass = false;
-    bool allowOpenLanAccess = true;
+    bool allowOpenLanAccess = false;
     bool securityProtocolsEnabled = true;
     std::vector<std::wstring> trustedRemoteHosts;
 };
@@ -202,7 +205,7 @@ struct ShellHostSettings final {
     std::wstring bindAddress;
     uint16_t browserPort = 7300;
     uint16_t beaconPort = 7301;
-    bool beaconEnabled = true;
+    bool beaconEnabled = false;
     int cpuAllocationPercent = 50;
     int memoryAllocationPercent = 50;
     int bandwidthAllocationPercent = 50;
@@ -428,12 +431,22 @@ struct ShellSnapshot final {
     uint64_t bytesReceivedPerSecond = 0;
     uint16_t browserPort = 7300;
     uint16_t beaconPort = 7301;
-    bool beaconEnabled = true;
+    bool beaconEnabled = false;
     bool aiAutonomyEnabled = false;
     bool advancedMode = false;          // WS5 — parity with browser progressive disclosure
     bool firstRunCompleted = false;     // WS1 — shell can route to Setup Readiness when false
+    std::wstring setupMode = L"guided";
+    std::wstring setupCurrentStep = L"welcome";
+    std::wstring setupSecurityPosture = L"local-only";
+    int setupMcpReadyCount = 0;
+    int setupMcpMissingCount = 0;
+    int setupWorkflowsReadyCount = 0;
+    int setupWorkflowsMissingCount = 0;
+    int setupSpecialistsReadyCount = 0;
+    int setupSpecialistsMissingCount = 0;
+    std::vector<std::wstring> setupReadinessIssues;
     bool securityProtocolsEnabled = true;
-    bool openLanAccess = true;
+    bool openLanAccess = false;
     int cpuAllocationPercent = 50;
     int memoryAllocationPercent = 50;
     int bandwidthAllocationPercent = 50;
@@ -553,6 +566,9 @@ public:
     [[nodiscard]] ShellOperationResult RemoveAppleRemoteHost(const std::wstring& hostId) const;
     [[nodiscard]] ShellOperationResult UpsertSubAgentGroup(const ShellSubAgentGroupDefinition& group) const;
     [[nodiscard]] ShellOperationResult RemoveSubAgentGroup(const std::wstring& groupId) const;
+    [[nodiscard]] ShellOperationResult BeginSetup(const std::wstring& mode) const;
+    [[nodiscard]] ShellOperationResult CompleteSetup() const;
+    [[nodiscard]] ShellOperationResult DismissSetup() const;
 
     // Install a host-side AI CLI dependency (e.g. Claude Code CLI) on demand.
     // `bridge` is the dependency id; POSTs to /api/setup/dependencies/{id}/install.
