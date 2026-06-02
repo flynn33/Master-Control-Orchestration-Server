@@ -531,8 +531,30 @@ pre {
 }
 
 .surface-toolbar {
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  width: min(100%, 760px);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  width: min(100%, 980px);
+}
+
+.toolbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid rgba(0, 246, 255, 0.16);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.toolbar-group-label,
+.nav-group-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.toolbar-group-label {
+  width: 100%;
 }
 
 .surface-toolbar-button,
@@ -1167,6 +1189,19 @@ dialog:focus-visible {
 .form-actions { display: flex; gap: 8px; margin-top: 12px; }
 
 /* Navigation chips */
+.nav-group {
+  display: grid;
+  gap: 6px;
+}
+
+.nav-group + .nav-group {
+  margin-top: 12px;
+}
+
+.nav-group-label {
+  margin: 0 0 2px;
+}
+
 .nav-link {
   display: flex;
   flex-direction: column;
@@ -1213,6 +1248,68 @@ dialog:focus-visible {
   background: rgba(255, 90, 100, 0.15);
   border-color: rgba(255, 90, 100, 0.55);
   color: rgba(255, 200, 210, 0.95);
+}
+
+.section-split-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.template-card-section {
+  margin-bottom: 14px;
+}
+
+.template-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.template-card {
+  border: 1px solid rgba(0, 246, 255, 0.22);
+  background: rgba(0, 0, 0, 0.26);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.template-card[data-risk="critical"] { border-color: rgba(255, 100, 120, 0.58); }
+.template-card[data-risk="warn"] { border-color: rgba(255, 200, 60, 0.58); }
+.template-card[data-risk="good"] { border-color: rgba(80, 220, 140, 0.5); }
+
+.template-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.risk-pill,
+.capability-chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(0, 246, 255, 0.2);
+  padding: 2px 7px;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+}
+
+.risk-pill.critical { border-color: rgba(255, 100, 120, 0.6); color: rgba(255, 170, 180, 0.95); }
+.risk-pill.warn { border-color: rgba(255, 200, 60, 0.6); color: rgba(255, 225, 150, 0.95); }
+.risk-pill.good { border-color: rgba(80, 220, 140, 0.55); color: rgba(170, 255, 205, 0.95); }
+.risk-pill.info { color: rgba(190, 230, 255, 0.92); }
+
+.capability-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.capability-chip.muted {
+  opacity: 0.65;
 }
 
 /* LAN clients shell */

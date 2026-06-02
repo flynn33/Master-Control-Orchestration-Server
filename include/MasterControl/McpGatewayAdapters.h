@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include "MasterControl/CapabilityAuthorization.h"
 #include "MasterControl/MasterControlContracts.h"
 #include "MasterControl/MasterControlModels.h"
 
@@ -94,6 +95,8 @@ public:
     // empty catalog rather than silently returning stale data.
     void AttachWorkerBridge(std::shared_ptr<IWorkerSupervisor> workerSupervisor,
                             std::shared_ptr<ILeaseRouter> leaseRouter);
+    void AttachCapabilityResolver(CapabilityResolver resolver,
+                                  CapabilityDenialAuditSink auditSink = {});
 
 private:
     void serveLoop();
@@ -107,7 +110,12 @@ private:
     std::string handleMcpRequest(const std::string& path,
                                  const std::string& body,
                                  const std::string& clientIpAddress = std::string{},
-                                 const std::string& clientType = std::string{});
+                                 const std::string& clientType = std::string{},
+                                 const std::string& clientId = std::string{});
+    CapabilityAuthorizationContext resolveCapabilities(
+        const std::string& clientId,
+        const std::string& clientIpAddress) const;
+    void auditCapabilityDenial(const CapabilityDenialAuditEvent& event) const;
 
     // PHASE-12 follow-up (v0.6.10): walk every pool's first Ready instance,
     // ask it tools/list via the stdio bridge, and rebuild the cached
@@ -138,6 +146,8 @@ private:
     // is called.
     std::shared_ptr<IWorkerSupervisor> workerSupervisor_;
     std::shared_ptr<ILeaseRouter> leaseRouter_;
+    CapabilityResolver capabilityResolver_;
+    CapabilityDenialAuditSink capabilityDenialAuditSink_;
 
     // PHASE-12 follow-up (v0.6.10): cached tools catalog, refreshed on
     // every tools/list. Used by tools/call to resolve a tool name to the

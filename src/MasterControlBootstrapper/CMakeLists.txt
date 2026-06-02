@@ -13,10 +13,6 @@ target_link_libraries(MasterControlBootstrapper PRIVATE
     shell32
 )
 
-target_compile_definitions(MasterControlBootstrapper PRIVATE
-    MASTERCONTROL_BOOTSTRAPPER_VERSION="${PROJECT_VERSION}"
-)
-
 add_executable(MasterControlOrchestrationServerLauncher WIN32
     launcher_main.cpp
     MasterControlBootstrapper.rc

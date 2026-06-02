@@ -24,6 +24,9 @@ namespace MasterControlShell {
 struct SetupWizardCallbacks {
     std::function<void(const std::wstring& destinationId)> navigateToDestination;
     std::function<void(const std::wstring& workflowId)> startGuidedWorkflow;
+    std::function<void(const std::wstring& mode)> startSetupMode;
+    std::function<void()> completeSetup;
+    std::function<void()> dismissSetup;
     std::function<void()> refreshData;
 };
 

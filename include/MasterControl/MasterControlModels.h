@@ -163,6 +163,9 @@ struct RuntimeEndpoint final {
     std::string specialization;
     bool userDefined = false;
     bool isTemplate = false;
+    std::vector<std::string> requiredCapabilities;
+    std::string risk;
+    bool highRisk = false;
     // v0.7.2: optional process-template fields. When `command` is non-empty
     // on a SubAgent registration, the runtime auto-promotes it to a
     // managed pool (poolId == endpoint.id) so autoscale + utilization
@@ -190,10 +193,11 @@ struct ManagedNodeProfile final {
 
 struct SecuritySettings final {
     bool enableTls = false;
-    bool enableAuthentication = false;
+    bool enableAuthentication = true;
     bool allowTroubleshootingBypass = false;
-    bool allowOpenLanAccess = true;
+    bool allowOpenLanAccess = false;
     bool securityProtocolsEnabled = true;
+    std::string securityPosture = "local-only";
     std::vector<std::string> trustedRemoteHosts;
 };
 
@@ -247,6 +251,7 @@ struct ReadinessIssue final {
 struct ReadinessSnapshot final {
     bool setupStarted = false;
     bool firstRunCompleted = false;
+    std::string securityPosture = "local-only";
     int mcpReadyCount = 0;
     int mcpMissingCount = 0;
     int workflowsReadyCount = 0;
@@ -258,6 +263,36 @@ struct ReadinessSnapshot final {
     // "create-starter-workflow" | "review" | "complete"
     std::string recommendedNextStep;
     std::string updatedAtUtc;
+};
+
+struct SetupOverrideRecord final {
+    std::string stepId;
+    std::string issueId;
+    std::string reason;
+    std::string createdAtUtc;
+};
+
+struct SetupStepState final {
+    std::string id;
+    std::string label;
+    std::string state = "pending";
+    std::vector<std::string> blockers;
+    std::string recommendedAction;
+};
+
+struct SetupStateSnapshot final {
+    int setupVersion = 1;
+    std::string mode = "guided";
+    std::string currentStep = "welcome";
+    std::vector<SetupStepState> steps;
+    ReadinessSnapshot readiness;
+    std::string securityPosture = "local-only";
+    bool lanModeEnabled = false;
+    bool beaconEnabled = false;
+    bool mcpGatewayAdvertised = false;
+    std::string dismissedAtUtc;
+    std::string lastUpdatedUtc;
+    std::vector<SetupOverrideRecord> overrides;
 };
 
 // ---------------------------------------------------------------------------
@@ -315,8 +350,32 @@ struct DependencyInstallResult final {
 };
 
 // ---------------------------------------------------------------------------
-// Starter Workflow Templates (WS6)
+// Workflow Persistence & Starter Templates
 // ---------------------------------------------------------------------------
+
+struct WorkflowStepDefinition final {
+    std::string stepId;
+    std::string kind = "mcp-tool";
+    std::string target;
+    nlohmann::json arguments = nlohmann::json::object();
+    bool requiresApproval = false;
+};
+
+struct WorkflowDefinition final {
+    std::string workflowId;
+    std::string displayName;
+    std::string description;
+    std::string source = "manual"; // "manual" | "imported" | "starter-template"
+    bool enabled = true;
+    std::string createdAtUtc;
+    std::string updatedAtUtc;
+    std::vector<std::string> requiredCapabilities;
+    std::vector<WorkflowStepDefinition> steps;
+};
+
+struct WorkflowDeleteRequest final {
+    std::string workflowId;
+};
 
 struct StarterWorkflowTemplate final {
     std::string id;
@@ -325,6 +384,8 @@ struct StarterWorkflowTemplate final {
     int requiresClients = 0;
     int requiresMcp = 0;
     int requiresSpecialists = 0;
+    std::vector<std::string> requiredCapabilities;
+    std::vector<WorkflowStepDefinition> steps;
 };
 
 struct StarterWorkflowInstantiateRequest final {
@@ -752,14 +813,14 @@ struct BeaconAdvertisement final {
 // older deserialize cleanly.
 struct McpGatewayConfiguration final {
     GatewayType type = GatewayType::Native;
-    bool enabled = true;             // v0.9.0 ships enabled-by-default
+    bool enabled = false;
     std::string binaryPath;          // unused since v0.9.0 -- kept for back-compat
-    std::string listenHost = "0.0.0.0";
+    std::string listenHost = "127.0.0.1";
     uint16_t listenPort = 8080;      // distinct from admin browserPort=7300
     std::string mcpPath = "/mcp";
     std::string healthPath = "/health";
     std::string databasePath;        // unused since v0.9.0 -- kept for back-compat
-    std::string mode = "lan-trusted"; // development | enterprise | lan-trusted
+    std::string mode = "local-only"; // local-only | trusted-lan | hardened-lan
 
     // v0.11.0-alpha.2: optional TLS dual-bind. When `tlsEnabled` is true the
     // native HTTP.sys adapter additionally registers `https://+:tlsListenPort/`
@@ -815,6 +876,9 @@ struct McpToolDescriptor final {
     // `tools/list` alone. The worker-side schemas were always present
     // -- the descriptor model just didn't carry them through.
     std::string inputSchemaJson;
+    std::vector<std::string> requiredCapabilities;
+    std::string risk;
+    bool highRisk = false;
 };
 
 struct GatewayStatus final {
@@ -823,9 +887,8 @@ struct GatewayStatus final {
     std::string mcpUrl;              // empty until Running
     std::string startedAtUtc;
     std::string adapterType;         // "native" | "fake"
-    // v0.11.0-alpha.2 (Copilot-review-hardened): runtime TLS readiness
-    // signal. tlsBound == true iff the HTTPS URL prefix registered
-    // successfully AND the operator declared a cert by setting
+    // Runtime TLS readiness signal. tlsBound == true iff the HTTPS URL
+    // prefix registered successfully AND the operator declared a cert by setting
     // cfg.mcpGateway.tlsCertThumbprint. Discovery + onboarding gate on
     // this rather than the bare config flag so we never advertise an
     // HTTPS URL that the runtime knows is not actually usable. Empty
@@ -1159,12 +1222,11 @@ struct DiscoveryGateway final {
     std::string mcpUrl;      // e.g. http://192.168.1.10:8080/mcp
     std::string healthUrl;   // e.g. http://192.168.1.10:8080/health
     std::string state;       // GatewayState slug
-    // v0.11.0-alpha.2 (Copilot-review-hardened): optional TLS dual-bind
-    // URLs. These are populated only when the runtime's GatewayStatus
+    // Optional TLS dual-bind URLs. These are populated only when the runtime's GatewayStatus
     // reports tlsBound == true -- i.e., the HTTPS URL prefix successfully
     // registered AND the operator declared a cert via
-    // cfg.mcpGateway.tlsCertThumbprint. Pre-hardening these fields were
-    // gated on the bare config flag, which could publish an HTTPS URL
+    // cfg.mcpGateway.tlsCertThumbprint. Earlier versions gated these
+    // fields on the bare config flag, which could publish an HTTPS URL
     // that the gateway knew was not actually serving (cert never bound,
     // URL prefix failed under ERROR_ACCESS_DENIED, etc.). Strict clients
     // (ChatGPT connector, Claude.ai web, security-conscious browser
@@ -1226,8 +1288,9 @@ struct DiscoveryDocument final {
     std::string role = "mcp-gateway-host";
     std::string version;
     std::string instanceId;
-    std::string trust = "lan";
-    std::string auth = "none";
+    std::string trust = "local-only";
+    std::string auth = "required";
+    std::string securityPosture = "local-only";
     DiscoveryGateway gateway;
     DiscoveryOnboarding onboarding;
     DiscoveryGovernance governance;
@@ -1383,20 +1446,25 @@ struct DashboardSnapshot final {
 struct AppConfiguration final {
     std::string instanceName = "Master Control Orchestration Server";
     std::string instanceId;          // PHASE-03: stable per-host id, generated on first run
-    std::string bindAddress = "0.0.0.0";
+    std::string bindAddress = "127.0.0.1";
     uint16_t browserPort = 7300;
     uint16_t beaconPort = 7301;
     uint16_t beaconBroadcastIntervalSeconds = 15;
-    bool beaconEnabled = true;
+    bool beaconEnabled = false;
     bool aiAutonomyEnabled = false;
     bool advancedMode = false;
     bool firstRunCompleted = false;
     std::string firstRunStartedAtUtc;
     std::string firstRunCompletedAtUtc;
     std::vector<std::string> firstRunSkippedSteps;
+    std::string setupMode = "guided";
+    std::string setupCurrentStep = "welcome";
+    std::string setupDismissedAtUtc;
+    std::vector<SetupOverrideRecord> setupOverrides;
     SecuritySettings security;
     ResourceAllocationProfile resourceAllocation;
     std::vector<SubAgentGroupDefinition> subAgentGroups;
+    std::vector<WorkflowDefinition> workflows;
     std::vector<LanClient> lanClients;
     std::vector<AppleRemoteHost> appleRemoteHosts;
     ManagedNodeProfile activeProfile;
@@ -1547,6 +1615,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     lastCheckedUtc,
     routePath,
     specialization,
+    requiredCapabilities,
+    risk,
+    highRisk,
     userDefined,
     isTemplate,
     command,
@@ -1570,6 +1641,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     allowTroubleshootingBypass,
     allowOpenLanAccess,
     securityProtocolsEnabled,
+    securityPosture,
     trustedRemoteHosts)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -1613,6 +1685,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ReadinessSnapshot,
     setupStarted,
     firstRunCompleted,
+    securityPosture,
     mcpReadyCount,
     mcpMissingCount,
     workflowsReadyCount,
@@ -1622,6 +1695,36 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     blockingIssues,
     recommendedNextStep,
     updatedAtUtc)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    SetupOverrideRecord,
+    stepId,
+    issueId,
+    reason,
+    createdAtUtc)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    SetupStepState,
+    id,
+    label,
+    state,
+    blockers,
+    recommendedAction)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    SetupStateSnapshot,
+    setupVersion,
+    mode,
+    currentStep,
+    steps,
+    readiness,
+    securityPosture,
+    lanModeEnabled,
+    beaconEnabled,
+    mcpGatewayAdvertised,
+    dismissedAtUtc,
+    lastUpdatedUtc,
+    overrides)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     SupportedDependency,
@@ -1656,13 +1759,39 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     postInstallDetection)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    WorkflowStepDefinition,
+    stepId,
+    kind,
+    target,
+    arguments,
+    requiresApproval)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    WorkflowDefinition,
+    workflowId,
+    displayName,
+    description,
+    source,
+    enabled,
+    createdAtUtc,
+    updatedAtUtc,
+    requiredCapabilities,
+    steps)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    WorkflowDeleteRequest,
+    workflowId)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     StarterWorkflowTemplate,
     id,
     displayName,
     description,
     requiresClients,
     requiresMcp,
-    requiresSpecialists)
+    requiresSpecialists,
+    requiredCapabilities,
+    steps)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     StarterWorkflowInstantiateRequest,
@@ -2143,9 +2272,14 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     firstRunStartedAtUtc,
     firstRunCompletedAtUtc,
     firstRunSkippedSteps,
+    setupMode,
+    setupCurrentStep,
+    setupDismissedAtUtc,
+    setupOverrides,
     security,
     resourceAllocation,
     subAgentGroups,
+    workflows,
     lanClients,
     appleRemoteHosts,
     activeProfile,
@@ -2183,7 +2317,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     McpToolDescriptor,
     serverName,
     toolName,
-    description)
+    description,
+    inputSchemaJson,
+    requiredCapabilities,
+    risk,
+    highRisk)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GatewayStatus,
@@ -2266,6 +2404,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     instanceId,
     trust,
     auth,
+    securityPosture,
     gateway,
     onboarding,
     governance,

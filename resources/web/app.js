@@ -20,7 +20,7 @@
 // ---------------------------------------------------------------------------
 
 const state = {
-  destination: 'overview',
+  destination: 'setup',
   dashboard: null,
   clients: [],
   approvals: [],
@@ -29,6 +29,10 @@ const state = {
   selectedClientId: null,
   health: { status: 'unknown', time: '' },
   errorBanner: '',
+  setupState: null,
+  setupBypassThisSession: false,
+  workflows: null,
+  workflowTemplates: null,
   // PHASE-09 gateway-first state
   gatewayStatus: null,
   gatewayHealth: null,
@@ -61,6 +65,13 @@ const destinations = [
     eyebrow: 'COMMAND DECK',
     title: 'Master Control',
     subtitle: 'Gateway, pools, clients, and governance posture at a glance.'
+  },
+  {
+    id: 'setup',
+    label: 'Start Here',
+    eyebrow: 'SETUP',
+    title: 'Start Here',
+    subtitle: 'Guided, manual, or import setup backed by the shared readiness state machine.'
   },
   {
     id: 'gateway',
@@ -119,6 +130,13 @@ const destinations = [
     subtitle: 'Operator catalog of registered backends. PHASE-06 added pools above; this remains the operator inventory.'
   },
   {
+    id: 'workflows',
+    label: 'Workflows',
+    eyebrow: 'SETUP',
+    title: 'Workflows',
+    subtitle: 'Manual, imported, and starter-template workflows that count toward setup readiness.'
+  },
+  {
     id: 'activity',
     label: 'Activity',
     eyebrow: 'STREAM',
@@ -133,6 +151,16 @@ const destinations = [
     subtitle: 'Server-authored config bundles and gateway profiles. Manual download remains first-class.'
   }
 ];
+
+function normalizeDestinationId(value, fallback) {
+  const raw = String(value || '').toLowerCase();
+  if (destinations.some((dest) => dest.id === raw)) return raw;
+  if (raw.indexOf('workflow') !== -1) return 'workflows';
+  if (raw.indexOf('client') !== -1) return 'clients';
+  if (raw.indexOf('mcp') !== -1 || raw.indexOf('specialist') !== -1 || raw.indexOf('runtime') !== -1) return 'runtime';
+  if (raw.indexOf('import') !== -1) return 'exports';
+  return fallback || 'setup';
+}
 
 function $(selector) { return document.querySelector(selector); }
 
@@ -212,6 +240,14 @@ async function loadJson(path, options) {
   return parsed;
 }
 
+function postJson(path, payload) {
+  return loadJson(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload || {})
+  });
+}
+
 function showBanner(message) {
   state.errorBanner = message;
   renderCurrent();
@@ -253,6 +289,9 @@ async function refreshAll() {
       loadJson('/api/clu/approvals').catch(() => []),
       loadJson('/api/exports').catch(() => []),
       loadJson('/api/activity').catch(() => ({ events: [], highWaterMarkId: '0' })),
+      loadJson('/api/setup/state').catch(() => null),
+      loadJson('/api/workflows').catch(() => null),
+      loadJson('/api/setup/workflow-templates').catch(() => null),
       // PHASE-02..08 gateway-first surface
       loadJson('/api/gateway/status').catch(() => null),
       loadJson('/api/gateway/health').catch(() => null),
@@ -272,7 +311,7 @@ async function refreshAll() {
       // browser-side mirror).
       loadJson('/api/supervisor/status').catch(() => null)
     ]);
-    const [health, dashboard, clients, approvals, exportsList, activity,
+    const [health, dashboard, clients, approvals, exportsList, activity, setupState, workflows, workflowTemplates,
            gwStatus, gwHealth, gwTools, pools, discovery,
            telEvents, telClients, telGateway, claudePlugin, selfTests,
            supervisorStatus] = results;
@@ -284,6 +323,9 @@ async function refreshAll() {
     state.activity = activity && Array.isArray(activity.events)
       ? activity
       : { events: [], highWaterMarkId: '0' };
+    state.setupState = setupState;
+    state.workflows = workflows;
+    state.workflowTemplates = workflowTemplates;
     state.gatewayStatus = gwStatus;
     state.gatewayHealth = gwHealth;
     state.gatewayTools = Array.isArray(gwTools) ? gwTools : [];
@@ -297,6 +339,16 @@ async function refreshAll() {
     state.claudePlugin = claudePlugin;
     state.selfTests = selfTests || null;
     state.supervisorStatus = supervisorStatus || null;
+    const setupReadiness = state.setupState && state.setupState.readiness;
+    const setupIncomplete = setupReadiness && setupReadiness.firstRunCompleted !== true;
+    const criticalSetupBlockers = ((setupReadiness && setupReadiness.blockingIssues) || [])
+      .some((issue) => issue && (issue.severity === 'critical' || issue.severity === 'blocking'));
+    if (setupIncomplete
+        && state.destination === 'overview'
+        && !state.setupBypassThisSession
+        && (criticalSetupBlockers || !state.setupState.dismissedAtUtc)) {
+      state.destination = 'setup';
+    }
     // Per-pool lease + saturation (best-effort; missing routes degrade silently)
     if (state.pools.length > 0) {
       const leaseFetches = state.pools.map((p) =>
@@ -358,29 +410,30 @@ function renderToolbar() {
   const toolbar = $('#surfaceToolbar');
   if (!toolbar) return;
   toolbar.innerHTML = `
-    <button type="button" data-action="open-onboarding" class="route-button accent">
-      Onboard a Client
-    </button>
-    <button type="button" data-action="open-gateway" class="route-button">
-      Gateway Status
-    </button>
-    <button type="button" data-action="open-pools" class="route-button">
-      Worker Pools
-    </button>
-    <button type="button" data-action="open-discovery" class="route-button">
-      Discovery
-    </button>
-    <button type="button" data-action="open-governance" class="route-button">
-      Governance
-    </button>
-    <button type="button" data-action="register-client" class="route-button">
-      LAN Identity
-    </button>
+    <div class="toolbar-group">
+      <span class="toolbar-group-label">Start</span>
+      <button type="button" data-action="open-setup" class="route-button accent">Start Here</button>
+      <button type="button" data-action="open-onboarding" class="route-button accent">Onboard Client</button>
+      <button type="button" data-action="open-workflows" class="route-button">Workflows</button>
+    </div>
+    <div class="toolbar-group">
+      <span class="toolbar-group-label">Operate</span>
+      <button type="button" data-action="open-gateway" class="route-button">Gateway</button>
+      <button type="button" data-action="open-pools" class="route-button">Pools</button>
+      <button type="button" data-action="open-governance" class="route-button">Governance</button>
+    </div>
+    <div class="toolbar-group">
+      <span class="toolbar-group-label">Advanced</span>
+      <button type="button" data-action="open-discovery" class="route-button">Discovery</button>
+      <button type="button" data-action="register-client" class="route-button">LAN Identity</button>
+    </div>
   `;
   const goto = (id) => () => { state.destination = id; renderCurrent(); };
+  toolbar.querySelector('[data-action="open-setup"]').addEventListener('click', goto('setup'));
   toolbar.querySelector('[data-action="open-onboarding"]').addEventListener('click', goto('onboarding'));
   toolbar.querySelector('[data-action="open-gateway"]').addEventListener('click', goto('gateway'));
   toolbar.querySelector('[data-action="open-pools"]').addEventListener('click', goto('pools'));
+  toolbar.querySelector('[data-action="open-workflows"]').addEventListener('click', goto('workflows'));
   toolbar.querySelector('[data-action="open-discovery"]').addEventListener('click', goto('discovery'));
   toolbar.querySelector('[data-action="open-governance"]').addEventListener('click', goto('governance'));
   toolbar.querySelector('[data-action="register-client"]').addEventListener('click', () => {
@@ -393,13 +446,25 @@ function renderToolbar() {
 function renderNavigation() {
   const nav = $('#surfaceNavigation');
   if (!nav) return;
-  nav.innerHTML = destinations.map((dest) => `
-    <button type="button"
-            class="nav-link${state.destination === dest.id ? ' active' : ''}"
-            data-destination="${escapeHtml(dest.id)}">
-      <span class="nav-link-label">${escapeHtml(dest.label)}</span>
-      <span class="nav-link-eyebrow">${escapeHtml(dest.eyebrow)}</span>
-    </button>
+  const byId = {};
+  destinations.forEach((dest) => { byId[dest.id] = dest; });
+  const groups = [
+    { label: 'Start', ids: ['setup', 'overview', 'onboarding', 'workflows'] },
+    { label: 'Operate', ids: ['gateway', 'pools', 'telemetry-clients', 'governance'] },
+    { label: 'Advanced', ids: ['runtime', 'discovery', 'clients', 'activity', 'exports'] }
+  ];
+  nav.innerHTML = groups.map((group) => `
+    <div class="nav-group">
+      <p class="nav-group-label">${escapeHtml(group.label)}</p>
+      ${group.ids.map((id) => byId[id]).filter(Boolean).map((dest) => `
+        <button type="button"
+                class="nav-link${state.destination === dest.id ? ' active' : ''}"
+                data-destination="${escapeHtml(dest.id)}">
+          <span class="nav-link-label">${escapeHtml(dest.label)}</span>
+          <span class="nav-link-eyebrow">${escapeHtml(dest.eyebrow)}</span>
+        </button>
+      `).join('')}
+    </div>
   `).join('');
   nav.querySelectorAll('button[data-destination]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -472,6 +537,7 @@ function renderCurrent() {
     : '';
 
   switch (state.destination) {
+    case 'setup':             host.innerHTML = banner + renderSetupPanel();       bindSetupHandlers();      break;
     case 'gateway':           host.innerHTML = banner + renderGatewayPanel();                                break;
     case 'pools':             host.innerHTML = banner + renderPoolsPanel();        bindPoolsHandlers();      break;
     case 'telemetry-clients': host.innerHTML = banner + renderTelemetryClients();                            break;
@@ -479,12 +545,341 @@ function renderCurrent() {
     case 'discovery':         host.innerHTML = banner + renderDiscoveryPanel();    bindDiscoveryHandlers();  break;
     case 'clients':           host.innerHTML = banner + renderClients();           bindClientsHandlers();    break;
     case 'governance':        host.innerHTML = banner + renderGovernance();        bindGovernanceHandlers(); break;
-    case 'runtime':           host.innerHTML = banner + renderRuntime();                                     break;
+    case 'runtime':           host.innerHTML = banner + renderRuntime();           bindRuntimeHandlers();    break;
+    case 'workflows':         host.innerHTML = banner + renderWorkflowsPanel(); bindWorkflowHandlers();      break;
     case 'activity':          host.innerHTML = banner + renderActivity();                                    break;
     case 'exports':           host.innerHTML = banner + renderExports();           bindExportsHandlers();    break;
     case 'overview':
     default:                  host.innerHTML = banner + renderOverview();          bindOverviewHandlers();   break;
   }
+}
+
+// ---- Setup ----
+
+function readinessTile(label, ready, missing, actionLabel, destination) {
+  const total = Number(ready || 0) + Number(missing || 0);
+  const tileState = ready > 0 && missing === 0 ? 'ready' : (ready === 0 ? 'missing' : 'needs-attention');
+  return `
+    <article class="readiness-tile" data-state="${escapeHtml(tileState)}">
+      <p class="eyebrow">${escapeHtml(label)}</p>
+      <h3>${escapeHtml(String(ready || 0))} / ${escapeHtml(String(total))}</h3>
+      <p class="muted">${escapeHtml(tileState === 'ready' ? 'Ready' : (tileState === 'missing' ? 'Missing' : 'Needs attention'))}</p>
+      ${destination ? `<button type="button" class="route-button" data-action="setup-goto" data-destination="${escapeHtml(destination)}">${escapeHtml(actionLabel || 'Fix now')}</button>` : ''}
+    </article>
+  `;
+}
+
+function renderSetupPanel() {
+  const setup = state.setupState || {};
+  const readiness = setup.readiness || {};
+  const issues = Array.isArray(readiness.blockingIssues) ? readiness.blockingIssues : [];
+  const steps = Array.isArray(setup.steps) ? setup.steps : [];
+  const completed = readiness.firstRunCompleted === true;
+  const mode = setup.mode || 'guided';
+  const currentStep = setup.currentStep || 'welcome';
+  const criticalIssues = issues.filter((issue) => issue && (issue.severity === 'critical' || issue.severity === 'blocking'));
+  return `
+    <article class="panel-block wide setup-state-panel">
+      <p class="eyebrow">SETUP STATE</p>
+      <h3>${completed ? 'Setup complete' : 'Start Here'}</h3>
+      <p class="muted">Mode <code>${escapeHtml(mode)}</code> · current step <code>${escapeHtml(currentStep)}</code> · posture <code>${escapeHtml(setup.securityPosture || 'local-only')}</code></p>
+
+      <div class="first-run-entry-grid">
+        <button type="button" class="first-run-entry-card" data-action="setup-start" data-mode="guided">
+          <p class="eyebrow">GUIDED</p>
+          <h3>Guided Setup</h3>
+          <p>Step through local preflight, security posture, runtime lanes, workflows, and readiness review.</p>
+        </button>
+        <button type="button" class="first-run-entry-card" data-action="setup-start" data-mode="manual">
+          <p class="eyebrow">MANUAL</p>
+          <h3>Manual Setup</h3>
+          <p>Use the full operator console now, then return here for the shared readiness review.</p>
+        </button>
+        <button type="button" class="first-run-entry-card" data-action="setup-start" data-mode="import-existing">
+          <p class="eyebrow">IMPORT</p>
+          <h3>Import Existing Configuration</h3>
+          <p>Bring in an existing package, repository, or zip bundle and validate it before completion.</p>
+        </button>
+      </div>
+
+      <div class="wizard-step-rail">
+        ${steps.map((step) => `
+          <span class="wizard-step-rail-item ${step.state === 'ready' ? 'done' : (step.state === 'active' ? 'active' : '')}"
+                title="${escapeHtml((step.blockers || []).join(', '))}">
+            ${escapeHtml(step.label || step.id || 'step')}
+          </span>
+        `).join('')}
+      </div>
+
+      <div class="readiness-grid">
+        ${readinessTile('MCP Servers', readiness.mcpReadyCount || 0, readiness.mcpMissingCount || 0, 'Open Runtime', 'runtime')}
+        ${readinessTile('Specialists', readiness.specialistsReadyCount || 0, readiness.specialistsMissingCount || 0, 'Open Runtime', 'runtime')}
+        ${readinessTile('Workflows', readiness.workflowsReadyCount || 0, readiness.workflowsMissingCount || 0, 'Open Workflows', 'workflows')}
+      </div>
+
+      ${issues.length === 0 ? '' : `
+        <h3>Readiness Issues</h3>
+        <table class="runtime-table">
+          <thead><tr><th>Severity</th><th>Issue</th><th>Destination</th></tr></thead>
+          <tbody>
+            ${issues.map((issue) => {
+              const destination = issue.remediationDestination || 'setup';
+              return `<tr>
+              <td>${escapeHtml(issue.severity || 'info')}</td>
+              <td><strong>${escapeHtml(issue.title || issue.id || 'Issue')}</strong><br><span class="muted">${escapeHtml(issue.detail || '')}</span></td>
+              <td><button type="button" class="route-button" data-action="setup-goto" data-destination="${escapeHtml(destination)}">${escapeHtml(issue.remediationLabel || 'Fix Now')}</button></td>
+            </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      `}
+
+      <div class="manual-setup-banner">
+        <div>
+          <strong>${criticalIssues.length === 0 ? 'Ready for operator confirmation' : 'Critical blockers require attention'}</strong>
+          <p class="muted">Completion requires <code>confirm: true</code>; critical blockers require explicit override reasons through the shared API.</p>
+        </div>
+        <div class="dialog-actions">
+          ${completed ? '' : '<button type="button" class="route-button accent" data-action="setup-complete">Mark Setup Complete</button>'}
+          <button type="button" class="route-button" data-action="setup-dismiss">Continue Setup Later</button>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function bindSetupHandlers() {
+  document.querySelectorAll('[data-action="setup-start"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const mode = btn.dataset.mode || 'guided';
+      try {
+        const result = await postJson('/api/setup/start', { mode });
+        state.setupState = result && result.setup ? result.setup : state.setupState;
+        if (mode === 'manual') {
+          await postJson('/api/setup/dismiss', {});
+          state.setupBypassThisSession = true;
+          state.destination = 'overview';
+        } else if (mode === 'import-existing') {
+          state.destination = 'exports';
+        } else {
+          state.destination = 'runtime';
+        }
+        await refreshAll();
+      } catch (err) {
+        const body = err.body || {};
+        showBanner(body.message || body.errorMessage || ('Setup start failed: ' + (err.message || 'unknown')));
+      }
+    });
+  });
+  document.querySelectorAll('[data-action="setup-goto"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.destination = normalizeDestinationId(btn.dataset.destination, 'setup');
+      renderCurrent();
+    });
+  });
+  const completeBtn = document.querySelector('[data-action="setup-complete"]');
+  if (completeBtn) {
+    completeBtn.addEventListener('click', async () => {
+      try {
+        const result = await postJson('/api/setup/complete', { confirm: true });
+        state.setupState = result && result.setup ? result.setup : state.setupState;
+        clearBanner();
+        await refreshAll();
+      } catch (err) {
+        const body = err.body || {};
+        showBanner(body.errorMessage || body.message || ('Setup completion failed: ' + (err.message || 'unknown')));
+      }
+    });
+  }
+  const dismissBtn = document.querySelector('[data-action="setup-dismiss"]');
+  if (dismissBtn) {
+    dismissBtn.addEventListener('click', async () => {
+      try {
+        const result = await postJson('/api/setup/dismiss', {});
+        state.setupState = result && result.setup ? result.setup : state.setupState;
+        state.setupBypassThisSession = true;
+        state.destination = 'overview';
+        await refreshAll();
+      } catch (err) {
+        const body = err.body || {};
+        showBanner(body.message || body.errorMessage || ('Setup dismiss failed: ' + (err.message || 'unknown')));
+      }
+    });
+  }
+}
+
+// ---- Workflows ----
+
+function riskTone(value) {
+  const risk = String(value || '').toLowerCase();
+  if (risk === 'critical' || risk === 'high') return 'critical';
+  if (risk === 'medium' || risk === 'warning') return 'warn';
+  if (risk === 'low') return 'good';
+  return 'info';
+}
+
+function capabilityChips(capabilities) {
+  const caps = Array.isArray(capabilities) ? capabilities : [];
+  if (caps.length === 0) {
+    return '<span class="capability-chip muted">no extra capability</span>';
+  }
+  return caps.map((cap) => `<span class="capability-chip">${escapeHtml(cap)}</span>`).join('');
+}
+
+function renderStarterWorkflowTemplates(templates) {
+  if (!templates || templates.length === 0) {
+    return '';
+  }
+  return `
+    <section class="template-card-section">
+      <div class="section-split-heading">
+        <div>
+          <p class="eyebrow">GUIDED TASK CARDS</p>
+          <h3>Starter workflow templates</h3>
+        </div>
+        <span class="muted">Direct instantiate, then validate readiness.</span>
+      </div>
+      <div class="template-card-grid">
+        ${templates.map((tpl) => {
+          const caps = Array.isArray(tpl.requiredCapabilities) ? tpl.requiredCapabilities : [];
+          const requirements = [
+            `${tpl.requiresClients || 0} client${tpl.requiresClients === 1 ? '' : 's'}`,
+            `${tpl.requiresMcp || 0} MCP`,
+            `${tpl.requiresSpecialists || 0} specialist${tpl.requiresSpecialists === 1 ? '' : 's'}`
+          ].join(' · ');
+          return `
+            <article class="template-card" data-risk="${caps.length > 0 ? 'warn' : 'info'}">
+              <div class="template-card-head">
+                <span class="badge-template">TEMPLATE</span>
+                <span class="risk-pill ${caps.length > 0 ? 'warn' : 'info'}">${caps.length > 0 ? 'capability gated' : 'standard'}</span>
+              </div>
+              <h3>${escapeHtml(tpl.displayName || tpl.id || 'Workflow template')}</h3>
+              <p class="muted">${escapeHtml(tpl.description || '')}</p>
+              <p class="muted">Requires ${escapeHtml(requirements)}</p>
+              <div class="capability-chip-row">${capabilityChips(caps)}</div>
+              <button type="button" class="route-button accent" data-action="workflow-template-instantiate" data-template-id="${escapeHtml(tpl.id || '')}">Instantiate</button>
+            </article>
+          `;
+        }).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function renderWorkflowsPanel() {
+  const doc = state.workflows || {};
+  const workflows = Array.isArray(doc.workflows) ? doc.workflows : [];
+  const templateDoc = state.workflowTemplates || {};
+  const templates = Array.isArray(templateDoc.templates) ? templateDoc.templates : [];
+  return `
+    <article class="panel-block wide">
+      <div class="manual-setup-banner">
+        <div>
+          <strong>${escapeHtml(String(doc.readyCount || 0))} ready workflow${doc.readyCount === 1 ? '' : 's'}</strong>
+          <p class="muted">${escapeHtml(String(doc.invalidCount || 0))} invalid · ${escapeHtml(String(doc.disabledCount || 0))} disabled · ${escapeHtml(String(doc.missingCount || 0))} missing</p>
+        </div>
+        <button type="button" class="route-button accent" data-action="workflow-create-demo">Create Manual Workflow</button>
+      </div>
+      ${renderStarterWorkflowTemplates(templates)}
+      ${workflows.length === 0 ? '<p class="muted">No workflows have been created yet. Manual, imported, and starter-template workflows all satisfy readiness when enabled and valid.</p>' : `
+        <table class="runtime-table">
+          <thead><tr><th>Workflow</th><th>Source</th><th>State</th><th>Steps</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${workflows.map((wf) => {
+              const issues = Array.isArray(wf.validationIssues) ? wf.validationIssues : [];
+              return `<tr>
+                <td><strong>${escapeHtml(wf.displayName || wf.workflowId || 'Workflow')}</strong><br><code>${escapeHtml(wf.workflowId || '')}</code>${issues.length === 0 ? '' : `<br><span class="muted">${escapeHtml(issues.map((issue) => issue.id || issue.message || 'issue').join(', '))}</span>`}</td>
+                <td>${escapeHtml(wf.source || 'manual')}</td>
+                <td>${wf.enabled === false ? 'disabled' : (wf.ready ? 'ready' : 'invalid')}</td>
+                <td>${escapeHtml(String((wf.steps || []).length))}</td>
+                <td>
+                  <button type="button" class="route-button" data-action="workflow-toggle" data-workflow-id="${escapeHtml(wf.workflowId || '')}" data-enabled="${wf.enabled === false ? 'false' : 'true'}">${wf.enabled === false ? 'Enable' : 'Disable'}</button>
+                  <button type="button" class="route-button danger" data-action="workflow-delete" data-workflow-id="${escapeHtml(wf.workflowId || '')}">Delete</button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      `}
+    </article>
+  `;
+}
+
+function workflowDemoPayload(source) {
+  const stamp = String(Date.now()).slice(-6);
+  return {
+    workflowId: source + '-workflow-' + stamp,
+    displayName: source === 'imported' ? 'Imported Workflow ' + stamp : 'Manual Workflow ' + stamp,
+    description: 'Operator-created workflow for setup readiness.',
+    source,
+    enabled: true,
+    steps: [
+      {
+        stepId: 'operator-review',
+        kind: 'approval',
+        target: 'operator.readiness-review',
+        arguments: {},
+        requiresApproval: true
+      }
+    ]
+  };
+}
+
+function bindWorkflowHandlers() {
+  const createBtn = document.querySelector('[data-action="workflow-create-demo"]');
+  if (createBtn) {
+    createBtn.addEventListener('click', async () => {
+      try {
+        await postJson('/api/workflows', workflowDemoPayload('manual'));
+        await refreshAll();
+      } catch (err) {
+        const body = err.body || {};
+        showBanner(body.message || body.errorMessage || 'Workflow create failed.');
+      }
+    });
+  }
+  document.querySelectorAll('[data-action="workflow-template-instantiate"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const templateId = btn.dataset.templateId || '';
+      if (!templateId) return;
+      try {
+        const result = await postJson('/api/setup/workflow-templates/' + encodeURIComponent(templateId) + '/instantiate', {});
+        if (result && result.succeeded === false) {
+          showBanner(result.message || 'Starter workflow requirements are not met.');
+          return;
+        }
+        await refreshAll();
+      } catch (err) {
+        const body = err.body || {};
+        showBanner(body.message || body.errorMessage || ('Starter workflow instantiate failed: ' + (err.message || 'unknown')));
+      }
+    });
+  });
+  document.querySelectorAll('[data-action="workflow-toggle"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.workflowId || '';
+      const action = btn.dataset.enabled === 'false' ? 'enable' : 'disable';
+      try {
+        await postJson('/api/workflows/' + encodeURIComponent(id) + '/' + action, {});
+        await refreshAll();
+      } catch (err) {
+        const body = err.body || {};
+        showBanner(body.message || body.errorMessage || 'Workflow update failed.');
+      }
+    });
+  });
+  document.querySelectorAll('[data-action="workflow-delete"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.workflowId || '';
+      try {
+        await loadJson('/api/workflows/' + encodeURIComponent(id), { method: 'DELETE' });
+        await refreshAll();
+      } catch (err) {
+        const body = err.body || {};
+        showBanner(body.message || body.errorMessage || 'Workflow delete failed.');
+      }
+    });
+  });
 }
 
 // ---- Overview ----
@@ -1699,27 +2094,76 @@ async function rejectDeferred(id) {
 
 // ---- Shared fabric ----
 
+function renderEndpointTemplateCards(templates, label, setupDestination) {
+  if (!templates || templates.length === 0) {
+    return '';
+  }
+  return `
+    <article class="panel-block wide template-card-section">
+      <div class="section-split-heading">
+        <div>
+          <p class="eyebrow">GUIDED TASK CARDS</p>
+          <h3>${escapeHtml(label)} templates (${templates.length})</h3>
+        </div>
+        <span class="muted">Templates are setup tasks, not live inventory.</span>
+      </div>
+      <div class="template-card-grid">
+        ${templates.map((endpoint) => {
+          const risk = endpoint.risk || (endpoint.highRisk ? 'high' : 'standard');
+          const tone = riskTone(risk);
+          return `
+            <article class="template-card" data-risk="${escapeHtml(tone)}">
+              <div class="template-card-head">
+                <span class="badge-template">TEMPLATE</span>
+                <span class="risk-pill ${escapeHtml(tone)}">${escapeHtml(risk || 'standard')}</span>
+              </div>
+              <h3>${escapeHtml(endpoint.displayName || endpoint.id || 'Template')}</h3>
+              <p class="muted">${escapeHtml(endpoint.description || endpoint.specialization || '')}</p>
+              <div class="capability-chip-row">${capabilityChips(endpoint.requiredCapabilities)}</div>
+              <button type="button" class="route-button" data-action="template-open-setup" data-destination="${escapeHtml(setupDestination || 'setup')}">Configure</button>
+            </article>
+          `;
+        }).join('')}
+      </div>
+    </article>
+  `;
+}
+
 function renderRuntime() {
   const endpoints = (state.dashboard && state.dashboard.endpoints) || [];
-  const mcp = endpoints.filter((e) => e.kind === 'mcp_server');
-  const subs = endpoints.filter((e) => e.kind === 'sub_agent');
+  const mcp = endpoints.filter((e) => e.kind === 'mcp_server' && !e.isTemplate);
+  const subs = endpoints.filter((e) => e.kind === 'sub_agent' && !e.isTemplate);
+  const mcpTemplates = endpoints.filter((e) => e.kind === 'mcp_server' && e.isTemplate);
+  const subTemplates = endpoints.filter((e) => e.kind === 'sub_agent' && e.isTemplate);
   return `
     <div class="runtime-grid">
+      ${renderEndpointTemplateCards(mcpTemplates, 'MCP server', 'setup')}
+      ${renderEndpointTemplateCards(subTemplates, 'Specialist', 'setup')}
       ${renderMcpServerUtilizationPanel({ deck: 'runtime' })}
       <article class="panel-block wide">
-        <h3>MCP Servers (${mcp.length}) — inventory table</h3>
-        <p class="muted">Universal-use catalog. Any authenticated LAN client may invoke these.</p>
+        <h3>MCP Servers (${mcp.length}) — configured inventory</h3>
+        <p class="muted">Only configured or live MCP servers appear here. Template candidates stay in guided task cards above.</p>
         ${endpointTable(mcp)}
       </article>
       ${renderSubAgentUtilizationPanel({ deck: 'runtime' })}
       <article class="panel-block wide">
-        <h3>Sub-Agents (${subs.length}) — inventory table</h3>
-        <p class="muted">Specialized lanes. Each sub-agent is also surfaced in the per-agent utilization panel on the Overview / Telemetry decks.</p>
+        <h3>Sub-Agents (${subs.length}) — configured inventory</h3>
+        <p class="muted">Only configured or live specialist lanes appear here. Setup templates are visually separated from active inventory.</p>
         ${subAgentTable(subs)}
       </article>
     </div>
   `;
 }
+
+function bindRuntimeHandlers() {
+  document.querySelectorAll('[data-action="template-open-setup"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.destination = normalizeDestinationId(btn.dataset.destination, 'setup');
+      renderCurrent();
+    });
+  });
+}
+
 
 // v0.8.3: per-MCP-server live utilization panel. Mirrors the
 // sub-agent panel (v0.7.1+) so both endpoint kinds share the same
