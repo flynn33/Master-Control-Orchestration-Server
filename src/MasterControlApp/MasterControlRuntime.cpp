@@ -10793,7 +10793,8 @@ public:
         return { "claude-code", "codex", "grok", "chatgpt", "generic" };
     }
 
-    OnboardingProfile profileFor(const std::string& clientType) const override {
+    OnboardingProfile profileFor(const std::string& clientType,
+                                 const std::string& platform) const override {
         const std::string normalized = normalizeClientType(clientType);
         const auto document = discoveryService_
             ? discoveryService_->currentDocument()
@@ -10825,7 +10826,13 @@ public:
         profile.transport = "streamable_http";
         profile.authRequired = false;       // schema const; ADR-002 §1 invariant
         profile.trust = "lan";
-        profile.governanceBundleUrl = adminBase + "/api/governance/bundles/windows";
+        // v0.11.0-alpha.3: platform-aware governance bundle URL. The
+        // requesting client passes ?platform=windows|macos|ios on
+        // /api/onboarding/{clientType}; empty/unknown falls back to
+        // windows (the pre-alpha.3 hardcoded value), so existing
+        // clients see no change.
+        profile.governanceBundleUrl = adminBase + "/api/governance/bundles/"
+            + normalizeGovernancePlatform(platform);
         profile.discoveryUrl = adminBase + "/.well-known/mcos.json";
         profile.instanceId = document.instanceId;
 
@@ -10844,6 +10851,22 @@ public:
     }
 
 private:
+    // v0.11.0-alpha.3: same normalization semantics as
+    // GovernanceBundleService::normalizePlatform (trivially duplicated
+    // here, matching the repo's local-helper convention -- see the
+    // bracketIpv6Host note in McpGatewayAdapters.cpp). Empty/unknown
+    // values fall back to "windows" so the pre-alpha.3 contract holds.
+    static std::string normalizeGovernancePlatform(const std::string& platform) {
+        std::string lowered;
+        lowered.reserve(platform.size());
+        for (const auto ch : platform) {
+            lowered.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+        }
+        if (lowered == "macos" || lowered == "mac" || lowered == "osx") return "macos";
+        if (lowered == "ios" || lowered == "iphoneos") return "ios";
+        return "windows";
+    }
+
     static std::string normalizeClientType(const std::string& clientType) {
         std::string lowered;
         lowered.reserve(clientType.size());
@@ -17567,8 +17590,15 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "GET" && startsWith(request.path, "/api/onboarding/")) {
             const auto prefix = std::string("/api/onboarding/");
             const std::string clientType = request.path.substr(prefix.size());
+            // v0.11.0-alpha.3: optional ?platform=windows|macos|ios picks
+            // the per-platform governance bundle URL in the profile.
+            // "os" accepted as an alias per the v0.10.15 alias
+            // convention. Absent/unknown -> windows (pre-alpha.3
+            // behavior), so existing clients are unaffected.
+            const auto platform = MasterControl::extractQueryParamAny(
+                request.query, { "platform", "os" });
             return jsonResponse(onboardingProfileService_
-                ? onboardingProfileService_->profileFor(clientType)
+                ? onboardingProfileService_->profileFor(clientType, platform)
                 : OnboardingProfile{});
         }
         // -------------------------------------------------------------------
