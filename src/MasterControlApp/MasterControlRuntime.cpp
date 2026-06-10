@@ -16262,6 +16262,12 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             ActivityEvent evt;
             evt.kind = "supervisor_select";
             evt.actor = context.actor;
+            // v0.11.0-alpha.3: stamp the HTTP verb like the other
+            // request-derived ring events (gateway_lifecycle,
+            // admin_api_request). Pre-fix the supervisor_* lifecycle
+            // events were the "method":"" anomalies the 2026-04-19
+            // operator probe flagged in /api/activity.
+            evt.method = request.method;
             evt.target = MasterControl::providerIdString(selectRequest.provider);
             evt.statusCode = issue.ok ? 200 : 400;
             evt.message = issue.ok
@@ -16321,6 +16327,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 ActivityEvent evt;
                 evt.kind = "supervisor_config_issue";
                 evt.actor = context.actor;
+                // v0.11.0-alpha.3: stamp the HTTP verb (see
+                // supervisor_select note).
+                evt.method = request.method;
                 evt.target = MasterControl::providerIdString(selectRequest.provider);
                 evt.statusCode = issue.ok ? 200 : 400;
                 evt.message = issue.ok
@@ -16354,6 +16363,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             ActivityEvent evt;
             evt.kind = "supervisor_config_regenerate";
             evt.actor = context.actor;
+            // v0.11.0-alpha.3: stamp the HTTP verb (see
+            // supervisor_select note).
+            evt.method = request.method;
             evt.target = issue.ok ? MasterControl::providerIdString(issue.assignment.provider) : "";
             evt.statusCode = issue.ok ? 200 : 400;
             evt.message = issue.ok
@@ -16395,6 +16407,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             ActivityEvent evt;
             evt.kind = "supervisor_revoke";
             evt.actor = context.actor;
+            // v0.11.0-alpha.3: stamp the HTTP verb (see
+            // supervisor_select note).
+            evt.method = request.method;
             evt.target = MasterControl::providerIdString(previous.provider);
             evt.statusCode = 200;
             evt.message = std::string("Supervisor revoked")
