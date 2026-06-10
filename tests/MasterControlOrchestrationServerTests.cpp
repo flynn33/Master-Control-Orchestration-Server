@@ -72,6 +72,33 @@ bool testDefaultConfiguration() {
                  "Default security posture is local-only.");
     ok &= expect(configuration.lanClients.empty(),
                  "Fresh installs start with an empty LAN client roster.");
+    // v0.11.0-alpha.3: beacon signing defaults. Fresh installs carry a
+    // generated 64-hex-char key; signing is enabled by default.
+    ok &= expect(configuration.security.beaconSigningEnabled == true,
+                 "Default beacon signing is enabled.");
+    ok &= expect(configuration.security.beaconSigningKey.size() == 64,
+                 "Fresh install generates a 64-hex-char beacon signing key.");
+    ok &= expect(configuration.security.beaconSigningKey.find_first_not_of("0123456789abcdef")
+                     == std::string::npos,
+                 "Beacon signing key is lowercase hex.");
+    // Back-compat: a persisted config without the new keys deserializes
+    // with an empty key (signing skipped) rather than throwing.
+    {
+        nlohmann::json legacy = nlohmann::json{
+            { "enableTls", false },
+            { "enableAuthentication", true },
+            { "allowTroubleshootingBypass", false },
+            { "allowOpenLanAccess", false },
+            { "securityProtocolsEnabled", true },
+            { "securityPosture", "local-only" },
+            { "trustedRemoteHosts", nlohmann::json::array() }
+        };
+        const auto restored = legacy.get<MasterControl::SecuritySettings>();
+        ok &= expect(restored.beaconSigningKey.empty(),
+                     "Legacy SecuritySettings JSON deserializes with an empty beacon signing key.");
+        ok &= expect(restored.beaconSigningEnabled == true,
+                     "Legacy SecuritySettings JSON defaults beaconSigningEnabled to true (no-op while the key is empty).");
+    }
     return ok;
 }
 

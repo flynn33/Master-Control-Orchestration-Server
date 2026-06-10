@@ -11029,6 +11029,68 @@ private:
     std::shared_ptr<IDiscoveryService> discoveryService_;
 };
 
+// v0.11.0-alpha.3: HMAC-SHA256 helper backing beacon payload signing.
+// Returns lowercase hex of HMAC_SHA256(keyBytes, message), or empty on
+// any BCrypt failure so callers can fall back to broadcasting unsigned.
+// bcrypt.h is already included by this TU (SupervisorAssignmentService
+// token generation) and MasterControlApp links bcrypt.lib.
+inline std::string hmacSha256Hex(const std::vector<unsigned char>& key,
+                                 const std::string& message) {
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM,
+                                    nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG) != 0) {
+        return {};
+    }
+    unsigned char digest[32]{};
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    std::string out;
+    if (BCryptCreateHash(algorithm, &hash,
+                         nullptr, 0,
+                         const_cast<PUCHAR>(key.data()),
+                         static_cast<ULONG>(key.size()), 0) == 0) {
+        if (BCryptHashData(hash,
+                           reinterpret_cast<PUCHAR>(const_cast<char*>(message.data())),
+                           static_cast<ULONG>(message.size()), 0) == 0
+            && BCryptFinishHash(hash, digest, sizeof(digest), 0) == 0) {
+            static const char* kHexDigits = "0123456789abcdef";
+            out.reserve(sizeof(digest) * 2);
+            for (const unsigned char byte : digest) {
+                out.push_back(kHexDigits[byte >> 4]);
+                out.push_back(kHexDigits[byte & 0x0F]);
+            }
+        }
+        BCryptDestroyHash(hash);
+    }
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    return out;
+}
+
+// Hex-decode helper for the operator-supplied beaconSigningKey. Returns
+// empty on odd length or non-hex characters ("invalid key" == "signing
+// off" + a one-time diagnostics warning at the call site).
+inline std::vector<unsigned char> hexDecodeOrEmpty(const std::string& hex) {
+    if (hex.empty() || (hex.size() % 2) != 0) {
+        return {};
+    }
+    const auto nibble = [](char ch) -> int {
+        if (ch >= '0' && ch <= '9') return ch - '0';
+        if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+        if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+        return -1;
+    };
+    std::vector<unsigned char> bytes;
+    bytes.reserve(hex.size() / 2);
+    for (size_t i = 0; i < hex.size(); i += 2) {
+        const int hi = nibble(hex[i]);
+        const int lo = nibble(hex[i + 1]);
+        if (hi < 0 || lo < 0) {
+            return {};
+        }
+        bytes.push_back(static_cast<unsigned char>((hi << 4) | lo));
+    }
+    return bytes;
+}
+
 class BeaconService final : public IBeaconService {
 public:
     BeaconService(std::shared_ptr<IConfigurationService> configurationService,
@@ -11116,6 +11178,8 @@ void BeaconService::start() {
         // one diagnostics event when sends start failing and one when
         // they recover, rather than one per 15s broadcast tick.
         bool lastSendFailed = false;
+        // v0.11.0-alpha.3: one-time invalid-signing-key warning latch.
+        bool invalidKeyReported = false;
 
         BOOL broadcastEnabled = TRUE;
         setsockopt(socketHandle, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&broadcastEnabled), sizeof(broadcastEnabled));
@@ -11142,9 +11206,41 @@ void BeaconService::start() {
             // BeaconAdvertisement. /api/beacon still returns the legacy
             // shape for browsers that haven't migrated; /api/discovery
             // and /.well-known/mcos.json are the primary surfaces.
-            const auto payload = discoveryService_
-                ? nlohmann::json(discoveryService_->currentDocument()).dump()
-                : nlohmann::json(currentAdvertisement()).dump();
+            nlohmann::json payloadDocument = discoveryService_
+                ? nlohmann::json(discoveryService_->currentDocument())
+                : nlohmann::json(currentAdvertisement());
+            // v0.11.0-alpha.3: beacon payload signing (VERSION.json
+            // deferred item). HMAC-SHA256 over the compact dump of the
+            // document WITHOUT the signature member; appended as an
+            // additive `signature` object so unsigned-era clients are
+            // unaffected. Empty/invalid key -> broadcast unsigned,
+            // exactly the pre-alpha.3 wire shape; the invalid-key case
+            // additionally gets a one-time diagnostics warning.
+            if (configuration.security.beaconSigningEnabled
+                && !configuration.security.beaconSigningKey.empty()) {
+                const auto keyBytes = hexDecodeOrEmpty(configuration.security.beaconSigningKey);
+                if (keyBytes.empty()) {
+                    if (!invalidKeyReported) {
+                        invalidKeyReported = true;
+                        MasterControl::Diagnostics::appendEvent(
+                            L"runtime",
+                            "warning",
+                            "beacon_signing_key_invalid",
+                            "security.beaconSigningKey is not valid hex; "
+                            "beacon broadcasts continue UNSIGNED.",
+                            nlohmann::json::object());
+                    }
+                } else {
+                    const auto signature = hmacSha256Hex(keyBytes, payloadDocument.dump());
+                    if (!signature.empty()) {
+                        payloadDocument["signature"] = nlohmann::json{
+                            { "alg", "hmac-sha256" },
+                            { "value", signature }
+                        };
+                    }
+                }
+            }
+            const auto payload = payloadDocument.dump();
             const int sendResult = sendto(socketHandle, payload.c_str(), static_cast<int>(payload.size()), 0, reinterpret_cast<sockaddr*>(&address), sizeof(address));
             if (sendResult == SOCKET_ERROR) {
                 if (!lastSendFailed) {

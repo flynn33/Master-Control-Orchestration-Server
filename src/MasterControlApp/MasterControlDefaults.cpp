@@ -557,6 +557,34 @@ std::string generateInstanceIdUtf8() {
     return "mcos-" + canonical;
 }
 
+// v0.11.0-alpha.3: 32-byte (64-hex-char) beacon signing key for fresh
+// installs. Composed from two UuidCreate v4 GUIDs with the dashes
+// stripped -- ~244 bits of OS-sourced randomness, comfortably beyond
+// the HMAC-SHA256 key-strength needs of LAN beacon spoof-resistance,
+// without adding a bcrypt dependency to this TU. Returns empty on
+// UuidCreate failure, which BeaconService treats as "signing off".
+std::string generateBeaconSigningKeyHex() {
+    std::string hex;
+    for (int i = 0; i < 2; ++i) {
+        UUID uuid{};
+        if (UuidCreate(&uuid) != RPC_S_OK) {
+            return "";
+        }
+        RPC_CSTR uuidString = nullptr;
+        if (UuidToStringA(&uuid, &uuidString) != RPC_S_OK || uuidString == nullptr) {
+            return "";
+        }
+        std::string canonical(reinterpret_cast<char*>(uuidString));
+        RpcStringFreeA(&uuidString);
+        for (const char ch : canonical) {
+            if (ch != '-') {
+                hex.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+            }
+        }
+    }
+    return hex;
+}
+
 } // namespace
 
 AppConfiguration buildDefaultConfiguration() {
@@ -577,6 +605,11 @@ AppConfiguration buildDefaultConfiguration() {
     configuration.security.allowOpenLanAccess = false;
     configuration.security.securityProtocolsEnabled = true;
     configuration.security.securityPosture = "local-only";
+    // v0.11.0-alpha.3: beacon signing on fresh installs. Existing
+    // persisted configs keep an empty key (signing skipped) until the
+    // operator supplies one.
+    configuration.security.beaconSigningEnabled = true;
+    configuration.security.beaconSigningKey = generateBeaconSigningKeyHex();
     configuration.activeProfile.environmentName = environment.hostName + " - " + environment.operatingSystem;
     configuration.activeProfile.preferredBindAddress = environment.preferredBindAddress;
     configuration.activeProfile.macAddress = environment.macAddress;
