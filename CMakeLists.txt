@@ -240,5 +240,8 @@ install(
     FILES
         "${CMAKE_SOURCE_DIR}/scripts/Configure-LocalServerCert.ps1"
         "${CMAKE_SOURCE_DIR}/scripts/Remove-LocalServerCert.ps1"
+        # v0.11.0-alpha.3: cert auto-rotation scheduled-task job (closes
+        # the VERSION.json "renewal-cron PS job" deferred item).
+        "${CMAKE_SOURCE_DIR}/scripts/Register-CertAutoRotation.ps1"
     DESTINATION "scripts"
 )
