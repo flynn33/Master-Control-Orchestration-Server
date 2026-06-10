@@ -12,9 +12,13 @@
 #include <Windows.h>
 #include <ShlObj.h>
 
+#include <chrono>
+#include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -161,6 +165,28 @@ inline PersistentLogPaths resolvePersistentLogPaths(std::wstring_view componentN
 // disk-constrained.
 inline constexpr std::uintmax_t kLogRotationBytes = 50ull * 1024ull * 1024ull;
 
+// v0.11.0-alpha.3: age + count rotation bounds, closing the CHANGELOG
+// Unreleased item "Telemetry log rotation (size / age / count)" -- the
+// v0.10.21 size bound alone let a low-traffic component keep a live
+// file growing in *age* indefinitely, and a burst of small records
+// could pack an unwieldy number of rows under the byte cap.
+//   - kLogMaxAgeDays: the live file rotates when its OLDEST record
+//     (first line's capturedAtUtc) is older than this many days.
+//     Determined from record content, not filesystem creation time --
+//     NTFS filename tunneling can resurrect the old creation stamp on
+//     the freshly-created live file and would re-trigger rotation in a
+//     loop, progressively discarding history.
+//   - kLogMaxEntries: the live file rotates when it holds more than
+//     this many newline-delimited records.
+// Both checks require reading the live file, so they run at most once
+// per kDeepRotationCheckInterval per path (the size check stays
+// per-append; it only stats).
+inline constexpr int kLogMaxAgeDays = 14;
+inline constexpr std::size_t kLogMaxEntries = 200000;
+inline constexpr std::chrono::minutes kDeepRotationCheckInterval{ 10 };
+
+inline void performRotationLocked(const std::filesystem::path& filePath);
+
 inline void rotateIfOversizedLocked(const std::filesystem::path& filePath) {
     std::error_code ec;
     if (!std::filesystem::exists(filePath, ec)) {
@@ -170,6 +196,97 @@ inline void rotateIfOversizedLocked(const std::filesystem::path& filePath) {
     if (ec || fileSize < kLogRotationBytes) {
         return;
     }
+    performRotationLocked(filePath);
+}
+
+// Parses the leading "YYYY-MM-DDTHH:MM:SS" of a capturedAtUtc value
+// (millisecond suffix and trailing Z ignored). Returns 0 on parse
+// failure so callers can treat "unparseable" as "no age signal".
+inline time_t parseCapturedAtUtcOrZero(const std::string& value) {
+    int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+    if (std::sscanf(value.c_str(), "%4d-%2d-%2dT%2d:%2d:%2d",
+                    &year, &month, &day, &hour, &minute, &second) != 6) {
+        return 0;
+    }
+    std::tm tm{};
+    tm.tm_year = year - 1900;
+    tm.tm_mon = month - 1;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    tm.tm_min = minute;
+    tm.tm_sec = second;
+    const auto parsed = _mkgmtime(&tm);
+    return parsed < 0 ? 0 : parsed;
+}
+
+// Deep (file-reading) rotation check: age of the oldest record +
+// record count. Throttled per path; caller holds the append mutex.
+inline void rotateIfAgedOrOverCountLocked(const std::filesystem::path& filePath) {
+    static std::map<std::wstring, std::chrono::steady_clock::time_point> nextCheckByPath;
+    const auto now = std::chrono::steady_clock::now();
+    auto& nextCheck = nextCheckByPath[filePath.wstring()];
+    if (now < nextCheck) {
+        return;
+    }
+    nextCheck = now + kDeepRotationCheckInterval;
+
+    std::error_code ec;
+    if (!std::filesystem::exists(filePath, ec)) {
+        return;
+    }
+
+    std::ifstream input(filePath, std::ios::binary);
+    if (!input.is_open()) {
+        return;
+    }
+
+    std::string firstLine;
+    if (!std::getline(input, firstLine) || firstLine.empty()) {
+        return;
+    }
+
+    bool rotate = false;
+
+    // Age bound: parse the first record's capturedAtUtc. Failure to
+    // parse (foreign line, truncated record) yields no age signal --
+    // the count and size bounds still apply.
+    try {
+        const auto record = nlohmann::json::parse(firstLine);
+        const auto capturedAt = record.is_object()
+            ? record.value("capturedAtUtc", std::string())
+            : std::string();
+        const auto oldest = parseCapturedAtUtcOrZero(capturedAt);
+        if (oldest != 0) {
+            const auto nowUtc = time(nullptr);
+            const auto maxAgeSeconds = static_cast<time_t>(kLogMaxAgeDays) * 24 * 60 * 60;
+            if (nowUtc - oldest > maxAgeSeconds) {
+                rotate = true;
+            }
+        }
+    } catch (const std::exception&) {
+        // Unparseable first line: no age signal.
+    }
+
+    // Count bound: one pass over the remainder (bounded by
+    // kLogRotationBytes worst case, and this whole function runs at
+    // most once per kDeepRotationCheckInterval per path).
+    if (!rotate) {
+        std::size_t lineCount = 1;  // the first line already read
+        std::string line;
+        while (lineCount <= kLogMaxEntries && std::getline(input, line)) {
+            ++lineCount;
+        }
+        rotate = lineCount > kLogMaxEntries;
+    }
+
+    input.close();
+    if (rotate) {
+        performRotationLocked(filePath);
+    }
+}
+
+inline void performRotationLocked(const std::filesystem::path& filePath) {
+    std::error_code ec;
     auto rotated = filePath;
     rotated += ".1";
     // v0.11.0 (Copilot review fix): preserve the prior rotated file
@@ -219,6 +336,8 @@ inline void appendJsonLine(const std::filesystem::path& filePath, const nlohmann
     // v0.10.21: check rotation BEFORE opening the append stream so the
     // rename target isn't held open by this process.
     rotateIfOversizedLocked(filePath);
+    // v0.11.0-alpha.3: throttled age/count bounds (see constants above).
+    rotateIfAgedOrOverCountLocked(filePath);
 
     std::ofstream output(filePath, std::ios::binary | std::ios::app);
     if (!output.is_open()) {

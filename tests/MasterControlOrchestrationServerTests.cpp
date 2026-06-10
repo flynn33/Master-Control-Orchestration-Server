@@ -9,6 +9,8 @@
 
 #include "MasterControl/AuthenticatedRequestContext.h"
 #include "MasterControl/DiagnosticsAggregator.h"
+// v0.11.0-alpha.3: parseCapturedAtUtcOrZero test (age-bound rotation).
+#include "MasterControl/MasterControlDiagnostics.h"
 #include "MasterControl/EndpointAdvertisement.h"
 #include "MasterControl/JsonStrictness.h"
 #include "MasterControl/LanClient.h"
@@ -2809,6 +2811,25 @@ bool testDiagnosticsMarkdownRender_truncatesOver50() {
     return ok;
 }
 
+// v0.11.0-alpha.3: timestamp parser backing the new age-bound log
+// rotation (MasterControlDiagnostics.h::rotateIfAgedOrOverCountLocked).
+// Valid capturedAtUtc values parse to ordered epochs; garbage parses
+// to the 0 "no age signal" sentinel so rotation never fires on noise.
+bool testDiagnosticsCapturedAtUtcParse() {
+    bool ok = true;
+    const auto early = MasterControl::Diagnostics::parseCapturedAtUtcOrZero("2026-05-15T12:00:00.000Z");
+    const auto later = MasterControl::Diagnostics::parseCapturedAtUtcOrZero("2026-05-16T12:00:00.000Z");
+    ok &= expect(early != 0, "Valid capturedAtUtc parses to a non-zero epoch.");
+    ok &= expect(later > early, "Later capturedAtUtc parses to a later epoch.");
+    ok &= expect(later - early == 24 * 60 * 60,
+                 "One day apart parses to exactly 86400 seconds.");
+    ok &= expect(MasterControl::Diagnostics::parseCapturedAtUtcOrZero("not-a-timestamp") == 0,
+                 "Garbage capturedAtUtc parses to the 0 sentinel.");
+    ok &= expect(MasterControl::Diagnostics::parseCapturedAtUtcOrZero("") == 0,
+                 "Empty capturedAtUtc parses to the 0 sentinel.");
+    return ok;
+}
+
 int main() {
     bool ok = true;
     ok &= testDefaultConfiguration();
@@ -2837,6 +2858,7 @@ int main() {
     ok &= testDiagnosticsAggregator_singleComponentSorted();
     ok &= testDiagnosticsAggregator_softCapEarlyExit();
     ok &= testDiagnosticsAggregator_partialWriteTolerance();
+    ok &= testDiagnosticsCapturedAtUtcParse();
     ok &= testDiagnosticsMarkdownRender_warnWarningAlias();
     ok &= testDiagnosticsMarkdownRender_truncatesOver50();
     ok &= testLanClientDefaults();
