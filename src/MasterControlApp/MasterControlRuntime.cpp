@@ -11005,12 +11005,20 @@ public:
     BeaconAdvertisement currentAdvertisement() const override {
         const auto configuration = configurationService_->current();
         const auto snapshot = telemetryService_->captureSnapshot();
+        // v0.11.0-alpha.3 fix: the second port slot is
+        // BeaconAdvertisement::gatewayPort (MasterControlModels.h:797).
+        // Pre-fix this passed configuration.browserPort twice, so the
+        // legacy /api/beacon surface (and the discovery-service-less
+        // fallback broadcast below) advertised gatewayPort=7300 -- a
+        // client connecting to the advertised "gateway" port reached
+        // the admin listener instead of the MCP gateway on
+        // cfg.mcpGateway.listenPort (default 8080).
         return BeaconAdvertisement{
             configuration.instanceName,
             snapshot.hostName,
             snapshot.primaryIpAddress.empty() ? configuration.bindAddress : snapshot.primaryIpAddress,
             configuration.browserPort,
-            configuration.browserPort,
+            configuration.mcpGateway.listenPort,
             "online",
             platformServiceCatalogService_ ? platformServiceCatalogService_->listGateways() : std::vector<PlatformGatewayDescriptor>{}
         };

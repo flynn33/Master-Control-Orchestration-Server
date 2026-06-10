@@ -1302,6 +1302,41 @@ bool testDiscoveryDocumentJsonRoundTrip() {
     return ok;
 }
 
+// v0.11.0-alpha.3: regression guard for the BeaconService port-confusion
+// bug. BeaconService::currentAdvertisement() passed
+// configuration.browserPort into BOTH port slots of the
+// BeaconAdvertisement aggregate, so the legacy /api/beacon surface
+// advertised gatewayPort=7300 (the admin listener) instead of
+// cfg.mcpGateway.listenPort (8080). This test pins the serialized
+// contract: the two ports are distinct keys carrying distinct values
+// when constructed correctly.
+bool testBeaconAdvertisementJsonShape() {
+    MasterControl::BeaconAdvertisement advertisement;
+    advertisement.instanceName = "Test MCOS";
+    advertisement.hostName = "test-host";
+    advertisement.ipAddress = "192.168.1.10";
+    advertisement.browserPort = 7300;
+    advertisement.gatewayPort = 8080;
+    advertisement.status = "online";
+
+    nlohmann::json serialized = advertisement;
+    bool ok = true;
+    ok &= expect(serialized["browserPort"].get<uint16_t>() == 7300,
+                 "Beacon advertisement serializes browserPort.");
+    ok &= expect(serialized["gatewayPort"].get<uint16_t>() == 8080,
+                 "Beacon advertisement serializes gatewayPort.");
+    ok &= expect(serialized["browserPort"].get<uint16_t>()
+                     != serialized["gatewayPort"].get<uint16_t>(),
+                 "Beacon advertisement keeps browserPort and gatewayPort distinct.");
+
+    auto restored = serialized.get<MasterControl::BeaconAdvertisement>();
+    ok &= expect(restored.gatewayPort == advertisement.gatewayPort,
+                 "Beacon advertisement round-trips gatewayPort.");
+    ok &= expect(restored.browserPort == advertisement.browserPort,
+                 "Beacon advertisement round-trips browserPort.");
+    return ok;
+}
+
 bool testWellKnownDocumentMatchesSchemaRequiredFields() {
     // The /.well-known/mcos.json shape strips beacon-only fields. The
     // remaining required keys per discovery-document.schema.json are:
@@ -2815,6 +2850,7 @@ int main() {
     // PHASE-03 LAN discovery tests
     ok &= testDiscoveryDocumentDefaultShape();
     ok &= testDiscoveryDocumentJsonRoundTrip();
+    ok &= testBeaconAdvertisementJsonShape();
     ok &= testWellKnownDocumentMatchesSchemaRequiredFields();
     ok &= testInstanceIdGeneration();
     // PHASE-04 onboarding profile tests
