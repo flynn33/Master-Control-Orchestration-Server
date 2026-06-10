@@ -11057,9 +11057,27 @@ void BeaconService::start() {
     worker_ = std::thread([this]() {
         SOCKET socketHandle = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (socketHandle == INVALID_SOCKET) {
+            // v0.11.0-alpha.3: surface the failure instead of dying
+            // silently. Pre-fix the worker exited without a trace and
+            // the operator's only signal was "no beacon on the wire."
+            MasterControl::Diagnostics::appendEvent(
+                L"runtime",
+                "error",
+                "beacon_socket_create_failed",
+                "UDP beacon worker could not create its broadcast socket; "
+                "beacon broadcasts are disabled until service restart.",
+                nlohmann::json{ { "wsaError", WSAGetLastError() } });
             running_ = false;
             return;
         }
+
+        // v0.11.0-alpha.3: edge-triggered send-failure reporting. A
+        // persistent sendto failure (firewall rule, adapter loss)
+        // previously vanished -- the return value was ignored, so the
+        // beacon appeared to run while nothing reached the wire. Emit
+        // one diagnostics event when sends start failing and one when
+        // they recover, rather than one per 15s broadcast tick.
+        bool lastSendFailed = false;
 
         BOOL broadcastEnabled = TRUE;
         setsockopt(socketHandle, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&broadcastEnabled), sizeof(broadcastEnabled));
@@ -11089,7 +11107,31 @@ void BeaconService::start() {
             const auto payload = discoveryService_
                 ? nlohmann::json(discoveryService_->currentDocument()).dump()
                 : nlohmann::json(currentAdvertisement()).dump();
-            sendto(socketHandle, payload.c_str(), static_cast<int>(payload.size()), 0, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+            const int sendResult = sendto(socketHandle, payload.c_str(), static_cast<int>(payload.size()), 0, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+            if (sendResult == SOCKET_ERROR) {
+                if (!lastSendFailed) {
+                    lastSendFailed = true;
+                    MasterControl::Diagnostics::appendEvent(
+                        L"runtime",
+                        "warning",
+                        "beacon_broadcast_failed",
+                        "UDP beacon sendto failed; discovery broadcasts are "
+                        "not reaching the LAN. Will report again on recovery.",
+                        nlohmann::json{
+                            { "wsaError", WSAGetLastError() },
+                            { "beaconPort", configuration.beaconPort }
+                        });
+                }
+            } else if (lastSendFailed) {
+                lastSendFailed = false;
+                MasterControl::Diagnostics::appendEvent(
+                    L"runtime",
+                    "info",
+                    "beacon_broadcast_recovered",
+                    "UDP beacon sendto succeeded after a failure window; "
+                    "discovery broadcasts have resumed.",
+                    nlohmann::json{ { "beaconPort", configuration.beaconPort } });
+            }
             // v0.9.11: interruptible sleep. wait_for returns when
             // either the predicate is true (running_ flipped to
             // false) OR the timeout elapses, whichever comes first.
