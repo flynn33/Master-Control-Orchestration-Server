@@ -4312,11 +4312,26 @@ public:
             ? std::string("127.0.0.1")
             : configuration.activeProfile.preferredBindAddress;
         const auto gatewayHost = iterator != endpoints.end() && iterator->host != "0.0.0.0" ? iterator->host : preferredHost;
-        const auto gatewayPort = iterator != endpoints.end() ? iterator->port : static_cast<uint16_t>(7200);
+        // v0.11.0-alpha.3 fix: compose the exported MCP URL from
+        // cfg.mcpGateway (listenPort + mcpPath), NOT from the seeded
+        // "platform-gateway" inventory row. Pre-fix the exports carried
+        // "http://<host>:7200/mcp/gateway" -- port 7200 belongs to the
+        // legacy external gateway retired at v0.9.0 (nothing listens
+        // there any more) and "/mcp/gateway/{platform}" is an admin-port
+        // JSON document route, not an MCP endpoint. Every artifact this
+        // service emits (.claude.json, Install-ClaudeGateway.ps1,
+        // codex-mcp.json, openai/xai gateway profiles) therefore handed
+        // LAN clients a dead URL. This mirrors the v0.10.8 supervisor-
+        // config fix (see initialize() comment): the live MCP endpoint
+        // is the native HTTP.sys adapter on cfg.mcpGateway.listenPort
+        // (default 8080) at cfg.mcpGateway.mcpPath (default /mcp).
         // v0.9.3: bracket IPv6 host literals in this exported handoff
         // bundle so a LAN client copying it into their MCP config gets a
         // URL their HTTP library can actually parse.
-        const auto gatewayUrl = "http://" + bracketIpv6Host(gatewayHost) + ":" + std::to_string(gatewayPort) + "/mcp/gateway";
+        const auto& gatewayConfig = configuration.mcpGateway;
+        const auto gatewayUrl = "http://" + bracketIpv6Host(gatewayHost) + ":"
+            + std::to_string(gatewayConfig.listenPort)
+            + ensureAdvertisementPath(gatewayConfig.mcpPath, "/mcp");
         const auto browserHost = browserIterator != endpoints.end() && browserIterator->host != "0.0.0.0"
             ? browserIterator->host
             : preferredHost;

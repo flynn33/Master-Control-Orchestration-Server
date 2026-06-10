@@ -79,6 +79,29 @@ bool testSeededEndpoints() {
                   "Default seeded endpoint set is non-empty.");
 }
 
+// v0.11.0-alpha.3: the seeded "platform-gateway" row must point at the
+// native HTTP.sys gateway (default listenPort 8080), not the legacy
+// external gateway port 7200 retired at v0.9.0. Pre-fix the Exports
+// surface derived its client-facing MCP URL from this row and handed
+// LAN clients a dead http://<host>:7200/mcp/gateway URL.
+bool testSeededGatewayEndpointPointsAtNativeGateway() {
+    const auto endpoints = MasterControl::buildDefaultSeededEndpoints();
+    bool ok = true;
+    bool found = false;
+    for (const auto& endpoint : endpoints) {
+        if (endpoint.id != "platform-gateway") {
+            continue;
+        }
+        found = true;
+        ok &= expect(endpoint.port == 8080,
+                     "Seeded platform-gateway endpoint targets the native gateway listen port (8080).");
+        ok &= expect(endpoint.port != 7200,
+                     "Seeded platform-gateway endpoint no longer targets the retired external gateway port (7200).");
+    }
+    ok &= expect(found, "Seeded endpoint set contains the platform-gateway row.");
+    return ok;
+}
+
 bool testLanClientRoundTrip() {
     using MasterControl::LanClient;
     using MasterControl::LanClientPrivileges;
@@ -2790,6 +2813,7 @@ int main() {
     bool ok = true;
     ok &= testDefaultConfiguration();
     ok &= testSeededEndpoints();
+    ok &= testSeededGatewayEndpointPointsAtNativeGateway();
     // v0.10.15 QueryParamParse helper tests (alias-aware ?param= extractor
     // backing /api/activity, /api/telemetry/events, /api/client/activity).
     ok &= testQueryParamCanonicalParse();

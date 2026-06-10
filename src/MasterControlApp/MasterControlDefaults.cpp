@@ -452,7 +452,14 @@ std::vector<RuntimeEndpoint> buildDefaultSeededEndpointsForHost(std::string host
 
     std::vector<RuntimeEndpoint> endpoints;
 
-    endpoints.push_back(makeEndpoint("platform-gateway", "Platform Gateway", EndpointKind::Gateway, host, 7200, "/health", "Unified orchestration gateway"));
+    // v0.11.0-alpha.3: the gateway row now points at the native HTTP.sys
+    // adapter (cfg.mcpGateway.listenPort default 8080, healthPath
+    // /health). The previous seed advertised port 7200 -- the legacy
+    // external gateway retired at v0.9.0 -- so the row could never probe
+    // reachable and the Exports surface derived a dead client URL from
+    // it. Existing installs keep their persisted endpoint list; this
+    // only affects fresh configurations.
+    endpoints.push_back(makeEndpoint("platform-gateway", "Platform Gateway", EndpointKind::Gateway, host, 8080, "/health", "Native HTTP.sys MCP gateway"));
     endpoints.push_back(makeEndpoint("browser-gateway", "Browser Gateway", EndpointKind::BrowserGateway, host, 7300, "/", "Master Control Orchestration Server browser surface"));
     endpoints.push_back(makeEndpoint("client-tracker", "Client Tracker", EndpointKind::MCPServer, host, 7120, "/api/clients", "LAN client tracker"));
     endpoints.push_back(makeEndpoint("metrics", "Metrics", EndpointKind::MCPServer, host, 7121, "/api/metrics", "Host metrics feed"));
