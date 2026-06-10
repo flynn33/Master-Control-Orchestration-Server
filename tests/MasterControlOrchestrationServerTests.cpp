@@ -11,6 +11,10 @@
 #include "MasterControl/DiagnosticsAggregator.h"
 // v0.11.0-alpha.3: parseCapturedAtUtcOrZero test (age-bound rotation).
 #include "MasterControl/MasterControlDiagnostics.h"
+// v0.11.0-alpha.3 (PHASE-14 Slice E): SqliteDiagnosticsStore + service.
+#include "MasterControl/DiagnosticsService.h"
+#include "MasterControl/DiagnosticsStore.h"
+#include "MasterControl/DiagnosticsTypes.h"
 #include "MasterControl/EndpointAdvertisement.h"
 #include "MasterControl/JsonStrictness.h"
 #include "MasterControl/LanClient.h"
@@ -2798,6 +2802,182 @@ bool testDiagnosticsAggregator_partialWriteTolerance() {
     return ok;
 }
 
+// ---------------------------------------------------------------------------
+// v0.11.0-alpha.3 (PHASE-14 Slice E): SqliteDiagnosticsStore +
+// DiagnosticsService tests. The store tests run against a throwaway
+// SQLite file under the system temp directory.
+// ---------------------------------------------------------------------------
+
+bool testSqliteDiagnosticsStoreCrudAndFilters() {
+    bool ok = true;
+    const auto databasePath = std::filesystem::temp_directory_path()
+        / "mcos-tests" / "diag-crud" / "diagnostics.db";
+    std::filesystem::remove_all(databasePath.parent_path());
+
+    MasterControl::SqliteDiagnosticsStore store(databasePath);
+    ok &= expect(store.available(), "Sqlite store opens against a fresh temp path.");
+
+    auto makeRecord = [](const char* capturedAt, const char* source,
+                         MasterControl::DiagnosticsSeverity severity,
+                         const char* eventName) {
+        MasterControl::DiagnosticsRecord record;
+        record.capturedAtUtc = capturedAt;
+        record.source = source;
+        record.severity = severity;
+        record.eventName = eventName;
+        record.message = "msg";
+        record.sessionId = "boot-test";
+        record.sequence = 1;
+        return record;
+    };
+
+    auto a = makeRecord("2026-06-01T10:00:00.000Z", "runtime",
+                        MasterControl::DiagnosticsSeverity::Info, "boot");
+    auto b = makeRecord("2026-06-01T11:00:00.000Z", "supervisor",
+                        MasterControl::DiagnosticsSeverity::Error, "pool_death");
+    auto c = makeRecord("2026-06-01T12:00:00.000Z", "runtime",
+                        MasterControl::DiagnosticsSeverity::Warning, "beacon_broadcast_failed");
+    ok &= expect(store.insert(a).ok, "Insert A succeeds.");
+    ok &= expect(store.insert(b).ok, "Insert B succeeds.");
+    ok &= expect(store.insert(c).ok, "Insert C succeeds.");
+    ok &= expect(a.id > 0 && b.id > a.id && c.id > b.id,
+                 "Inserts assign monotonically increasing row ids.");
+    ok &= expect(store.count() == 3, "Count reports three rows.");
+
+    // Newest-first ordering.
+    const auto all = store.query(MasterControl::DiagnosticsQuery{});
+    ok &= expect(all.size() == 3 && all.front().eventName == "beacon_broadcast_failed",
+                 "Unfiltered query returns newest-first.");
+
+    // Severity filter (incl. the warn alias).
+    MasterControl::DiagnosticsQuery bySeverity;
+    bySeverity.severity = "warn";
+    const auto warnings = store.query(bySeverity);
+    ok &= expect(warnings.size() == 1 && warnings.front().eventName == "beacon_broadcast_failed",
+                 "Severity filter accepts the warn alias and matches the warning row.");
+
+    // Source filter + max.
+    MasterControl::DiagnosticsQuery bySource;
+    bySource.source = "runtime";
+    bySource.maxResults = 1;
+    const auto runtimeRows = store.query(bySource);
+    ok &= expect(runtimeRows.size() == 1 && runtimeRows.front().eventName == "beacon_broadcast_failed",
+                 "Source filter + maxResults returns the newest runtime row only.");
+
+    // sinceUtc lower bound.
+    MasterControl::DiagnosticsQuery since;
+    since.sinceUtc = "2026-06-01T11:00:00.000Z";
+    ok &= expect(store.query(since).size() == 2,
+                 "sinceUtc keeps the two rows at/after the bound.");
+
+    // Clear-with-retention: keep rows >= 11:00.
+    const auto retained = store.clear("test retention", "2026-06-01T11:00:00.000Z");
+    ok &= expect(retained.ok && retained.affectedRows == 1,
+                 "Retention clear deletes exactly the one older row.");
+    ok &= expect(store.count() == 2, "Two rows remain after retention clear.");
+
+    // Full clear.
+    const auto wiped = store.clear("test full clear", "");
+    ok &= expect(wiped.ok && wiped.affectedRows == 2, "Full clear deletes the rest.");
+    ok &= expect(store.count() == 0, "Store is empty after full clear.");
+
+    std::filesystem::remove_all(databasePath.parent_path());
+    return ok;
+}
+
+bool testSqliteDiagnosticsStoreSelfTestPrune() {
+    bool ok = true;
+    const auto databasePath = std::filesystem::temp_directory_path()
+        / "mcos-tests" / "diag-prune" / "diagnostics.db";
+    std::filesystem::remove_all(databasePath.parent_path());
+
+    MasterControl::SqliteDiagnosticsStore store(databasePath);
+    for (int i = 0; i < 5; ++i) {
+        MasterControl::DiagnosticsRecord record;
+        record.capturedAtUtc = "2026-06-0" + std::to_string(i + 1) + "T00:00:00.000Z";
+        record.source = "self-test";
+        record.severity = MasterControl::DiagnosticsSeverity::Info;
+        record.eventName = "boot_self_test_snapshot";
+        record.message = "snapshot";
+        record.sessionId = "boot-" + std::to_string(i);
+        record.sequence = i + 1;
+        (void)store.insert(record);
+    }
+    const auto pruned = store.pruneSelfTestSnapshots(2);
+    ok &= expect(pruned.ok && pruned.affectedRows == 3,
+                 "Prune keeps the requested 2 most recent self-test rows.");
+    MasterControl::DiagnosticsQuery selfTests;
+    selfTests.source = "self-test";
+    const auto remaining = store.query(selfTests);
+    ok &= expect(remaining.size() == 2
+                     && remaining.front().sessionId == "boot-4"
+                     && remaining.back().sessionId == "boot-3",
+                 "The two newest snapshots survive the prune.");
+
+    std::filesystem::remove_all(databasePath.parent_path());
+    return ok;
+}
+
+bool testDiagnosticsServiceRingFallbackAndClear() {
+    bool ok = true;
+    // Store-less service: ring-only operation.
+    MasterControl::DiagnosticsService service(nullptr, "boot-ring-test");
+    const auto reported = service.report(
+        MasterControl::DiagnosticsSeverity::Error, "runtime", "evt", "boom",
+        nlohmann::json::object(), "2026-06-01T10:00:00.000Z");
+    ok &= expect(!reported.ok && reported.ringAccepted,
+                 "Store-less report lands in the ring and honestly reports ok=false.");
+    ok &= expect(!service.storeAvailable(), "Store-less service reports store unavailable.");
+
+    MasterControl::DiagnosticsQuery anyQuery;
+    const auto rows = service.query(anyQuery);
+    ok &= expect(rows.size() == 1 && rows.front().eventName == "evt"
+                     && rows.front().sessionId == "boot-ring-test"
+                     && rows.front().sequence == 1,
+                 "Ring fallback query returns the reported record with session + sequence stamped.");
+
+    const auto cleared = service.clear("test", "", "2026-06-01T11:00:00.000Z");
+    ok &= expect(cleared.ok, "Store-less clear succeeds (ring wipe).");
+    // After clear, the ring holds nothing from before; the audit record
+    // is only emitted when a store-backed clear happens... store-less
+    // clear returns before the audit (no store). Query must be empty.
+    ok &= expect(service.query(anyQuery).empty(),
+                 "Ring is empty after store-less clear.");
+    return ok;
+}
+
+bool testDiagnosticsServiceStoreBackedReportAndAuditedClear() {
+    bool ok = true;
+    const auto databasePath = std::filesystem::temp_directory_path()
+        / "mcos-tests" / "diag-service" / "diagnostics.db";
+    std::filesystem::remove_all(databasePath.parent_path());
+
+    MasterControl::DiagnosticsService service(
+        MasterControl::createSqliteDiagnosticsStore(databasePath), "boot-svc-test");
+    ok &= expect(service.storeAvailable(), "Service opens its sqlite store.");
+
+    (void)service.report(MasterControl::DiagnosticsSeverity::Info, "runtime",
+                         "boot", "boot ok", nlohmann::json::object(),
+                         "2026-06-01T10:00:00.000Z");
+    (void)service.report(MasterControl::DiagnosticsSeverity::Warning, "runtime",
+                         "warn_evt", "warn", nlohmann::json::object(),
+                         "2026-06-01T11:00:00.000Z");
+    ok &= expect(service.storeCount() == 2, "Two reports persisted to the store.");
+
+    const auto cleared = service.clear("operator wipe", "", "2026-06-01T12:00:00.000Z");
+    ok &= expect(cleared.ok && cleared.affectedRows == 2, "Clear deletes both rows.");
+    // The clear is audited: one fresh diagnostics_cleared record.
+    MasterControl::DiagnosticsQuery audit;
+    audit.eventName = "diagnostics_cleared";
+    const auto auditRows = service.query(audit);
+    ok &= expect(auditRows.size() == 1
+                     && auditRows.front().data.value("deletedRows", 0) == 2,
+                 "Clear leaves exactly one audit record carrying the deleted count.");
+
+    std::filesystem::remove_all(databasePath.parent_path());
+    return ok;
+}
+
 bool testDiagnosticsMarkdownRender_warnWarningAlias() {
     bool ok = true;
     const std::vector<nlohmann::json> events = {
@@ -2886,6 +3066,11 @@ int main() {
     ok &= testDiagnosticsAggregator_softCapEarlyExit();
     ok &= testDiagnosticsAggregator_partialWriteTolerance();
     ok &= testDiagnosticsCapturedAtUtcParse();
+    // PHASE-14 Slice E
+    ok &= testSqliteDiagnosticsStoreCrudAndFilters();
+    ok &= testSqliteDiagnosticsStoreSelfTestPrune();
+    ok &= testDiagnosticsServiceRingFallbackAndClear();
+    ok &= testDiagnosticsServiceStoreBackedReportAndAuditedClear();
     ok &= testDiagnosticsMarkdownRender_warnWarningAlias();
     ok &= testDiagnosticsMarkdownRender_truncatesOver50();
     ok &= testLanClientDefaults();

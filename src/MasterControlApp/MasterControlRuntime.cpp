@@ -28,6 +28,7 @@
 #include "MasterControl/WorkflowReadiness.h"
 #include "MasterControl/JsonStrictness.h"   // v0.10.17: dropped-top-level-keys diagnostic.
 #include "MasterControl/DiagnosticsAggregator.h"  // v0.11.0 Slice A: testable aggregator + markdown renderer.
+#include "MasterControl/DiagnosticsService.h"     // v0.11.0-alpha.3 Slice E: SqliteDiagnosticsStore-backed central service.
 
 #include <bcrypt.h>
 #include <iomanip>
@@ -14045,6 +14046,11 @@ private:
     // existing v0.8.7 Error Reporting frame on the WinUI Overview
     // surface harvests error-flagged activity events automatically,
     // so failed probes appear there with no further wiring.
+    // v0.11.0-alpha.3 (PHASE-14 Slice E): central diagnostics service.
+    // Constructed FIRST in initialize() so every later appendEvent
+    // (via the diagnosticsReportHook shim) lands in the store.
+    std::shared_ptr<MasterControl::DiagnosticsService> diagnosticsService_;
+
     mutable std::mutex selfTestMutex_;
     SelfTestSnapshot lastSelfTestSnapshot_;
     std::thread selfTestThread_;
@@ -14070,6 +14076,37 @@ bool MasterControlApplication::Impl::initialize() {
     // so any subsequent activity-ring appends (gateway boot,
     // configuration load, etc.) get persisted.
     globalActivityRing().setPersistencePath(paths_.dataDirectory / "activity.jsonl");
+
+    // v0.11.0-alpha.3 (PHASE-14 Slice E): central diagnostics service +
+    // SqliteDiagnosticsStore. Constructed before every other service so
+    // their appendEvent calls (via the diagnosticsReportHook shim) land
+    // in the store from the first boot event onward. DB lives next to
+    // the jsonl logs root: <PUBLIC>\Documents\Master Control
+    // Orchestration Server\diagnostics\diagnostics.db. Store
+    // construction failure (unwritable path, disk full) leaves the
+    // service ring-only -- "no fake telemetry": summary() reports
+    // storeUnavailable, the runtime keeps working.
+    {
+        const auto logPaths = MasterControl::Diagnostics::resolvePersistentLogPaths(L"runtime");
+        const auto databasePath = logPaths.root.parent_path() / "diagnostics" / "diagnostics.db";
+        diagnosticsService_ = std::make_shared<MasterControl::DiagnosticsService>(
+            MasterControl::createSqliteDiagnosticsStore(databasePath),
+            "boot-" + MasterControl::Diagnostics::timestampNowUtc());
+        std::weak_ptr<MasterControl::DiagnosticsService> weakService = diagnosticsService_;
+        MasterControl::Diagnostics::diagnosticsReportHook() =
+            [weakService](const std::string& component,
+                          const std::string& severity,
+                          const std::string& eventName,
+                          const std::string& message,
+                          const nlohmann::json& data,
+                          const std::string& capturedAtUtc) {
+                if (const auto service = weakService.lock()) {
+                    (void)service->report(
+                        MasterControl::diagnosticsSeverityFromString(severity),
+                        component, eventName, message, data, capturedAtUtc);
+                }
+            };
+    }
 
     configurationService_ = std::make_shared<FileBackedConfigurationService>(state_, paths_.configurationFile);
     resourceAllocationService_ = std::make_shared<ResourceAllocationService>(state_, paths_.configurationFile);
@@ -14856,6 +14893,14 @@ void MasterControlApplication::Impl::runBootSelfTestsAsync() {
         std::this_thread::sleep_for(std::chrono::seconds(3));
         if (stopRequested_.load()) return;
         auto snap = runBootSelfTestsNow();
+        // v0.11.0-alpha.3 (PHASE-14 Slice E): persist the snapshot so
+        // failed boot self-tests survive past process exit (one record
+        // per boot, retained for the last 50 boots).
+        if (diagnosticsService_) {
+            (void)diagnosticsService_->recordSelfTest(
+                nlohmann::json(snap),
+                MasterControl::Diagnostics::timestampNowUtc());
+        }
         std::lock_guard<std::mutex> lock(selfTestMutex_);
         lastSelfTestSnapshot_ = std::move(snap);
     });
@@ -17164,7 +17209,34 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             // only if the live pass didn't fill the cap (4x headroom
             // for severity filtering). softCap == 0 retains the
             // unbounded read-all semantics that summary + export need.
+            // v0.11.0-alpha.3 (PHASE-14 Slice E): prefer the SQLite
+            // store. The store receives every appendEvent via the
+            // diagnosticsReportHook shim, so going forward it is a
+            // superset of the jsonl files. The jsonl walk remains the
+            // fallback for (a) a store that failed to open and (b) the
+            // first boot after the upgrade, when the store exists but
+            // holds no history yet -- pre-Slice-E jsonl history stays
+            // visible until the store has accumulated rows.
+            const bool useStore = diagnosticsService_
+                && diagnosticsService_->storeAvailable()
+                && diagnosticsService_->storeCount() > 0;
+
             auto aggregateEvents = [&](std::size_t softCap) -> std::vector<nlohmann::json> {
+                if (useStore) {
+                    MasterControl::DiagnosticsQuery storeQuery;
+                    // 4x headroom mirrors the jsonl aggregator's
+                    // softCap contract: applyFilters runs AFTER the
+                    // fetch, so a tight cap + severity filter would
+                    // under-fill the response.
+                    storeQuery.maxResults = softCap > 0 ? softCap * 4 : 0;
+                    const auto records = diagnosticsService_->query(storeQuery);
+                    std::vector<nlohmann::json> events;
+                    events.reserve(records.size());
+                    for (const auto& record : records) {
+                        events.push_back(record.toLegacyJson());
+                    }
+                    return events;
+                }
                 const auto rootPaths = MasterControl::Diagnostics::resolvePersistentLogPaths(L"runtime");
                 return MasterControl::aggregateDiagnosticsEventsFromRoot(rootPaths.root, softCap);
             };
@@ -17229,6 +17301,14 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 body["byComponent"] = byComponent;
                 body["latest5"]     = latest;
                 body["generatedAtUtc"] = timestampNowUtc();
+                // v0.11.0-alpha.3 (PHASE-14 Slice E): store health
+                // surfaced per the "no fake state" acceptance
+                // criterion. storeUnavailable carries the sqlite reason
+                // when the persistent store could not be opened.
+                if (diagnosticsService_ && !diagnosticsService_->storeAvailable()) {
+                    body["storeUnavailable"] = diagnosticsService_->storeLastError();
+                }
+                body["storeBacked"] = useStore;
                 return HttpResponse{ 200, "application/json", body.dump() };
             }
 
@@ -17266,17 +17346,51 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             return HttpResponse{ 200, "application/json", body.dump(2) };
         }
         if (request.method == "POST" && request.path == "/api/diagnostics/clear") {
-            // v0.11.0 PHASE-14 Slice A: deferred to a follow-up slice
-            // when the SqliteDiagnosticsStore lands. The current
-            // jsonl-aggregated path is read-only; clearing would
-            // require deleting per-component log files which has
-            // operator-side risk. Return 501 with a clear message
-            // so consumers don't silently retry.
-            return HttpResponse{ 501, "application/json",
-                nlohmann::json{
-                    {"ok", false},
-                    {"message", "Clearing diagnostics is not supported in this slice. The persistent log files at <PUBLIC>\\Documents\\Master Control Orchestration Server\\logs\\ remain operator-owned. A future slice with the SqliteDiagnosticsStore will support clear-with-retention."}
-                }.dump() };
+            // v0.11.0-alpha.3 (PHASE-14 Slice E): functional clear-with-
+            // retention against the SqliteDiagnosticsStore, replacing
+            // the Slice A 501. Body (optional JSON object):
+            //   { "reason": "...",               // audited
+            //     "retainSinceUtc": "ISO-8601" } // keep records >= this
+            // Empty/absent retainSinceUtc clears everything. The
+            // operator-owned per-component jsonl files under logs\ are
+            // deliberately NOT touched -- they remain the raw audit
+            // trail; clear applies to the central store + ring that
+            // back the /api/diagnostics query surface.
+            if (!diagnosticsService_) {
+                return HttpResponse{ 503, "application/json",
+                    nlohmann::json{
+                        {"ok", false},
+                        {"message", "Diagnostics service not initialized."}
+                    }.dump() };
+            }
+            std::string reason;
+            std::string retainSinceUtc;
+            if (!request.body.empty()) {
+                try {
+                    const auto body = nlohmann::json::parse(request.body);
+                    if (body.is_object()) {
+                        reason = body.value("reason", std::string());
+                        retainSinceUtc = body.value("retainSinceUtc", std::string());
+                    }
+                } catch (const std::exception& ex) {
+                    return HttpResponse{ 400, "application/json",
+                        nlohmann::json{
+                            {"ok", false},
+                            {"message", std::string("Invalid clear payload: ") + ex.what()}
+                        }.dump() };
+                }
+            }
+            const auto cleared = diagnosticsService_->clear(
+                reason, retainSinceUtc, timestampNowUtc());
+            nlohmann::json responseBody = {
+                {"ok", cleared.ok},
+                {"deletedRows", cleared.affectedRows},
+                {"retainSinceUtc", retainSinceUtc},
+                {"message", cleared.ok
+                    ? std::string("Diagnostics store cleared. Per-component jsonl logs under logs\\ are operator-owned and untouched.")
+                    : cleared.message}
+            };
+            return HttpResponse{ cleared.ok ? 200 : 503, "application/json", responseBody.dump() };
         }
         // -------------------------------------------------------------------
         // v0.9.4 (Fix #4): host telemetry surface. Pre-v0.9.4 the

@@ -17,6 +17,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <map>
 #include <mutex>
@@ -347,20 +348,55 @@ inline void appendJsonLine(const std::filesystem::path& filePath, const nlohmann
     output << record.dump() << '\n';
 }
 
+// v0.11.0-alpha.3 (PHASE-14 Slice E): central-store shim. When the
+// runtime has constructed its DiagnosticsService it registers a hook
+// here; every appendEvent call then ALSO reports into the central
+// SQLite-backed store. The hook is a std::function (not a hard
+// dependency on the service header) so this header stays lightweight
+// for the bootstrapper / shell / worker TUs that include it without
+// the service. Registration happens once during runtime initialize()
+// before traffic; the hook is intentionally not torn down (the service
+// outlives every caller in the process).
+using DiagnosticsReportHook = std::function<void(
+    const std::string& component,
+    const std::string& severity,
+    const std::string& eventName,
+    const std::string& message,
+    const nlohmann::json& data,
+    const std::string& capturedAtUtc)>;
+
+inline DiagnosticsReportHook& diagnosticsReportHook() {
+    static DiagnosticsReportHook hook;
+    return hook;
+}
+
 inline void appendEvent(std::wstring_view componentName,
                         std::string_view severity,
                         std::string_view eventName,
                         std::string_view message,
                         nlohmann::json data = nlohmann::json::object()) {
     const auto paths = resolvePersistentLogPaths(componentName);
+    const auto capturedAtUtc = timestampNowUtc();
+    const auto componentUtf8 = utf8FromWide(std::wstring(componentName));
     appendJsonLine(paths.eventsFile, nlohmann::json{
-        { "capturedAtUtc", timestampNowUtc() },
-        { "component", utf8FromWide(std::wstring(componentName)) },
+        { "capturedAtUtc", capturedAtUtc },
+        { "component", componentUtf8 },
         { "severity", std::string(severity) },
         { "event", std::string(eventName) },
         { "message", std::string(message) },
-        { "data", std::move(data) }
+        { "data", data }
     });
+    // PHASE-14 Slice E: dual-report into the central store when wired.
+    if (const auto& hook = diagnosticsReportHook(); hook) {
+        try {
+            hook(componentUtf8, std::string(severity), std::string(eventName),
+                 std::string(message), data, capturedAtUtc);
+        } catch (const std::exception&) {
+            // The central store must never take down a caller that was
+            // only trying to log. The jsonl write above already
+            // happened, so nothing is lost from the legacy surface.
+        }
+    }
 }
 
 inline void appendTelemetry(std::wstring_view componentName,

@@ -3,6 +3,8 @@
 # Proprietary and Confidential.
 
 add_library(MasterControlApp STATIC
+    DiagnosticsService.cpp
+    DiagnosticsStore.cpp
     MasterControlDefaults.cpp
     MasterControlModels.cpp
     MasterControlRuntime.cpp
@@ -21,6 +23,10 @@ target_link_libraries(MasterControlApp
         ForsettiCore
         ForsettiPlatform
         nlohmann_json::nlohmann_json
+        # PHASE-14 Slice E: persistent diagnostics store. PUBLIC because
+        # the tests target links MasterControlApp and includes
+        # DiagnosticsStore.h directly.
+        unofficial::sqlite3::sqlite3
     PRIVATE
         ws2_32
         iphlpapi
