@@ -2094,3 +2094,60 @@ dialog:focus-visible {
 }
 .supervisor-actions button[disabled] { opacity: 0.4; cursor: not-allowed; }
 .supervisor-status { margin-top: 8px; font-size: 0.85rem; line-height: 1.5; }
+
+/* ---------------------------------------------------------------------------
+   PHASE-14 Slice D — Diagnostics tab (browser surface).
+   Severity badges reuse the established tone palette: warning/error/critical
+   match the .activity-row[data-tone] / .rule-severity colors, info matches
+   the cyan info tone, debug renders muted (--muted). No new animations; the
+   global prefers-reduced-motion block stays authoritative.
+   --------------------------------------------------------------------------- */
+
+.diagnostics-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin: 14px 0 4px;
+}
+.diagnostics-filter-row label {
+  flex: 0 1 180px;
+  min-width: 140px;
+  font-size: 0.85rem;
+}
+.diagnostics-filter-row .route-button { margin-bottom: 1px; }
+
+.diagnostics-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 10px 0 4px;
+}
+
+.severity-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border: 1px solid currentColor;
+  color: rgba(140, 220, 255, 0.95);
+}
+.severity-badge[data-tone="debug"]    { color: var(--muted); opacity: 0.8; }
+.severity-badge[data-tone="info"]     { color: rgba(140, 220, 255, 0.95); }
+.severity-badge[data-tone="warning"]  { color: rgba(255, 200, 100, 0.95); background: rgba(255, 200, 100, 0.08); }
+.severity-badge[data-tone="error"]    { color: rgba(255, 140, 150, 0.95); background: rgba(255, 140, 150, 0.08); }
+.severity-badge[data-tone="critical"] {
+  color: rgba(255, 120, 130, 1);
+  background: rgba(255, 120, 130, 0.14);
+  font-weight: 700;
+}
+
+.diagnostics-table td { word-break: break-word; }
+.diagnostics-table td:first-child { white-space: nowrap; }
+.diagnostics-summary-grid .summary-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
