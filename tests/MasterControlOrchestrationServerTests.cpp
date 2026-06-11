@@ -2853,8 +2853,15 @@ bool testSqliteDiagnosticsStoreCrudAndFilters() {
     bool ok = true;
     const auto databasePath = std::filesystem::temp_directory_path()
         / "mcos-tests" / "diag-crud" / "diagnostics.db";
-    std::filesystem::remove_all(databasePath.parent_path());
+    std::error_code cleanupEc;
+    std::filesystem::remove_all(databasePath.parent_path(), cleanupEc);
 
+    // v0.11.0-alpha.3: scope the store so its destructor closes the DB
+    // handle BEFORE the cleanup below. Windows refuses to delete an
+    // open file (.db/-wal/-shm), so the throwing remove_all overload
+    // would raise an uncaught filesystem_error -> terminate (POSIX
+    // unlinks open files, which is why this only faulted on Windows).
+    {
     MasterControl::SqliteDiagnosticsStore store(databasePath);
     ok &= expect(store.available(), "Sqlite store opens against a fresh temp path.");
 
@@ -2921,8 +2928,9 @@ bool testSqliteDiagnosticsStoreCrudAndFilters() {
     const auto wiped = store.clear("test full clear", "");
     ok &= expect(wiped.ok && wiped.affectedRows == 2, "Full clear deletes the rest.");
     ok &= expect(store.count() == 0, "Store is empty after full clear.");
+    }
 
-    std::filesystem::remove_all(databasePath.parent_path());
+    std::filesystem::remove_all(databasePath.parent_path(), cleanupEc);
     return ok;
 }
 
@@ -2930,8 +2938,12 @@ bool testSqliteDiagnosticsStoreSelfTestPrune() {
     bool ok = true;
     const auto databasePath = std::filesystem::temp_directory_path()
         / "mcos-tests" / "diag-prune" / "diagnostics.db";
-    std::filesystem::remove_all(databasePath.parent_path());
+    std::error_code cleanupEc;
+    std::filesystem::remove_all(databasePath.parent_path(), cleanupEc);
 
+    // Scope the store so the DB closes before cleanup (see the
+    // CrudAndFilters test for the Windows open-file-delete rationale).
+    {
     MasterControl::SqliteDiagnosticsStore store(databasePath);
     for (int i = 0; i < 5; ++i) {
         MasterControl::DiagnosticsRecord record;
@@ -2954,8 +2966,9 @@ bool testSqliteDiagnosticsStoreSelfTestPrune() {
                      && remaining.front().sessionId == "boot-4"
                      && remaining.back().sessionId == "boot-3",
                  "The two newest snapshots survive the prune.");
+    }
 
-    std::filesystem::remove_all(databasePath.parent_path());
+    std::filesystem::remove_all(databasePath.parent_path(), cleanupEc);
     return ok;
 }
 
@@ -2991,8 +3004,12 @@ bool testDiagnosticsServiceStoreBackedReportAndAuditedClear() {
     bool ok = true;
     const auto databasePath = std::filesystem::temp_directory_path()
         / "mcos-tests" / "diag-service" / "diagnostics.db";
-    std::filesystem::remove_all(databasePath.parent_path());
+    std::error_code cleanupEc;
+    std::filesystem::remove_all(databasePath.parent_path(), cleanupEc);
 
+    // Scope the service (which owns the store) so the DB closes before
+    // cleanup (see the CrudAndFilters test for the rationale).
+    {
     MasterControl::DiagnosticsService service(
         MasterControl::createSqliteDiagnosticsStore(databasePath), "boot-svc-test");
     ok &= expect(service.storeAvailable(), "Service opens its sqlite store.");
@@ -3014,8 +3031,9 @@ bool testDiagnosticsServiceStoreBackedReportAndAuditedClear() {
     ok &= expect(auditRows.size() == 1
                      && auditRows.front().data.value("deletedRows", 0) == 2,
                  "Clear leaves exactly one audit record carrying the deleted count.");
+    }
 
-    std::filesystem::remove_all(databasePath.parent_path());
+    std::filesystem::remove_all(databasePath.parent_path(), cleanupEc);
     return ok;
 }
 
