@@ -181,6 +181,50 @@ struct ShellSelfTestSnapshot final {
     std::wstring fetchError;   // non-empty when the HTTP fetch itself failed
 };
 
+// v0.11.0-alpha.3 (PHASE-14 Slice C): comprehensive-diagnostics surface.
+// ShellRuntime fetches the centralized diagnostics aggregate exposed by
+// the Slice A/E routes (GET /api/diagnostics/events, /summary, /export
+// + POST /clear) and unpacks the JSON into Shell-side wstrings so the
+// DiagnosticsSectionControl never touches WinHTTP / JSON parsing
+// directly -- same separation the supervisor wizard helpers use.
+struct ShellDiagnosticsEvent final {
+    std::wstring capturedAtUtc;
+    std::wstring component;      // source subsystem ("runtime" / "supervisor" / "installer" / "self-test" / ...)
+    std::wstring severity;       // "debug" / "info" / "warning" / "error" / "critical"
+    std::wstring eventName;
+    std::wstring message;
+};
+
+struct ShellDiagnosticsEventsResult final {
+    bool succeeded = false;
+    std::wstring message;
+    std::vector<ShellDiagnosticsEvent> events;
+};
+
+struct ShellDiagnosticsSummary final {
+    bool succeeded = false;
+    std::wstring message;
+    uint64_t totalEvents = 0;
+    bool storeBacked = false;          // true when the SQLite store served the aggregate
+    std::wstring storeUnavailable;     // sqlite open failure reason; empty when healthy
+    std::wstring generatedAtUtc;
+};
+
+// Export bytes come back verbatim (the route already renders UTF-8
+// Markdown / JSON); the section control writes `content` to the
+// operator-chosen path without re-encoding.
+struct ShellDiagnosticsExportResult final {
+    bool succeeded = false;
+    std::wstring message;
+    std::string content;
+};
+
+struct ShellDiagnosticsClearResult final {
+    bool succeeded = false;
+    uint64_t deletedRows = 0;
+    std::wstring message;
+};
+
 // Auto-Connect AI Model — the shell hands the runtime just the credentials
 // and optional role targets. Everything else (route id, display name, base
 // url, model discovery, dpapi encryption, assignment fan-out) is automated.
@@ -608,6 +652,17 @@ public:
     // v0.9.75: re-run the boot self-test sweep on demand. POSTs
     // /api/self-tests/run and returns the freshly-computed snapshot.
     [[nodiscard]] ShellSelfTestSnapshot RunSelfTestsNow() const;
+
+    // v0.11.0-alpha.3 (PHASE-14 Slice C): diagnostics fetch helpers for
+    // the DiagnosticsSectionControl. Empty severity / source means "no
+    // filter"; maxEvents <= 0 falls back to the route default (200).
+    // `format` for the export is "markdown" or "json".
+    [[nodiscard]] ShellDiagnosticsSummary FetchDiagnosticsSummary() const;
+    [[nodiscard]] ShellDiagnosticsEventsResult FetchDiagnosticsEvents(const std::wstring& severity,
+                                                                      const std::wstring& source,
+                                                                      int maxEvents) const;
+    [[nodiscard]] ShellDiagnosticsExportResult FetchDiagnosticsExport(const std::wstring& format) const;
+    [[nodiscard]] ShellDiagnosticsClearResult ClearDiagnostics(const std::wstring& reason) const;
 
     // v0.9.76: Supervisor Agent Assignment Wizard surface. The Shell's
     // OverviewSectionControl drives the popup, single-toggle group, and
