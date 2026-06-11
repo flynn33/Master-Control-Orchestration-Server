@@ -13357,7 +13357,10 @@ public:
             static_cast<size_t>(streamSizes_.cbHeader) + maxChunk + streamSizes_.cbTrailer);
         size_t offset = 0;
         while (offset < size) {
-            const size_t chunk = std::min(size - offset, maxChunk);
+            // (std::min) parenthesized to dodge the windows.h min macro
+            // -- this TU does not define NOMINMAX; same convention as
+            // the (std::min<std::size_t>) call in the summary route.
+            const size_t chunk = (std::min)(size - offset, maxChunk);
             std::memcpy(message.data() + streamSizes_.cbHeader, data + offset, chunk);
 
             SecBuffer buffers[4]{};
