@@ -541,9 +541,17 @@ namespace {
 // document. Uses Win32 UuidCreate (rpcrt4) and lowercases the canonical
 // 36-char form. Operators can override by editing AppConfiguration.instanceId
 // in mcos.json — the field round-trips like every other configuration key.
+// v0.11.0-alpha.3 (Copilot review): UuidCreate may return
+// RPC_S_UUID_LOCAL_ONLY -- the UUID is still valid and unique on this
+// machine, it just couldn't include a globally-unique node id. Treat it
+// as success; only a hard error (RPC_S_*_FAILURE etc.) yields empty.
+inline bool uuidCreateSucceeded(RPC_STATUS status) {
+    return status == RPC_S_OK || status == RPC_S_UUID_LOCAL_ONLY;
+}
+
 std::string generateInstanceIdUtf8() {
     UUID uuid{};
-    if (UuidCreate(&uuid) != RPC_S_OK) {
+    if (!uuidCreateSucceeded(UuidCreate(&uuid))) {
         return "";
     }
     RPC_CSTR uuidString = nullptr;
@@ -567,7 +575,11 @@ std::string generateBeaconSigningKeyHex() {
     std::string hex;
     for (int i = 0; i < 2; ++i) {
         UUID uuid{};
-        if (UuidCreate(&uuid) != RPC_S_OK) {
+        // v0.11.0-alpha.3 (Copilot review): RPC_S_UUID_LOCAL_ONLY is a
+        // valid UUID, not a failure -- accepting it keeps fresh installs
+        // from ending up with an empty (signing-disabled) key on hosts
+        // whose RPC layer can't supply a global node id.
+        if (!uuidCreateSucceeded(UuidCreate(&uuid))) {
             return "";
         }
         RPC_CSTR uuidString = nullptr;

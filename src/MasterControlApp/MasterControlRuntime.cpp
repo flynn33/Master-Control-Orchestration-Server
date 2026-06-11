@@ -13211,15 +13211,29 @@ public:
             // Flush any output token (handshake reply, or an alert when
             // the failure carried ASC_RET_EXTENDED_ERROR). Free the
             // SChannel-allocated buffer on every path.
+            // v0.11.0-alpha.3 (Copilot review): a failed send during a
+            // CONTINUE_NEEDED / OK round means the peer will never
+            // receive the handshake bytes it is waiting for -- looping
+            // would hang the connection. Treat the send failure as a
+            // failed handshake and bail (the buffer is freed first, and
+            // the existing partial context is torn down by the adapter
+            // destructor). Send failures on the extended-error alert
+            // path are ignored: we're already failing and about to close.
             if (outBuffer.pvBuffer != nullptr) {
-                if (outBuffer.cbBuffer > 0
-                    && (status == SEC_I_CONTINUE_NEEDED
-                        || status == SEC_E_OK
-                        || (FAILED(status) && (attributes & ASC_RET_EXTENDED_ERROR) != 0))) {
-                    sendAll(static_cast<const char*>(outBuffer.pvBuffer), outBuffer.cbBuffer);
+                bool sendFailedDuringHandshake = false;
+                if (outBuffer.cbBuffer > 0) {
+                    if (status == SEC_I_CONTINUE_NEEDED || status == SEC_E_OK) {
+                        sendFailedDuringHandshake = !sendAll(
+                            static_cast<const char*>(outBuffer.pvBuffer), outBuffer.cbBuffer);
+                    } else if (FAILED(status) && (attributes & ASC_RET_EXTENDED_ERROR) != 0) {
+                        sendAll(static_cast<const char*>(outBuffer.pvBuffer), outBuffer.cbBuffer);
+                    }
                 }
                 FreeContextBuffer(outBuffer.pvBuffer);
                 outBuffer.pvBuffer = nullptr;
+                if (sendFailedDuringHandshake) {
+                    return false;
+                }
             }
 
             // Consume the input we handed in, keeping any SECBUFFER_EXTRA

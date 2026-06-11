@@ -10,6 +10,7 @@
 #include "ShellFormatting.h"
 
 #include <ShlObj.h>
+#include <cstdio>   // v0.11.0-alpha.3: std::snprintf for jsonEscapeInner
 #include <mutex>
 
 namespace MasterControlShell {
@@ -107,6 +108,41 @@ std::string narrowFromWide(const std::wstring& input) {
         nullptr,
         nullptr);
     return output;
+}
+
+// v0.11.0-alpha.3 (Copilot review): JSON string-literal escaper for the
+// hand-built request bodies in this TU (ShellRuntime does not pull in
+// nlohmann). Escapes every character JSON requires -- the two quote/
+// backslash specials PLUS the C0 control characters (\b \f \n \r \t and
+// the \u00XX long form for the rest). Pre-fix the callers escaped only
+// `\` and `"`, so a maintainer reason containing a newline/tab/control
+// char produced an invalid body that /api/diagnostics/clear (and the
+// supervisor revoke route) rejected. Returns the escaped INNER text
+// (no surrounding quotes) so callers keep their `"key":"..."` shape.
+std::string jsonEscapeInner(const std::string& utf8) {
+    std::string out;
+    out.reserve(utf8.size() + 8);
+    for (const unsigned char ch : utf8) {
+        switch (ch) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b";  break;
+            case '\f': out += "\\f";  break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (ch < 0x20) {
+                    char buffer[7];
+                    std::snprintf(buffer, sizeof(buffer), "\\u%04x", ch);
+                    out += buffer;
+                } else {
+                    out.push_back(static_cast<char>(ch));
+                }
+                break;
+        }
+    }
+    return out;
 }
 
 std::wstring trimWideCopy(std::wstring value) {
@@ -3285,16 +3321,12 @@ bool ShellRuntime::RevokeSupervisor(const std::wstring& reason,
     if (reason.empty()) {
         body = "{}";
     } else {
-        // Minimal JSON-string escape: backslash + double-quote. Maintainer
-        // input flows through here so quote-handling matters.
-        std::string escaped;
-        escaped.reserve(reason.size());
-        const auto narrow = narrowFromWide(reason);
-        for (char c : narrow) {
-            if (c == '\\' || c == '"') escaped.push_back('\\');
-            escaped.push_back(c);
-        }
-        body = std::string("{\"reason\":\"") + escaped + "\"}";
+        // v0.11.0-alpha.3 (Copilot review): full JSON escaping via
+        // jsonEscapeInner. Pre-fix only `\` and `"` were escaped, so a
+        // maintainer reason containing a newline/tab/control character
+        // produced an invalid body the revoke route would reject.
+        body = std::string("{\"reason\":\"")
+            + jsonEscapeInner(narrowFromWide(reason)) + "\"}";
     }
     std::wstring errorMessage;
     const auto response = httpRequest(
@@ -3474,21 +3506,16 @@ ShellDiagnosticsExportResult ShellRuntime::FetchDiagnosticsExport(const std::wst
 ShellDiagnosticsClearResult ShellRuntime::ClearDiagnostics(const std::wstring& reason) const {
     ShellDiagnosticsClearResult out;
     const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
-    // Body: optional audited reason. Same minimal JSON-string escape as
-    // RevokeSupervisor (backslash + double-quote) because operator text
-    // flows through here.
+    // Body: optional audited reason. v0.11.0-alpha.3 (Copilot review):
+    // full JSON escaping via jsonEscapeInner so a reason carrying a
+    // newline/tab/control character produces valid JSON the clear route
+    // can parse (pre-fix only `\` and `"` were escaped).
     std::string body;
     if (reason.empty()) {
         body = "{}";
     } else {
-        std::string escaped;
-        const auto narrow = narrowFromWide(reason);
-        escaped.reserve(narrow.size());
-        for (char c : narrow) {
-            if (c == '\\' || c == '"') escaped.push_back('\\');
-            escaped.push_back(c);
-        }
-        body = std::string("{\"reason\":\"") + escaped + "\"}";
+        body = std::string("{\"reason\":\"")
+            + jsonEscapeInner(narrowFromWide(reason)) + "\"}";
     }
     std::wstring errorMessage;
     const auto response = httpRequest(

@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -284,11 +285,18 @@ def t_diagnostics_summary(args):
     return _get("/api/diagnostics/summary")
 
 def t_diagnostics_events(args):
-    params = []
-    if args.get("max"):      params.append(f"max={int(args['max'])}")
-    if args.get("severity"): params.append(f"severity={args['severity']}")
-    if args.get("source"):   params.append(f"source={args['source']}")
-    query = ("?" + "&".join(params)) if params else ""
+    # URL-encode every value: tool args are user-provided, so raw
+    # concatenation would allow query-string injection
+    # (severity='warning&max=5000') and break on characters that need
+    # percent-encoding. int() coercion on max also rejects non-numbers.
+    params = {}
+    if args.get("max") is not None:
+        params["max"] = int(args["max"])
+    if args.get("severity"):
+        params["severity"] = str(args["severity"])
+    if args.get("source"):
+        params["source"] = str(args["source"])
+    query = ("?" + urllib.parse.urlencode(params)) if params else ""
     return _get(f"/api/diagnostics/events{query}")
 
 def t_diagnostics_self_test(args):
