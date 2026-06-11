@@ -52,6 +52,15 @@ bool expect(const bool condition, const char* message) {
     return true;
 }
 
+// v0.11.0-alpha.3: crash-localization breadcrumb. std::cerr is
+// unit-buffered, so the LAST line in ctest's --output-on-failure
+// capture names the test that faulted (the handwritten framework is
+// otherwise silent on success). Cheap to leave in permanently.
+bool trace(const char* name) {
+    std::cerr << "[run] " << name << '\n';
+    return true;
+}
+
 bool testDefaultConfiguration() {
     const auto configuration = MasterControl::buildDefaultConfiguration();
     bool ok = true;
@@ -3070,6 +3079,10 @@ bool testDiagnosticsCapturedAtUtcParse() {
 }
 
 int main() {
+    // v0.11.0-alpha.3: prove the process reached main -- distinguishes a
+    // DLL/load failure (banner absent) from a crash inside a test
+    // (banner present, last [run] line names the test).
+    std::cerr << "[run] === main entered ===\n";
 #if defined(_WIN32)
     // v0.11.0-alpha.3: fail fast on a hard fault instead of hanging.
     // A missing DLL or an access violation in a non-interactive CI
@@ -3081,138 +3094,138 @@ int main() {
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
     bool ok = true;
-    ok &= testDefaultConfiguration();
+    trace("testDefaultConfiguration"); ok &= testDefaultConfiguration();
     // v0.11.0-alpha.3: admin-listener TLS opt-in defaults + legacy
     // SecuritySettings JSON back-compat (mirrors the beacon-signing
     // back-compat block inside testDefaultConfiguration).
-    ok &= testSecuritySettingsAdminTlsDefaults();
-    ok &= testSeededEndpoints();
-    ok &= testSeededGatewayEndpointPointsAtNativeGateway();
+    trace("testSecuritySettingsAdminTlsDefaults"); ok &= testSecuritySettingsAdminTlsDefaults();
+    trace("testSeededEndpoints"); ok &= testSeededEndpoints();
+    trace("testSeededGatewayEndpointPointsAtNativeGateway"); ok &= testSeededGatewayEndpointPointsAtNativeGateway();
     // v0.10.15 QueryParamParse helper tests (alias-aware ?param= extractor
     // backing /api/activity, /api/telemetry/events, /api/client/activity).
-    ok &= testQueryParamCanonicalParse();
-    ok &= testQueryParamAliasFallback();
-    ok &= testQueryParamBoundaryGuard();
-    ok &= testQueryParamMissingReturnsEmpty();
-    ok &= testQueryParamMultiPair();
+    trace("testQueryParamCanonicalParse"); ok &= testQueryParamCanonicalParse();
+    trace("testQueryParamAliasFallback"); ok &= testQueryParamAliasFallback();
+    trace("testQueryParamBoundaryGuard"); ok &= testQueryParamBoundaryGuard();
+    trace("testQueryParamMissingReturnsEmpty"); ok &= testQueryParamMissingReturnsEmpty();
+    trace("testQueryParamMultiPair"); ok &= testQueryParamMultiPair();
     // v0.10.17 JsonStrictness helper tests (additive droppedKeys
     // diagnostic on /api/clients, /api/pools, /api/telemetry/heartbeat).
-    ok &= testJsonStrictnessDetectsTypo();
-    ok &= testJsonStrictnessNoDropsWhenAllKeysKnown();
-    ok &= testJsonStrictnessSafeOnNonObjectInput();
-    ok &= testDroppedKeysToJsonShape();
+    trace("testJsonStrictnessDetectsTypo"); ok &= testJsonStrictnessDetectsTypo();
+    trace("testJsonStrictnessNoDropsWhenAllKeysKnown"); ok &= testJsonStrictnessNoDropsWhenAllKeysKnown();
+    trace("testJsonStrictnessSafeOnNonObjectInput"); ok &= testJsonStrictnessSafeOnNonObjectInput();
+    trace("testDroppedKeysToJsonShape"); ok &= testDroppedKeysToJsonShape();
     // v0.11.0 PHASE-14 Slice A diagnostics aggregator + markdown
     // render tests against the new include/MasterControl/Diagnostics
     // Aggregator.h helpers. Covers the file-walk + softCap early-out
     // + recent-first sort + partial-write tolerance + markdown
     // warn/warning aliasing + 50-events/section truncation paths
     // that back the new /api/diagnostics/* HTTP surface.
-    ok &= testDiagnosticsAggregator_emptyRoot();
-    ok &= testDiagnosticsAggregator_singleComponentSorted();
-    ok &= testDiagnosticsAggregator_softCapEarlyExit();
-    ok &= testDiagnosticsAggregator_partialWriteTolerance();
-    ok &= testDiagnosticsCapturedAtUtcParse();
+    trace("testDiagnosticsAggregator_emptyRoot"); ok &= testDiagnosticsAggregator_emptyRoot();
+    trace("testDiagnosticsAggregator_singleComponentSorted"); ok &= testDiagnosticsAggregator_singleComponentSorted();
+    trace("testDiagnosticsAggregator_softCapEarlyExit"); ok &= testDiagnosticsAggregator_softCapEarlyExit();
+    trace("testDiagnosticsAggregator_partialWriteTolerance"); ok &= testDiagnosticsAggregator_partialWriteTolerance();
+    trace("testDiagnosticsCapturedAtUtcParse"); ok &= testDiagnosticsCapturedAtUtcParse();
     // PHASE-14 Slice E
-    ok &= testSqliteDiagnosticsStoreCrudAndFilters();
-    ok &= testSqliteDiagnosticsStoreSelfTestPrune();
-    ok &= testDiagnosticsServiceRingFallbackAndClear();
-    ok &= testDiagnosticsServiceStoreBackedReportAndAuditedClear();
-    ok &= testDiagnosticsMarkdownRender_warnWarningAlias();
-    ok &= testDiagnosticsMarkdownRender_truncatesOver50();
-    ok &= testLanClientDefaults();
-    ok &= testLanClientRoundTrip();
-    ok &= testAppConfigurationCarriesLanClients();
-    ok &= testSetupStateJsonContract();
-    ok &= testAppConfigurationCarriesSetupState();
-    ok &= testWorkflowDefinitionJsonContract();
-    ok &= testWorkflowReadinessCountsSources();
-    ok &= testWorkflowReadinessRejectsInvalidDisabledDeleted();
-    ok &= testLanClientPrivilegesDefaults();
-    ok &= testLanClientPrivilegesRoundTrip();
-    ok &= testCapabilityMatrixDefaults();
-    ok &= testMcpToolCapabilityMatrix();
-    ok &= testAuthenticatedRequestContextDefaults();
-    ok &= testLocalBootstrapGrantsAllPrivileges();
-    ok &= testLanClientConfigBundleShape();
-    ok &= testGovernanceActionKindRoundTrip();
-    ok &= testGovernanceDecisionOutcomeRoundTrip();
-    ok &= testGovernanceDeferredActionShape();
+    trace("testSqliteDiagnosticsStoreCrudAndFilters"); ok &= testSqliteDiagnosticsStoreCrudAndFilters();
+    trace("testSqliteDiagnosticsStoreSelfTestPrune"); ok &= testSqliteDiagnosticsStoreSelfTestPrune();
+    trace("testDiagnosticsServiceRingFallbackAndClear"); ok &= testDiagnosticsServiceRingFallbackAndClear();
+    trace("testDiagnosticsServiceStoreBackedReportAndAuditedClear"); ok &= testDiagnosticsServiceStoreBackedReportAndAuditedClear();
+    trace("testDiagnosticsMarkdownRender_warnWarningAlias"); ok &= testDiagnosticsMarkdownRender_warnWarningAlias();
+    trace("testDiagnosticsMarkdownRender_truncatesOver50"); ok &= testDiagnosticsMarkdownRender_truncatesOver50();
+    trace("testLanClientDefaults"); ok &= testLanClientDefaults();
+    trace("testLanClientRoundTrip"); ok &= testLanClientRoundTrip();
+    trace("testAppConfigurationCarriesLanClients"); ok &= testAppConfigurationCarriesLanClients();
+    trace("testSetupStateJsonContract"); ok &= testSetupStateJsonContract();
+    trace("testAppConfigurationCarriesSetupState"); ok &= testAppConfigurationCarriesSetupState();
+    trace("testWorkflowDefinitionJsonContract"); ok &= testWorkflowDefinitionJsonContract();
+    trace("testWorkflowReadinessCountsSources"); ok &= testWorkflowReadinessCountsSources();
+    trace("testWorkflowReadinessRejectsInvalidDisabledDeleted"); ok &= testWorkflowReadinessRejectsInvalidDisabledDeleted();
+    trace("testLanClientPrivilegesDefaults"); ok &= testLanClientPrivilegesDefaults();
+    trace("testLanClientPrivilegesRoundTrip"); ok &= testLanClientPrivilegesRoundTrip();
+    trace("testCapabilityMatrixDefaults"); ok &= testCapabilityMatrixDefaults();
+    trace("testMcpToolCapabilityMatrix"); ok &= testMcpToolCapabilityMatrix();
+    trace("testAuthenticatedRequestContextDefaults"); ok &= testAuthenticatedRequestContextDefaults();
+    trace("testLocalBootstrapGrantsAllPrivileges"); ok &= testLocalBootstrapGrantsAllPrivileges();
+    trace("testLanClientConfigBundleShape"); ok &= testLanClientConfigBundleShape();
+    trace("testGovernanceActionKindRoundTrip"); ok &= testGovernanceActionKindRoundTrip();
+    trace("testGovernanceDecisionOutcomeRoundTrip"); ok &= testGovernanceDecisionOutcomeRoundTrip();
+    trace("testGovernanceDeferredActionShape"); ok &= testGovernanceDeferredActionShape();
     // PHASE-02 MCP Gateway adapter tests
-    ok &= testGatewayConfigurationDefaults();
-    ok &= testFakeGatewayDisabledStartsDisabled();
-    ok &= testFakeGatewayEnabledStartStopRoundTrip();
-    ok &= testFakeGatewayStartFailureScripted();
-    ok &= testFakeGatewayRegistrationRoundTrip();
-    ok &= testFakeGatewayRegistrationRejectsEmptyName();
-    ok &= testFakeGatewayProbeUsesScriptedHealth();
-    ok &= testFakeGatewayMcpUrlComposition();
-    ok &= testRealAdapterDisabledByDefault();
-    ok &= testRealAdapterRegistrationSurvivesAcrossStartStop();
-    ok &= testGatewayEnumRoundTrips();
-    ok &= testGatewayConfigJsonRoundTrip();
-    ok &= testGatewayConfigUnknownTypeFallsBackWithoutWipe();
+    trace("testGatewayConfigurationDefaults"); ok &= testGatewayConfigurationDefaults();
+    trace("testFakeGatewayDisabledStartsDisabled"); ok &= testFakeGatewayDisabledStartsDisabled();
+    trace("testFakeGatewayEnabledStartStopRoundTrip"); ok &= testFakeGatewayEnabledStartStopRoundTrip();
+    trace("testFakeGatewayStartFailureScripted"); ok &= testFakeGatewayStartFailureScripted();
+    trace("testFakeGatewayRegistrationRoundTrip"); ok &= testFakeGatewayRegistrationRoundTrip();
+    trace("testFakeGatewayRegistrationRejectsEmptyName"); ok &= testFakeGatewayRegistrationRejectsEmptyName();
+    trace("testFakeGatewayProbeUsesScriptedHealth"); ok &= testFakeGatewayProbeUsesScriptedHealth();
+    trace("testFakeGatewayMcpUrlComposition"); ok &= testFakeGatewayMcpUrlComposition();
+    trace("testRealAdapterDisabledByDefault"); ok &= testRealAdapterDisabledByDefault();
+    trace("testRealAdapterRegistrationSurvivesAcrossStartStop"); ok &= testRealAdapterRegistrationSurvivesAcrossStartStop();
+    trace("testGatewayEnumRoundTrips"); ok &= testGatewayEnumRoundTrips();
+    trace("testGatewayConfigJsonRoundTrip"); ok &= testGatewayConfigJsonRoundTrip();
+    trace("testGatewayConfigUnknownTypeFallsBackWithoutWipe"); ok &= testGatewayConfigUnknownTypeFallsBackWithoutWipe();
     // PHASE-03 LAN discovery tests
-    ok &= testDiscoveryDocumentDefaultShape();
-    ok &= testDiscoveryDocumentJsonRoundTrip();
-    ok &= testBeaconAdvertisementJsonShape();
-    ok &= testWellKnownDocumentMatchesSchemaRequiredFields();
-    ok &= testInstanceIdGeneration();
+    trace("testDiscoveryDocumentDefaultShape"); ok &= testDiscoveryDocumentDefaultShape();
+    trace("testDiscoveryDocumentJsonRoundTrip"); ok &= testDiscoveryDocumentJsonRoundTrip();
+    trace("testBeaconAdvertisementJsonShape"); ok &= testBeaconAdvertisementJsonShape();
+    trace("testWellKnownDocumentMatchesSchemaRequiredFields"); ok &= testWellKnownDocumentMatchesSchemaRequiredFields();
+    trace("testInstanceIdGeneration"); ok &= testInstanceIdGeneration();
     // PHASE-04 onboarding profile tests
-    ok &= testOnboardingProfileDefaultsAreLanTrust();
-    ok &= testOnboardingProfileJsonRequiredFields();
-    ok &= testOnboardingConfigSnippetRoundTrip();
-    ok &= testOnboardingProfileTransportEnum();
+    trace("testOnboardingProfileDefaultsAreLanTrust"); ok &= testOnboardingProfileDefaultsAreLanTrust();
+    trace("testOnboardingProfileJsonRequiredFields"); ok &= testOnboardingProfileJsonRequiredFields();
+    trace("testOnboardingConfigSnippetRoundTrip"); ok &= testOnboardingConfigSnippetRoundTrip();
+    trace("testOnboardingProfileTransportEnum"); ok &= testOnboardingProfileTransportEnum();
     // PHASE-05 governance bundle tests
-    ok &= testGovernanceBundleJsonRequiredFields();
-    ok &= testGovernanceBundleAllPlatformsRecognized();
-    ok &= testGovernanceProfileSummaryJsonRoundTrip();
-    ok &= testOnboardingProfileLinksToGovernanceBundleUrl();
+    trace("testGovernanceBundleJsonRequiredFields"); ok &= testGovernanceBundleJsonRequiredFields();
+    trace("testGovernanceBundleAllPlatformsRecognized"); ok &= testGovernanceBundleAllPlatformsRecognized();
+    trace("testGovernanceProfileSummaryJsonRoundTrip"); ok &= testGovernanceProfileSummaryJsonRoundTrip();
+    trace("testOnboardingProfileLinksToGovernanceBundleUrl"); ok &= testOnboardingProfileLinksToGovernanceBundleUrl();
     // PHASE-06 managed worker pool tests
-    ok &= testEndpointPoolKindEnumRoundTrip();
-    ok &= testEndpointInstanceStateAllSevenLifecycleStates();
-    ok &= testManagedEndpointPoolJsonRequiredFields();
-    ok &= testEndpointInstanceJsonShape();
-    ok &= testManagedPoolEmptyByDefault();
+    trace("testEndpointPoolKindEnumRoundTrip"); ok &= testEndpointPoolKindEnumRoundTrip();
+    trace("testEndpointInstanceStateAllSevenLifecycleStates"); ok &= testEndpointInstanceStateAllSevenLifecycleStates();
+    trace("testManagedEndpointPoolJsonRequiredFields"); ok &= testManagedEndpointPoolJsonRequiredFields();
+    trace("testEndpointInstanceJsonShape"); ok &= testEndpointInstanceJsonShape();
+    trace("testManagedPoolEmptyByDefault"); ok &= testManagedPoolEmptyByDefault();
     // PHASE-07 lease + autoscale tests
-    ok &= testLeaseStateEnumRoundTrip();
-    ok &= testLeaseRequestJsonRoundTrip();
-    ok &= testEndpointLeaseDefaultStateActive();
-    ok &= testEndpointLeaseJsonShape();
-    ok &= testPoolSaturationJsonShape();
-    ok &= testScalePolicyDefaultsAreSafe();
+    trace("testLeaseStateEnumRoundTrip"); ok &= testLeaseStateEnumRoundTrip();
+    trace("testLeaseRequestJsonRoundTrip"); ok &= testLeaseRequestJsonRoundTrip();
+    trace("testEndpointLeaseDefaultStateActive"); ok &= testEndpointLeaseDefaultStateActive();
+    trace("testEndpointLeaseJsonShape"); ok &= testEndpointLeaseJsonShape();
+    trace("testPoolSaturationJsonShape"); ok &= testPoolSaturationJsonShape();
+    trace("testScalePolicyDefaultsAreSafe"); ok &= testScalePolicyDefaultsAreSafe();
     // PHASE-08 telemetry tests
-    ok &= testTelemetryCategoryEnumRoundTrip();
-    ok &= testTelemetrySeverityEnumRoundTrip();
-    ok &= testTelemetryEventJsonRequiredFields();
-    ok &= testClientHeartbeatHonestDefaultsAreUnavailable();
-    ok &= testClientHeartbeatJsonRoundTrip();
-    ok &= testClientPresenceShape();
-    ok &= testGatewayTrafficSnapshotShape();
+    trace("testTelemetryCategoryEnumRoundTrip"); ok &= testTelemetryCategoryEnumRoundTrip();
+    trace("testTelemetrySeverityEnumRoundTrip"); ok &= testTelemetrySeverityEnumRoundTrip();
+    trace("testTelemetryEventJsonRequiredFields"); ok &= testTelemetryEventJsonRequiredFields();
+    trace("testClientHeartbeatHonestDefaultsAreUnavailable"); ok &= testClientHeartbeatHonestDefaultsAreUnavailable();
+    trace("testClientHeartbeatJsonRoundTrip"); ok &= testClientHeartbeatJsonRoundTrip();
+    trace("testClientPresenceShape"); ok &= testClientPresenceShape();
+    trace("testGatewayTrafficSnapshotShape"); ok &= testGatewayTrafficSnapshotShape();
     // WS6 endpoint advertisement gates.
-    ok &= testAdvertisedEndpointPlanLocalOnlyDoesNotAdvertiseLan();
-    ok &= testAdvertisedEndpointPlanRequiresGatewayRunningForLanMcp();
-    ok &= testAdvertisedEndpointPlanLanWhenEnabledAndGatewayRunning();
+    trace("testAdvertisedEndpointPlanLocalOnlyDoesNotAdvertiseLan"); ok &= testAdvertisedEndpointPlanLocalOnlyDoesNotAdvertiseLan();
+    trace("testAdvertisedEndpointPlanRequiresGatewayRunningForLanMcp"); ok &= testAdvertisedEndpointPlanRequiresGatewayRunningForLanMcp();
+    trace("testAdvertisedEndpointPlanLanWhenEnabledAndGatewayRunning"); ok &= testAdvertisedEndpointPlanLanWhenEnabledAndGatewayRunning();
     // v0.9.76 Supervisor Agent Assignment Wizard backend tests.
-    ok &= testSupervisorProviderRoundTrip();
-    ok &= testSupervisorStateRoundTrip();
-    ok &= testSupervisorDefaultCapabilitiesAreAutonomousScoped();
-    ok &= testSupervisorSelectAndIssueChatGpt();
-    ok &= testSupervisorSelectRejectsUnknownProvider();
-    ok &= testSupervisorReassignmentSupersedes();
-    ok &= testSupervisorRevokeClearsActive();
-    ok &= testSupervisorRevokeClearsStaleErrorMessage();
-    ok &= testSupervisorLoadDropsStaleErrorOnTerminalState();
-    ok &= testSupervisorRegenerateClearsStaleErrorMessage();
-    ok &= testSupervisorConfirmConnectionHappyPath();
-    ok &= testSupervisorConfirmRejectsTokenMismatch();
-    ok &= testSupervisorLegacyDerivedTokenRotatesOnLoad();
-    ok &= testSupervisorConfirmRejectsForbiddenCapability();
-    ok &= testSupervisorConfirmRejectsProviderMismatch();
-    ok &= testSupervisorPersistenceSurvivesServiceRecreation();
-    ok &= testSupervisorParseSelectRequestRejectsBreakGlass();
-    ok &= testSupervisorInstructionsAreProviderSpecific();
-    ok &= testSupervisorConfirmDefaultDenyOnEmptyAllowedSet();
-    ok &= testSupervisorHeartbeatWatchdogIdleStateNoTransition();
-    ok &= testSupervisorHeartbeatWatchdogFlipsConnectedToDisconnected();
+    trace("testSupervisorProviderRoundTrip"); ok &= testSupervisorProviderRoundTrip();
+    trace("testSupervisorStateRoundTrip"); ok &= testSupervisorStateRoundTrip();
+    trace("testSupervisorDefaultCapabilitiesAreAutonomousScoped"); ok &= testSupervisorDefaultCapabilitiesAreAutonomousScoped();
+    trace("testSupervisorSelectAndIssueChatGpt"); ok &= testSupervisorSelectAndIssueChatGpt();
+    trace("testSupervisorSelectRejectsUnknownProvider"); ok &= testSupervisorSelectRejectsUnknownProvider();
+    trace("testSupervisorReassignmentSupersedes"); ok &= testSupervisorReassignmentSupersedes();
+    trace("testSupervisorRevokeClearsActive"); ok &= testSupervisorRevokeClearsActive();
+    trace("testSupervisorRevokeClearsStaleErrorMessage"); ok &= testSupervisorRevokeClearsStaleErrorMessage();
+    trace("testSupervisorLoadDropsStaleErrorOnTerminalState"); ok &= testSupervisorLoadDropsStaleErrorOnTerminalState();
+    trace("testSupervisorRegenerateClearsStaleErrorMessage"); ok &= testSupervisorRegenerateClearsStaleErrorMessage();
+    trace("testSupervisorConfirmConnectionHappyPath"); ok &= testSupervisorConfirmConnectionHappyPath();
+    trace("testSupervisorConfirmRejectsTokenMismatch"); ok &= testSupervisorConfirmRejectsTokenMismatch();
+    trace("testSupervisorLegacyDerivedTokenRotatesOnLoad"); ok &= testSupervisorLegacyDerivedTokenRotatesOnLoad();
+    trace("testSupervisorConfirmRejectsForbiddenCapability"); ok &= testSupervisorConfirmRejectsForbiddenCapability();
+    trace("testSupervisorConfirmRejectsProviderMismatch"); ok &= testSupervisorConfirmRejectsProviderMismatch();
+    trace("testSupervisorPersistenceSurvivesServiceRecreation"); ok &= testSupervisorPersistenceSurvivesServiceRecreation();
+    trace("testSupervisorParseSelectRequestRejectsBreakGlass"); ok &= testSupervisorParseSelectRequestRejectsBreakGlass();
+    trace("testSupervisorInstructionsAreProviderSpecific"); ok &= testSupervisorInstructionsAreProviderSpecific();
+    trace("testSupervisorConfirmDefaultDenyOnEmptyAllowedSet"); ok &= testSupervisorConfirmDefaultDenyOnEmptyAllowedSet();
+    trace("testSupervisorHeartbeatWatchdogIdleStateNoTransition"); ok &= testSupervisorHeartbeatWatchdogIdleStateNoTransition();
+    trace("testSupervisorHeartbeatWatchdogFlipsConnectedToDisconnected"); ok &= testSupervisorHeartbeatWatchdogFlipsConnectedToDisconnected();
     return ok ? 0 : 1;
 }
