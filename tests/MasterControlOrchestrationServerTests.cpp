@@ -106,6 +106,37 @@ bool testDefaultConfiguration() {
     return ok;
 }
 
+// v0.11.0-alpha.3: admin-listener SChannel TLS is strictly opt-in.
+// Fresh installs must keep the flag off with an empty thumbprint, and
+// legacy persisted SecuritySettings JSON (written before the keys
+// existed) must deserialize to the same off state via the WITH_DEFAULT
+// macro -- i.e. upgrading never silently flips the admin port to TLS.
+bool testSecuritySettingsAdminTlsDefaults() {
+    bool ok = true;
+    const auto configuration = MasterControl::buildDefaultConfiguration();
+    ok &= expect(configuration.security.adminTlsEnabled == false,
+                 "Default admin-listener TLS is disabled (opt-in).");
+    ok &= expect(configuration.security.adminTlsCertThumbprint.empty(),
+                 "Fresh installs carry no admin TLS cert thumbprint.");
+    {
+        nlohmann::json legacy = nlohmann::json{
+            { "enableTls", false },
+            { "enableAuthentication", true },
+            { "allowTroubleshootingBypass", false },
+            { "allowOpenLanAccess", false },
+            { "securityProtocolsEnabled", true },
+            { "securityPosture", "local-only" },
+            { "trustedRemoteHosts", nlohmann::json::array() }
+        };
+        const auto restored = legacy.get<MasterControl::SecuritySettings>();
+        ok &= expect(restored.adminTlsEnabled == false,
+                     "Legacy SecuritySettings JSON deserializes with admin TLS disabled.");
+        ok &= expect(restored.adminTlsCertThumbprint.empty(),
+                     "Legacy SecuritySettings JSON deserializes with an empty admin TLS thumbprint.");
+    }
+    return ok;
+}
+
 bool testSeededEndpoints() {
     const auto endpoints = MasterControl::buildDefaultSeededEndpoints();
     return expect(!endpoints.empty(),
@@ -3040,6 +3071,10 @@ bool testDiagnosticsCapturedAtUtcParse() {
 int main() {
     bool ok = true;
     ok &= testDefaultConfiguration();
+    // v0.11.0-alpha.3: admin-listener TLS opt-in defaults + legacy
+    // SecuritySettings JSON back-compat (mirrors the beacon-signing
+    // back-compat block inside testDefaultConfiguration).
+    ok &= testSecuritySettingsAdminTlsDefaults();
     ok &= testSeededEndpoints();
     ok &= testSeededGatewayEndpointPointsAtNativeGateway();
     // v0.10.15 QueryParamParse helper tests (alias-aware ?param= extractor

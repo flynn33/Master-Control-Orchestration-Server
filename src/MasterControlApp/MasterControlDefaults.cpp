@@ -610,6 +610,13 @@ AppConfiguration buildDefaultConfiguration() {
     // operator supplies one.
     configuration.security.beaconSigningEnabled = true;
     configuration.security.beaconSigningKey = generateBeaconSigningKeyHex();
+    // v0.11.0-alpha.3: admin-listener SChannel TLS is strictly opt-in.
+    // Fresh installs serve plain HTTP on the admin port exactly as
+    // before; an operator turns this on by provisioning a cert in
+    // Cert:\LocalMachine\My (scripts\Configure-LocalServerCert.ps1) and
+    // setting the cert's hex SHA-1 thumbprint here.
+    configuration.security.adminTlsEnabled = false;
+    configuration.security.adminTlsCertThumbprint = "";
     configuration.activeProfile.environmentName = environment.hostName + " - " + environment.operatingSystem;
     configuration.activeProfile.preferredBindAddress = environment.preferredBindAddress;
     configuration.activeProfile.macAddress = environment.macAddress;

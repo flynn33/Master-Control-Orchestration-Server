@@ -48,6 +48,14 @@
 #include <wincrypt.h>
 #include <winhttp.h>
 #include <windns.h>
+// v0.11.0-alpha.3: SSPI/SChannel for the opt-in admin-listener TLS
+// layer (SchannelStreamAdapter below). SECURITY_WIN32 selects the
+// user-mode SSPI prototypes in <security.h>. Links against secur32
+// (see src/MasterControlApp/CMakeLists.txt); crypt32 was already
+// linked for the existing wincrypt usage.
+#define SECURITY_WIN32
+#include <security.h>
+#include <schannel.h>
 
 #include <algorithm>
 #include <array>
@@ -55,6 +63,7 @@
 #include <cctype>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>   // v0.11.0-alpha.3: std::memcpy in SchannelStreamAdapter.
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -12955,14 +12964,495 @@ void appendSupervisorWedgeActivity(const std::string& message,
     globalActivityRing().append(event);
 }
 
+// ----------------------------------------------------------------------
+// v0.11.0-alpha.3: opt-in SChannel TLS for the admin HTTP listener.
+//
+// Closes the VERSION.json deferred item "Admin HTTP listener (port
+// 7300) TLS support. SimpleHttpServer is Winsock-based, not HTTP.sys-
+// based, so adding TLS there requires SChannel handshake code."
+//
+// Posture:
+//   * Strictly opt-in. security.adminTlsEnabled defaults to false and
+//     the plain-HTTP code path below (handleClient / sendResponse) is
+//     untouched when the flag is off -- the TLS layer is a parallel,
+//     self-contained path, never an indirection inserted into the
+//     plain path. Isolation is the safety mechanism: this TU cannot be
+//     compiled on the authoring host, so the change is structured so
+//     that a defect in the TLS code cannot perturb flag-off behavior.
+//   * Operator workflow: provision a server cert in
+//     Cert:\LocalMachine\My -- scripts\Configure-LocalServerCert.ps1
+//     (added for the v0.11.0-alpha.2 gateway TLS dual-bind) already
+//     mints a suitable self-signed cert with host SANs; reuse it.
+//     Bind by pasting the cert's hex SHA-1 thumbprint into
+//     security.adminTlsCertThumbprint. Note: `netsh http add sslcert`
+//     does NOT apply here -- that binds certs for HTTP.sys, and this
+//     listener is a raw Winsock server that terminates TLS itself.
+//   * No-brick guarantee: if credential acquisition fails at start()
+//     (typo'd thumbprint, missing cert, no private-key access), the
+//     listener logs an error diagnostics event and continues serving
+//     PLAIN HTTP. A misconfigured cert must never lock the operator
+//     out of the admin surface that they would use to fix the config.
+//   * Renegotiation is NOT supported (SEC_I_RENEGOTIATE is treated as
+//     connection close); SSE streaming routes are not available over
+//     TLS this iteration (the stream handlers write raw bytes to the
+//     SOCKET and cannot be intercepted by this layer).
+// ----------------------------------------------------------------------
+
+// Decode a hex SHA-1 certificate thumbprint into raw bytes. Tolerates
+// the separators operators commonly paste from certlm.msc / PowerShell
+// (spaces and colons) and mixed case. Returns empty unless the result
+// is exactly 20 bytes (a SHA-1 hash).
+inline std::vector<unsigned char> decodeCertThumbprintHex(const std::string& thumbprint) {
+    std::string compact;
+    compact.reserve(thumbprint.size());
+    for (const char ch : thumbprint) {
+        if (ch == ' ' || ch == ':' || ch == '-') {
+            continue;
+        }
+        compact.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    if (compact.size() != 40
+        || compact.find_first_not_of("0123456789abcdef") != std::string::npos) {
+        return {};
+    }
+    std::vector<unsigned char> bytes(20, 0);
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        const auto nibble = [](const char c) -> unsigned char {
+            return static_cast<unsigned char>(c >= 'a' ? (c - 'a' + 10) : (c - '0'));
+        };
+        bytes[i] = static_cast<unsigned char>((nibble(compact[i * 2]) << 4)
+                                              | nibble(compact[i * 2 + 1]));
+    }
+    return bytes;
+}
+
+// Acquire a server-side (SECPKG_CRED_INBOUND) SChannel credentials
+// handle for the cert in LocalMachine\MY whose SHA-1 hash matches
+// `thumbprintHex`. On success `credentialsOut` is valid and the caller
+// owns it (FreeCredentialsHandle). On failure returns false with a
+// human-readable reason in `errorOut`; `credentialsOut` is untouched.
+//
+// Resource notes: the cert store and cert context are freed on EVERY
+// path -- SChannel takes its own reference on the cert context inside
+// AcquireCredentialsHandleW, so freeing ours immediately afterwards is
+// the documented pattern.
+inline bool acquireAdminTlsCredentials(const std::string& thumbprintHex,
+                                       CredHandle& credentialsOut,
+                                       std::string& errorOut) {
+    const auto hashBytes = decodeCertThumbprintHex(thumbprintHex);
+    if (hashBytes.empty()) {
+        errorOut = "adminTlsCertThumbprint is not a 40-hex-digit SHA-1 thumbprint.";
+        return false;
+    }
+
+    HCERTSTORE store = CertOpenStore(
+        CERT_STORE_PROV_SYSTEM_W,
+        0,
+        0,
+        CERT_SYSTEM_STORE_LOCAL_MACHINE
+            | CERT_STORE_OPEN_EXISTING_FLAG
+            | CERT_STORE_READONLY_FLAG,
+        L"MY");
+    if (store == nullptr) {
+        errorOut = "CertOpenStore(LocalMachine\\MY) failed with error "
+            + std::to_string(GetLastError()) + ".";
+        return false;
+    }
+
+    CRYPT_HASH_BLOB hashBlob{};
+    hashBlob.cbData = static_cast<DWORD>(hashBytes.size());
+    hashBlob.pbData = const_cast<BYTE*>(hashBytes.data());
+    PCCERT_CONTEXT certificate = CertFindCertificateInStore(
+        store,
+        X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+        0,
+        CERT_FIND_HASH,
+        &hashBlob,
+        nullptr);
+    if (certificate == nullptr) {
+        CertCloseStore(store, 0);
+        errorOut = "No certificate with thumbprint " + thumbprintHex
+            + " found in Cert:\\LocalMachine\\My.";
+        return false;
+    }
+
+    // SCHANNEL_CRED (not the newer SCH_CREDENTIALS) keeps the minimum-
+    // SDK floor unchanged. grbitEnabledProtocols stays 0 so the OS
+    // policy decides the protocol set (TLS 1.2+ on supported builds);
+    // SCH_USE_STRONG_CRYPTO additionally drops weak ciphers.
+    SCHANNEL_CRED schannelCred{};
+    schannelCred.dwVersion = SCHANNEL_CRED_VERSION;
+    schannelCred.cCreds = 1;
+    schannelCred.paCred = &certificate;
+    schannelCred.grbitEnabledProtocols = 0;
+    schannelCred.dwFlags = SCH_USE_STRONG_CRYPTO;
+
+    wchar_t packageName[] = UNISP_NAME_W;
+    TimeStamp expiry{};
+    const SECURITY_STATUS status = AcquireCredentialsHandleW(
+        nullptr,
+        packageName,
+        SECPKG_CRED_INBOUND,
+        nullptr,
+        &schannelCred,
+        nullptr,
+        nullptr,
+        &credentialsOut,
+        &expiry);
+
+    CertFreeCertificateContext(certificate);
+    CertCloseStore(store, 0);
+
+    if (status != SEC_E_OK) {
+        errorOut = "AcquireCredentialsHandleW failed with status 0x"
+            + [&]() { std::ostringstream hex; hex << std::hex << static_cast<unsigned long>(status); return hex.str(); }()
+            + " (commonly: the service account lacks read access to the cert's private key).";
+        return false;
+    }
+    return true;
+}
+
+// Wraps one accepted admin-listener SOCKET in a server-side SChannel
+// TLS stream. Lifecycle per connection:
+//   adapter tls(socket, &serverCredentials);
+//   if (!tls.handshake()) { close socket; }
+//   ... tls.recvPlain(...) / tls.sendPlain(...) ...
+//   tls.shutdownTls();    // best-effort close_notify
+// The adapter does NOT own the SOCKET (the caller closes it) and does
+// NOT own the credentials handle (shared across connections, owned by
+// SimpleHttpServer). It DOES own the security context: the destructor
+// calls DeleteSecurityContext whenever a context was established, so
+// every early-return path inside handshake()/recvPlain() stays leak-
+// free. Output tokens allocated by SChannel (ASC_REQ_ALLOCATE_MEMORY)
+// are released with FreeContextBuffer immediately after each send
+// attempt, success or failure.
+class SchannelStreamAdapter final {
+public:
+    SchannelStreamAdapter(SOCKET socket, CredHandle* credentials)
+        : socket_(socket)
+        , credentials_(credentials) {}
+
+    SchannelStreamAdapter(const SchannelStreamAdapter&) = delete;
+    SchannelStreamAdapter& operator=(const SchannelStreamAdapter&) = delete;
+
+    ~SchannelStreamAdapter() {
+        if (contextValid_) {
+            DeleteSecurityContext(&context_);
+            contextValid_ = false;
+        }
+    }
+
+    // Server-side handshake loop. Returns true when the TLS session is
+    // established and stream sizes are known; false on any failure
+    // (peer spoke plain HTTP, no shared cipher, socket dropped, ...).
+    bool handshake() {
+        if (credentials_ == nullptr) {
+            return false;
+        }
+        const DWORD requirements = ASC_REQ_SEQUENCE_DETECT
+            | ASC_REQ_REPLAY_DETECT
+            | ASC_REQ_CONFIDENTIALITY
+            | ASC_REQ_EXTENDED_ERROR
+            | ASC_REQ_ALLOCATE_MEMORY
+            | ASC_REQ_STREAM;
+
+        std::string inbound;
+        bool needRead = true;
+        for (;;) {
+            if (needRead) {
+                char chunk[8192];
+                const int received = ::recv(socket_, chunk, static_cast<int>(sizeof(chunk)), 0);
+                if (received <= 0) {
+                    return false;
+                }
+                inbound.append(chunk, chunk + received);
+                needRead = false;
+            }
+
+            SecBuffer inBuffers[2]{};
+            inBuffers[0].BufferType = SECBUFFER_TOKEN;
+            inBuffers[0].pvBuffer = inbound.data();
+            inBuffers[0].cbBuffer = static_cast<unsigned long>(inbound.size());
+            inBuffers[1].BufferType = SECBUFFER_EMPTY;
+            SecBufferDesc inDesc{ SECBUFFER_VERSION, 2, inBuffers };
+
+            SecBuffer outBuffer{};
+            outBuffer.BufferType = SECBUFFER_TOKEN;
+            SecBufferDesc outDesc{ SECBUFFER_VERSION, 1, &outBuffer };
+
+            DWORD attributes = 0;
+            TimeStamp expiry{};
+            const SECURITY_STATUS status = AcceptSecurityContext(
+                credentials_,
+                contextValid_ ? &context_ : nullptr,
+                &inDesc,
+                requirements,
+                0,
+                contextValid_ ? nullptr : &context_,
+                &outDesc,
+                &attributes,
+                &expiry);
+
+            if (status == SEC_E_INCOMPLETE_MESSAGE) {
+                // Partial TLS record: keep the bytes, read more. The
+                // input was not consumed.
+                needRead = true;
+                continue;
+            }
+
+            // Any status other than INCOMPLETE_MESSAGE on the first
+            // iteration means a context handle now exists and must be
+            // deleted on destruction -- including failure statuses
+            // reached after CONTINUE_NEEDED rounds.
+            if (status == SEC_I_CONTINUE_NEEDED || status == SEC_E_OK) {
+                contextValid_ = true;
+            }
+
+            // Flush any output token (handshake reply, or an alert when
+            // the failure carried ASC_RET_EXTENDED_ERROR). Free the
+            // SChannel-allocated buffer on every path.
+            if (outBuffer.pvBuffer != nullptr) {
+                if (outBuffer.cbBuffer > 0
+                    && (status == SEC_I_CONTINUE_NEEDED
+                        || status == SEC_E_OK
+                        || (FAILED(status) && (attributes & ASC_RET_EXTENDED_ERROR) != 0))) {
+                    sendAll(static_cast<const char*>(outBuffer.pvBuffer), outBuffer.cbBuffer);
+                }
+                FreeContextBuffer(outBuffer.pvBuffer);
+                outBuffer.pvBuffer = nullptr;
+            }
+
+            // Consume the input we handed in, keeping any SECBUFFER_EXTRA
+            // tail (bytes past the end of the consumed handshake records).
+            std::string leftover;
+            if (inBuffers[1].BufferType == SECBUFFER_EXTRA && inBuffers[1].cbBuffer > 0
+                && inBuffers[1].cbBuffer <= inbound.size()) {
+                leftover.assign(inbound.data() + (inbound.size() - inBuffers[1].cbBuffer),
+                                inBuffers[1].cbBuffer);
+            }
+            inbound.swap(leftover);
+
+            if (status == SEC_E_OK) {
+                // Bytes that arrived glued to the final handshake record
+                // are already application data -- seed the decrypt buffer.
+                encrypted_ = std::move(inbound);
+                if (QueryContextAttributesW(&context_, SECPKG_ATTR_STREAM_SIZES,
+                                            &streamSizes_) != SEC_E_OK) {
+                    return false;
+                }
+                handshakeComplete_ = true;
+                return true;
+            }
+            if (status == SEC_I_CONTINUE_NEEDED) {
+                if (inbound.empty()) {
+                    needRead = true;
+                }
+                continue;
+            }
+            // SEC_E_INCOMPLETE_CREDENTIALS (client-cert dance) and every
+            // failure status: this listener does not request client
+            // certs, so treat anything else as a failed handshake.
+            return false;
+        }
+    }
+
+    // Read decrypted plaintext into `out`. Mirrors recv() semantics:
+    // returns >0 (bytes), 0 (orderly close / close_notify / requested
+    // renegotiation, which this listener treats as close), or -1 on
+    // error.
+    int recvPlain(char* out, const int outSize) {
+        if (!handshakeComplete_ || out == nullptr || outSize <= 0) {
+            return -1;
+        }
+        for (;;) {
+            if (!decrypted_.empty()) {
+                const size_t take = std::min<size_t>(decrypted_.size(),
+                                                     static_cast<size_t>(outSize));
+                std::memcpy(out, decrypted_.data(), take);
+                decrypted_.erase(0, take);
+                return static_cast<int>(take);
+            }
+
+            bool needRead = encrypted_.empty();
+            if (!needRead) {
+                SecBuffer buffers[4]{};
+                buffers[0].BufferType = SECBUFFER_DATA;
+                buffers[0].pvBuffer = encrypted_.data();
+                buffers[0].cbBuffer = static_cast<unsigned long>(encrypted_.size());
+                buffers[1].BufferType = SECBUFFER_EMPTY;
+                buffers[2].BufferType = SECBUFFER_EMPTY;
+                buffers[3].BufferType = SECBUFFER_EMPTY;
+                SecBufferDesc desc{ SECBUFFER_VERSION, 4, buffers };
+
+                const SECURITY_STATUS status = DecryptMessage(&context_, &desc, 0, nullptr);
+                if (status == SEC_E_OK) {
+                    // Collect plaintext and retain any EXTRA tail (start
+                    // of the next TLS record) as the new cipher buffer.
+                    std::string extra;
+                    for (const auto& buffer : buffers) {
+                        if (buffer.BufferType == SECBUFFER_DATA && buffer.cbBuffer > 0) {
+                            decrypted_.append(static_cast<const char*>(buffer.pvBuffer),
+                                              buffer.cbBuffer);
+                        } else if (buffer.BufferType == SECBUFFER_EXTRA && buffer.cbBuffer > 0) {
+                            extra.append(static_cast<const char*>(buffer.pvBuffer),
+                                         buffer.cbBuffer);
+                        }
+                    }
+                    encrypted_.swap(extra);
+                    continue;
+                }
+                if (status == SEC_E_INCOMPLETE_MESSAGE) {
+                    needRead = true;   // partial record: keep bytes, read more
+                } else if (status == SEC_I_CONTEXT_EXPIRED) {
+                    return 0;          // peer sent close_notify
+                } else if (status == SEC_I_RENEGOTIATE) {
+                    // Renegotiation is intentionally unsupported on the
+                    // admin listener; treat as an orderly close so the
+                    // connection is dropped instead of mis-handshaken.
+                    return 0;
+                } else {
+                    return -1;
+                }
+            }
+
+            if (needRead) {
+                char chunk[8192];
+                const int received = ::recv(socket_, chunk, static_cast<int>(sizeof(chunk)), 0);
+                if (received == 0) {
+                    return 0;
+                }
+                if (received < 0) {
+                    return -1;
+                }
+                encrypted_.append(chunk, chunk + received);
+            }
+        }
+    }
+
+    // Encrypt and send the whole plaintext buffer, chunked to the
+    // negotiated cbMaximumMessage. Returns false on any failure.
+    bool sendPlain(const char* data, const size_t size) {
+        if (!handshakeComplete_ || (data == nullptr && size > 0)) {
+            return false;
+        }
+        const size_t maxChunk = streamSizes_.cbMaximumMessage;
+        if (maxChunk == 0) {
+            return false;
+        }
+        std::vector<char> message(
+            static_cast<size_t>(streamSizes_.cbHeader) + maxChunk + streamSizes_.cbTrailer);
+        size_t offset = 0;
+        while (offset < size) {
+            const size_t chunk = std::min(size - offset, maxChunk);
+            std::memcpy(message.data() + streamSizes_.cbHeader, data + offset, chunk);
+
+            SecBuffer buffers[4]{};
+            buffers[0].BufferType = SECBUFFER_STREAM_HEADER;
+            buffers[0].pvBuffer = message.data();
+            buffers[0].cbBuffer = streamSizes_.cbHeader;
+            buffers[1].BufferType = SECBUFFER_DATA;
+            buffers[1].pvBuffer = message.data() + streamSizes_.cbHeader;
+            buffers[1].cbBuffer = static_cast<unsigned long>(chunk);
+            buffers[2].BufferType = SECBUFFER_STREAM_TRAILER;
+            buffers[2].pvBuffer = message.data() + streamSizes_.cbHeader + chunk;
+            buffers[2].cbBuffer = streamSizes_.cbTrailer;
+            buffers[3].BufferType = SECBUFFER_EMPTY;
+            SecBufferDesc desc{ SECBUFFER_VERSION, 4, buffers };
+
+            if (EncryptMessage(&context_, 0, &desc, 0) != SEC_E_OK) {
+                return false;
+            }
+            const size_t wireSize = static_cast<size_t>(buffers[0].cbBuffer)
+                + buffers[1].cbBuffer + buffers[2].cbBuffer;
+            if (!sendAll(message.data(), wireSize)) {
+                return false;
+            }
+            offset += chunk;
+        }
+        return true;
+    }
+
+    // Best-effort TLS close_notify (ApplyControlToken SCHANNEL_SHUTDOWN
+    // followed by one AcceptSecurityContext round to mint the alert).
+    // Failures are ignored by design -- the caller is about to close
+    // the socket either way.
+    void shutdownTls() {
+        if (!contextValid_ || credentials_ == nullptr) {
+            return;
+        }
+        DWORD shutdownToken = SCHANNEL_SHUTDOWN;
+        SecBuffer controlBuffer{};
+        controlBuffer.BufferType = SECBUFFER_TOKEN;
+        controlBuffer.pvBuffer = &shutdownToken;
+        controlBuffer.cbBuffer = sizeof(shutdownToken);
+        SecBufferDesc controlDesc{ SECBUFFER_VERSION, 1, &controlBuffer };
+        if (ApplyControlToken(&context_, &controlDesc) != SEC_E_OK) {
+            return;
+        }
+
+        SecBuffer outBuffer{};
+        outBuffer.BufferType = SECBUFFER_TOKEN;
+        SecBufferDesc outDesc{ SECBUFFER_VERSION, 1, &outBuffer };
+        DWORD attributes = 0;
+        TimeStamp expiry{};
+        const SECURITY_STATUS status = AcceptSecurityContext(
+            credentials_,
+            &context_,
+            nullptr,
+            ASC_REQ_SEQUENCE_DETECT | ASC_REQ_REPLAY_DETECT | ASC_REQ_CONFIDENTIALITY
+                | ASC_REQ_EXTENDED_ERROR | ASC_REQ_ALLOCATE_MEMORY | ASC_REQ_STREAM,
+            0,
+            nullptr,
+            &outDesc,
+            &attributes,
+            &expiry);
+        if (outBuffer.pvBuffer != nullptr) {
+            if ((status == SEC_E_OK || status == SEC_I_CONTINUE_NEEDED)
+                && outBuffer.cbBuffer > 0) {
+                sendAll(static_cast<const char*>(outBuffer.pvBuffer), outBuffer.cbBuffer);
+            }
+            FreeContextBuffer(outBuffer.pvBuffer);
+        }
+    }
+
+private:
+    bool sendAll(const char* data, const size_t size) {
+        size_t sent = 0;
+        while (sent < size) {
+            const int written = ::send(socket_, data + sent,
+                                       static_cast<int>(size - sent), 0);
+            if (written <= 0) {
+                return false;
+            }
+            sent += static_cast<size_t>(written);
+        }
+        return true;
+    }
+
+    SOCKET socket_ = INVALID_SOCKET;
+    CredHandle* credentials_ = nullptr;   // shared, owned by SimpleHttpServer
+    CtxtHandle context_{};
+    bool contextValid_ = false;
+    bool handshakeComplete_ = false;
+    SecPkgContext_StreamSizes streamSizes_{};
+    std::string encrypted_;    // raw bytes off the wire, not yet decrypted
+    std::string decrypted_;    // plaintext not yet handed to the caller
+};
+
 class SimpleHttpServer final {
 public:
     using RequestHandler = std::function<HttpResponse(const HttpRequest&)>;
 
-    SimpleHttpServer(std::string bindAddress, uint16_t port, RequestHandler handler)
+    // v0.11.0-alpha.3: the trailing TLS parameters are defaulted so
+    // every pre-existing construction site (and the flag-off path)
+    // compiles and behaves exactly as before.
+    SimpleHttpServer(std::string bindAddress, uint16_t port, RequestHandler handler,
+                     bool tlsEnabled = false, std::string tlsCertThumbprint = {})
         : bindAddress_(std::move(bindAddress))
         , port_(port)
-        , handler_(std::move(handler)) {}
+        , handler_(std::move(handler))
+        , tlsEnabled_(tlsEnabled)
+        , tlsCertThumbprint_(std::move(tlsCertThumbprint)) {}
 
     bool start();
     void stop();
@@ -12972,8 +13462,16 @@ private:
     static std::string reasonPhrase(int statusCode);
     static HttpRequest parseRequest(const std::string& rawRequest);
     static void sendResponse(SOCKET client, const HttpResponse& response);
+    // v0.11.0-alpha.3: TLS twin of sendResponse. Serializes the SAME
+    // byte layout (keep the two in sync) but writes through the
+    // SChannel adapter instead of the raw socket.
+    static void sendResponseTls(SchannelStreamAdapter& tls, const HttpResponse& response);
     void run();
     void handleClient(SOCKET client);
+    // v0.11.0-alpha.3: TLS twin of handleClient. A parallel path (not
+    // an indirection inside handleClient) so the plain-HTTP behavior
+    // is untouched when security.adminTlsEnabled is off.
+    void handleClientTls(SOCKET client);
 
     std::string bindAddress_;
     uint16_t port_;
@@ -12985,11 +13483,57 @@ private:
     SOCKET listenSocket_ = INVALID_SOCKET;
     std::mutex startupMutex_;
     std::condition_variable startupCv_;
+    // v0.11.0-alpha.3: admin-listener TLS state. tlsCredentialsValid_
+    // is the single switch the accept loops consult: it is true only
+    // when tlsEnabled_ was set AND credential acquisition succeeded at
+    // start(). Credentials are shared across connections and freed in
+    // stop(). tlsHandshakeFailureReported_ is the once-per-process
+    // diagnostics latch for failed client handshakes (same edge-
+    // triggered pattern as BeaconService's send-failure latch); it is
+    // only touched on the accept thread, so a plain bool suffices.
+    bool tlsEnabled_ = false;
+    std::string tlsCertThumbprint_;
+    CredHandle tlsCredentials_{};
+    bool tlsCredentialsValid_ = false;
+    bool tlsHandshakeFailureReported_ = false;
 };
 
 bool SimpleHttpServer::start() {
     if (running_.exchange(true)) {
         return true;
+    }
+
+    // v0.11.0-alpha.3: opt-in admin-listener TLS. Acquire the SChannel
+    // server credentials up front, on the caller's thread, before the
+    // accept loop spawns. NO-BRICK GUARANTEE: if acquisition fails
+    // (typo'd thumbprint, cert not in LocalMachine\MY, no private-key
+    // read access for the service account) we log an error and keep
+    // serving PLAIN HTTP -- a misconfigured cert must not take down
+    // the very admin surface the operator needs to fix the config.
+    if (tlsEnabled_ && !tlsCredentialsValid_) {
+        std::string credentialError;
+        if (acquireAdminTlsCredentials(tlsCertThumbprint_, tlsCredentials_, credentialError)) {
+            tlsCredentialsValid_ = true;
+            MasterControl::Diagnostics::appendEvent(
+                L"runtime",
+                "info",
+                "admin_tls_enabled",
+                "Admin HTTP listener TLS is active: SChannel server credentials "
+                "acquired for the configured certificate thumbprint.",
+                nlohmann::json{ { "certThumbprint", tlsCertThumbprint_ } });
+        } else {
+            MasterControl::Diagnostics::appendEvent(
+                L"runtime",
+                "error",
+                "admin_tls_credentials_failed",
+                "security.adminTlsEnabled is set but SChannel credentials could "
+                "not be acquired; the admin listener CONTINUES SERVING PLAIN HTTP "
+                "so a misconfigured certificate cannot brick the operator's admin "
+                "surface. Fix security.adminTlsCertThumbprint (hex SHA-1 of a cert "
+                "in Cert:\\LocalMachine\\My; see scripts\\Configure-LocalServerCert"
+                ".ps1) and restart. Reason: " + credentialError,
+                nlohmann::json{ { "certThumbprint", tlsCertThumbprint_ } });
+        }
     }
 
     startupComplete_ = false;
@@ -13010,6 +13554,15 @@ void SimpleHttpServer::stop() {
     if (worker_.joinable()) {
         worker_.join();
     }
+    // v0.11.0-alpha.3: release the shared SChannel credentials after
+    // the accept thread has joined (TLS connections are handled
+    // synchronously on that thread, so nothing can still be using the
+    // handle here). Guarded so stop() stays safe to call repeatedly
+    // and on a never-started/credentials-failed server.
+    if (tlsCredentialsValid_) {
+        FreeCredentialsHandle(&tlsCredentials_);
+        tlsCredentialsValid_ = false;
+    }
 }
 
 std::string SimpleHttpServer::reasonPhrase(const int statusCode) {
@@ -13023,6 +13576,9 @@ std::string SimpleHttpServer::reasonPhrase(const int statusCode) {
         case 405: return "Method Not Allowed";
         case 409: return "Conflict";
         case 500: return "Internal Server Error";
+        // v0.11.0-alpha.3: produced only by the TLS path's SSE-
+        // unsupported response; no plain-HTTP route returns 501.
+        case 501: return "Not Implemented";
         case 503: return "Service Unavailable";
         default: return "OK";
     }
@@ -13169,7 +13725,16 @@ void SimpleHttpServer::run() {
                         if (running_) continue;
                         break;
                     }
-                    handleClient(client);
+                    // v0.11.0-alpha.3: TLS dispatch. When credentials
+                    // were acquired at start() every connection goes
+                    // through the SChannel path (which owns closing the
+                    // socket on all of its paths); otherwise the plain
+                    // path below runs exactly as before.
+                    if (tlsCredentialsValid_) {
+                        handleClientTls(client);
+                    } else {
+                        handleClient(client);
+                    }
                 }
                 return;
             }
@@ -13242,8 +13807,15 @@ void SimpleHttpServer::run() {
         if (client == INVALID_SOCKET) {
             continue;
         }
-        handleClient(client);
-        closesocket(client);
+        // v0.11.0-alpha.3: TLS dispatch (see the dual-stack loop above).
+        // handleClientTls closes the socket on every one of its paths,
+        // so the extra closesocket stays confined to the plain branch.
+        if (tlsCredentialsValid_) {
+            handleClientTls(client);
+        } else {
+            handleClient(client);
+            closesocket(client);
+        }
     }
 }
 
@@ -13350,6 +13922,136 @@ void SimpleHttpServer::handleClient(SOCKET client) {
     sendResponse(client, response);
     ::shutdown(client, SD_BOTH);
     ::closesocket(client);
+}
+
+// v0.11.0-alpha.3: TLS twin of sendResponse. The serialized bytes MUST
+// stay identical to sendResponse (same status line, same CORS posture,
+// same Connection: close, same HEAD body suppression) -- only the
+// transport differs. Deliberately duplicated rather than refactoring
+// sendResponse through an indirection: keeping the plain path untouched
+// is the safety mechanism for this opt-in feature.
+void SimpleHttpServer::sendResponseTls(SchannelStreamAdapter& tls, const HttpResponse& response) {
+    std::ostringstream stream;
+    stream << "HTTP/1.1 " << response.statusCode << ' ' << reasonPhrase(response.statusCode) << "\r\n";
+    stream << "Content-Type: " << response.contentType << "\r\n";
+    stream << "Content-Length: " << response.body.size() << "\r\n";
+    stream << "Access-Control-Allow-Origin: *\r\n";
+    stream << "Access-Control-Allow-Methods: GET, HEAD, POST, OPTIONS\r\n";
+    stream << "Access-Control-Allow-Headers: Content-Type, Authorization, X-MCOS-Admin-Token, X-MCOS-Client-Id, X-MCOS-Client-Type\r\n";
+    stream << "Access-Control-Max-Age: 86400\r\n";
+    for (const auto& [name, value] : response.extraHeaders) {
+        stream << name << ": " << value << "\r\n";
+    }
+    stream << "Connection: close\r\n\r\n";
+    if (!response.suppressBody) {
+        stream << response.body;
+    }
+
+    const auto data = stream.str();
+    tls.sendPlain(data.c_str(), data.size());
+}
+
+// v0.11.0-alpha.3: TLS twin of handleClient. Owns the accepted socket:
+// it is closed on EVERY path out of this function (handshake failure,
+// request loop exit, OPTIONS short-circuit, SSE-unsupported, normal
+// response). The SchannelStreamAdapter destructor releases the
+// security context on the same paths, and the shared credentials
+// handle is owned by stop().
+void SimpleHttpServer::handleClientTls(SOCKET client) {
+    SchannelStreamAdapter tls(client, &tlsCredentials_);
+    if (!tls.handshake()) {
+        // Common operator-visible cause: a client speaking plain HTTP
+        // at the TLS-enabled port. Edge-triggered once-per-process
+        // latch (BeaconService precedent) so a misdirected monitoring
+        // probe cannot flood the diagnostics surface.
+        if (!tlsHandshakeFailureReported_) {
+            tlsHandshakeFailureReported_ = true;
+            MasterControl::Diagnostics::appendEvent(
+                L"runtime",
+                "warning",
+                "admin_tls_handshake_failed",
+                "An admin-listener TLS handshake failed; the connection was "
+                "closed. Common causes: a client using http:// against the "
+                "TLS-enabled admin port, or a client that does not trust the "
+                "configured certificate. Reported once per process.",
+                nlohmann::json::object());
+        }
+        ::closesocket(client);
+        return;
+    }
+
+    // From here on this mirrors handleClient byte-for-byte at the HTTP
+    // layer; reads and writes flow through DecryptMessage /
+    // EncryptMessage instead of raw recv/send.
+    std::string requestBuffer;
+    char chunk[4096]{};
+    int bytesRead = 0;
+    while ((bytesRead = tls.recvPlain(chunk, static_cast<int>(sizeof(chunk)))) > 0) {
+        requestBuffer.append(chunk, chunk + bytesRead);
+        const auto headerEnd = requestBuffer.find("\r\n\r\n");
+        if (headerEnd == std::string::npos) {
+            continue;
+        }
+        const auto contentLengthPosition = requestBuffer.find("Content-Length:");
+        if (contentLengthPosition == std::string::npos) {
+            break;
+        }
+
+        const auto lineEnd = requestBuffer.find("\r\n", contentLengthPosition);
+        const auto value = requestBuffer.substr(contentLengthPosition + 15, lineEnd - (contentLengthPosition + 15));
+        const auto contentLength = static_cast<size_t>(std::stoi(value));
+        if (requestBuffer.size() >= headerEnd + 4 + contentLength) {
+            break;
+        }
+    }
+
+    const auto closeConnection = [&tls, client]() {
+        tls.shutdownTls();          // best-effort close_notify
+        ::shutdown(client, SD_BOTH);
+        ::closesocket(client);
+    };
+
+    auto request = parseRequest(requestBuffer);
+    request.remoteAddress = peerAddressForSocket(client);
+
+    // OPTIONS preflight short-circuit -- same contract as handleClient
+    // (v0.9.27).
+    if (request.method == "OPTIONS") {
+        HttpResponse cors;
+        cors.statusCode = 204;
+        cors.contentType = "text/plain";
+        cors.body = "";
+        cors.suppressBody = true;
+        sendResponseTls(tls, cors);
+        closeConnection();
+        return;
+    }
+
+    // HEAD-as-GET rewrite -- same contract as handleClient (v0.9.26).
+    const bool isHead = (request.method == "HEAD");
+    if (isHead) {
+        request.method = "GET";
+    }
+    auto response = handler_(request);
+    if (isHead) {
+        response.suppressBody = true;
+    }
+    // SSE streaming (v0.9.71) is NOT available over the TLS admin
+    // listener this iteration: stream handlers write raw bytes
+    // directly to the SOCKET on a detached thread, which would bypass
+    // EncryptMessage entirely and emit plaintext mid-TLS-stream.
+    // Surface an explicit 501 instead of corrupting the connection.
+    if (response.streamMode && response.streamHandler) {
+        HttpResponse unsupported;
+        unsupported.statusCode = 501;
+        unsupported.contentType = "application/json";
+        unsupported.body = R"({"error":"SSE streaming endpoints are not available over the TLS admin listener; disable security.adminTlsEnabled or use the plain-HTTP admin listener for event streams."})";
+        sendResponseTls(tls, unsupported);
+        closeConnection();
+        return;
+    }
+    sendResponseTls(tls, response);
+    closeConnection();
 }
 
 std::string contentTypeForPath(const std::filesystem::path& path) {
@@ -14854,10 +15556,18 @@ bool MasterControlApplication::Impl::initialize() {
         beaconService_->start();
     }
 
+    // v0.11.0-alpha.3: pass the opt-in admin-TLS settings through. With
+    // adminTlsEnabled=false (the default) SimpleHttpServer behaves
+    // exactly as before; with it set, start() acquires SChannel
+    // credentials for the configured LocalMachine\MY thumbprint and
+    // falls back to plain HTTP (with an error diagnostics event) if the
+    // cert cannot be used -- see the no-brick comments on the class.
     httpServer_ = std::make_unique<SimpleHttpServer>(
         currentConfiguration.bindAddress == "0.0.0.0" ? "0.0.0.0" : currentConfiguration.bindAddress,
         currentConfiguration.browserPort,
-        [this](const HttpRequest& request) { return handleHttpRequest(request); });
+        [this](const HttpRequest& request) { return handleHttpRequest(request); },
+        currentConfiguration.security.adminTlsEnabled,
+        currentConfiguration.security.adminTlsCertThumbprint);
     if (!httpServer_->start()) {
         httpServer_.reset();
         if (beaconService_) {

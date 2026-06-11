@@ -218,6 +218,23 @@ struct SecuritySettings final {
     // behavior to pre-alpha.3. Fresh installs generate a key.
     bool beaconSigningEnabled = true;
     std::string beaconSigningKey;
+    // v0.11.0-alpha.3: opt-in SChannel TLS for the admin HTTP listener
+    // (port 7300; closes the VERSION.json deferred item "Admin HTTP
+    // listener (port 7300) TLS support"). The admin listener is the
+    // Winsock-based SimpleHttpServer, NOT HTTP.sys, so `netsh http add
+    // sslcert` does NOT apply here -- the runtime performs the TLS
+    // handshake itself via SChannel. Operator workflow: provision a
+    // cert in Cert:\LocalMachine\My (scripts\Configure-LocalServerCert
+    // .ps1 already mints a suitable one for the gateway; reuse it) and
+    // paste its hex SHA-1 thumbprint into adminTlsCertThumbprint.
+    // Default OFF: when adminTlsEnabled is false the plain-HTTP path is
+    // completely untouched. When enabled but the thumbprint resolves to
+    // no usable cert, the listener logs an error and KEEPS serving
+    // plain HTTP -- a misconfigured cert must never brick the
+    // operator's admin surface. Existing persisted configs deserialize
+    // with both fields defaulted (WITH_DEFAULT macro), i.e. TLS off.
+    bool adminTlsEnabled = false;
+    std::string adminTlsCertThumbprint;
 };
 
 struct ResourceAllocationProfile final {
@@ -1663,7 +1680,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     securityPosture,
     trustedRemoteHosts,
     beaconSigningEnabled,
-    beaconSigningKey)
+    beaconSigningKey,
+    adminTlsEnabled,
+    adminTlsCertThumbprint)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ResourceAllocationProfile,
