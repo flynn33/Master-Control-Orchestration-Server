@@ -13,7 +13,6 @@
 #include <ShlObj.h>
 
 #include <chrono>
-#include <cstdio>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -203,10 +202,31 @@ inline void rotateIfOversizedLocked(const std::filesystem::path& filePath) {
 // Parses the leading "YYYY-MM-DDTHH:MM:SS" of a capturedAtUtc value
 // (millisecond suffix and trailing Z ignored). Returns 0 on parse
 // failure so callers can treat "unparseable" as "no age signal".
+// Hand-rolled fixed-offset digit parsing rather than sscanf: the
+// WinUI Shell project compiles with /sdl, which promotes C4996
+// (sscanf deprecation) to an error, and sscanf_s is MSVC-only.
 inline time_t parseCapturedAtUtcOrZero(const std::string& value) {
+    if (value.size() < 19) {
+        return 0;
+    }
+    const auto readDigits = [&value](size_t position, int count, int& out) -> bool {
+        out = 0;
+        for (int i = 0; i < count; ++i) {
+            const char ch = value[position + static_cast<size_t>(i)];
+            if (ch < '0' || ch > '9') {
+                return false;
+            }
+            out = out * 10 + (ch - '0');
+        }
+        return true;
+    };
     int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
-    if (std::sscanf(value.c_str(), "%4d-%2d-%2dT%2d:%2d:%2d",
-                    &year, &month, &day, &hour, &minute, &second) != 6) {
+    if (!readDigits(0, 4, year)   || value[4]  != '-'
+        || !readDigits(5, 2, month)  || value[7]  != '-'
+        || !readDigits(8, 2, day)    || value[10] != 'T'
+        || !readDigits(11, 2, hour)  || value[13] != ':'
+        || !readDigits(14, 2, minute) || value[16] != ':'
+        || !readDigits(17, 2, second)) {
         return 0;
     }
     std::tm tm{};
