@@ -35,6 +35,7 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <cstdlib>   // v0.11.0-alpha.3: _set_abort_behavior in main()
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -3069,6 +3070,16 @@ bool testDiagnosticsCapturedAtUtcParse() {
 }
 
 int main() {
+#if defined(_WIN32)
+    // v0.11.0-alpha.3: fail fast on a hard fault instead of hanging.
+    // A missing DLL or an access violation in a non-interactive CI
+    // session otherwise spawns WerFault.exe, which blocks the process
+    // for the full ctest timeout (observed as a 300s "Timeout" with no
+    // diagnostic). Suppressing the WER UI + the abort message box turns
+    // any such fault into an immediate non-zero exit ctest can capture.
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
     bool ok = true;
     ok &= testDefaultConfiguration();
     // v0.11.0-alpha.3: admin-listener TLS opt-in defaults + legacy
