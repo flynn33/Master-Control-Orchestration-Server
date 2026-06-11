@@ -14,6 +14,7 @@
 #include <sqlite3.h>
 
 #include <filesystem>
+#include <iostream>   // v0.11.0-alpha.3: TEMP crash-localization breadcrumbs
 
 namespace MasterControl {
 
@@ -52,6 +53,7 @@ SqliteDiagnosticsStore::~SqliteDiagnosticsStore() {
 }
 
 bool SqliteDiagnosticsStore::openAndMigrateLocked() {
+    std::cerr << "[store] openAndMigrateLocked: enter\n";
     if (db_ != nullptr) {
         return true;
     }
@@ -61,17 +63,20 @@ bool SqliteDiagnosticsStore::openAndMigrateLocked() {
     if (!parent.empty()) {
         std::filesystem::create_directories(parent, ec);
     }
+    std::cerr << "[store] dirs created\n";
 
     // sqlite3_open requires UTF-8. path::u8string is the lossless
     // conversion on Windows (the native path is UTF-16).
     const auto u8 = databasePath_.u8string();
     const std::string databasePathUtf8(u8.begin(), u8.end());
+    std::cerr << "[store] opening: " << databasePathUtf8 << "\n";
     if (sqlite3_open(databasePathUtf8.c_str(), &db_) != SQLITE_OK) {
         lastError_ = db_ != nullptr ? sqlite3_errmsg(db_) : "sqlite3_open failed";
         closeLocked();
         return false;
     }
 
+    std::cerr << "[store] opened ok; setting WAL\n";
     // WAL: writers don't block readers; busy timeout absorbs the rare
     // checkpoint collision instead of surfacing SQLITE_BUSY to callers.
     if (auto error = runSimpleSql(db_, "PRAGMA journal_mode=WAL;"); !error.empty()) {
@@ -80,6 +85,7 @@ bool SqliteDiagnosticsStore::openAndMigrateLocked() {
         return false;
     }
     sqlite3_busy_timeout(db_, 2000);
+    std::cerr << "[store] WAL set; migrating schema\n";
 
     if (auto error = runSimpleSql(db_,
             "CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL);");
@@ -127,6 +133,7 @@ bool SqliteDiagnosticsStore::openAndMigrateLocked() {
         currentVersion = 1;
     }
 
+    std::cerr << "[store] schema version=" << currentVersion << "\n";
     // Future migrations: `if (currentVersion == 1) { ...ALTER...;
     // UPDATE schema_version SET version=2; currentVersion = 2; }`
     if (currentVersion != kSchemaVersion) {
@@ -149,6 +156,7 @@ void SqliteDiagnosticsStore::closeLocked() {
 }
 
 DiagnosticsStoreResult SqliteDiagnosticsStore::insert(DiagnosticsRecord& record) {
+    std::cerr << "[store] insert: enter\n";
     std::lock_guard<std::mutex> lock(mutex_);
     DiagnosticsStoreResult result;
     if (!openAndMigrateLocked()) {
@@ -193,6 +201,7 @@ DiagnosticsStoreResult SqliteDiagnosticsStore::insert(DiagnosticsRecord& record)
 }
 
 std::vector<DiagnosticsRecord> SqliteDiagnosticsStore::query(const DiagnosticsQuery& filters) const {
+    std::cerr << "[store] query: enter\n";
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<DiagnosticsRecord> records;
     if (db_ == nullptr) {
@@ -275,6 +284,7 @@ std::int64_t SqliteDiagnosticsStore::count() const {
 
 DiagnosticsStoreResult SqliteDiagnosticsStore::clear(const std::string& reason,
                                                      const std::string& retainSinceUtc) {
+    std::cerr << "[store] clear: enter\n";
     std::lock_guard<std::mutex> lock(mutex_);
     DiagnosticsStoreResult result;
     if (!openAndMigrateLocked()) {

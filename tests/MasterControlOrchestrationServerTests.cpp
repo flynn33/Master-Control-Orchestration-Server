@@ -3091,7 +3091,10 @@ int main() {
     // diagnostic). Suppressing the WER UI + the abort message box turns
     // any such fault into an immediate non-zero exit ctest can capture.
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
-    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    // Keep _WRITE_ABORT_MSG so a CRT assert / abort prints its reason to
+    // stderr (ctest captures it); clear only _CALL_REPORTFAULT so WER
+    // does not spawn a blocking fault-report process.
+    _set_abort_behavior(_WRITE_ABORT_MSG, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 #endif
     bool ok = true;
     trace("testDefaultConfiguration"); ok &= testDefaultConfiguration();
