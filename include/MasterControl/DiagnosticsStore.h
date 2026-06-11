@@ -84,7 +84,9 @@ private:
     mutable std::mutex mutex_;
     std::filesystem::path databasePath_;
     sqlite3* db_ = nullptr;
-    std::string lastError_;
+    // mutable: const read paths (query) legitimately record why a
+    // prepare failed. Guarded by mutex_ like every other member.
+    mutable std::string lastError_;
 };
 
 std::unique_ptr<IDiagnosticsStore> createSqliteDiagnosticsStore(std::filesystem::path databasePath);
