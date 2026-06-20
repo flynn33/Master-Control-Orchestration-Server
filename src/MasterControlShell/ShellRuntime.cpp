@@ -10,6 +10,7 @@
 #include "ShellFormatting.h"
 
 #include <ShlObj.h>
+#include <cstdio>   // v0.11.0-alpha.3: std::snprintf for jsonEscapeInner
 #include <mutex>
 
 namespace MasterControlShell {
@@ -107,6 +108,41 @@ std::string narrowFromWide(const std::wstring& input) {
         nullptr,
         nullptr);
     return output;
+}
+
+// v0.11.0-alpha.3 (Copilot review): JSON string-literal escaper for the
+// hand-built request bodies in this TU (ShellRuntime does not pull in
+// nlohmann). Escapes every character JSON requires -- the two quote/
+// backslash specials PLUS the C0 control characters (\b \f \n \r \t and
+// the \u00XX long form for the rest). Pre-fix the callers escaped only
+// `\` and `"`, so a maintainer reason containing a newline/tab/control
+// char produced an invalid body that /api/diagnostics/clear (and the
+// supervisor revoke route) rejected. Returns the escaped INNER text
+// (no surrounding quotes) so callers keep their `"key":"..."` shape.
+std::string jsonEscapeInner(const std::string& utf8) {
+    std::string out;
+    out.reserve(utf8.size() + 8);
+    for (const unsigned char ch : utf8) {
+        switch (ch) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b";  break;
+            case '\f': out += "\\f";  break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (ch < 0x20) {
+                    char buffer[7];
+                    std::snprintf(buffer, sizeof(buffer), "\\u%04x", ch);
+                    out += buffer;
+                } else {
+                    out.push_back(static_cast<char>(ch));
+                }
+                break;
+        }
+    }
+    return out;
 }
 
 std::wstring trimWideCopy(std::wstring value) {
@@ -3285,16 +3321,12 @@ bool ShellRuntime::RevokeSupervisor(const std::wstring& reason,
     if (reason.empty()) {
         body = "{}";
     } else {
-        // Minimal JSON-string escape: backslash + double-quote. Maintainer
-        // input flows through here so quote-handling matters.
-        std::string escaped;
-        escaped.reserve(reason.size());
-        const auto narrow = narrowFromWide(reason);
-        for (char c : narrow) {
-            if (c == '\\' || c == '"') escaped.push_back('\\');
-            escaped.push_back(c);
-        }
-        body = std::string("{\"reason\":\"") + escaped + "\"}";
+        // v0.11.0-alpha.3 (Copilot review): full JSON escaping via
+        // jsonEscapeInner. Pre-fix only `\` and `"` were escaped, so a
+        // maintainer reason containing a newline/tab/control character
+        // produced an invalid body the revoke route would reject.
+        body = std::string("{\"reason\":\"")
+            + jsonEscapeInner(narrowFromWide(reason)) + "\"}";
     }
     std::wstring errorMessage;
     const auto response = httpRequest(
@@ -3353,6 +3385,172 @@ ShellSelfTestSnapshot ShellRuntime::RunSelfTestsNow() const {
         }
     }
     return tests;
+}
+
+// v0.11.0-alpha.3 (PHASE-14 Slice C): diagnostics fetch helpers.
+// All four ride the same adminApiEndpoint + httpRequest plumbing the
+// rest of the shell uses; JSON shapes mirror the Slice A/E route
+// contracts in MasterControlRuntime.cpp (events carry the legacy
+// jsonl schema -- capturedAtUtc / component / severity / event /
+// message -- via DiagnosticsRecord::toLegacyJson).
+ShellDiagnosticsSummary ShellRuntime::FetchDiagnosticsSummary() const {
+    ShellDiagnosticsSummary out;
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    std::wstring errorMessage;
+    const auto response = httpGet(host, port, L"/api/diagnostics/summary", errorMessage);
+    if (!response.has_value()) {
+        out.message = errorMessage.empty()
+            ? std::wstring(L"Unable to reach the local admin API diagnostics summary.")
+            : errorMessage;
+        return out;
+    }
+    if (response->statusCode != 200) {
+        out.message = L"GET /api/diagnostics/summary returned "
+            + std::to_wstring(response->statusCode) + L".";
+        return out;
+    }
+    const auto parsed = parseJsonObject(response->body);
+    if (!parsed.has_value()) {
+        out.message = L"Diagnostics summary endpoint returned invalid JSON.";
+        return out;
+    }
+    out.succeeded = true;
+    out.totalEvents = static_cast<uint64_t>(jsonNumberOr(*parsed, L"totalEvents"));
+    out.storeBacked = jsonBoolOr(*parsed, L"storeBacked", false);
+    out.storeUnavailable = wideFromUtf8(jsonStringOr(*parsed, L"storeUnavailable", ""));
+    out.generatedAtUtc = wideFromUtf8(jsonStringOr(*parsed, L"generatedAtUtc", ""));
+    return out;
+}
+
+ShellDiagnosticsEventsResult ShellRuntime::FetchDiagnosticsEvents(const std::wstring& severity,
+                                                                  const std::wstring& source,
+                                                                  const int maxEvents) const {
+    ShellDiagnosticsEventsResult result;
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    std::wstring errorMessage;
+    // Filter values come from fixed ComboBox slugs (severity ladder +
+    // source roster), so plain concatenation is URL-safe here.
+    std::wstring path = L"/api/diagnostics/events?max="
+        + std::to_wstring(maxEvents > 0 ? maxEvents : 200);
+    if (!severity.empty()) {
+        path += L"&severity=";
+        path += severity;
+    }
+    if (!source.empty()) {
+        path += L"&source=";
+        path += source;
+    }
+    const auto response = httpGet(host, port, path, errorMessage);
+    if (!response.has_value()) {
+        result.message = errorMessage.empty()
+            ? std::wstring(L"Unable to reach the local admin API diagnostics stream.")
+            : errorMessage;
+        return result;
+    }
+    if (response->statusCode != 200) {
+        result.message = L"GET /api/diagnostics/events returned "
+            + std::to_wstring(response->statusCode) + L".";
+        return result;
+    }
+    const auto body = parseJsonObject(response->body);
+    if (!body.has_value()) {
+        result.message = L"Diagnostics events endpoint returned invalid JSON.";
+        return result;
+    }
+    if (body->HasKey(L"events")) {
+        for (const auto& entry : body->GetNamedArray(L"events", JsonArray())) {
+            if (entry.ValueType() != JsonValueType::Object) continue;
+            const auto obj = entry.GetObject();
+            ShellDiagnosticsEvent event;
+            event.capturedAtUtc = obj.GetNamedString(L"capturedAtUtc", L"");
+            event.component = obj.GetNamedString(L"component", L"");
+            event.severity = obj.GetNamedString(L"severity", L"info");
+            event.eventName = obj.GetNamedString(L"event", L"");
+            event.message = obj.GetNamedString(L"message", L"");
+            result.events.push_back(std::move(event));
+        }
+    }
+    result.succeeded = true;
+    result.message = L"Loaded " + std::to_wstring(result.events.size())
+        + L" diagnostic event" + (result.events.size() == 1 ? L"" : L"s")
+        + L" from the local admin API.";
+    return result;
+}
+
+ShellDiagnosticsExportResult ShellRuntime::FetchDiagnosticsExport(const std::wstring& format) const {
+    ShellDiagnosticsExportResult out;
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    std::wstring errorMessage;
+    const std::wstring path = L"/api/diagnostics/export?format="
+        + (format.empty() ? std::wstring(L"json") : format);
+    const auto response = httpGet(host, port, path, errorMessage);
+    if (!response.has_value()) {
+        out.message = errorMessage.empty()
+            ? std::wstring(L"Unable to reach the local admin API diagnostics export.")
+            : errorMessage;
+        return out;
+    }
+    if (response->statusCode != 200) {
+        out.message = L"GET /api/diagnostics/export returned "
+            + std::to_wstring(response->statusCode) + L".";
+        return out;
+    }
+    // The body is the finished document (text/markdown or
+    // application/json) already encoded as UTF-8; ferry the raw bytes
+    // so the on-disk file matches the route output exactly.
+    out.content = response->body;
+    out.succeeded = true;
+    return out;
+}
+
+ShellDiagnosticsClearResult ShellRuntime::ClearDiagnostics(const std::wstring& reason) const {
+    ShellDiagnosticsClearResult out;
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    // Body: optional audited reason. v0.11.0-alpha.3 (Copilot review):
+    // full JSON escaping via jsonEscapeInner so a reason carrying a
+    // newline/tab/control character produces valid JSON the clear route
+    // can parse (pre-fix only `\` and `"` were escaped).
+    std::string body;
+    if (reason.empty()) {
+        body = "{}";
+    } else {
+        body = std::string("{\"reason\":\"")
+            + jsonEscapeInner(narrowFromWide(reason)) + "\"}";
+    }
+    std::wstring errorMessage;
+    const auto response = httpRequest(
+        host, port, L"POST", L"/api/diagnostics/clear",
+        body, {}, errorMessage);
+    if (!response.has_value()) {
+        out.message = errorMessage.empty()
+            ? std::wstring(L"Unable to reach the local admin API.")
+            : errorMessage;
+        return out;
+    }
+    const auto parsed = parseJsonObject(response->body);
+    if (response->statusCode != 200) {
+        if (parsed.has_value()) {
+            out.message = wideFromUtf8(jsonStringOr(*parsed, L"message", ""));
+        }
+        if (out.message.empty()) {
+            out.message = L"POST /api/diagnostics/clear returned "
+                + std::to_wstring(response->statusCode) + L".";
+        }
+        return out;
+    }
+    if (!parsed.has_value()) {
+        out.message = L"Diagnostics clear endpoint returned invalid JSON.";
+        return out;
+    }
+    out.succeeded = jsonBoolOr(*parsed, L"ok", false);
+    out.deletedRows = static_cast<uint64_t>(jsonNumberOr(*parsed, L"deletedRows"));
+    out.message = wideFromUtf8(jsonStringOr(*parsed, L"message", ""));
+    if (out.message.empty()) {
+        out.message = out.succeeded
+            ? std::wstring(L"Diagnostics store cleared.")
+            : std::wstring(L"Diagnostics clear failed.");
+    }
+    return out;
 }
 
 } // namespace MasterControlShell

@@ -199,6 +199,42 @@ struct SecuritySettings final {
     bool securityProtocolsEnabled = true;
     std::string securityPosture = "local-only";
     std::vector<std::string> trustedRemoteHosts;
+    // v0.11.0-alpha.3: UDP beacon payload signing (closes the
+    // VERSION.json deferred item "future iteration may sign the beacon
+    // payload"). When enabled AND a key is present, BeaconService
+    // appends a `signature` object to the broadcast discovery document:
+    //   { "alg": "hmac-sha256",
+    //     "value": hex(HMAC_SHA256(keyBytes, doc.dump())) }
+    // where doc.dump() is the nlohmann compact dump of the document
+    // WITHOUT the signature member (nlohmann objects serialize with
+    // sorted keys, so the canonical form is reproducible from any
+    // JSON library that can emit sorted-key compact JSON). Clients
+    // that ignore unknown fields are unaffected. This is blind-spoof
+    // resistance on the trusted LAN, not transport security: verifiers
+    // obtain `beaconSigningKey` (hex-encoded bytes) out-of-band or via
+    // the operator-facing GET /api/config surface.
+    // Existing persisted configs deserialize with an empty key (the
+    // WITH_DEFAULT macro), which skips signing -- identical wire
+    // behavior to pre-alpha.3. Fresh installs generate a key.
+    bool beaconSigningEnabled = true;
+    std::string beaconSigningKey;
+    // v0.11.0-alpha.3: opt-in SChannel TLS for the admin HTTP listener
+    // (port 7300; closes the VERSION.json deferred item "Admin HTTP
+    // listener (port 7300) TLS support"). The admin listener is the
+    // Winsock-based SimpleHttpServer, NOT HTTP.sys, so `netsh http add
+    // sslcert` does NOT apply here -- the runtime performs the TLS
+    // handshake itself via SChannel. Operator workflow: provision a
+    // cert in Cert:\LocalMachine\My (scripts\Configure-LocalServerCert
+    // .ps1 already mints a suitable one for the gateway; reuse it) and
+    // paste its hex SHA-1 thumbprint into adminTlsCertThumbprint.
+    // Default OFF: when adminTlsEnabled is false the plain-HTTP path is
+    // completely untouched. When enabled but the thumbprint resolves to
+    // no usable cert, the listener logs an error and KEEPS serving
+    // plain HTTP -- a misconfigured cert must never brick the
+    // operator's admin surface. Existing persisted configs deserialize
+    // with both fields defaulted (WITH_DEFAULT macro), i.e. TLS off.
+    bool adminTlsEnabled = false;
+    std::string adminTlsCertThumbprint;
 };
 
 struct ResourceAllocationProfile final {
@@ -1642,7 +1678,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     allowOpenLanAccess,
     securityProtocolsEnabled,
     securityPosture,
-    trustedRemoteHosts)
+    trustedRemoteHosts,
+    beaconSigningEnabled,
+    beaconSigningKey,
+    adminTlsEnabled,
+    adminTlsCertThumbprint)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     ResourceAllocationProfile,

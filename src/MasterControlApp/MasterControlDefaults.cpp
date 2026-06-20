@@ -452,7 +452,14 @@ std::vector<RuntimeEndpoint> buildDefaultSeededEndpointsForHost(std::string host
 
     std::vector<RuntimeEndpoint> endpoints;
 
-    endpoints.push_back(makeEndpoint("platform-gateway", "Platform Gateway", EndpointKind::Gateway, host, 7200, "/health", "Unified orchestration gateway"));
+    // v0.11.0-alpha.3: the gateway row now points at the native HTTP.sys
+    // adapter (cfg.mcpGateway.listenPort default 8080, healthPath
+    // /health). The previous seed advertised port 7200 -- the legacy
+    // external gateway retired at v0.9.0 -- so the row could never probe
+    // reachable and the Exports surface derived a dead client URL from
+    // it. Existing installs keep their persisted endpoint list; this
+    // only affects fresh configurations.
+    endpoints.push_back(makeEndpoint("platform-gateway", "Platform Gateway", EndpointKind::Gateway, host, 8080, "/health", "Native HTTP.sys MCP gateway"));
     endpoints.push_back(makeEndpoint("browser-gateway", "Browser Gateway", EndpointKind::BrowserGateway, host, 7300, "/", "Master Control Orchestration Server browser surface"));
     endpoints.push_back(makeEndpoint("client-tracker", "Client Tracker", EndpointKind::MCPServer, host, 7120, "/api/clients", "LAN client tracker"));
     endpoints.push_back(makeEndpoint("metrics", "Metrics", EndpointKind::MCPServer, host, 7121, "/api/metrics", "Host metrics feed"));
@@ -534,9 +541,17 @@ namespace {
 // document. Uses Win32 UuidCreate (rpcrt4) and lowercases the canonical
 // 36-char form. Operators can override by editing AppConfiguration.instanceId
 // in mcos.json — the field round-trips like every other configuration key.
+// v0.11.0-alpha.3 (Copilot review): UuidCreate may return
+// RPC_S_UUID_LOCAL_ONLY -- the UUID is still valid and unique on this
+// machine, it just couldn't include a globally-unique node id. Treat it
+// as success; only a hard error (RPC_S_*_FAILURE etc.) yields empty.
+inline bool uuidCreateSucceeded(RPC_STATUS status) {
+    return status == RPC_S_OK || status == RPC_S_UUID_LOCAL_ONLY;
+}
+
 std::string generateInstanceIdUtf8() {
     UUID uuid{};
-    if (UuidCreate(&uuid) != RPC_S_OK) {
+    if (!uuidCreateSucceeded(UuidCreate(&uuid))) {
         return "";
     }
     RPC_CSTR uuidString = nullptr;
@@ -548,6 +563,38 @@ std::string generateInstanceIdUtf8() {
     std::transform(canonical.begin(), canonical.end(), canonical.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return "mcos-" + canonical;
+}
+
+// v0.11.0-alpha.3: 32-byte (64-hex-char) beacon signing key for fresh
+// installs. Composed from two UuidCreate v4 GUIDs with the dashes
+// stripped -- ~244 bits of OS-sourced randomness, comfortably beyond
+// the HMAC-SHA256 key-strength needs of LAN beacon spoof-resistance,
+// without adding a bcrypt dependency to this TU. Returns empty on
+// UuidCreate failure, which BeaconService treats as "signing off".
+std::string generateBeaconSigningKeyHex() {
+    std::string hex;
+    for (int i = 0; i < 2; ++i) {
+        UUID uuid{};
+        // v0.11.0-alpha.3 (Copilot review): RPC_S_UUID_LOCAL_ONLY is a
+        // valid UUID, not a failure -- accepting it keeps fresh installs
+        // from ending up with an empty (signing-disabled) key on hosts
+        // whose RPC layer can't supply a global node id.
+        if (!uuidCreateSucceeded(UuidCreate(&uuid))) {
+            return "";
+        }
+        RPC_CSTR uuidString = nullptr;
+        if (UuidToStringA(&uuid, &uuidString) != RPC_S_OK || uuidString == nullptr) {
+            return "";
+        }
+        std::string canonical(reinterpret_cast<char*>(uuidString));
+        RpcStringFreeA(&uuidString);
+        for (const char ch : canonical) {
+            if (ch != '-') {
+                hex.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+            }
+        }
+    }
+    return hex;
 }
 
 } // namespace
@@ -570,6 +617,18 @@ AppConfiguration buildDefaultConfiguration() {
     configuration.security.allowOpenLanAccess = false;
     configuration.security.securityProtocolsEnabled = true;
     configuration.security.securityPosture = "local-only";
+    // v0.11.0-alpha.3: beacon signing on fresh installs. Existing
+    // persisted configs keep an empty key (signing skipped) until the
+    // operator supplies one.
+    configuration.security.beaconSigningEnabled = true;
+    configuration.security.beaconSigningKey = generateBeaconSigningKeyHex();
+    // v0.11.0-alpha.3: admin-listener SChannel TLS is strictly opt-in.
+    // Fresh installs serve plain HTTP on the admin port exactly as
+    // before; an operator turns this on by provisioning a cert in
+    // Cert:\LocalMachine\My (scripts\Configure-LocalServerCert.ps1) and
+    // setting the cert's hex SHA-1 thumbprint here.
+    configuration.security.adminTlsEnabled = false;
+    configuration.security.adminTlsCertThumbprint = "";
     configuration.activeProfile.environmentName = environment.hostName + " - " + environment.operatingSystem;
     configuration.activeProfile.preferredBindAddress = environment.preferredBindAddress;
     configuration.activeProfile.macAddress = environment.macAddress;

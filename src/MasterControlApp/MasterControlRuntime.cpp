@@ -28,6 +28,7 @@
 #include "MasterControl/WorkflowReadiness.h"
 #include "MasterControl/JsonStrictness.h"   // v0.10.17: dropped-top-level-keys diagnostic.
 #include "MasterControl/DiagnosticsAggregator.h"  // v0.11.0 Slice A: testable aggregator + markdown renderer.
+#include "MasterControl/DiagnosticsService.h"     // v0.11.0-alpha.3 Slice E: SqliteDiagnosticsStore-backed central service.
 
 #include <bcrypt.h>
 #include <iomanip>
@@ -47,6 +48,14 @@
 #include <wincrypt.h>
 #include <winhttp.h>
 #include <windns.h>
+// v0.11.0-alpha.3: SSPI/SChannel for the opt-in admin-listener TLS
+// layer (SchannelStreamAdapter below). SECURITY_WIN32 selects the
+// user-mode SSPI prototypes in <security.h>. Links against secur32
+// (see src/MasterControlApp/CMakeLists.txt); crypt32 was already
+// linked for the existing wincrypt usage.
+#define SECURITY_WIN32
+#include <security.h>
+#include <schannel.h>
 
 #include <algorithm>
 #include <array>
@@ -54,6 +63,7 @@
 #include <cctype>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>   // v0.11.0-alpha.3: std::memcpy in SchannelStreamAdapter.
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -4312,11 +4322,26 @@ public:
             ? std::string("127.0.0.1")
             : configuration.activeProfile.preferredBindAddress;
         const auto gatewayHost = iterator != endpoints.end() && iterator->host != "0.0.0.0" ? iterator->host : preferredHost;
-        const auto gatewayPort = iterator != endpoints.end() ? iterator->port : static_cast<uint16_t>(7200);
+        // v0.11.0-alpha.3 fix: compose the exported MCP URL from
+        // cfg.mcpGateway (listenPort + mcpPath), NOT from the seeded
+        // "platform-gateway" inventory row. Pre-fix the exports carried
+        // "http://<host>:7200/mcp/gateway" -- port 7200 belongs to the
+        // legacy external gateway retired at v0.9.0 (nothing listens
+        // there any more) and "/mcp/gateway/{platform}" is an admin-port
+        // JSON document route, not an MCP endpoint. Every artifact this
+        // service emits (.claude.json, Install-ClaudeGateway.ps1,
+        // codex-mcp.json, openai/xai gateway profiles) therefore handed
+        // LAN clients a dead URL. This mirrors the v0.10.8 supervisor-
+        // config fix (see initialize() comment): the live MCP endpoint
+        // is the native HTTP.sys adapter on cfg.mcpGateway.listenPort
+        // (default 8080) at cfg.mcpGateway.mcpPath (default /mcp).
         // v0.9.3: bracket IPv6 host literals in this exported handoff
         // bundle so a LAN client copying it into their MCP config gets a
         // URL their HTTP library can actually parse.
-        const auto gatewayUrl = "http://" + bracketIpv6Host(gatewayHost) + ":" + std::to_string(gatewayPort) + "/mcp/gateway";
+        const auto& gatewayConfig = configuration.mcpGateway;
+        const auto gatewayUrl = "http://" + bracketIpv6Host(gatewayHost) + ":"
+            + std::to_string(gatewayConfig.listenPort)
+            + ensureAdvertisementPath(gatewayConfig.mcpPath, "/mcp");
         const auto browserHost = browserIterator != endpoints.end() && browserIterator->host != "0.0.0.0"
             ? browserIterator->host
             : preferredHost;
@@ -10778,7 +10803,8 @@ public:
         return { "claude-code", "codex", "grok", "chatgpt", "generic" };
     }
 
-    OnboardingProfile profileFor(const std::string& clientType) const override {
+    OnboardingProfile profileFor(const std::string& clientType,
+                                 const std::string& platform) const override {
         const std::string normalized = normalizeClientType(clientType);
         const auto document = discoveryService_
             ? discoveryService_->currentDocument()
@@ -10810,7 +10836,13 @@ public:
         profile.transport = "streamable_http";
         profile.authRequired = false;       // schema const; ADR-002 §1 invariant
         profile.trust = "lan";
-        profile.governanceBundleUrl = adminBase + "/api/governance/bundles/windows";
+        // v0.11.0-alpha.3: platform-aware governance bundle URL. The
+        // requesting client passes ?platform=windows|macos|ios on
+        // /api/onboarding/{clientType}; empty/unknown falls back to
+        // windows (the pre-alpha.3 hardcoded value), so existing
+        // clients see no change.
+        profile.governanceBundleUrl = adminBase + "/api/governance/bundles/"
+            + normalizeGovernancePlatform(platform);
         profile.discoveryUrl = adminBase + "/.well-known/mcos.json";
         profile.instanceId = document.instanceId;
 
@@ -10829,6 +10861,22 @@ public:
     }
 
 private:
+    // v0.11.0-alpha.3: same normalization semantics as
+    // GovernanceBundleService::normalizePlatform (trivially duplicated
+    // here, matching the repo's local-helper convention -- see the
+    // bracketIpv6Host note in McpGatewayAdapters.cpp). Empty/unknown
+    // values fall back to "windows" so the pre-alpha.3 contract holds.
+    static std::string normalizeGovernancePlatform(const std::string& platform) {
+        std::string lowered;
+        lowered.reserve(platform.size());
+        for (const auto ch : platform) {
+            lowered.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+        }
+        if (lowered == "macos" || lowered == "mac" || lowered == "osx") return "macos";
+        if (lowered == "ios" || lowered == "iphoneos") return "ios";
+        return "windows";
+    }
+
     static std::string normalizeClientType(const std::string& clientType) {
         std::string lowered;
         lowered.reserve(clientType.size());
@@ -10991,6 +11039,68 @@ private:
     std::shared_ptr<IDiscoveryService> discoveryService_;
 };
 
+// v0.11.0-alpha.3: HMAC-SHA256 helper backing beacon payload signing.
+// Returns lowercase hex of HMAC_SHA256(keyBytes, message), or empty on
+// any BCrypt failure so callers can fall back to broadcasting unsigned.
+// bcrypt.h is already included by this TU (SupervisorAssignmentService
+// token generation) and MasterControlApp links bcrypt.lib.
+inline std::string hmacSha256Hex(const std::vector<unsigned char>& key,
+                                 const std::string& message) {
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM,
+                                    nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG) != 0) {
+        return {};
+    }
+    unsigned char digest[32]{};
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    std::string out;
+    if (BCryptCreateHash(algorithm, &hash,
+                         nullptr, 0,
+                         const_cast<PUCHAR>(key.data()),
+                         static_cast<ULONG>(key.size()), 0) == 0) {
+        if (BCryptHashData(hash,
+                           reinterpret_cast<PUCHAR>(const_cast<char*>(message.data())),
+                           static_cast<ULONG>(message.size()), 0) == 0
+            && BCryptFinishHash(hash, digest, sizeof(digest), 0) == 0) {
+            static const char* kHexDigits = "0123456789abcdef";
+            out.reserve(sizeof(digest) * 2);
+            for (const unsigned char byte : digest) {
+                out.push_back(kHexDigits[byte >> 4]);
+                out.push_back(kHexDigits[byte & 0x0F]);
+            }
+        }
+        BCryptDestroyHash(hash);
+    }
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    return out;
+}
+
+// Hex-decode helper for the operator-supplied beaconSigningKey. Returns
+// empty on odd length or non-hex characters ("invalid key" == "signing
+// off" + a one-time diagnostics warning at the call site).
+inline std::vector<unsigned char> hexDecodeOrEmpty(const std::string& hex) {
+    if (hex.empty() || (hex.size() % 2) != 0) {
+        return {};
+    }
+    const auto nibble = [](char ch) -> int {
+        if (ch >= '0' && ch <= '9') return ch - '0';
+        if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+        if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+        return -1;
+    };
+    std::vector<unsigned char> bytes;
+    bytes.reserve(hex.size() / 2);
+    for (size_t i = 0; i < hex.size(); i += 2) {
+        const int hi = nibble(hex[i]);
+        const int lo = nibble(hex[i + 1]);
+        if (hi < 0 || lo < 0) {
+            return {};
+        }
+        bytes.push_back(static_cast<unsigned char>((hi << 4) | lo));
+    }
+    return bytes;
+}
+
 class BeaconService final : public IBeaconService {
 public:
     BeaconService(std::shared_ptr<IConfigurationService> configurationService,
@@ -11005,12 +11115,20 @@ public:
     BeaconAdvertisement currentAdvertisement() const override {
         const auto configuration = configurationService_->current();
         const auto snapshot = telemetryService_->captureSnapshot();
+        // v0.11.0-alpha.3 fix: the second port slot is
+        // BeaconAdvertisement::gatewayPort (MasterControlModels.h:797).
+        // Pre-fix this passed configuration.browserPort twice, so the
+        // legacy /api/beacon surface (and the discovery-service-less
+        // fallback broadcast below) advertised gatewayPort=7300 -- a
+        // client connecting to the advertised "gateway" port reached
+        // the admin listener instead of the MCP gateway on
+        // cfg.mcpGateway.listenPort (default 8080).
         return BeaconAdvertisement{
             configuration.instanceName,
             snapshot.hostName,
             snapshot.primaryIpAddress.empty() ? configuration.bindAddress : snapshot.primaryIpAddress,
             configuration.browserPort,
-            configuration.browserPort,
+            configuration.mcpGateway.listenPort,
             "online",
             platformServiceCatalogService_ ? platformServiceCatalogService_->listGateways() : std::vector<PlatformGatewayDescriptor>{}
         };
@@ -11049,9 +11167,29 @@ void BeaconService::start() {
     worker_ = std::thread([this]() {
         SOCKET socketHandle = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (socketHandle == INVALID_SOCKET) {
+            // v0.11.0-alpha.3: surface the failure instead of dying
+            // silently. Pre-fix the worker exited without a trace and
+            // the operator's only signal was "no beacon on the wire."
+            MasterControl::Diagnostics::appendEvent(
+                L"runtime",
+                "error",
+                "beacon_socket_create_failed",
+                "UDP beacon worker could not create its broadcast socket; "
+                "beacon broadcasts are disabled until service restart.",
+                nlohmann::json{ { "wsaError", WSAGetLastError() } });
             running_ = false;
             return;
         }
+
+        // v0.11.0-alpha.3: edge-triggered send-failure reporting. A
+        // persistent sendto failure (firewall rule, adapter loss)
+        // previously vanished -- the return value was ignored, so the
+        // beacon appeared to run while nothing reached the wire. Emit
+        // one diagnostics event when sends start failing and one when
+        // they recover, rather than one per 15s broadcast tick.
+        bool lastSendFailed = false;
+        // v0.11.0-alpha.3: one-time invalid-signing-key warning latch.
+        bool invalidKeyReported = false;
 
         BOOL broadcastEnabled = TRUE;
         setsockopt(socketHandle, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&broadcastEnabled), sizeof(broadcastEnabled));
@@ -11078,10 +11216,66 @@ void BeaconService::start() {
             // BeaconAdvertisement. /api/beacon still returns the legacy
             // shape for browsers that haven't migrated; /api/discovery
             // and /.well-known/mcos.json are the primary surfaces.
-            const auto payload = discoveryService_
-                ? nlohmann::json(discoveryService_->currentDocument()).dump()
-                : nlohmann::json(currentAdvertisement()).dump();
-            sendto(socketHandle, payload.c_str(), static_cast<int>(payload.size()), 0, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+            nlohmann::json payloadDocument = discoveryService_
+                ? nlohmann::json(discoveryService_->currentDocument())
+                : nlohmann::json(currentAdvertisement());
+            // v0.11.0-alpha.3: beacon payload signing (VERSION.json
+            // deferred item). HMAC-SHA256 over the compact dump of the
+            // document WITHOUT the signature member; appended as an
+            // additive `signature` object so unsigned-era clients are
+            // unaffected. Empty/invalid key -> broadcast unsigned,
+            // exactly the pre-alpha.3 wire shape; the invalid-key case
+            // additionally gets a one-time diagnostics warning.
+            if (configuration.security.beaconSigningEnabled
+                && !configuration.security.beaconSigningKey.empty()) {
+                const auto keyBytes = hexDecodeOrEmpty(configuration.security.beaconSigningKey);
+                if (keyBytes.empty()) {
+                    if (!invalidKeyReported) {
+                        invalidKeyReported = true;
+                        MasterControl::Diagnostics::appendEvent(
+                            L"runtime",
+                            "warning",
+                            "beacon_signing_key_invalid",
+                            "security.beaconSigningKey is not valid hex; "
+                            "beacon broadcasts continue UNSIGNED.",
+                            nlohmann::json::object());
+                    }
+                } else {
+                    const auto signature = hmacSha256Hex(keyBytes, payloadDocument.dump());
+                    if (!signature.empty()) {
+                        payloadDocument["signature"] = nlohmann::json{
+                            { "alg", "hmac-sha256" },
+                            { "value", signature }
+                        };
+                    }
+                }
+            }
+            const auto payload = payloadDocument.dump();
+            const int sendResult = sendto(socketHandle, payload.c_str(), static_cast<int>(payload.size()), 0, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+            if (sendResult == SOCKET_ERROR) {
+                if (!lastSendFailed) {
+                    lastSendFailed = true;
+                    MasterControl::Diagnostics::appendEvent(
+                        L"runtime",
+                        "warning",
+                        "beacon_broadcast_failed",
+                        "UDP beacon sendto failed; discovery broadcasts are "
+                        "not reaching the LAN. Will report again on recovery.",
+                        nlohmann::json{
+                            { "wsaError", WSAGetLastError() },
+                            { "beaconPort", configuration.beaconPort }
+                        });
+                }
+            } else if (lastSendFailed) {
+                lastSendFailed = false;
+                MasterControl::Diagnostics::appendEvent(
+                    L"runtime",
+                    "info",
+                    "beacon_broadcast_recovered",
+                    "UDP beacon sendto succeeded after a failure window; "
+                    "discovery broadcasts have resumed.",
+                    nlohmann::json{ { "beaconPort", configuration.beaconPort } });
+            }
             // v0.9.11: interruptible sleep. wait_for returns when
             // either the predicate is true (running_ flipped to
             // false) OR the timeout elapses, whichever comes first.
@@ -12770,14 +12964,512 @@ void appendSupervisorWedgeActivity(const std::string& message,
     globalActivityRing().append(event);
 }
 
+// ----------------------------------------------------------------------
+// v0.11.0-alpha.3: opt-in SChannel TLS for the admin HTTP listener.
+//
+// Closes the VERSION.json deferred item "Admin HTTP listener (port
+// 7300) TLS support. SimpleHttpServer is Winsock-based, not HTTP.sys-
+// based, so adding TLS there requires SChannel handshake code."
+//
+// Posture:
+//   * Strictly opt-in. security.adminTlsEnabled defaults to false and
+//     the plain-HTTP code path below (handleClient / sendResponse) is
+//     untouched when the flag is off -- the TLS layer is a parallel,
+//     self-contained path, never an indirection inserted into the
+//     plain path. Isolation is the safety mechanism: this TU cannot be
+//     compiled on the authoring host, so the change is structured so
+//     that a defect in the TLS code cannot perturb flag-off behavior.
+//   * Operator workflow: provision a server cert in
+//     Cert:\LocalMachine\My -- scripts\Configure-LocalServerCert.ps1
+//     (added for the v0.11.0-alpha.2 gateway TLS dual-bind) already
+//     mints a suitable self-signed cert with host SANs; reuse it.
+//     Bind by pasting the cert's hex SHA-1 thumbprint into
+//     security.adminTlsCertThumbprint. Note: `netsh http add sslcert`
+//     does NOT apply here -- that binds certs for HTTP.sys, and this
+//     listener is a raw Winsock server that terminates TLS itself.
+//   * No-brick guarantee: if credential acquisition fails at start()
+//     (typo'd thumbprint, missing cert, no private-key access), the
+//     listener logs an error diagnostics event and continues serving
+//     PLAIN HTTP. A misconfigured cert must never lock the operator
+//     out of the admin surface that they would use to fix the config.
+//   * Renegotiation is NOT supported (SEC_I_RENEGOTIATE is treated as
+//     connection close); SSE streaming routes are not available over
+//     TLS this iteration (the stream handlers write raw bytes to the
+//     SOCKET and cannot be intercepted by this layer).
+// ----------------------------------------------------------------------
+
+// Decode a hex SHA-1 certificate thumbprint into raw bytes. Tolerates
+// the separators operators commonly paste from certlm.msc / PowerShell
+// (spaces and colons) and mixed case. Returns empty unless the result
+// is exactly 20 bytes (a SHA-1 hash).
+inline std::vector<unsigned char> decodeCertThumbprintHex(const std::string& thumbprint) {
+    std::string compact;
+    compact.reserve(thumbprint.size());
+    for (const char ch : thumbprint) {
+        if (ch == ' ' || ch == ':' || ch == '-') {
+            continue;
+        }
+        compact.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    if (compact.size() != 40
+        || compact.find_first_not_of("0123456789abcdef") != std::string::npos) {
+        return {};
+    }
+    std::vector<unsigned char> bytes(20, 0);
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        const auto nibble = [](const char c) -> unsigned char {
+            return static_cast<unsigned char>(c >= 'a' ? (c - 'a' + 10) : (c - '0'));
+        };
+        bytes[i] = static_cast<unsigned char>((nibble(compact[i * 2]) << 4)
+                                              | nibble(compact[i * 2 + 1]));
+    }
+    return bytes;
+}
+
+// Acquire a server-side (SECPKG_CRED_INBOUND) SChannel credentials
+// handle for the cert in LocalMachine\MY whose SHA-1 hash matches
+// `thumbprintHex`. On success `credentialsOut` is valid and the caller
+// owns it (FreeCredentialsHandle). On failure returns false with a
+// human-readable reason in `errorOut`; `credentialsOut` is untouched.
+//
+// Resource notes: the cert store and cert context are freed on EVERY
+// path -- SChannel takes its own reference on the cert context inside
+// AcquireCredentialsHandleW, so freeing ours immediately afterwards is
+// the documented pattern.
+inline bool acquireAdminTlsCredentials(const std::string& thumbprintHex,
+                                       CredHandle& credentialsOut,
+                                       std::string& errorOut) {
+    const auto hashBytes = decodeCertThumbprintHex(thumbprintHex);
+    if (hashBytes.empty()) {
+        errorOut = "adminTlsCertThumbprint is not a 40-hex-digit SHA-1 thumbprint.";
+        return false;
+    }
+
+    HCERTSTORE store = CertOpenStore(
+        CERT_STORE_PROV_SYSTEM_W,
+        0,
+        0,
+        CERT_SYSTEM_STORE_LOCAL_MACHINE
+            | CERT_STORE_OPEN_EXISTING_FLAG
+            | CERT_STORE_READONLY_FLAG,
+        L"MY");
+    if (store == nullptr) {
+        errorOut = "CertOpenStore(LocalMachine\\MY) failed with error "
+            + std::to_string(GetLastError()) + ".";
+        return false;
+    }
+
+    CRYPT_HASH_BLOB hashBlob{};
+    hashBlob.cbData = static_cast<DWORD>(hashBytes.size());
+    hashBlob.pbData = const_cast<BYTE*>(hashBytes.data());
+    PCCERT_CONTEXT certificate = CertFindCertificateInStore(
+        store,
+        X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+        0,
+        CERT_FIND_HASH,
+        &hashBlob,
+        nullptr);
+    if (certificate == nullptr) {
+        CertCloseStore(store, 0);
+        errorOut = "No certificate with thumbprint " + thumbprintHex
+            + " found in Cert:\\LocalMachine\\My.";
+        return false;
+    }
+
+    // SCHANNEL_CRED (not the newer SCH_CREDENTIALS) keeps the minimum-
+    // SDK floor unchanged. grbitEnabledProtocols stays 0 so the OS
+    // policy decides the protocol set (TLS 1.2+ on supported builds);
+    // SCH_USE_STRONG_CRYPTO additionally drops weak ciphers.
+    SCHANNEL_CRED schannelCred{};
+    schannelCred.dwVersion = SCHANNEL_CRED_VERSION;
+    schannelCred.cCreds = 1;
+    schannelCred.paCred = &certificate;
+    schannelCred.grbitEnabledProtocols = 0;
+    schannelCred.dwFlags = SCH_USE_STRONG_CRYPTO;
+
+    wchar_t packageName[] = UNISP_NAME_W;
+    TimeStamp expiry{};
+    const SECURITY_STATUS status = AcquireCredentialsHandleW(
+        nullptr,
+        packageName,
+        SECPKG_CRED_INBOUND,
+        nullptr,
+        &schannelCred,
+        nullptr,
+        nullptr,
+        &credentialsOut,
+        &expiry);
+
+    CertFreeCertificateContext(certificate);
+    CertCloseStore(store, 0);
+
+    if (status != SEC_E_OK) {
+        errorOut = "AcquireCredentialsHandleW failed with status 0x"
+            + [&]() { std::ostringstream hex; hex << std::hex << static_cast<unsigned long>(status); return hex.str(); }()
+            + " (commonly: the service account lacks read access to the cert's private key).";
+        return false;
+    }
+    return true;
+}
+
+// Wraps one accepted admin-listener SOCKET in a server-side SChannel
+// TLS stream. Lifecycle per connection:
+//   adapter tls(socket, &serverCredentials);
+//   if (!tls.handshake()) { close socket; }
+//   ... tls.recvPlain(...) / tls.sendPlain(...) ...
+//   tls.shutdownTls();    // best-effort close_notify
+// The adapter does NOT own the SOCKET (the caller closes it) and does
+// NOT own the credentials handle (shared across connections, owned by
+// SimpleHttpServer). It DOES own the security context: the destructor
+// calls DeleteSecurityContext whenever a context was established, so
+// every early-return path inside handshake()/recvPlain() stays leak-
+// free. Output tokens allocated by SChannel (ASC_REQ_ALLOCATE_MEMORY)
+// are released with FreeContextBuffer immediately after each send
+// attempt, success or failure.
+class SchannelStreamAdapter final {
+public:
+    SchannelStreamAdapter(SOCKET socket, CredHandle* credentials)
+        : socket_(socket)
+        , credentials_(credentials) {}
+
+    SchannelStreamAdapter(const SchannelStreamAdapter&) = delete;
+    SchannelStreamAdapter& operator=(const SchannelStreamAdapter&) = delete;
+
+    ~SchannelStreamAdapter() {
+        if (contextValid_) {
+            DeleteSecurityContext(&context_);
+            contextValid_ = false;
+        }
+    }
+
+    // Server-side handshake loop. Returns true when the TLS session is
+    // established and stream sizes are known; false on any failure
+    // (peer spoke plain HTTP, no shared cipher, socket dropped, ...).
+    bool handshake() {
+        if (credentials_ == nullptr) {
+            return false;
+        }
+        const DWORD requirements = ASC_REQ_SEQUENCE_DETECT
+            | ASC_REQ_REPLAY_DETECT
+            | ASC_REQ_CONFIDENTIALITY
+            | ASC_REQ_EXTENDED_ERROR
+            | ASC_REQ_ALLOCATE_MEMORY
+            | ASC_REQ_STREAM;
+
+        std::string inbound;
+        bool needRead = true;
+        for (;;) {
+            if (needRead) {
+                char chunk[8192];
+                const int received = ::recv(socket_, chunk, static_cast<int>(sizeof(chunk)), 0);
+                if (received <= 0) {
+                    return false;
+                }
+                inbound.append(chunk, chunk + received);
+                needRead = false;
+            }
+
+            SecBuffer inBuffers[2]{};
+            inBuffers[0].BufferType = SECBUFFER_TOKEN;
+            inBuffers[0].pvBuffer = inbound.data();
+            inBuffers[0].cbBuffer = static_cast<unsigned long>(inbound.size());
+            inBuffers[1].BufferType = SECBUFFER_EMPTY;
+            SecBufferDesc inDesc{ SECBUFFER_VERSION, 2, inBuffers };
+
+            SecBuffer outBuffer{};
+            outBuffer.BufferType = SECBUFFER_TOKEN;
+            SecBufferDesc outDesc{ SECBUFFER_VERSION, 1, &outBuffer };
+
+            DWORD attributes = 0;
+            TimeStamp expiry{};
+            const SECURITY_STATUS status = AcceptSecurityContext(
+                credentials_,
+                contextValid_ ? &context_ : nullptr,
+                &inDesc,
+                requirements,
+                0,
+                contextValid_ ? nullptr : &context_,
+                &outDesc,
+                &attributes,
+                &expiry);
+
+            if (status == SEC_E_INCOMPLETE_MESSAGE) {
+                // Partial TLS record: keep the bytes, read more. The
+                // input was not consumed.
+                needRead = true;
+                continue;
+            }
+
+            // Any status other than INCOMPLETE_MESSAGE on the first
+            // iteration means a context handle now exists and must be
+            // deleted on destruction -- including failure statuses
+            // reached after CONTINUE_NEEDED rounds.
+            if (status == SEC_I_CONTINUE_NEEDED || status == SEC_E_OK) {
+                contextValid_ = true;
+            }
+
+            // Flush any output token (handshake reply, or an alert when
+            // the failure carried ASC_RET_EXTENDED_ERROR). Free the
+            // SChannel-allocated buffer on every path.
+            // v0.11.0-alpha.3 (Copilot review): a failed send during a
+            // CONTINUE_NEEDED / OK round means the peer will never
+            // receive the handshake bytes it is waiting for -- looping
+            // would hang the connection. Treat the send failure as a
+            // failed handshake and bail (the buffer is freed first, and
+            // the existing partial context is torn down by the adapter
+            // destructor). Send failures on the extended-error alert
+            // path are ignored: we're already failing and about to close.
+            if (outBuffer.pvBuffer != nullptr) {
+                bool sendFailedDuringHandshake = false;
+                if (outBuffer.cbBuffer > 0) {
+                    if (status == SEC_I_CONTINUE_NEEDED || status == SEC_E_OK) {
+                        sendFailedDuringHandshake = !sendAll(
+                            static_cast<const char*>(outBuffer.pvBuffer), outBuffer.cbBuffer);
+                    } else if (FAILED(status) && (attributes & ASC_RET_EXTENDED_ERROR) != 0) {
+                        sendAll(static_cast<const char*>(outBuffer.pvBuffer), outBuffer.cbBuffer);
+                    }
+                }
+                FreeContextBuffer(outBuffer.pvBuffer);
+                outBuffer.pvBuffer = nullptr;
+                if (sendFailedDuringHandshake) {
+                    return false;
+                }
+            }
+
+            // Consume the input we handed in, keeping any SECBUFFER_EXTRA
+            // tail (bytes past the end of the consumed handshake records).
+            std::string leftover;
+            if (inBuffers[1].BufferType == SECBUFFER_EXTRA && inBuffers[1].cbBuffer > 0
+                && inBuffers[1].cbBuffer <= inbound.size()) {
+                leftover.assign(inbound.data() + (inbound.size() - inBuffers[1].cbBuffer),
+                                inBuffers[1].cbBuffer);
+            }
+            inbound.swap(leftover);
+
+            if (status == SEC_E_OK) {
+                // Bytes that arrived glued to the final handshake record
+                // are already application data -- seed the decrypt buffer.
+                encrypted_ = std::move(inbound);
+                if (QueryContextAttributesW(&context_, SECPKG_ATTR_STREAM_SIZES,
+                                            &streamSizes_) != SEC_E_OK) {
+                    return false;
+                }
+                handshakeComplete_ = true;
+                return true;
+            }
+            if (status == SEC_I_CONTINUE_NEEDED) {
+                if (inbound.empty()) {
+                    needRead = true;
+                }
+                continue;
+            }
+            // SEC_E_INCOMPLETE_CREDENTIALS (client-cert dance) and every
+            // failure status: this listener does not request client
+            // certs, so treat anything else as a failed handshake.
+            return false;
+        }
+    }
+
+    // Read decrypted plaintext into `out`. Mirrors recv() semantics:
+    // returns >0 (bytes), 0 (orderly close / close_notify / requested
+    // renegotiation, which this listener treats as close), or -1 on
+    // error.
+    int recvPlain(char* out, const int outSize) {
+        if (!handshakeComplete_ || out == nullptr || outSize <= 0) {
+            return -1;
+        }
+        for (;;) {
+            if (!decrypted_.empty()) {
+                const size_t take = std::min<size_t>(decrypted_.size(),
+                                                     static_cast<size_t>(outSize));
+                std::memcpy(out, decrypted_.data(), take);
+                decrypted_.erase(0, take);
+                return static_cast<int>(take);
+            }
+
+            bool needRead = encrypted_.empty();
+            if (!needRead) {
+                SecBuffer buffers[4]{};
+                buffers[0].BufferType = SECBUFFER_DATA;
+                buffers[0].pvBuffer = encrypted_.data();
+                buffers[0].cbBuffer = static_cast<unsigned long>(encrypted_.size());
+                buffers[1].BufferType = SECBUFFER_EMPTY;
+                buffers[2].BufferType = SECBUFFER_EMPTY;
+                buffers[3].BufferType = SECBUFFER_EMPTY;
+                SecBufferDesc desc{ SECBUFFER_VERSION, 4, buffers };
+
+                const SECURITY_STATUS status = DecryptMessage(&context_, &desc, 0, nullptr);
+                if (status == SEC_E_OK) {
+                    // Collect plaintext and retain any EXTRA tail (start
+                    // of the next TLS record) as the new cipher buffer.
+                    std::string extra;
+                    for (const auto& buffer : buffers) {
+                        if (buffer.BufferType == SECBUFFER_DATA && buffer.cbBuffer > 0) {
+                            decrypted_.append(static_cast<const char*>(buffer.pvBuffer),
+                                              buffer.cbBuffer);
+                        } else if (buffer.BufferType == SECBUFFER_EXTRA && buffer.cbBuffer > 0) {
+                            extra.append(static_cast<const char*>(buffer.pvBuffer),
+                                         buffer.cbBuffer);
+                        }
+                    }
+                    encrypted_.swap(extra);
+                    continue;
+                }
+                if (status == SEC_E_INCOMPLETE_MESSAGE) {
+                    needRead = true;   // partial record: keep bytes, read more
+                } else if (status == SEC_I_CONTEXT_EXPIRED) {
+                    return 0;          // peer sent close_notify
+                } else if (status == SEC_I_RENEGOTIATE) {
+                    // Renegotiation is intentionally unsupported on the
+                    // admin listener; treat as an orderly close so the
+                    // connection is dropped instead of mis-handshaken.
+                    return 0;
+                } else {
+                    return -1;
+                }
+            }
+
+            if (needRead) {
+                char chunk[8192];
+                const int received = ::recv(socket_, chunk, static_cast<int>(sizeof(chunk)), 0);
+                if (received == 0) {
+                    return 0;
+                }
+                if (received < 0) {
+                    return -1;
+                }
+                encrypted_.append(chunk, chunk + received);
+            }
+        }
+    }
+
+    // Encrypt and send the whole plaintext buffer, chunked to the
+    // negotiated cbMaximumMessage. Returns false on any failure.
+    bool sendPlain(const char* data, const size_t size) {
+        if (!handshakeComplete_ || (data == nullptr && size > 0)) {
+            return false;
+        }
+        const size_t maxChunk = streamSizes_.cbMaximumMessage;
+        if (maxChunk == 0) {
+            return false;
+        }
+        std::vector<char> message(
+            static_cast<size_t>(streamSizes_.cbHeader) + maxChunk + streamSizes_.cbTrailer);
+        size_t offset = 0;
+        while (offset < size) {
+            // (std::min) parenthesized to dodge the windows.h min macro
+            // -- this TU does not define NOMINMAX; same convention as
+            // the (std::min<std::size_t>) call in the summary route.
+            const size_t chunk = (std::min)(size - offset, maxChunk);
+            std::memcpy(message.data() + streamSizes_.cbHeader, data + offset, chunk);
+
+            SecBuffer buffers[4]{};
+            buffers[0].BufferType = SECBUFFER_STREAM_HEADER;
+            buffers[0].pvBuffer = message.data();
+            buffers[0].cbBuffer = streamSizes_.cbHeader;
+            buffers[1].BufferType = SECBUFFER_DATA;
+            buffers[1].pvBuffer = message.data() + streamSizes_.cbHeader;
+            buffers[1].cbBuffer = static_cast<unsigned long>(chunk);
+            buffers[2].BufferType = SECBUFFER_STREAM_TRAILER;
+            buffers[2].pvBuffer = message.data() + streamSizes_.cbHeader + chunk;
+            buffers[2].cbBuffer = streamSizes_.cbTrailer;
+            buffers[3].BufferType = SECBUFFER_EMPTY;
+            SecBufferDesc desc{ SECBUFFER_VERSION, 4, buffers };
+
+            if (EncryptMessage(&context_, 0, &desc, 0) != SEC_E_OK) {
+                return false;
+            }
+            const size_t wireSize = static_cast<size_t>(buffers[0].cbBuffer)
+                + buffers[1].cbBuffer + buffers[2].cbBuffer;
+            if (!sendAll(message.data(), wireSize)) {
+                return false;
+            }
+            offset += chunk;
+        }
+        return true;
+    }
+
+    // Best-effort TLS close_notify (ApplyControlToken SCHANNEL_SHUTDOWN
+    // followed by one AcceptSecurityContext round to mint the alert).
+    // Failures are ignored by design -- the caller is about to close
+    // the socket either way.
+    void shutdownTls() {
+        if (!contextValid_ || credentials_ == nullptr) {
+            return;
+        }
+        DWORD shutdownToken = SCHANNEL_SHUTDOWN;
+        SecBuffer controlBuffer{};
+        controlBuffer.BufferType = SECBUFFER_TOKEN;
+        controlBuffer.pvBuffer = &shutdownToken;
+        controlBuffer.cbBuffer = sizeof(shutdownToken);
+        SecBufferDesc controlDesc{ SECBUFFER_VERSION, 1, &controlBuffer };
+        if (ApplyControlToken(&context_, &controlDesc) != SEC_E_OK) {
+            return;
+        }
+
+        SecBuffer outBuffer{};
+        outBuffer.BufferType = SECBUFFER_TOKEN;
+        SecBufferDesc outDesc{ SECBUFFER_VERSION, 1, &outBuffer };
+        DWORD attributes = 0;
+        TimeStamp expiry{};
+        const SECURITY_STATUS status = AcceptSecurityContext(
+            credentials_,
+            &context_,
+            nullptr,
+            ASC_REQ_SEQUENCE_DETECT | ASC_REQ_REPLAY_DETECT | ASC_REQ_CONFIDENTIALITY
+                | ASC_REQ_EXTENDED_ERROR | ASC_REQ_ALLOCATE_MEMORY | ASC_REQ_STREAM,
+            0,
+            nullptr,
+            &outDesc,
+            &attributes,
+            &expiry);
+        if (outBuffer.pvBuffer != nullptr) {
+            if ((status == SEC_E_OK || status == SEC_I_CONTINUE_NEEDED)
+                && outBuffer.cbBuffer > 0) {
+                sendAll(static_cast<const char*>(outBuffer.pvBuffer), outBuffer.cbBuffer);
+            }
+            FreeContextBuffer(outBuffer.pvBuffer);
+        }
+    }
+
+private:
+    bool sendAll(const char* data, const size_t size) {
+        size_t sent = 0;
+        while (sent < size) {
+            const int written = ::send(socket_, data + sent,
+                                       static_cast<int>(size - sent), 0);
+            if (written <= 0) {
+                return false;
+            }
+            sent += static_cast<size_t>(written);
+        }
+        return true;
+    }
+
+    SOCKET socket_ = INVALID_SOCKET;
+    CredHandle* credentials_ = nullptr;   // shared, owned by SimpleHttpServer
+    CtxtHandle context_{};
+    bool contextValid_ = false;
+    bool handshakeComplete_ = false;
+    SecPkgContext_StreamSizes streamSizes_{};
+    std::string encrypted_;    // raw bytes off the wire, not yet decrypted
+    std::string decrypted_;    // plaintext not yet handed to the caller
+};
+
 class SimpleHttpServer final {
 public:
     using RequestHandler = std::function<HttpResponse(const HttpRequest&)>;
 
-    SimpleHttpServer(std::string bindAddress, uint16_t port, RequestHandler handler)
+    // v0.11.0-alpha.3: the trailing TLS parameters are defaulted so
+    // every pre-existing construction site (and the flag-off path)
+    // compiles and behaves exactly as before.
+    SimpleHttpServer(std::string bindAddress, uint16_t port, RequestHandler handler,
+                     bool tlsEnabled = false, std::string tlsCertThumbprint = {})
         : bindAddress_(std::move(bindAddress))
         , port_(port)
-        , handler_(std::move(handler)) {}
+        , handler_(std::move(handler))
+        , tlsEnabled_(tlsEnabled)
+        , tlsCertThumbprint_(std::move(tlsCertThumbprint)) {}
 
     bool start();
     void stop();
@@ -12787,8 +13479,16 @@ private:
     static std::string reasonPhrase(int statusCode);
     static HttpRequest parseRequest(const std::string& rawRequest);
     static void sendResponse(SOCKET client, const HttpResponse& response);
+    // v0.11.0-alpha.3: TLS twin of sendResponse. Serializes the SAME
+    // byte layout (keep the two in sync) but writes through the
+    // SChannel adapter instead of the raw socket.
+    static void sendResponseTls(SchannelStreamAdapter& tls, const HttpResponse& response);
     void run();
     void handleClient(SOCKET client);
+    // v0.11.0-alpha.3: TLS twin of handleClient. A parallel path (not
+    // an indirection inside handleClient) so the plain-HTTP behavior
+    // is untouched when security.adminTlsEnabled is off.
+    void handleClientTls(SOCKET client);
 
     std::string bindAddress_;
     uint16_t port_;
@@ -12800,11 +13500,57 @@ private:
     SOCKET listenSocket_ = INVALID_SOCKET;
     std::mutex startupMutex_;
     std::condition_variable startupCv_;
+    // v0.11.0-alpha.3: admin-listener TLS state. tlsCredentialsValid_
+    // is the single switch the accept loops consult: it is true only
+    // when tlsEnabled_ was set AND credential acquisition succeeded at
+    // start(). Credentials are shared across connections and freed in
+    // stop(). tlsHandshakeFailureReported_ is the once-per-process
+    // diagnostics latch for failed client handshakes (same edge-
+    // triggered pattern as BeaconService's send-failure latch); it is
+    // only touched on the accept thread, so a plain bool suffices.
+    bool tlsEnabled_ = false;
+    std::string tlsCertThumbprint_;
+    CredHandle tlsCredentials_{};
+    bool tlsCredentialsValid_ = false;
+    bool tlsHandshakeFailureReported_ = false;
 };
 
 bool SimpleHttpServer::start() {
     if (running_.exchange(true)) {
         return true;
+    }
+
+    // v0.11.0-alpha.3: opt-in admin-listener TLS. Acquire the SChannel
+    // server credentials up front, on the caller's thread, before the
+    // accept loop spawns. NO-BRICK GUARANTEE: if acquisition fails
+    // (typo'd thumbprint, cert not in LocalMachine\MY, no private-key
+    // read access for the service account) we log an error and keep
+    // serving PLAIN HTTP -- a misconfigured cert must not take down
+    // the very admin surface the operator needs to fix the config.
+    if (tlsEnabled_ && !tlsCredentialsValid_) {
+        std::string credentialError;
+        if (acquireAdminTlsCredentials(tlsCertThumbprint_, tlsCredentials_, credentialError)) {
+            tlsCredentialsValid_ = true;
+            MasterControl::Diagnostics::appendEvent(
+                L"runtime",
+                "info",
+                "admin_tls_enabled",
+                "Admin HTTP listener TLS is active: SChannel server credentials "
+                "acquired for the configured certificate thumbprint.",
+                nlohmann::json{ { "certThumbprint", tlsCertThumbprint_ } });
+        } else {
+            MasterControl::Diagnostics::appendEvent(
+                L"runtime",
+                "error",
+                "admin_tls_credentials_failed",
+                "security.adminTlsEnabled is set but SChannel credentials could "
+                "not be acquired; the admin listener CONTINUES SERVING PLAIN HTTP "
+                "so a misconfigured certificate cannot brick the operator's admin "
+                "surface. Fix security.adminTlsCertThumbprint (hex SHA-1 of a cert "
+                "in Cert:\\LocalMachine\\My; see scripts\\Configure-LocalServerCert"
+                ".ps1) and restart. Reason: " + credentialError,
+                nlohmann::json{ { "certThumbprint", tlsCertThumbprint_ } });
+        }
     }
 
     startupComplete_ = false;
@@ -12825,6 +13571,15 @@ void SimpleHttpServer::stop() {
     if (worker_.joinable()) {
         worker_.join();
     }
+    // v0.11.0-alpha.3: release the shared SChannel credentials after
+    // the accept thread has joined (TLS connections are handled
+    // synchronously on that thread, so nothing can still be using the
+    // handle here). Guarded so stop() stays safe to call repeatedly
+    // and on a never-started/credentials-failed server.
+    if (tlsCredentialsValid_) {
+        FreeCredentialsHandle(&tlsCredentials_);
+        tlsCredentialsValid_ = false;
+    }
 }
 
 std::string SimpleHttpServer::reasonPhrase(const int statusCode) {
@@ -12838,6 +13593,9 @@ std::string SimpleHttpServer::reasonPhrase(const int statusCode) {
         case 405: return "Method Not Allowed";
         case 409: return "Conflict";
         case 500: return "Internal Server Error";
+        // v0.11.0-alpha.3: produced only by the TLS path's SSE-
+        // unsupported response; no plain-HTTP route returns 501.
+        case 501: return "Not Implemented";
         case 503: return "Service Unavailable";
         default: return "OK";
     }
@@ -12984,7 +13742,16 @@ void SimpleHttpServer::run() {
                         if (running_) continue;
                         break;
                     }
-                    handleClient(client);
+                    // v0.11.0-alpha.3: TLS dispatch. When credentials
+                    // were acquired at start() every connection goes
+                    // through the SChannel path (which owns closing the
+                    // socket on all of its paths); otherwise the plain
+                    // path below runs exactly as before.
+                    if (tlsCredentialsValid_) {
+                        handleClientTls(client);
+                    } else {
+                        handleClient(client);
+                    }
                 }
                 return;
             }
@@ -13057,8 +13824,15 @@ void SimpleHttpServer::run() {
         if (client == INVALID_SOCKET) {
             continue;
         }
-        handleClient(client);
-        closesocket(client);
+        // v0.11.0-alpha.3: TLS dispatch (see the dual-stack loop above).
+        // handleClientTls closes the socket on every one of its paths,
+        // so the extra closesocket stays confined to the plain branch.
+        if (tlsCredentialsValid_) {
+            handleClientTls(client);
+        } else {
+            handleClient(client);
+            closesocket(client);
+        }
     }
 }
 
@@ -13165,6 +13939,136 @@ void SimpleHttpServer::handleClient(SOCKET client) {
     sendResponse(client, response);
     ::shutdown(client, SD_BOTH);
     ::closesocket(client);
+}
+
+// v0.11.0-alpha.3: TLS twin of sendResponse. The serialized bytes MUST
+// stay identical to sendResponse (same status line, same CORS posture,
+// same Connection: close, same HEAD body suppression) -- only the
+// transport differs. Deliberately duplicated rather than refactoring
+// sendResponse through an indirection: keeping the plain path untouched
+// is the safety mechanism for this opt-in feature.
+void SimpleHttpServer::sendResponseTls(SchannelStreamAdapter& tls, const HttpResponse& response) {
+    std::ostringstream stream;
+    stream << "HTTP/1.1 " << response.statusCode << ' ' << reasonPhrase(response.statusCode) << "\r\n";
+    stream << "Content-Type: " << response.contentType << "\r\n";
+    stream << "Content-Length: " << response.body.size() << "\r\n";
+    stream << "Access-Control-Allow-Origin: *\r\n";
+    stream << "Access-Control-Allow-Methods: GET, HEAD, POST, OPTIONS\r\n";
+    stream << "Access-Control-Allow-Headers: Content-Type, Authorization, X-MCOS-Admin-Token, X-MCOS-Client-Id, X-MCOS-Client-Type\r\n";
+    stream << "Access-Control-Max-Age: 86400\r\n";
+    for (const auto& [name, value] : response.extraHeaders) {
+        stream << name << ": " << value << "\r\n";
+    }
+    stream << "Connection: close\r\n\r\n";
+    if (!response.suppressBody) {
+        stream << response.body;
+    }
+
+    const auto data = stream.str();
+    tls.sendPlain(data.c_str(), data.size());
+}
+
+// v0.11.0-alpha.3: TLS twin of handleClient. Owns the accepted socket:
+// it is closed on EVERY path out of this function (handshake failure,
+// request loop exit, OPTIONS short-circuit, SSE-unsupported, normal
+// response). The SchannelStreamAdapter destructor releases the
+// security context on the same paths, and the shared credentials
+// handle is owned by stop().
+void SimpleHttpServer::handleClientTls(SOCKET client) {
+    SchannelStreamAdapter tls(client, &tlsCredentials_);
+    if (!tls.handshake()) {
+        // Common operator-visible cause: a client speaking plain HTTP
+        // at the TLS-enabled port. Edge-triggered once-per-process
+        // latch (BeaconService precedent) so a misdirected monitoring
+        // probe cannot flood the diagnostics surface.
+        if (!tlsHandshakeFailureReported_) {
+            tlsHandshakeFailureReported_ = true;
+            MasterControl::Diagnostics::appendEvent(
+                L"runtime",
+                "warning",
+                "admin_tls_handshake_failed",
+                "An admin-listener TLS handshake failed; the connection was "
+                "closed. Common causes: a client using http:// against the "
+                "TLS-enabled admin port, or a client that does not trust the "
+                "configured certificate. Reported once per process.",
+                nlohmann::json::object());
+        }
+        ::closesocket(client);
+        return;
+    }
+
+    // From here on this mirrors handleClient byte-for-byte at the HTTP
+    // layer; reads and writes flow through DecryptMessage /
+    // EncryptMessage instead of raw recv/send.
+    std::string requestBuffer;
+    char chunk[4096]{};
+    int bytesRead = 0;
+    while ((bytesRead = tls.recvPlain(chunk, static_cast<int>(sizeof(chunk)))) > 0) {
+        requestBuffer.append(chunk, chunk + bytesRead);
+        const auto headerEnd = requestBuffer.find("\r\n\r\n");
+        if (headerEnd == std::string::npos) {
+            continue;
+        }
+        const auto contentLengthPosition = requestBuffer.find("Content-Length:");
+        if (contentLengthPosition == std::string::npos) {
+            break;
+        }
+
+        const auto lineEnd = requestBuffer.find("\r\n", contentLengthPosition);
+        const auto value = requestBuffer.substr(contentLengthPosition + 15, lineEnd - (contentLengthPosition + 15));
+        const auto contentLength = static_cast<size_t>(std::stoi(value));
+        if (requestBuffer.size() >= headerEnd + 4 + contentLength) {
+            break;
+        }
+    }
+
+    const auto closeConnection = [&tls, client]() {
+        tls.shutdownTls();          // best-effort close_notify
+        ::shutdown(client, SD_BOTH);
+        ::closesocket(client);
+    };
+
+    auto request = parseRequest(requestBuffer);
+    request.remoteAddress = peerAddressForSocket(client);
+
+    // OPTIONS preflight short-circuit -- same contract as handleClient
+    // (v0.9.27).
+    if (request.method == "OPTIONS") {
+        HttpResponse cors;
+        cors.statusCode = 204;
+        cors.contentType = "text/plain";
+        cors.body = "";
+        cors.suppressBody = true;
+        sendResponseTls(tls, cors);
+        closeConnection();
+        return;
+    }
+
+    // HEAD-as-GET rewrite -- same contract as handleClient (v0.9.26).
+    const bool isHead = (request.method == "HEAD");
+    if (isHead) {
+        request.method = "GET";
+    }
+    auto response = handler_(request);
+    if (isHead) {
+        response.suppressBody = true;
+    }
+    // SSE streaming (v0.9.71) is NOT available over the TLS admin
+    // listener this iteration: stream handlers write raw bytes
+    // directly to the SOCKET on a detached thread, which would bypass
+    // EncryptMessage entirely and emit plaintext mid-TLS-stream.
+    // Surface an explicit 501 instead of corrupting the connection.
+    if (response.streamMode && response.streamHandler) {
+        HttpResponse unsupported;
+        unsupported.statusCode = 501;
+        unsupported.contentType = "application/json";
+        unsupported.body = R"({"error":"SSE streaming endpoints are not available over the TLS admin listener; disable security.adminTlsEnabled or use the plain-HTTP admin listener for event streams."})";
+        sendResponseTls(tls, unsupported);
+        closeConnection();
+        return;
+    }
+    sendResponseTls(tls, response);
+    closeConnection();
 }
 
 std::string contentTypeForPath(const std::filesystem::path& path) {
@@ -13861,6 +14765,11 @@ private:
     // existing v0.8.7 Error Reporting frame on the WinUI Overview
     // surface harvests error-flagged activity events automatically,
     // so failed probes appear there with no further wiring.
+    // v0.11.0-alpha.3 (PHASE-14 Slice E): central diagnostics service.
+    // Constructed FIRST in initialize() so every later appendEvent
+    // (via the diagnosticsReportHook shim) lands in the store.
+    std::shared_ptr<MasterControl::DiagnosticsService> diagnosticsService_;
+
     mutable std::mutex selfTestMutex_;
     SelfTestSnapshot lastSelfTestSnapshot_;
     std::thread selfTestThread_;
@@ -13886,6 +14795,37 @@ bool MasterControlApplication::Impl::initialize() {
     // so any subsequent activity-ring appends (gateway boot,
     // configuration load, etc.) get persisted.
     globalActivityRing().setPersistencePath(paths_.dataDirectory / "activity.jsonl");
+
+    // v0.11.0-alpha.3 (PHASE-14 Slice E): central diagnostics service +
+    // SqliteDiagnosticsStore. Constructed before every other service so
+    // their appendEvent calls (via the diagnosticsReportHook shim) land
+    // in the store from the first boot event onward. DB lives next to
+    // the jsonl logs root: <PUBLIC>\Documents\Master Control
+    // Orchestration Server\diagnostics\diagnostics.db. Store
+    // construction failure (unwritable path, disk full) leaves the
+    // service ring-only -- "no fake telemetry": summary() reports
+    // storeUnavailable, the runtime keeps working.
+    {
+        const auto logPaths = MasterControl::Diagnostics::resolvePersistentLogPaths(L"runtime");
+        const auto databasePath = logPaths.root.parent_path() / "diagnostics" / "diagnostics.db";
+        diagnosticsService_ = std::make_shared<MasterControl::DiagnosticsService>(
+            MasterControl::createSqliteDiagnosticsStore(databasePath),
+            "boot-" + MasterControl::Diagnostics::timestampNowUtc());
+        std::weak_ptr<MasterControl::DiagnosticsService> weakService = diagnosticsService_;
+        MasterControl::Diagnostics::diagnosticsReportHook() =
+            [weakService](const std::string& component,
+                          const std::string& severity,
+                          const std::string& eventName,
+                          const std::string& message,
+                          const nlohmann::json& data,
+                          const std::string& capturedAtUtc) {
+                if (const auto service = weakService.lock()) {
+                    (void)service->report(
+                        MasterControl::diagnosticsSeverityFromString(severity),
+                        component, eventName, message, data, capturedAtUtc);
+                }
+            };
+    }
 
     configurationService_ = std::make_shared<FileBackedConfigurationService>(state_, paths_.configurationFile);
     resourceAllocationService_ = std::make_shared<ResourceAllocationService>(state_, paths_.configurationFile);
@@ -14633,10 +15573,18 @@ bool MasterControlApplication::Impl::initialize() {
         beaconService_->start();
     }
 
+    // v0.11.0-alpha.3: pass the opt-in admin-TLS settings through. With
+    // adminTlsEnabled=false (the default) SimpleHttpServer behaves
+    // exactly as before; with it set, start() acquires SChannel
+    // credentials for the configured LocalMachine\MY thumbprint and
+    // falls back to plain HTTP (with an error diagnostics event) if the
+    // cert cannot be used -- see the no-brick comments on the class.
     httpServer_ = std::make_unique<SimpleHttpServer>(
         currentConfiguration.bindAddress == "0.0.0.0" ? "0.0.0.0" : currentConfiguration.bindAddress,
         currentConfiguration.browserPort,
-        [this](const HttpRequest& request) { return handleHttpRequest(request); });
+        [this](const HttpRequest& request) { return handleHttpRequest(request); },
+        currentConfiguration.security.adminTlsEnabled,
+        currentConfiguration.security.adminTlsCertThumbprint);
     if (!httpServer_->start()) {
         httpServer_.reset();
         if (beaconService_) {
@@ -14672,6 +15620,14 @@ void MasterControlApplication::Impl::runBootSelfTestsAsync() {
         std::this_thread::sleep_for(std::chrono::seconds(3));
         if (stopRequested_.load()) return;
         auto snap = runBootSelfTestsNow();
+        // v0.11.0-alpha.3 (PHASE-14 Slice E): persist the snapshot so
+        // failed boot self-tests survive past process exit (one record
+        // per boot, retained for the last 50 boots).
+        if (diagnosticsService_) {
+            (void)diagnosticsService_->recordSelfTest(
+                nlohmann::json(snap),
+                MasterControl::Diagnostics::timestampNowUtc());
+        }
         std::lock_guard<std::mutex> lock(selfTestMutex_);
         lastSelfTestSnapshot_ = std::move(snap);
     });
@@ -16197,6 +17153,12 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             ActivityEvent evt;
             evt.kind = "supervisor_select";
             evt.actor = context.actor;
+            // v0.11.0-alpha.3: stamp the HTTP verb like the other
+            // request-derived ring events (gateway_lifecycle,
+            // admin_api_request). Pre-fix the supervisor_* lifecycle
+            // events were the "method":"" anomalies the 2026-04-19
+            // operator probe flagged in /api/activity.
+            evt.method = request.method;
             evt.target = MasterControl::providerIdString(selectRequest.provider);
             evt.statusCode = issue.ok ? 200 : 400;
             evt.message = issue.ok
@@ -16256,6 +17218,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 ActivityEvent evt;
                 evt.kind = "supervisor_config_issue";
                 evt.actor = context.actor;
+                // v0.11.0-alpha.3: stamp the HTTP verb (see
+                // supervisor_select note).
+                evt.method = request.method;
                 evt.target = MasterControl::providerIdString(selectRequest.provider);
                 evt.statusCode = issue.ok ? 200 : 400;
                 evt.message = issue.ok
@@ -16289,6 +17254,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             ActivityEvent evt;
             evt.kind = "supervisor_config_regenerate";
             evt.actor = context.actor;
+            // v0.11.0-alpha.3: stamp the HTTP verb (see
+            // supervisor_select note).
+            evt.method = request.method;
             evt.target = issue.ok ? MasterControl::providerIdString(issue.assignment.provider) : "";
             evt.statusCode = issue.ok ? 200 : 400;
             evt.message = issue.ok
@@ -16330,6 +17298,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             ActivityEvent evt;
             evt.kind = "supervisor_revoke";
             evt.actor = context.actor;
+            // v0.11.0-alpha.3: stamp the HTTP verb (see
+            // supervisor_select note).
+            evt.method = request.method;
             evt.target = MasterControl::providerIdString(previous.provider);
             evt.statusCode = 200;
             evt.message = std::string("Supervisor revoked")
@@ -16965,7 +17936,34 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             // only if the live pass didn't fill the cap (4x headroom
             // for severity filtering). softCap == 0 retains the
             // unbounded read-all semantics that summary + export need.
+            // v0.11.0-alpha.3 (PHASE-14 Slice E): prefer the SQLite
+            // store. The store receives every appendEvent via the
+            // diagnosticsReportHook shim, so going forward it is a
+            // superset of the jsonl files. The jsonl walk remains the
+            // fallback for (a) a store that failed to open and (b) the
+            // first boot after the upgrade, when the store exists but
+            // holds no history yet -- pre-Slice-E jsonl history stays
+            // visible until the store has accumulated rows.
+            const bool useStore = diagnosticsService_
+                && diagnosticsService_->storeAvailable()
+                && diagnosticsService_->storeCount() > 0;
+
             auto aggregateEvents = [&](std::size_t softCap) -> std::vector<nlohmann::json> {
+                if (useStore) {
+                    MasterControl::DiagnosticsQuery storeQuery;
+                    // 4x headroom mirrors the jsonl aggregator's
+                    // softCap contract: applyFilters runs AFTER the
+                    // fetch, so a tight cap + severity filter would
+                    // under-fill the response.
+                    storeQuery.maxResults = softCap > 0 ? softCap * 4 : 0;
+                    const auto records = diagnosticsService_->query(storeQuery);
+                    std::vector<nlohmann::json> events;
+                    events.reserve(records.size());
+                    for (const auto& record : records) {
+                        events.push_back(record.toLegacyJson());
+                    }
+                    return events;
+                }
                 const auto rootPaths = MasterControl::Diagnostics::resolvePersistentLogPaths(L"runtime");
                 return MasterControl::aggregateDiagnosticsEventsFromRoot(rootPaths.root, softCap);
             };
@@ -17030,6 +18028,14 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 body["byComponent"] = byComponent;
                 body["latest5"]     = latest;
                 body["generatedAtUtc"] = timestampNowUtc();
+                // v0.11.0-alpha.3 (PHASE-14 Slice E): store health
+                // surfaced per the "no fake state" acceptance
+                // criterion. storeUnavailable carries the sqlite reason
+                // when the persistent store could not be opened.
+                if (diagnosticsService_ && !diagnosticsService_->storeAvailable()) {
+                    body["storeUnavailable"] = diagnosticsService_->storeLastError();
+                }
+                body["storeBacked"] = useStore;
                 return HttpResponse{ 200, "application/json", body.dump() };
             }
 
@@ -17067,17 +18073,51 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             return HttpResponse{ 200, "application/json", body.dump(2) };
         }
         if (request.method == "POST" && request.path == "/api/diagnostics/clear") {
-            // v0.11.0 PHASE-14 Slice A: deferred to a follow-up slice
-            // when the SqliteDiagnosticsStore lands. The current
-            // jsonl-aggregated path is read-only; clearing would
-            // require deleting per-component log files which has
-            // operator-side risk. Return 501 with a clear message
-            // so consumers don't silently retry.
-            return HttpResponse{ 501, "application/json",
-                nlohmann::json{
-                    {"ok", false},
-                    {"message", "Clearing diagnostics is not supported in this slice. The persistent log files at <PUBLIC>\\Documents\\Master Control Orchestration Server\\logs\\ remain operator-owned. A future slice with the SqliteDiagnosticsStore will support clear-with-retention."}
-                }.dump() };
+            // v0.11.0-alpha.3 (PHASE-14 Slice E): functional clear-with-
+            // retention against the SqliteDiagnosticsStore, replacing
+            // the Slice A 501. Body (optional JSON object):
+            //   { "reason": "...",               // audited
+            //     "retainSinceUtc": "ISO-8601" } // keep records >= this
+            // Empty/absent retainSinceUtc clears everything. The
+            // operator-owned per-component jsonl files under logs\ are
+            // deliberately NOT touched -- they remain the raw audit
+            // trail; clear applies to the central store + ring that
+            // back the /api/diagnostics query surface.
+            if (!diagnosticsService_) {
+                return HttpResponse{ 503, "application/json",
+                    nlohmann::json{
+                        {"ok", false},
+                        {"message", "Diagnostics service not initialized."}
+                    }.dump() };
+            }
+            std::string reason;
+            std::string retainSinceUtc;
+            if (!request.body.empty()) {
+                try {
+                    const auto body = nlohmann::json::parse(request.body);
+                    if (body.is_object()) {
+                        reason = body.value("reason", std::string());
+                        retainSinceUtc = body.value("retainSinceUtc", std::string());
+                    }
+                } catch (const std::exception& ex) {
+                    return HttpResponse{ 400, "application/json",
+                        nlohmann::json{
+                            {"ok", false},
+                            {"message", std::string("Invalid clear payload: ") + ex.what()}
+                        }.dump() };
+                }
+            }
+            const auto cleared = diagnosticsService_->clear(
+                reason, retainSinceUtc, timestampNowUtc());
+            nlohmann::json responseBody = {
+                {"ok", cleared.ok},
+                {"deletedRows", cleared.affectedRows},
+                {"retainSinceUtc", retainSinceUtc},
+                {"message", cleared.ok
+                    ? std::string("Diagnostics store cleared. Per-component jsonl logs under logs\\ are operator-owned and untouched.")
+                    : cleared.message}
+            };
+            return HttpResponse{ cleared.ok ? 200 : 503, "application/json", responseBody.dump() };
         }
         // -------------------------------------------------------------------
         // v0.9.4 (Fix #4): host telemetry surface. Pre-v0.9.4 the
@@ -17487,8 +18527,15 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "GET" && startsWith(request.path, "/api/onboarding/")) {
             const auto prefix = std::string("/api/onboarding/");
             const std::string clientType = request.path.substr(prefix.size());
+            // v0.11.0-alpha.3: optional ?platform=windows|macos|ios picks
+            // the per-platform governance bundle URL in the profile.
+            // "os" accepted as an alias per the v0.10.15 alias
+            // convention. Absent/unknown -> windows (pre-alpha.3
+            // behavior), so existing clients are unaffected.
+            const auto platform = MasterControl::extractQueryParamAny(
+                request.query, { "platform", "os" });
             return jsonResponse(onboardingProfileService_
-                ? onboardingProfileService_->profileFor(clientType)
+                ? onboardingProfileService_->profileFor(clientType, platform)
                 : OnboardingProfile{});
         }
         // -------------------------------------------------------------------

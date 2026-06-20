@@ -55,7 +55,14 @@ const state = {
   // active console user as a directory junction at
   // %USERPROFILE%\.claude\plugins\mcos-control.
   claudePlugin: null,
-  claudePluginBusy: false
+  claudePluginBusy: false,
+  // PHASE-14 Slice D: Diagnostics tab. Summary + filtered events are
+  // lazily fetched when the destination is 'diagnostics' (same lazy
+  // pattern as onboarding/governance) so the 8s safety-net poll only
+  // hits the diagnostics store while the operator is on the tab.
+  diagnosticsSummary: null,
+  diagnosticsEvents: { events: [], count: 0 },
+  diagnosticsFilters: { severity: '', source: '', max: 200 }
 };
 
 const destinations = [
@@ -142,6 +149,13 @@ const destinations = [
     eyebrow: 'STREAM',
     title: 'Activity Stream',
     subtitle: 'Telemetry event ring + legacy admin activity. Categories: system / gateway / worker / client / discovery / governance.'
+  },
+  {
+    id: 'diagnostics',
+    label: 'Diagnostics',
+    eyebrow: 'DIAGNOSTICS',
+    title: 'Comprehensive Diagnostics',
+    subtitle: 'PHASE-14 central diagnostics store. Severity/source filters, Markdown/JSON export, operator clear.'
   },
   {
     id: 'exports',
@@ -386,6 +400,11 @@ async function refreshAll() {
         state.governanceBundle = null;
       }
     }
+    // PHASE-14 Slice D: diagnostics summary + filtered events lazily
+    // fetched when destination is 'diagnostics'.
+    if (state.destination === 'diagnostics') {
+      await refreshDiagnostics();
+    }
     clearBanner();
   } catch (err) {
     console.error('Refresh failed:', err);
@@ -451,7 +470,7 @@ function renderNavigation() {
   const groups = [
     { label: 'Start', ids: ['setup', 'overview', 'onboarding', 'workflows'] },
     { label: 'Operate', ids: ['gateway', 'pools', 'telemetry-clients', 'governance'] },
-    { label: 'Advanced', ids: ['runtime', 'discovery', 'clients', 'activity', 'exports'] }
+    { label: 'Advanced', ids: ['runtime', 'discovery', 'clients', 'activity', 'diagnostics', 'exports'] }
   ];
   nav.innerHTML = groups.map((group) => `
     <div class="nav-group">
@@ -548,6 +567,7 @@ function renderCurrent() {
     case 'runtime':           host.innerHTML = banner + renderRuntime();           bindRuntimeHandlers();    break;
     case 'workflows':         host.innerHTML = banner + renderWorkflowsPanel(); bindWorkflowHandlers();      break;
     case 'activity':          host.innerHTML = banner + renderActivity();                                    break;
+    case 'diagnostics':       host.innerHTML = banner + renderDiagnosticsPanel();  bindDiagnosticsHandlers(); break;
     case 'exports':           host.innerHTML = banner + renderExports();           bindExportsHandlers();    break;
     case 'overview':
     default:                  host.innerHTML = banner + renderOverview();          bindOverviewHandlers();   break;
@@ -2429,6 +2449,220 @@ function bindExportsHandlers() {
       URL.revokeObjectURL(url);
     });
   });
+}
+
+// ---- Diagnostics (PHASE-14 Slice D) ----
+//
+// Browser surface for the central diagnostics store:
+//   GET  /api/diagnostics/summary  -> totals, bySeverity, storeBacked,
+//                                     storeUnavailable (when sqlite failed)
+//   GET  /api/diagnostics/events   -> filtered, newest-first event list
+//   GET  /api/diagnostics/export   -> markdown|json document (Blob download;
+//                                     the native file picker is shell-only)
+//   POST /api/diagnostics/clear    -> clears the central store + ring only;
+//                                     per-component jsonl logs stay untouched
+// Every server-sourced string renders through escapeHtml.
+
+const DIAGNOSTICS_SEVERITIES = ['debug', 'info', 'warning', 'error', 'critical'];
+const DIAGNOSTICS_SOURCES = ['runtime', 'supervisor', 'installer', 'self-test'];
+
+function diagnosticsSeverityBadge(severity) {
+  const slug = String(severity || 'info').toLowerCase();
+  // The store accepts 'warn' as an alias; render it under the warning tone.
+  const tone = slug === 'warn' ? 'warning' : slug;
+  return `<span class="severity-badge" data-tone="${escapeHtml(tone)}">${escapeHtml(slug)}</span>`;
+}
+
+async function refreshDiagnostics() {
+  const f = state.diagnosticsFilters || { severity: '', source: '', max: 200 };
+  const params = ['max=' + encodeURIComponent(String(f.max || 200))];
+  if (f.severity) params.push('severity=' + encodeURIComponent(f.severity));
+  if (f.source) params.push('source=' + encodeURIComponent(f.source));
+  const [summary, events] = await Promise.all([
+    loadJson('/api/diagnostics/summary').catch(() => null),
+    loadJson('/api/diagnostics/events?' + params.join('&')).catch(() => ({ events: [], count: 0 }))
+  ]);
+  state.diagnosticsSummary = summary;
+  state.diagnosticsEvents = (events && Array.isArray(events.events))
+    ? events
+    : { events: [], count: 0 };
+}
+
+function renderDiagnosticsPanel() {
+  const summary = state.diagnosticsSummary;
+  const f = state.diagnosticsFilters || { severity: '', source: '', max: 200 };
+  const eventsDoc = state.diagnosticsEvents || { events: [], count: 0 };
+  // Backend returns newest-first (summary's latest5 is events[0..4]).
+  const events = Array.isArray(eventsDoc.events) ? eventsDoc.events : [];
+
+  const bySeverity = (summary && summary.bySeverity) || {};
+  const storeUnavailable = summary && summary.storeUnavailable
+    ? String(summary.storeUnavailable)
+    : '';
+  const storeBadge = summary
+    ? (summary.storeBacked
+        ? '<span class="badge" data-tone="success">SQLITE STORE</span>'
+        : '<span class="badge" data-tone="warn">JSONL FALLBACK</span>')
+    : '<span class="badge" data-tone="info">CONNECTING</span>';
+
+  const summaryStrip = summary
+    ? `
+      <div class="summary-grid diagnostics-summary-grid">
+        <div class="summary-cell">
+          <span class="summary-label">Total events</span>
+          <span class="summary-value">${escapeHtml(String(summary.totalEvents != null ? summary.totalEvents : '—'))}</span>
+        </div>
+        ${DIAGNOSTICS_SEVERITIES.map((sev) => {
+          // Legacy jsonl history may carry the 'warn' alias; fold it
+          // into the warning cell so the fallback path stays honest.
+          const count = (bySeverity[sev] || 0)
+            + (sev === 'warning' ? (bySeverity.warn || 0) : 0);
+          return `
+          <div class="summary-cell">
+            <span class="summary-label">${escapeHtml(sev)}</span>
+            <span class="summary-value">${diagnosticsSeverityBadge(sev)} ${escapeHtml(String(count))}</span>
+          </div>
+        `;
+        }).join('')}
+      </div>
+      <p class="muted">Generated ${escapeHtml(shortDate(summary.generatedAtUtc))} UTC. Clearing affects the central store + ring only; per-component jsonl logs under <code>logs\\</code> remain the raw audit trail.</p>
+    `
+    : '<p class="muted">Diagnostics summary unavailable. The endpoint may still be starting, or the admin port is unreachable.</p>';
+
+  const eventRows = events.map((e) => `
+    <tr>
+      <td><code>${escapeHtml(shortDate(e.capturedAtUtc))}</code></td>
+      <td>${diagnosticsSeverityBadge(e.severity)}</td>
+      <td>${escapeHtml(e.component || '')}</td>
+      <td><code>${escapeHtml(e.event || '')}</code></td>
+      <td>${escapeHtml(e.message || '')}</td>
+    </tr>
+  `).join('');
+
+  return `
+    <div class="activity-grid">
+      <article class="panel-block wide">
+        <h3>Diagnostics summary ${storeBadge}</h3>
+        ${storeUnavailable ? `<div class="error-banner">Persistent store unavailable: ${escapeHtml(storeUnavailable)} (events still flow into the in-memory ring + jsonl logs).</div>` : ''}
+        ${summaryStrip}
+      </article>
+      <article class="panel-block wide">
+        <h3>Events (${escapeHtml(String(eventsDoc.count != null ? eventsDoc.count : events.length))})</h3>
+        <div class="diagnostics-filter-row">
+          <label>Severity
+            <select data-diag-filter="severity">
+              <option value=""${f.severity === '' ? ' selected' : ''}>all</option>
+              ${DIAGNOSTICS_SEVERITIES.map((sev) => `<option value="${escapeHtml(sev)}"${f.severity === sev ? ' selected' : ''}>${escapeHtml(sev)}</option>`).join('')}
+            </select>
+          </label>
+          <label>Source
+            <select data-diag-filter="source">
+              <option value=""${f.source === '' ? ' selected' : ''}>all</option>
+              ${DIAGNOSTICS_SOURCES.map((src) => `<option value="${escapeHtml(src)}"${f.source === src ? ' selected' : ''}>${escapeHtml(src)}</option>`).join('')}
+            </select>
+          </label>
+          <label>Max events
+            <input type="number" min="1" max="5000" step="1" value="${escapeHtml(String(f.max || 200))}" data-diag-filter="max">
+          </label>
+          <button type="button" class="route-button accent" data-action="diagnostics-refresh">Refresh</button>
+        </div>
+        <div class="diagnostics-actions">
+          <button type="button" class="route-button" data-action="diagnostics-export" data-format="markdown">Export Markdown</button>
+          <button type="button" class="route-button" data-action="diagnostics-export" data-format="json">Export JSON</button>
+          <button type="button" class="route-button danger" data-action="diagnostics-clear">Clear…</button>
+        </div>
+        ${events.length === 0
+          ? '<p class="muted">No diagnostics events match the current filters.</p>'
+          : `<table class="runtime-table diagnostics-table">
+              <thead><tr><th>Captured (UTC)</th><th>Severity</th><th>Component</th><th>Event</th><th>Message</th></tr></thead>
+              <tbody>${eventRows}</tbody>
+            </table>`}
+      </article>
+    </div>
+  `;
+}
+
+function bindDiagnosticsHandlers() {
+  document.querySelectorAll('[data-diag-filter]').forEach((control) => {
+    control.addEventListener('change', () => {
+      const key = control.dataset.diagFilter;
+      if (!state.diagnosticsFilters) {
+        state.diagnosticsFilters = { severity: '', source: '', max: 200 };
+      }
+      if (key === 'max') {
+        const parsed = parseInt(control.value, 10);
+        state.diagnosticsFilters.max = Number.isFinite(parsed) && parsed > 0 ? parsed : 200;
+      } else if (key === 'severity' || key === 'source') {
+        state.diagnosticsFilters[key] = control.value || '';
+      }
+    });
+  });
+
+  const refreshBtn = document.querySelector('[data-action="diagnostics-refresh"]');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      try {
+        await refreshDiagnostics();
+        clearBanner();
+      } catch (err) {
+        showBanner('Diagnostics refresh failed: ' + (err.message || 'unknown error'));
+      }
+      renderCurrent();
+    });
+  }
+
+  document.querySelectorAll('[data-action="diagnostics-export"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const format = btn.dataset.format === 'markdown' ? 'markdown' : 'json';
+      try {
+        const response = await fetch('/api/diagnostics/export?format=' + format);
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const text = await response.text();
+        // Same Blob URL + anchor-click download pattern as
+        // bindExportsHandlers. Browsers cannot open the native file
+        // picker (that is the shell's FileSavePicker surface); the
+        // operator gets the standard OS download dialog instead.
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const fileName = 'mcos-diagnostics-' + stamp + (format === 'markdown' ? '.md' : '.json');
+        const blob = new Blob([text], {
+          type: format === 'markdown' ? 'text/markdown' : 'application/json'
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        link.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        showBanner('Diagnostics export failed: ' + (err.message || 'unknown error'));
+      }
+    });
+  });
+
+  const clearBtn = document.querySelector('[data-action="diagnostics-clear"]');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', async () => {
+      // Same bare confirm() pattern the LAN-client remove flow uses.
+      if (!confirm('Clear the central diagnostics store? Per-component jsonl logs under logs\\ are operator-owned and stay untouched.')) {
+        return;
+      }
+      try {
+        const result = await postJson('/api/diagnostics/clear', {
+          reason: 'operator clear via browser dashboard Diagnostics tab'
+        });
+        if (result && result.ok === false) {
+          showBanner(result.message || 'Diagnostics clear failed.');
+        } else {
+          clearBanner();
+        }
+        await refreshDiagnostics();
+      } catch (err) {
+        const body = err.body || {};
+        showBanner(body.message || ('Diagnostics clear failed: ' + (err.message || 'unknown error')));
+      }
+      renderCurrent();
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

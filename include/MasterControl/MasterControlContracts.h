@@ -301,7 +301,14 @@ public:
 // gateway URL surfaced by IDiscoveryService and IMcpGateway.
 class IOnboardingProfileService {
 public:
-    virtual OnboardingProfile profileFor(const std::string& clientType) const = 0;
+    // v0.11.0-alpha.3: `platform` selects which per-platform CLU/Forsetti
+    // governance bundle URL the profile advertises
+    // (windows | macos | ios; empty/unknown falls back to windows --
+    // same normalization semantics as GovernanceBundleService).
+    // Pre-alpha.3 the bundle URL was hardcoded to the windows bundle
+    // for every client (CHANGELOG Unreleased item, now closed).
+    virtual OnboardingProfile profileFor(const std::string& clientType,
+                                         const std::string& platform = std::string()) const = 0;
     virtual std::vector<std::string> knownClientTypes() const = 0;
     virtual ~IOnboardingProfileService() = default;
 };

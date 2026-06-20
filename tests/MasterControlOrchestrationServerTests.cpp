@@ -9,6 +9,12 @@
 
 #include "MasterControl/AuthenticatedRequestContext.h"
 #include "MasterControl/DiagnosticsAggregator.h"
+// v0.11.0-alpha.3: parseCapturedAtUtcOrZero test (age-bound rotation).
+#include "MasterControl/MasterControlDiagnostics.h"
+// v0.11.0-alpha.3 (PHASE-14 Slice E): SqliteDiagnosticsStore + service.
+#include "MasterControl/DiagnosticsService.h"
+#include "MasterControl/DiagnosticsStore.h"
+#include "MasterControl/DiagnosticsTypes.h"
 #include "MasterControl/EndpointAdvertisement.h"
 #include "MasterControl/JsonStrictness.h"
 #include "MasterControl/LanClient.h"
@@ -29,6 +35,7 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <cstdlib>   // v0.11.0-alpha.3: _set_abort_behavior in main()
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -70,6 +77,64 @@ bool testDefaultConfiguration() {
                  "Default security posture is local-only.");
     ok &= expect(configuration.lanClients.empty(),
                  "Fresh installs start with an empty LAN client roster.");
+    // v0.11.0-alpha.3: beacon signing defaults. Fresh installs carry a
+    // generated 64-hex-char key; signing is enabled by default.
+    ok &= expect(configuration.security.beaconSigningEnabled == true,
+                 "Default beacon signing is enabled.");
+    ok &= expect(configuration.security.beaconSigningKey.size() == 64,
+                 "Fresh install generates a 64-hex-char beacon signing key.");
+    ok &= expect(configuration.security.beaconSigningKey.find_first_not_of("0123456789abcdef")
+                     == std::string::npos,
+                 "Beacon signing key is lowercase hex.");
+    // Back-compat: a persisted config without the new keys deserializes
+    // with an empty key (signing skipped) rather than throwing.
+    {
+        nlohmann::json legacy = nlohmann::json{
+            { "enableTls", false },
+            { "enableAuthentication", true },
+            { "allowTroubleshootingBypass", false },
+            { "allowOpenLanAccess", false },
+            { "securityProtocolsEnabled", true },
+            { "securityPosture", "local-only" },
+            { "trustedRemoteHosts", nlohmann::json::array() }
+        };
+        const auto restored = legacy.get<MasterControl::SecuritySettings>();
+        ok &= expect(restored.beaconSigningKey.empty(),
+                     "Legacy SecuritySettings JSON deserializes with an empty beacon signing key.");
+        ok &= expect(restored.beaconSigningEnabled == true,
+                     "Legacy SecuritySettings JSON defaults beaconSigningEnabled to true (no-op while the key is empty).");
+    }
+    return ok;
+}
+
+// v0.11.0-alpha.3: admin-listener SChannel TLS is strictly opt-in.
+// Fresh installs must keep the flag off with an empty thumbprint, and
+// legacy persisted SecuritySettings JSON (written before the keys
+// existed) must deserialize to the same off state via the WITH_DEFAULT
+// macro -- i.e. upgrading never silently flips the admin port to TLS.
+bool testSecuritySettingsAdminTlsDefaults() {
+    bool ok = true;
+    const auto configuration = MasterControl::buildDefaultConfiguration();
+    ok &= expect(configuration.security.adminTlsEnabled == false,
+                 "Default admin-listener TLS is disabled (opt-in).");
+    ok &= expect(configuration.security.adminTlsCertThumbprint.empty(),
+                 "Fresh installs carry no admin TLS cert thumbprint.");
+    {
+        nlohmann::json legacy = nlohmann::json{
+            { "enableTls", false },
+            { "enableAuthentication", true },
+            { "allowTroubleshootingBypass", false },
+            { "allowOpenLanAccess", false },
+            { "securityProtocolsEnabled", true },
+            { "securityPosture", "local-only" },
+            { "trustedRemoteHosts", nlohmann::json::array() }
+        };
+        const auto restored = legacy.get<MasterControl::SecuritySettings>();
+        ok &= expect(restored.adminTlsEnabled == false,
+                     "Legacy SecuritySettings JSON deserializes with admin TLS disabled.");
+        ok &= expect(restored.adminTlsCertThumbprint.empty(),
+                     "Legacy SecuritySettings JSON deserializes with an empty admin TLS thumbprint.");
+    }
     return ok;
 }
 
@@ -77,6 +142,29 @@ bool testSeededEndpoints() {
     const auto endpoints = MasterControl::buildDefaultSeededEndpoints();
     return expect(!endpoints.empty(),
                   "Default seeded endpoint set is non-empty.");
+}
+
+// v0.11.0-alpha.3: the seeded "platform-gateway" row must point at the
+// native HTTP.sys gateway (default listenPort 8080), not the legacy
+// external gateway port 7200 retired at v0.9.0. Pre-fix the Exports
+// surface derived its client-facing MCP URL from this row and handed
+// LAN clients a dead http://<host>:7200/mcp/gateway URL.
+bool testSeededGatewayEndpointPointsAtNativeGateway() {
+    const auto endpoints = MasterControl::buildDefaultSeededEndpoints();
+    bool ok = true;
+    bool found = false;
+    for (const auto& endpoint : endpoints) {
+        if (endpoint.id != "platform-gateway") {
+            continue;
+        }
+        found = true;
+        ok &= expect(endpoint.port == 8080,
+                     "Seeded platform-gateway endpoint targets the native gateway listen port (8080).");
+        ok &= expect(endpoint.port != 7200,
+                     "Seeded platform-gateway endpoint no longer targets the retired external gateway port (7200).");
+    }
+    ok &= expect(found, "Seeded endpoint set contains the platform-gateway row.");
+    return ok;
 }
 
 bool testLanClientRoundTrip() {
@@ -1299,6 +1387,41 @@ bool testDiscoveryDocumentJsonRoundTrip() {
     ok &= expect(tlsOffJson["gateway"]["tlsCertThumbprint"].get<std::string>().empty(),
                  "Default (TLS off) discovery JSON has empty gateway.tlsCertThumbprint.");
 
+    return ok;
+}
+
+// v0.11.0-alpha.3: regression guard for the BeaconService port-confusion
+// bug. BeaconService::currentAdvertisement() passed
+// configuration.browserPort into BOTH port slots of the
+// BeaconAdvertisement aggregate, so the legacy /api/beacon surface
+// advertised gatewayPort=7300 (the admin listener) instead of
+// cfg.mcpGateway.listenPort (8080). This test pins the serialized
+// contract: the two ports are distinct keys carrying distinct values
+// when constructed correctly.
+bool testBeaconAdvertisementJsonShape() {
+    MasterControl::BeaconAdvertisement advertisement;
+    advertisement.instanceName = "Test MCOS";
+    advertisement.hostName = "test-host";
+    advertisement.ipAddress = "192.168.1.10";
+    advertisement.browserPort = 7300;
+    advertisement.gatewayPort = 8080;
+    advertisement.status = "online";
+
+    nlohmann::json serialized = advertisement;
+    bool ok = true;
+    ok &= expect(serialized["browserPort"].get<uint16_t>() == 7300,
+                 "Beacon advertisement serializes browserPort.");
+    ok &= expect(serialized["gatewayPort"].get<uint16_t>() == 8080,
+                 "Beacon advertisement serializes gatewayPort.");
+    ok &= expect(serialized["browserPort"].get<uint16_t>()
+                     != serialized["gatewayPort"].get<uint16_t>(),
+                 "Beacon advertisement keeps browserPort and gatewayPort distinct.");
+
+    auto restored = serialized.get<MasterControl::BeaconAdvertisement>();
+    ok &= expect(restored.gatewayPort == advertisement.gatewayPort,
+                 "Beacon advertisement round-trips gatewayPort.");
+    ok &= expect(restored.browserPort == advertisement.browserPort,
+                 "Beacon advertisement round-trips browserPort.");
     return ok;
 }
 
@@ -2711,6 +2834,200 @@ bool testDiagnosticsAggregator_partialWriteTolerance() {
     return ok;
 }
 
+// ---------------------------------------------------------------------------
+// v0.11.0-alpha.3 (PHASE-14 Slice E): SqliteDiagnosticsStore +
+// DiagnosticsService tests. The store tests run against a throwaway
+// SQLite file under the system temp directory.
+// ---------------------------------------------------------------------------
+
+bool testSqliteDiagnosticsStoreCrudAndFilters() {
+    bool ok = true;
+    const auto databasePath = std::filesystem::temp_directory_path()
+        / "mcos-tests" / "diag-crud" / "diagnostics.db";
+    std::error_code cleanupEc;
+    std::filesystem::remove_all(databasePath.parent_path(), cleanupEc);
+
+    // v0.11.0-alpha.3: scope the store so its destructor closes the DB
+    // handle BEFORE the cleanup below. Windows refuses to delete an
+    // open file (.db/-wal/-shm), so the throwing remove_all overload
+    // would raise an uncaught filesystem_error -> terminate (POSIX
+    // unlinks open files, which is why this only faulted on Windows).
+    {
+    MasterControl::SqliteDiagnosticsStore store(databasePath);
+    ok &= expect(store.available(), "Sqlite store opens against a fresh temp path.");
+
+    auto makeRecord = [](const char* capturedAt, const char* source,
+                         MasterControl::DiagnosticsSeverity severity,
+                         const char* eventName) {
+        MasterControl::DiagnosticsRecord record;
+        record.capturedAtUtc = capturedAt;
+        record.source = source;
+        record.severity = severity;
+        record.eventName = eventName;
+        record.message = "msg";
+        record.sessionId = "boot-test";
+        record.sequence = 1;
+        return record;
+    };
+
+    auto a = makeRecord("2026-06-01T10:00:00.000Z", "runtime",
+                        MasterControl::DiagnosticsSeverity::Info, "boot");
+    auto b = makeRecord("2026-06-01T11:00:00.000Z", "supervisor",
+                        MasterControl::DiagnosticsSeverity::Error, "pool_death");
+    auto c = makeRecord("2026-06-01T12:00:00.000Z", "runtime",
+                        MasterControl::DiagnosticsSeverity::Warning, "beacon_broadcast_failed");
+    ok &= expect(store.insert(a).ok, "Insert A succeeds.");
+    ok &= expect(store.insert(b).ok, "Insert B succeeds.");
+    ok &= expect(store.insert(c).ok, "Insert C succeeds.");
+    ok &= expect(a.id > 0 && b.id > a.id && c.id > b.id,
+                 "Inserts assign monotonically increasing row ids.");
+    ok &= expect(store.count() == 3, "Count reports three rows.");
+
+    // Newest-first ordering.
+    const auto all = store.query(MasterControl::DiagnosticsQuery{});
+    ok &= expect(all.size() == 3 && all.front().eventName == "beacon_broadcast_failed",
+                 "Unfiltered query returns newest-first.");
+
+    // Severity filter (incl. the warn alias).
+    MasterControl::DiagnosticsQuery bySeverity;
+    bySeverity.severity = "warn";
+    const auto warnings = store.query(bySeverity);
+    ok &= expect(warnings.size() == 1 && warnings.front().eventName == "beacon_broadcast_failed",
+                 "Severity filter accepts the warn alias and matches the warning row.");
+
+    // Source filter + max.
+    MasterControl::DiagnosticsQuery bySource;
+    bySource.source = "runtime";
+    bySource.maxResults = 1;
+    const auto runtimeRows = store.query(bySource);
+    ok &= expect(runtimeRows.size() == 1 && runtimeRows.front().eventName == "beacon_broadcast_failed",
+                 "Source filter + maxResults returns the newest runtime row only.");
+
+    // sinceUtc lower bound.
+    MasterControl::DiagnosticsQuery since;
+    since.sinceUtc = "2026-06-01T11:00:00.000Z";
+    ok &= expect(store.query(since).size() == 2,
+                 "sinceUtc keeps the two rows at/after the bound.");
+
+    // Clear-with-retention: keep rows >= 11:00.
+    const auto retained = store.clear("test retention", "2026-06-01T11:00:00.000Z");
+    ok &= expect(retained.ok && retained.affectedRows == 1,
+                 "Retention clear deletes exactly the one older row.");
+    ok &= expect(store.count() == 2, "Two rows remain after retention clear.");
+
+    // Full clear.
+    const auto wiped = store.clear("test full clear", "");
+    ok &= expect(wiped.ok && wiped.affectedRows == 2, "Full clear deletes the rest.");
+    ok &= expect(store.count() == 0, "Store is empty after full clear.");
+    }
+
+    std::filesystem::remove_all(databasePath.parent_path(), cleanupEc);
+    return ok;
+}
+
+bool testSqliteDiagnosticsStoreSelfTestPrune() {
+    bool ok = true;
+    const auto databasePath = std::filesystem::temp_directory_path()
+        / "mcos-tests" / "diag-prune" / "diagnostics.db";
+    std::error_code cleanupEc;
+    std::filesystem::remove_all(databasePath.parent_path(), cleanupEc);
+
+    // Scope the store so the DB closes before cleanup (see the
+    // CrudAndFilters test for the Windows open-file-delete rationale).
+    {
+    MasterControl::SqliteDiagnosticsStore store(databasePath);
+    for (int i = 0; i < 5; ++i) {
+        MasterControl::DiagnosticsRecord record;
+        record.capturedAtUtc = "2026-06-0" + std::to_string(i + 1) + "T00:00:00.000Z";
+        record.source = "self-test";
+        record.severity = MasterControl::DiagnosticsSeverity::Info;
+        record.eventName = "boot_self_test_snapshot";
+        record.message = "snapshot";
+        record.sessionId = "boot-" + std::to_string(i);
+        record.sequence = i + 1;
+        (void)store.insert(record);
+    }
+    const auto pruned = store.pruneSelfTestSnapshots(2);
+    ok &= expect(pruned.ok && pruned.affectedRows == 3,
+                 "Prune keeps the requested 2 most recent self-test rows.");
+    MasterControl::DiagnosticsQuery selfTests;
+    selfTests.source = "self-test";
+    const auto remaining = store.query(selfTests);
+    ok &= expect(remaining.size() == 2
+                     && remaining.front().sessionId == "boot-4"
+                     && remaining.back().sessionId == "boot-3",
+                 "The two newest snapshots survive the prune.");
+    }
+
+    std::filesystem::remove_all(databasePath.parent_path(), cleanupEc);
+    return ok;
+}
+
+bool testDiagnosticsServiceRingFallbackAndClear() {
+    bool ok = true;
+    // Store-less service: ring-only operation.
+    MasterControl::DiagnosticsService service(nullptr, "boot-ring-test");
+    const auto reported = service.report(
+        MasterControl::DiagnosticsSeverity::Error, "runtime", "evt", "boom",
+        nlohmann::json::object(), "2026-06-01T10:00:00.000Z");
+    ok &= expect(!reported.ok && reported.ringAccepted,
+                 "Store-less report lands in the ring and honestly reports ok=false.");
+    ok &= expect(!service.storeAvailable(), "Store-less service reports store unavailable.");
+
+    MasterControl::DiagnosticsQuery anyQuery;
+    const auto rows = service.query(anyQuery);
+    ok &= expect(rows.size() == 1 && rows.front().eventName == "evt"
+                     && rows.front().sessionId == "boot-ring-test"
+                     && rows.front().sequence == 1,
+                 "Ring fallback query returns the reported record with session + sequence stamped.");
+
+    const auto cleared = service.clear("test", "", "2026-06-01T11:00:00.000Z");
+    ok &= expect(cleared.ok, "Store-less clear succeeds (ring wipe).");
+    // After clear, the ring holds nothing from before; the audit record
+    // is only emitted when a store-backed clear happens... store-less
+    // clear returns before the audit (no store). Query must be empty.
+    ok &= expect(service.query(anyQuery).empty(),
+                 "Ring is empty after store-less clear.");
+    return ok;
+}
+
+bool testDiagnosticsServiceStoreBackedReportAndAuditedClear() {
+    bool ok = true;
+    const auto databasePath = std::filesystem::temp_directory_path()
+        / "mcos-tests" / "diag-service" / "diagnostics.db";
+    std::error_code cleanupEc;
+    std::filesystem::remove_all(databasePath.parent_path(), cleanupEc);
+
+    // Scope the service (which owns the store) so the DB closes before
+    // cleanup (see the CrudAndFilters test for the rationale).
+    {
+    MasterControl::DiagnosticsService service(
+        MasterControl::createSqliteDiagnosticsStore(databasePath), "boot-svc-test");
+    ok &= expect(service.storeAvailable(), "Service opens its sqlite store.");
+
+    (void)service.report(MasterControl::DiagnosticsSeverity::Info, "runtime",
+                         "boot", "boot ok", nlohmann::json::object(),
+                         "2026-06-01T10:00:00.000Z");
+    (void)service.report(MasterControl::DiagnosticsSeverity::Warning, "runtime",
+                         "warn_evt", "warn", nlohmann::json::object(),
+                         "2026-06-01T11:00:00.000Z");
+    ok &= expect(service.storeCount() == 2, "Two reports persisted to the store.");
+
+    const auto cleared = service.clear("operator wipe", "", "2026-06-01T12:00:00.000Z");
+    ok &= expect(cleared.ok && cleared.affectedRows == 2, "Clear deletes both rows.");
+    // The clear is audited: one fresh diagnostics_cleared record.
+    MasterControl::DiagnosticsQuery audit;
+    audit.eventName = "diagnostics_cleared";
+    const auto auditRows = service.query(audit);
+    ok &= expect(auditRows.size() == 1
+                     && auditRows.front().data.value("deletedRows", 0) == 2,
+                 "Clear leaves exactly one audit record carrying the deleted count.");
+    }
+
+    std::filesystem::remove_all(databasePath.parent_path(), cleanupEc);
+    return ok;
+}
+
 bool testDiagnosticsMarkdownRender_warnWarningAlias() {
     bool ok = true;
     const std::vector<nlohmann::json> events = {
@@ -2751,10 +3068,47 @@ bool testDiagnosticsMarkdownRender_truncatesOver50() {
     return ok;
 }
 
+// v0.11.0-alpha.3: timestamp parser backing the new age-bound log
+// rotation (MasterControlDiagnostics.h::rotateIfAgedOrOverCountLocked).
+// Valid capturedAtUtc values parse to ordered epochs; garbage parses
+// to the 0 "no age signal" sentinel so rotation never fires on noise.
+bool testDiagnosticsCapturedAtUtcParse() {
+    bool ok = true;
+    const auto early = MasterControl::Diagnostics::parseCapturedAtUtcOrZero("2026-05-15T12:00:00.000Z");
+    const auto later = MasterControl::Diagnostics::parseCapturedAtUtcOrZero("2026-05-16T12:00:00.000Z");
+    ok &= expect(early != 0, "Valid capturedAtUtc parses to a non-zero epoch.");
+    ok &= expect(later > early, "Later capturedAtUtc parses to a later epoch.");
+    ok &= expect(later - early == 24 * 60 * 60,
+                 "One day apart parses to exactly 86400 seconds.");
+    ok &= expect(MasterControl::Diagnostics::parseCapturedAtUtcOrZero("not-a-timestamp") == 0,
+                 "Garbage capturedAtUtc parses to the 0 sentinel.");
+    ok &= expect(MasterControl::Diagnostics::parseCapturedAtUtcOrZero("") == 0,
+                 "Empty capturedAtUtc parses to the 0 sentinel.");
+    return ok;
+}
+
 int main() {
+#if defined(_WIN32)
+    // v0.11.0-alpha.3: fail fast on a hard fault instead of hanging.
+    // A missing DLL or an access violation in a non-interactive CI
+    // session otherwise spawns WerFault.exe, which blocks the process
+    // for the full ctest timeout (observed as a 300s "Timeout" with no
+    // diagnostic). Suppressing the WER UI + the abort message box turns
+    // any such fault into an immediate non-zero exit ctest can capture.
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+    // Keep _WRITE_ABORT_MSG so a CRT assert / abort prints its reason to
+    // stderr (ctest captures it); clear only _CALL_REPORTFAULT so WER
+    // does not spawn a blocking fault-report process.
+    _set_abort_behavior(_WRITE_ABORT_MSG, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
     bool ok = true;
     ok &= testDefaultConfiguration();
+    // v0.11.0-alpha.3: admin-listener TLS opt-in defaults + legacy
+    // SecuritySettings JSON back-compat (mirrors the beacon-signing
+    // back-compat block inside testDefaultConfiguration).
+    ok &= testSecuritySettingsAdminTlsDefaults();
     ok &= testSeededEndpoints();
+    ok &= testSeededGatewayEndpointPointsAtNativeGateway();
     // v0.10.15 QueryParamParse helper tests (alias-aware ?param= extractor
     // backing /api/activity, /api/telemetry/events, /api/client/activity).
     ok &= testQueryParamCanonicalParse();
@@ -2778,6 +3132,12 @@ int main() {
     ok &= testDiagnosticsAggregator_singleComponentSorted();
     ok &= testDiagnosticsAggregator_softCapEarlyExit();
     ok &= testDiagnosticsAggregator_partialWriteTolerance();
+    ok &= testDiagnosticsCapturedAtUtcParse();
+    // PHASE-14 Slice E
+    ok &= testSqliteDiagnosticsStoreCrudAndFilters();
+    ok &= testSqliteDiagnosticsStoreSelfTestPrune();
+    ok &= testDiagnosticsServiceRingFallbackAndClear();
+    ok &= testDiagnosticsServiceStoreBackedReportAndAuditedClear();
     ok &= testDiagnosticsMarkdownRender_warnWarningAlias();
     ok &= testDiagnosticsMarkdownRender_truncatesOver50();
     ok &= testLanClientDefaults();
@@ -2815,6 +3175,7 @@ int main() {
     // PHASE-03 LAN discovery tests
     ok &= testDiscoveryDocumentDefaultShape();
     ok &= testDiscoveryDocumentJsonRoundTrip();
+    ok &= testBeaconAdvertisementJsonShape();
     ok &= testWellKnownDocumentMatchesSchemaRequiredFields();
     ok &= testInstanceIdGeneration();
     // PHASE-04 onboarding profile tests

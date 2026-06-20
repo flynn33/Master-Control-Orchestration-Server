@@ -12,9 +12,13 @@
 #include <Windows.h>
 #include <ShlObj.h>
 
+#include <chrono>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -161,6 +165,28 @@ inline PersistentLogPaths resolvePersistentLogPaths(std::wstring_view componentN
 // disk-constrained.
 inline constexpr std::uintmax_t kLogRotationBytes = 50ull * 1024ull * 1024ull;
 
+// v0.11.0-alpha.3: age + count rotation bounds, closing the CHANGELOG
+// Unreleased item "Telemetry log rotation (size / age / count)" -- the
+// v0.10.21 size bound alone let a low-traffic component keep a live
+// file growing in *age* indefinitely, and a burst of small records
+// could pack an unwieldy number of rows under the byte cap.
+//   - kLogMaxAgeDays: the live file rotates when its OLDEST record
+//     (first line's capturedAtUtc) is older than this many days.
+//     Determined from record content, not filesystem creation time --
+//     NTFS filename tunneling can resurrect the old creation stamp on
+//     the freshly-created live file and would re-trigger rotation in a
+//     loop, progressively discarding history.
+//   - kLogMaxEntries: the live file rotates when it holds more than
+//     this many newline-delimited records.
+// Both checks require reading the live file, so they run at most once
+// per kDeepRotationCheckInterval per path (the size check stays
+// per-append; it only stats).
+inline constexpr int kLogMaxAgeDays = 14;
+inline constexpr std::size_t kLogMaxEntries = 200000;
+inline constexpr std::chrono::minutes kDeepRotationCheckInterval{ 10 };
+
+inline void performRotationLocked(const std::filesystem::path& filePath);
+
 inline void rotateIfOversizedLocked(const std::filesystem::path& filePath) {
     std::error_code ec;
     if (!std::filesystem::exists(filePath, ec)) {
@@ -170,6 +196,118 @@ inline void rotateIfOversizedLocked(const std::filesystem::path& filePath) {
     if (ec || fileSize < kLogRotationBytes) {
         return;
     }
+    performRotationLocked(filePath);
+}
+
+// Parses the leading "YYYY-MM-DDTHH:MM:SS" of a capturedAtUtc value
+// (millisecond suffix and trailing Z ignored). Returns 0 on parse
+// failure so callers can treat "unparseable" as "no age signal".
+// Hand-rolled fixed-offset digit parsing rather than sscanf: the
+// WinUI Shell project compiles with /sdl, which promotes C4996
+// (sscanf deprecation) to an error, and sscanf_s is MSVC-only.
+inline time_t parseCapturedAtUtcOrZero(const std::string& value) {
+    if (value.size() < 19) {
+        return 0;
+    }
+    const auto readDigits = [&value](size_t position, int count, int& out) -> bool {
+        out = 0;
+        for (int i = 0; i < count; ++i) {
+            const char ch = value[position + static_cast<size_t>(i)];
+            if (ch < '0' || ch > '9') {
+                return false;
+            }
+            out = out * 10 + (ch - '0');
+        }
+        return true;
+    };
+    int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+    if (!readDigits(0, 4, year)   || value[4]  != '-'
+        || !readDigits(5, 2, month)  || value[7]  != '-'
+        || !readDigits(8, 2, day)    || value[10] != 'T'
+        || !readDigits(11, 2, hour)  || value[13] != ':'
+        || !readDigits(14, 2, minute) || value[16] != ':'
+        || !readDigits(17, 2, second)) {
+        return 0;
+    }
+    std::tm tm{};
+    tm.tm_year = year - 1900;
+    tm.tm_mon = month - 1;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    tm.tm_min = minute;
+    tm.tm_sec = second;
+    const auto parsed = _mkgmtime(&tm);
+    return parsed < 0 ? 0 : parsed;
+}
+
+// Deep (file-reading) rotation check: age of the oldest record +
+// record count. Throttled per path; caller holds the append mutex.
+inline void rotateIfAgedOrOverCountLocked(const std::filesystem::path& filePath) {
+    static std::map<std::wstring, std::chrono::steady_clock::time_point> nextCheckByPath;
+    const auto now = std::chrono::steady_clock::now();
+    auto& nextCheck = nextCheckByPath[filePath.wstring()];
+    if (now < nextCheck) {
+        return;
+    }
+    nextCheck = now + kDeepRotationCheckInterval;
+
+    std::error_code ec;
+    if (!std::filesystem::exists(filePath, ec)) {
+        return;
+    }
+
+    std::ifstream input(filePath, std::ios::binary);
+    if (!input.is_open()) {
+        return;
+    }
+
+    std::string firstLine;
+    if (!std::getline(input, firstLine) || firstLine.empty()) {
+        return;
+    }
+
+    bool rotate = false;
+
+    // Age bound: parse the first record's capturedAtUtc. Failure to
+    // parse (foreign line, truncated record) yields no age signal --
+    // the count and size bounds still apply.
+    try {
+        const auto record = nlohmann::json::parse(firstLine);
+        const auto capturedAt = record.is_object()
+            ? record.value("capturedAtUtc", std::string())
+            : std::string();
+        const auto oldest = parseCapturedAtUtcOrZero(capturedAt);
+        if (oldest != 0) {
+            const auto nowUtc = time(nullptr);
+            const auto maxAgeSeconds = static_cast<time_t>(kLogMaxAgeDays) * 24 * 60 * 60;
+            if (nowUtc - oldest > maxAgeSeconds) {
+                rotate = true;
+            }
+        }
+    } catch (const std::exception&) {
+        // Unparseable first line: no age signal.
+    }
+
+    // Count bound: one pass over the remainder (bounded by
+    // kLogRotationBytes worst case, and this whole function runs at
+    // most once per kDeepRotationCheckInterval per path).
+    if (!rotate) {
+        std::size_t lineCount = 1;  // the first line already read
+        std::string line;
+        while (lineCount <= kLogMaxEntries && std::getline(input, line)) {
+            ++lineCount;
+        }
+        rotate = lineCount > kLogMaxEntries;
+    }
+
+    input.close();
+    if (rotate) {
+        performRotationLocked(filePath);
+    }
+}
+
+inline void performRotationLocked(const std::filesystem::path& filePath) {
+    std::error_code ec;
     auto rotated = filePath;
     rotated += ".1";
     // v0.11.0 (Copilot review fix): preserve the prior rotated file
@@ -219,6 +357,8 @@ inline void appendJsonLine(const std::filesystem::path& filePath, const nlohmann
     // v0.10.21: check rotation BEFORE opening the append stream so the
     // rename target isn't held open by this process.
     rotateIfOversizedLocked(filePath);
+    // v0.11.0-alpha.3: throttled age/count bounds (see constants above).
+    rotateIfAgedOrOverCountLocked(filePath);
 
     std::ofstream output(filePath, std::ios::binary | std::ios::app);
     if (!output.is_open()) {
@@ -228,20 +368,55 @@ inline void appendJsonLine(const std::filesystem::path& filePath, const nlohmann
     output << record.dump() << '\n';
 }
 
+// v0.11.0-alpha.3 (PHASE-14 Slice E): central-store shim. When the
+// runtime has constructed its DiagnosticsService it registers a hook
+// here; every appendEvent call then ALSO reports into the central
+// SQLite-backed store. The hook is a std::function (not a hard
+// dependency on the service header) so this header stays lightweight
+// for the bootstrapper / shell / worker TUs that include it without
+// the service. Registration happens once during runtime initialize()
+// before traffic; the hook is intentionally not torn down (the service
+// outlives every caller in the process).
+using DiagnosticsReportHook = std::function<void(
+    const std::string& component,
+    const std::string& severity,
+    const std::string& eventName,
+    const std::string& message,
+    const nlohmann::json& data,
+    const std::string& capturedAtUtc)>;
+
+inline DiagnosticsReportHook& diagnosticsReportHook() {
+    static DiagnosticsReportHook hook;
+    return hook;
+}
+
 inline void appendEvent(std::wstring_view componentName,
                         std::string_view severity,
                         std::string_view eventName,
                         std::string_view message,
                         nlohmann::json data = nlohmann::json::object()) {
     const auto paths = resolvePersistentLogPaths(componentName);
+    const auto capturedAtUtc = timestampNowUtc();
+    const auto componentUtf8 = utf8FromWide(std::wstring(componentName));
     appendJsonLine(paths.eventsFile, nlohmann::json{
-        { "capturedAtUtc", timestampNowUtc() },
-        { "component", utf8FromWide(std::wstring(componentName)) },
+        { "capturedAtUtc", capturedAtUtc },
+        { "component", componentUtf8 },
         { "severity", std::string(severity) },
         { "event", std::string(eventName) },
         { "message", std::string(message) },
-        { "data", std::move(data) }
+        { "data", data }
     });
+    // PHASE-14 Slice E: dual-report into the central store when wired.
+    if (const auto& hook = diagnosticsReportHook(); hook) {
+        try {
+            hook(componentUtf8, std::string(severity), std::string(eventName),
+                 std::string(message), data, capturedAtUtc);
+        } catch (const std::exception&) {
+            // The central store must never take down a caller that was
+            // only trying to log. The jsonl write above already
+            // happened, so nothing is lost from the legacy surface.
+        }
+    }
 }
 
 inline void appendTelemetry(std::wstring_view componentName,

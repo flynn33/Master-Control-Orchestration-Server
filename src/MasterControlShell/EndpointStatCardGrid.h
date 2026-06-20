@@ -21,6 +21,11 @@
 //       - spec line (10pt, neutral) -- if present
 //       - util row: util% label (10pt) + ProgressBar (h=4) + active/cap
 //       - clients block: "no clients" / "ip (type)" lines + "+N more"
+//       - v0.11.0-alpha.3: click/tap toggles an expanded detail panel
+//         (endpoint host:port + FULL active-client roster) in place of
+//         the truncated clients block; host:port also shows on hover
+//         via tooltip. Expansion persists across snapshot-tick grid
+//         rebuilds through the expandedTileKeys registry below.
 //     Tiles render side by side in a fixed-column Grid and stack
 //     vertically as additional rows when the item count exceeds the
 //     column count. The Telemetry deck thus shows the MCP server
@@ -43,6 +48,7 @@
 
 #include <algorithm>
 #include <cwctype>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -60,6 +66,24 @@ inline const std::wstring& endpointStatId(const ::MasterControlShell::ShellMcpSe
 }
 
 namespace endpoint_stat_card_grid_detail {
+
+// v0.11.0-alpha.3: expanded-tile key registry backing the expand-on-click
+// endpoint detail (closes the CHANGELOG Unreleased deferred item
+// "Expand-on-click for tile-grid endpoint detail"). The Runtime and
+// Telemetry decks rebuild their tile grids from scratch on every
+// snapshot tick (ApplySnapshot -> Populate*Cards ->
+// renderEndpointStatCardGrid clears the destination StackPanel), so
+// expansion state parked on the freshly built controls would be wiped
+// within ~1 s of the operator's tap. Keying the expanded set on
+// "<kind>|<stat id>" lets buildFooterStyleTile re-apply the operator's
+// expansion across rebuilds. UI-thread-only by construction (snapshot
+// application and pointer input both run on the dispatcher thread), so
+// no locking. Bounded by the registered endpoint count in practice;
+// keys for since-unregistered endpoints are inert.
+inline std::set<std::wstring>& expandedTileKeys() {
+    static std::set<std::wstring> keys;
+    return keys;
+}
 
 // Build one "footer-style" tile Border for a single stat. Matches the
 // per-tile shape produced by MainWindow::ApplySubAgentFooter v0.7.8 so
@@ -193,6 +217,19 @@ winrt::Microsoft::UI::Xaml::Controls::Border buildFooterStyleTile(
 
     inner.Children().Append(utilRow);
 
+    // v0.11.0-alpha.3: shared "ip (type)" client-line formatter so the
+    // collapsed 2-line preview and the expanded full roster below render
+    // each client identically.
+    auto formatClientLine = [](const auto& holder) {
+        std::wstring line = holder.ipAddress.empty() ? std::wstring(L"unknown") : holder.ipAddress;
+        if (!holder.clientType.empty()) {
+            line += L" (";
+            line += holder.clientType;
+            line += L")";
+        }
+        return line;
+    };
+
     // Active client IPs. Cap at 2 lines and append "+N more" when over;
     // empty list shows "no clients" in muted color so the operator can
     // tell at a glance which endpoints are idle vs in use. Matches the
@@ -208,13 +245,7 @@ winrt::Microsoft::UI::Xaml::Controls::Border buildFooterStyleTile(
         const size_t shown = std::min<size_t>(2, stat.activeClients.size());
         for (size_t i = 0; i < shown; ++i) {
             if (i > 0) acc += L'\n';
-            const auto& holder = stat.activeClients[i];
-            acc += holder.ipAddress.empty() ? std::wstring(L"unknown") : holder.ipAddress;
-            if (!holder.clientType.empty()) {
-                acc += L" (";
-                acc += holder.clientType;
-                acc += L")";
-            }
+            acc += formatClientLine(stat.activeClients[i]);
         }
         if (stat.activeClients.size() > shown) {
             acc += L"\n+";
@@ -224,6 +255,84 @@ winrt::Microsoft::UI::Xaml::Controls::Border buildFooterStyleTile(
         clientsText.Text(winrt::hstring(acc));
     }
     inner.Children().Append(clientsText);
+
+    // v0.11.0-alpha.3: expand-on-click endpoint detail (closes the
+    // CHANGELOG Unreleased deferred item "Expand-on-click for tile-grid
+    // endpoint detail"). The collapsed tile caps the client list at 2
+    // lines and never shows the endpoint host:port; tapping the tile
+    // reveals this detail panel carrying the host:port plus the FULL
+    // active-client roster, and swaps the truncated preview out so
+    // clients are not listed twice. Tapping again collapses. Safe for
+    // every consumer: the compact tile grid's rows are Height=Auto and
+    // all four destination StackPanels (Runtime + Telemetry, MCP +
+    // sub-agent) are auto-sized, so expansion simply grows the row --
+    // nothing keys off a fixed tile height.
+    StackPanel detailPanel;
+    detailPanel.Spacing(2);
+    detailPanel.Visibility(Visibility::Collapsed);
+
+    if (!stat.endpointHostPort.empty()) {
+        TextBlock hostPortText;
+        hostPortText.Text(winrt::hstring(stat.endpointHostPort));
+        hostPortText.FontSize(10);
+        hostPortText.FontFamily(winrt::Microsoft::UI::Xaml::Media::FontFamily(winrt::hstring{L"Consolas, Cascadia Mono, Courier New"}));
+        hostPortText.Foreground(SolidColorBrush(titleColor));
+        hostPortText.TextTrimming(TextTrimming::CharacterEllipsis);
+        detailPanel.Children().Append(hostPortText);
+    }
+    if (stat.activeClients.empty()) {
+        TextBlock noClientsText;
+        noClientsText.Text(L"no clients");
+        noClientsText.FontSize(10);
+        noClientsText.Foreground(SolidColorBrush(neutralColor));
+        detailPanel.Children().Append(noClientsText);
+    } else {
+        for (const auto& holder : stat.activeClients) {
+            TextBlock clientLine;
+            clientLine.Text(winrt::hstring(formatClientLine(holder)));
+            clientLine.FontSize(10);
+            clientLine.Foreground(SolidColorBrush(neutralColor));
+            clientLine.TextTrimming(TextTrimming::CharacterEllipsis);
+            detailPanel.Children().Append(clientLine);
+        }
+    }
+    inner.Children().Append(detailPanel);
+
+    // Re-apply persisted expansion across the ~1 Hz grid rebuilds (see
+    // expandedTileKeys above). Key on kind + id so an MCP server and a
+    // sub-agent that happen to share an id string cannot cross-toggle.
+    std::wstring statIdForKey = endpointStatId(stat);
+    if (statIdForKey.empty()) statIdForKey = rawName;
+    const std::wstring expandKey =
+        std::wstring(fallbackName != nullptr ? fallbackName : L"") + L"|" + statIdForKey;
+    const bool startExpanded = expandedTileKeys().count(expandKey) > 0;
+    detailPanel.Visibility(startExpanded ? Visibility::Visible : Visibility::Collapsed);
+    clientsText.Visibility(startExpanded ? Visibility::Collapsed : Visibility::Visible);
+
+    // Toggle on click/tap. winrt projection objects are ref-counted, so
+    // capturing the two panels by value keeps them alive exactly as the
+    // existing by-value Click lambdas elsewhere in the shell do; no
+    // reference cycle -- the handler lives on the card and captures only
+    // the card's children.
+    card.Tapped([detailPanel, clientsText, expandKey](auto&&, auto&&) {
+        auto& keys = expandedTileKeys();
+        const bool expand = keys.count(expandKey) == 0;
+        if (expand) {
+            keys.insert(expandKey);
+        } else {
+            keys.erase(expandKey);
+        }
+        detailPanel.Visibility(expand ? Visibility::Visible : Visibility::Collapsed);
+        clientsText.Visibility(expand ? Visibility::Collapsed : Visibility::Visible);
+    });
+
+    // Hover affordance for mouse operators (the deferred item asked for
+    // "hover/expand"): surface the endpoint host:port in a tooltip so a
+    // hover answers the common question without committing the grid row
+    // to the taller expanded layout.
+    if (!stat.endpointHostPort.empty()) {
+        ToolTipService::SetToolTip(card, winrt::box_value(winrt::hstring(stat.endpointHostPort)));
+    }
 
     card.Child(inner);
     return card;

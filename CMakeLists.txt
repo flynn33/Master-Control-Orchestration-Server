@@ -76,6 +76,10 @@ configure_file(
 include(CTest)
 
 find_package(nlohmann_json CONFIG REQUIRED)
+# v0.11.0-alpha.3 (PHASE-14 Slice E): SQLite for the persistent
+# diagnostics store. vcpkg's sqlite3 port exports the unofficial
+# config package.
+find_package(unofficial-sqlite3 CONFIG REQUIRED)
 find_program(MASTERCONTROL_POWERSHELL NAMES pwsh.exe pwsh powershell.exe powershell)
 if(WIN32 AND NOT MASTERCONTROL_POWERSHELL)
     message(FATAL_ERROR
@@ -240,5 +244,8 @@ install(
     FILES
         "${CMAKE_SOURCE_DIR}/scripts/Configure-LocalServerCert.ps1"
         "${CMAKE_SOURCE_DIR}/scripts/Remove-LocalServerCert.ps1"
+        # v0.11.0-alpha.3: cert auto-rotation scheduled-task job (closes
+        # the VERSION.json "renewal-cron PS job" deferred item).
+        "${CMAKE_SOURCE_DIR}/scripts/Register-CertAutoRotation.ps1"
     DESTINATION "scripts"
 )

@@ -49,6 +49,12 @@ namespace MasterControlShell
     }
 
     [default_interface]
+    runtimeclass DiagnosticsSectionControl : Microsoft.UI.Xaml.Controls.UserControl
+    {
+        DiagnosticsSectionControl();
+    }
+
+    [default_interface]
     runtimeclass SettingsSectionControl : Microsoft.UI.Xaml.Controls.UserControl
     {
         SettingsSectionControl();

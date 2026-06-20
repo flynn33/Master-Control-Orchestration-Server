@@ -3,6 +3,8 @@
 # Proprietary and Confidential.
 
 add_library(MasterControlApp STATIC
+    DiagnosticsService.cpp
+    DiagnosticsStore.cpp
     MasterControlDefaults.cpp
     MasterControlModels.cpp
     MasterControlRuntime.cpp
@@ -21,6 +23,10 @@ target_link_libraries(MasterControlApp
         ForsettiCore
         ForsettiPlatform
         nlohmann_json::nlohmann_json
+        # PHASE-14 Slice E: persistent diagnostics store. PUBLIC because
+        # the tests target links MasterControlApp and includes
+        # DiagnosticsStore.h directly.
+        unofficial::sqlite3::sqlite3
     PRIVATE
         ws2_32
         iphlpapi
@@ -36,6 +42,10 @@ target_link_libraries(MasterControlApp
         rpcrt4
         bcrypt
         psapi   # GetProcessMemoryInfo for per-instance CPU/RAM telemetry
+        secur32 # v0.11.0-alpha.3: SSPI/SChannel (AcquireCredentialsHandleW,
+                # AcceptSecurityContext, Encrypt/DecryptMessage) for the
+                # opt-in admin-listener TLS layer in MasterControlRuntime.cpp.
+                # crypt32 (cert store lookup by thumbprint) is already linked.
 )
 
 target_compile_definitions(MasterControlApp PUBLIC

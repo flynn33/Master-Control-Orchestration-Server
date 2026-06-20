@@ -6,20 +6,32 @@ The release-management and doc-sync GitHub agents that previously generated part
 
 ## [Unreleased]
 
+### Fixed (fix/bug-campaign-2026-06 branch)
+
+- **Beacon advertised the admin port as `gatewayPort`.** `BeaconService::currentAdvertisement()` passed `configuration.browserPort` into both port slots of the `BeaconAdvertisement` aggregate, so `/api/beacon` (and the discovery-service-less fallback broadcast) advertised `gatewayPort=7300` instead of `cfg.mcpGateway.listenPort` (8080). Regression test added.
+- **Exports surface handed LAN clients a dead MCP URL.** `ExportService::generateExports` composed every client artifact (`.claude.json`, `Install-ClaudeGateway.ps1`, `codex-mcp.json`, openai/xai profiles) around `http://<host>:7200/mcp/gateway` — port 7200 belongs to the external gateway retired at v0.9.0 and `/mcp/gateway/{platform}` is an admin-port document route, not an MCP endpoint. Now composed from `cfg.mcpGateway.listenPort + mcpPath` (same realignment the v0.10.8 supervisor-config fix applied). The seeded `platform-gateway` inventory row likewise moved 7200 → 8080.
+- **Silent UDP beacon failures.** `sendto()`/`socket()` results were ignored; broadcast failures now emit edge-triggered diagnostics events (`beacon_broadcast_failed`/`_recovered`, `beacon_socket_create_failed`).
+- **Empty-`method` supervisor events in `/api/activity`.** The four supervisor lifecycle emit sites never stamped `evt.method` (the anomaly the 2026-04-19 operator probe flagged).
+
+### Added (fix/bug-campaign-2026-06 branch)
+
+- Onboarding profile `governanceBundleUrl` platform-awareness: `/api/onboarding/{clientType}?platform=windows|macos|ios` (alias `?os=`); absent/unknown falls back to `windows` (the prior hardcoded value).
+- Persistent-log rotation age (14-day) + count (200k-row) bounds alongside the v0.10.21 50 MB size bound; deep checks throttled to once per 10 minutes per path.
+- `scripts/Register-CertAutoRotation.ps1` — weekly scheduled-task cert reuse-or-renew + `cfg.mcpGateway.tlsCertThumbprint` sync via `POST /api/config`. Shipped in the MSI `scripts/` payload.
+- UDP beacon payload signing: additive `signature` object (HMAC-SHA256 over the document's compact dump) gated on `security.beaconSigningEnabled` + `security.beaconSigningKey` (auto-generated on fresh installs; legacy configs broadcast unsigned exactly as before).
+- **PHASE-14 Slices B–E complete.** Slice E: `SqliteDiagnosticsStore` (WAL, schema_version migration) + `DiagnosticsService` (1000-record ring + store, boot self-test persistence with last-50-boots retention, audited clear) + functional `POST /api/diagnostics/clear` (clear-with-retention, replacing the Slice A 501); diagnostics routes are store-backed with jsonl fallback. Slice B: six `mcos_diagnostics_*` tools in the `mcos-bridge` MCP plugin. Slice C: WinUI Shell `DiagnosticsSectionControl` (severity/source filters, native save-dialog exports, ContentDialog-confirmed clear). Slice D: browser dashboard Diagnostics tab with Blob-download exports.
+- Opt-in SChannel TLS for the admin HTTP listener (port 7300): `security.adminTlsEnabled` + `security.adminTlsCertThumbprint` (default off; credentials failure falls back to plain HTTP with a diagnostics event — the admin surface cannot be bricked by a bad cert). Known limitation: SSE over the TLS listener returns 501; plain-HTTP SSE unchanged.
+- Tile-grid expand-on-click endpoint detail: tapping a compact tile reveals host:port + the full active-client roster; hover shows host:port via tooltip.
+
+### Closed as already-implemented (stale deferred entries)
+
+- CLU rebuild Phase 2 + Phase 3 (`enforceAction` wiring) — the route-layer `enforceGovernance` helper already wires `enforceAction` into all mutation handlers (catalog, clients, modules, installs) with Block → 403 and RequiresOperatorApproval → staged deferred action + HTTP 202.
+- Legacy `GatewayType` tombstone — the enum already holds only `Native`; the bootstrapper kill-list reference was removed at v0.10.14.
+
 ### Deferred to v1.0.0+
 
-- CLU rebuild Phase 2 + Phase 3 (`enforceAction` wiring).
-- PHASE-14 `DiagnosticsSectionControl` with FileSavePicker export — plan file in place, implementation gated on maintainer approval.
-- Telemetry log rotation (size / age / count). v0.10.5 throttling defers the disk-fill horizon from weeks to many months but does not bound it.
-- Expand-on-click for tile-grid endpoint detail (host:port + active-client list on hover/expand).
 - Per-pass self-test rows in the persistent Diagnostics log (behind an opt-in flag).
-- PHASE-13 Win2D / Direct2D high-rate visual surfaces in the WinUI Shell (per-pool sparklines, Tron grid HLSL, activity stream SwapChainPanel).
-- Onboarding profile `governanceBundleUrl` platform-awareness (currently hardcoded to `windows` in `MasterControlRuntime.cpp`; should reflect the requesting client's target platform).
-- Source-code tombstone removal of the legacy `GatewayType` slot enum value and `the legacy gateway binary` reference in `MasterControlBootstrapper/main.cpp` supervised-gateway child list (kept for back-compat deserialization in v0.10.x; removable at the next major bump).
-- PHASE-14 Slice B: `mcos-bridge` MCP plugin tools (`mcos_diagnostics_summary`, `_events`, `_self_test`, `_export_markdown`, `_export_json`, `_clear`). Slice A's HTTP routes landed in v0.11.0; the MCP-plugin shim defers to a v0.11.x follow-up.
-- PHASE-14 Slice C: WinUI Shell `DiagnosticsSectionControl` with `FileSavePicker` for native Export Markdown / Export JSON.
-- PHASE-14 Slice D: Browser dashboard Diagnostics tab + Blob-download Export buttons.
-- PHASE-14 Slice E: `SqliteDiagnosticsStore` (persistent ring + retention + schema migration) + tests + completion report. Required before `POST /api/diagnostics/clear` can move from 501 to functional.
+- PHASE-13 Win2D / Direct2D high-rate visual surfaces in the WinUI Shell (per-pool sparklines, Tron grid HLSL, activity stream SwapChainPanel). Requires an interactive Windows build loop; not implementable from a non-Windows session.
 
 ## [0.11.0-alpha.2] - 2026-05-15
 

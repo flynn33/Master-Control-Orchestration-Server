@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -279,6 +280,43 @@ def t_forsetti_module_disable(args):
     return _post(f"/api/forsetti/modules/{args['moduleId']}/disable")
 
 
+# ---- PHASE-14 Slice B: centralized diagnostics surface ----
+def t_diagnostics_summary(args):
+    return _get("/api/diagnostics/summary")
+
+def t_diagnostics_events(args):
+    # URL-encode every value: tool args are user-provided, so raw
+    # concatenation would allow query-string injection
+    # (severity='warning&max=5000') and break on characters that need
+    # percent-encoding. int() coercion on max also rejects non-numbers.
+    params = {}
+    if args.get("max") is not None:
+        params["max"] = int(args["max"])
+    if args.get("severity"):
+        params["severity"] = str(args["severity"])
+    if args.get("source"):
+        params["source"] = str(args["source"])
+    query = ("?" + urllib.parse.urlencode(params)) if params else ""
+    return _get(f"/api/diagnostics/events{query}")
+
+def t_diagnostics_self_test(args):
+    return _get("/api/diagnostics/self-test")
+
+def t_diagnostics_export_markdown(args):
+    return _get("/api/diagnostics/export?format=markdown")
+
+def t_diagnostics_export_json(args):
+    return _get("/api/diagnostics/export?format=json")
+
+def t_diagnostics_clear(args):
+    refusal = _confirm_required(args, "clear diagnostics store", "diagnostics")
+    if refusal: return refusal
+    body = {}
+    if args.get("reason"):         body["reason"] = args["reason"]
+    if args.get("retainSinceUtc"): body["retainSinceUtc"] = args["retainSinceUtc"]
+    return _post("/api/diagnostics/clear", body=body)
+
+
 # ---- Local diagnostic (Windows-only) ----
 def t_service_status(args):
     return _powershell(
@@ -384,6 +422,36 @@ TOOLS_REGISTRY: List[Tuple[str, Dict[str, Any], callable]] = [
     ("mcos_forsetti_modules",
      {"description": "List registered Forsetti modules.",
       "inputSchema": {"type": "object", "properties": {}}}, t_forsetti_modules),
+
+    # --- PHASE-14 Slice B: centralized diagnostics ---
+    ("mcos_diagnostics_summary",
+     {"description": "Diagnostics summary: totalEvents, bySeverity, byComponent, latest5, storeBacked/storeUnavailable (GET /api/diagnostics/summary).",
+      "inputSchema": {"type": "object", "properties": {}}}, t_diagnostics_summary),
+    ("mcos_diagnostics_events",
+     {"description": "Query diagnostics events, newest-first (GET /api/diagnostics/events). Optional filters: max (int), severity (debug|info|warning|error|critical; warn accepted), source (runtime|supervisor|installer|self-test).",
+      "inputSchema": {"type": "object",
+                      "properties": {
+                          "max": {"type": "integer"},
+                          "severity": {"type": "string"},
+                          "source": {"type": "string"}}}},
+     t_diagnostics_events),
+    ("mcos_diagnostics_self_test",
+     {"description": "Latest boot self-test snapshot: passed/failed counts + per-test rows (GET /api/diagnostics/self-test).",
+      "inputSchema": {"type": "object", "properties": {}}}, t_diagnostics_self_test),
+    ("mcos_diagnostics_export_markdown",
+     {"description": "Render the full diagnostics history as a Markdown document (GET /api/diagnostics/export?format=markdown).",
+      "inputSchema": {"type": "object", "properties": {}}}, t_diagnostics_export_markdown),
+    ("mcos_diagnostics_export_json",
+     {"description": "Export the full diagnostics history as JSON (GET /api/diagnostics/export?format=json).",
+      "inputSchema": {"type": "object", "properties": {}}}, t_diagnostics_export_json),
+    ("mcos_diagnostics_clear",
+     {"description": "Clear the central diagnostics store (POST /api/diagnostics/clear). Destructive: requires confirm:true. Optional reason (audited) and retainSinceUtc (ISO-8601; records at/after this bound are kept). Per-component jsonl logs on disk are NOT touched.",
+      "inputSchema": {"type": "object",
+                      "properties": {
+                          "confirm": {"type": "boolean"},
+                          "reason": {"type": "string"},
+                          "retainSinceUtc": {"type": "string"}}}},
+     t_diagnostics_clear),
 
     # --- Write — config ---
     ("mcos_config_update",

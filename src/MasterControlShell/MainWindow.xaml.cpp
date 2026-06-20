@@ -11,6 +11,7 @@
 #endif
 
 #include "CommandLogicUnitSectionControl.xaml.h"
+#include "DiagnosticsSectionControl.xaml.h"
 #include "ExportsSectionControl.xaml.h"
 #include "ImportsSectionControl.xaml.h"
 #include "../../include/MasterControl/DeploymentLogPaths.h"
@@ -52,6 +53,8 @@ constexpr wchar_t kRuntimeDestination[] = L"runtime";
 constexpr wchar_t kCluDestination[] = L"clu";
 constexpr wchar_t kImportsDestination[] = L"imports";
 constexpr wchar_t kExportsDestination[] = L"exports";
+// v0.11.0-alpha.3 (PHASE-14 Slice C): comprehensive-diagnostics surface.
+constexpr wchar_t kDiagnosticsDestination[] = L"diagnostics";
 constexpr wchar_t kSecurityDestination[] = L"security";
 constexpr wchar_t kSettingsDestination[] = L"settings";
 constexpr wchar_t kSetupWizardDestination[] = L"setup-wizard";
@@ -63,6 +66,8 @@ constexpr wchar_t kRuntimeView[] = L"RuntimeSectionView";
 constexpr wchar_t kCluView[] = L"CommandLogicUnitSectionView";
 constexpr wchar_t kImportsView[] = L"ImportsSectionView";
 constexpr wchar_t kExportsView[] = L"ExportsSectionView";
+// v0.11.0-alpha.3 (PHASE-14 Slice C).
+constexpr wchar_t kDiagnosticsView[] = L"DiagnosticsSectionView";
 constexpr wchar_t kSecurityView[] = L"SecuritySectionView";
 constexpr wchar_t kSettingsView[] = L"SettingsSectionView";
 constexpr wchar_t kSetupWizardView[] = L"SetupWizardView";
@@ -206,6 +211,9 @@ std::wstring labelForDestination(const std::wstring& destinationId) {
     if (destinationId == kExportsDestination) {
         return L"Exports";
     }
+    if (destinationId == kDiagnosticsDestination) {
+        return L"Diagnostics";
+    }
     if (destinationId == kSecurityDestination) {
         return L"Security";
     }
@@ -237,6 +245,9 @@ std::wstring destinationForViewId(const std::wstring& viewId) {
     if (viewId == kExportsView) {
         return kExportsDestination;
     }
+    if (viewId == kDiagnosticsView) {
+        return kDiagnosticsDestination;
+    }
     if (viewId == kSecurityView) {
         return kSecurityDestination;
     }
@@ -267,6 +278,9 @@ SectionMetadata metadataForDestination(const std::wstring& destinationId, const 
     }
     if (destinationId == kExportsDestination) {
         return { L"ADVANCED", title, L"Review exported agent artifacts, browser handoff endpoints, and downstream integration material after direct setup flows have been considered." };
+    }
+    if (destinationId == kDiagnosticsDestination) {
+        return { L"ADVANCED", title, L"Query the centralized diagnostics aggregate by severity and source, export portable Markdown or JSON snapshots, and clear the persistent store after triage." };
     }
     if (destinationId == kSecurityDestination) {
         return { L"ADVANCED", title, L"Inspect bind policy, browser access posture, beacon state, AI autonomy, and operator-sensitive toggles." };
@@ -306,6 +320,7 @@ std::vector<::MasterControlShell::ShellNavigationPointer> bootstrapNavigationPoi
         { L"clu-nav", L"Operate / Governance", kCluDestination },
         { L"imports-nav", L"Advanced / Imports", kImportsDestination },
         { L"exports-nav", L"Advanced / Exports", kExportsDestination },
+        { L"diagnostics-nav", L"Advanced / Diagnostics", kDiagnosticsDestination },
         { L"security-nav", L"Advanced / Security", kSecurityDestination },
         { L"settings-nav", L"Advanced / Settings", kSettingsDestination }
     };
@@ -341,6 +356,7 @@ std::map<std::wstring, std::vector<::MasterControlShell::ShellViewInjection>> bo
         { kCluDestination, { { L"clu-surface", kCluDestination, kCluView, 100 } } },
         { kImportsDestination, { { L"imports-surface", kImportsDestination, kImportsView, 100 } } },
         { kExportsDestination, { { L"exports-surface", kExportsDestination, kExportsView, 100 } } },
+        { kDiagnosticsDestination, { { L"diagnostics-surface", kDiagnosticsDestination, kDiagnosticsView, 100 } } },
         { kSecurityDestination, { { L"security-surface", kSecurityDestination, kSecurityView, 100 } } },
         { kSettingsDestination, { { L"settings-surface", kSettingsDestination, kSettingsView, 100 } } },
         { kSetupWizardDestination, { { L"setup-wizard-surface", kSetupWizardDestination, kSetupWizardView, 100 } } },
@@ -450,6 +466,14 @@ void attachInteractiveRuntime(const FrameworkElement& view,
         winrt::get_self<winrt::MasterControlShell::implementation::ExportsSectionControl>(typed)->AttachRuntime(&runtime);
         return;
     }
+    if (viewId == kDiagnosticsView) {
+        // v0.11.0-alpha.3 (PHASE-14 Slice C): same runtime-only attach
+        // shape as Exports -- the section drives its own refresh and
+        // does not need the guided-workflow action callback.
+        const auto typed = view.as<winrt::MasterControlShell::DiagnosticsSectionControl>();
+        winrt::get_self<winrt::MasterControlShell::implementation::DiagnosticsSectionControl>(typed)->AttachRuntime(&runtime);
+        return;
+    }
     if (viewId == kSecurityView) {
         const auto typed = view.as<winrt::MasterControlShell::SecuritySectionControl>();
         winrt::get_self<winrt::MasterControlShell::implementation::SecuritySectionControl>(typed)->AttachRuntime(
@@ -498,6 +522,11 @@ void applySnapshotToView(const FrameworkElement& view,
     if (viewId == kExportsView) {
         const auto typed = view.as<winrt::MasterControlShell::ExportsSectionControl>();
         winrt::get_self<winrt::MasterControlShell::implementation::ExportsSectionControl>(typed)->ApplySnapshot(snapshot);
+        return;
+    }
+    if (viewId == kDiagnosticsView) {
+        const auto typed = view.as<winrt::MasterControlShell::DiagnosticsSectionControl>();
+        winrt::get_self<winrt::MasterControlShell::implementation::DiagnosticsSectionControl>(typed)->ApplySnapshot(snapshot);
         return;
     }
     if (viewId == kSecurityView) {
@@ -1291,6 +1320,22 @@ void MainWindow::ConfigureTimer() {
 void MainWindow::EnsureBootstrapSurface(::MasterControlShell::ShellSnapshot& snapshot) {
     if (snapshot.navigationPointers.empty()) {
         snapshot.navigationPointers = bootstrapNavigationPointers();
+    } else {
+        // v0.11.0-alpha.3 (PHASE-14 Slice C): the service-published
+        // dashboard surface (composeDashboardSurface in
+        // MasterControlModules.cpp) does not yet advertise a Diagnostics
+        // lane, and the empty-only fallback above would therefore hide
+        // the new section whenever the server surface arrives. Append
+        // the Diagnostics pointer when it is missing -- same per-entry
+        // merge philosophy as the viewInjectionsBySlot loop below.
+        const bool hasDiagnostics = std::any_of(
+            snapshot.navigationPointers.begin(),
+            snapshot.navigationPointers.end(),
+            [](const auto& pointer) { return pointer.destinationId == kDiagnosticsDestination; });
+        if (!hasDiagnostics) {
+            snapshot.navigationPointers.push_back(
+                { L"diagnostics-nav", L"Advanced / Diagnostics", kDiagnosticsDestination });
+        }
     }
     if (snapshot.toolbarItems.empty()) {
         snapshot.toolbarItems = bootstrapToolbarItems();
@@ -1545,6 +1590,8 @@ FrameworkElement MainWindow::CreateViewForViewId(const std::wstring& viewId, con
         view = winrt::MasterControlShell::ImportsSectionControl();
     } else if (viewId == kExportsView) {
         view = winrt::MasterControlShell::ExportsSectionControl();
+    } else if (viewId == kDiagnosticsView) {
+        view = winrt::MasterControlShell::DiagnosticsSectionControl();
     } else if (viewId == kSecurityView) {
         view = winrt::MasterControlShell::SecuritySectionControl();
     } else if (viewId == kSettingsView) {
@@ -1627,6 +1674,7 @@ FrameworkElement MainWindow::CreateViewForViewId(const std::wstring& viewId, con
         || viewId == kCluView
         || viewId == kImportsView
         || viewId == kExportsView
+        || viewId == kDiagnosticsView
         || viewId == kSecurityView
         || viewId == kSettingsView
         || viewId == kOverviewView) {
