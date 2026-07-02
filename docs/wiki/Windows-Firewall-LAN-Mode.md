@@ -150,6 +150,6 @@ Get-NetFirewallRule -DisplayName "MCOS *" | Remove-NetFirewallRule
 
 ## See also
 
-- [ADR-002 — Gateway-first MCP realignment](../Architecture-Decisions/ADR-002-gateway-first-mcp-realignment.md) — section 1 (trust model), section 3 (LAN discovery), section 10 (release gate)
+- [ADR-002 — Gateway-first MCP realignment](ADR-002-gateway-first-mcp-realignment.md) — section 1 (trust model), section 3 (LAN discovery), section 10 (release gate)
 - [Packaging and Gateway Binary](Packaging-and-Gateway-Binary.md) — what the MSI installs
 - [Release Gate](Release-Gate.md) — CI / release flow

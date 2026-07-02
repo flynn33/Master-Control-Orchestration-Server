@@ -13211,7 +13211,7 @@ public:
             // Flush any output token (handshake reply, or an alert when
             // the failure carried ASC_RET_EXTENDED_ERROR). Free the
             // SChannel-allocated buffer on every path.
-            // v0.11.0-alpha.3 (Copilot review): a failed send during a
+            // v0.11.0-alpha.3 (code review): a failed send during a
             // CONTINUE_NEEDED / OK round means the peer will never
             // receive the handshake bytes it is waiting for -- looping
             // would hang the connection. Treat the send failure as a

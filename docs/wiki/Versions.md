@@ -1,8 +1,8 @@
 # Versions
 
 ![scheme](https://img.shields.io/badge/scheme-semver-00f6ff?style=flat-square)
-![current](https://img.shields.io/badge/current-v0.10.11-1cf2c1?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--05--11-031018?style=flat-square)
+![current](https://img.shields.io/badge/current-v0.11.0--alpha.3-1cf2c1?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--07--02-031018?style=flat-square)
 ![strategy](https://img.shields.io/badge/strategy-hand%20authored-5a00e8?style=flat-square)
 ![license](https://img.shields.io/badge/license-Proprietary-00aacc?style=flat-square)
 
@@ -16,15 +16,19 @@
 
 | Field | Value |
 | --- | --- |
-| **Version** | `v0.10.14` |
-| **Released** | `2026-05-11` |
-| **Theme** | LAN MCP Gateway + Supervisor Wizard + Direct AI plugin slots + audit remediation |
-| **Tag** | [`v0.10.14`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.10.14) |
+| **Version** | `v0.11.0-alpha.3` |
+| **Released** | `2026-07-02` |
+| **Theme** | PHASE-14 completion (Slices B–E) + security hardening (beacon signing, admin-listener TLS, cert auto-rotation) + 2026-06 bug campaign |
+| **Tag** | `v0.11.0-alpha.3` — GitHub Release cut pending the Windows Build, Test, and Package gate on the Windows host |
 | **Gateway substrate** | `native` (in-process Windows HTTP.sys) — only shipping substrate as of v0.9.0. the legacy external gateway retired per maintainer directive. `cfg.mcpGateway.type` is retained for back-compat deserialization only; runtime always uses the native adapter. |
-| **Live state on reference host** | 31/31 supervised worker pools healthy, 97 advertised gateway tools, 39/39 boot self-tests pass |
-| **Next** | v1.0.0+ candidates: CLU Phase 2/3 (`enforceAction` wiring), PHASE-14 DiagnosticsSectionControl with FileSavePicker, telemetry log rotation, PHASE-13 Win2D shell rendering |
+| **Live state on reference host** | 31/31 supervised worker pools healthy, 97 advertised gateway tools, 39/39 boot self-tests pass (observed on the v0.10.14 reference host) |
+| **Next** | v1.0.0+ candidates: PHASE-13 Win2D shell rendering, per-pass self-test rows in the persistent Diagnostics log (opt-in), app-layer auth for the retail build, end-to-end LAN client integration test |
 
-### What v0.10.14 represents
+### What v0.11.0-alpha.3 represents
+
+Completion of the PHASE-14 comprehensive-diagnostics module plus the security items deferred at the alpha.2 cut. Slice E's `SqliteDiagnosticsStore` (WAL journal, schema_version migration) backs the `/api/diagnostics/*` routes with jsonl fallback and makes `POST /api/diagnostics/clear` functional with retention; Slice B ships six `mcos_diagnostics_*` tools in the `mcos-bridge` MCP plugin; Slice C ships the WinUI Shell `DiagnosticsSectionControl`; Slice D ships the browser dashboard Diagnostics tab. Security hardening adds UDP beacon payload signing (HMAC-SHA256, auto-generated key on fresh installs), opt-in SChannel TLS for the admin HTTP listener, and weekly cert auto-rotation (`scripts/Register-CertAutoRotation.ps1`). The 2026-06 bug campaign fixed the beacon `gatewayPort` confusion, retired-port-7200 export artifacts, silent UDP beacon failures, and empty-`method` supervisor events. The MSI cut for alpha.3 happens on the Windows host once the Windows Build, Test, and Package gate passes there.
+
+### What the v0.9.4 – v0.10.14 line represented (historical)
 
 Aggregate release line spanning v0.9.4 through v0.10.14 on top of the v0.7.0 production-milestone baseline. The architecture established at v0.7.0 is unchanged — every phase from PHASE-00 through PHASE-12 remains delivered. v0.9.x and v0.10.x iterate on top of the locked architecture across four themes: (1) gateway-substrate simplification (the in-process HTTP.sys adapter dropped at v0.9.0, native HTTP.sys becomes the only path), (2) Supervisor Agent Assignment Wizard (v0.9.76+ — maintainer picks one supervisor model and MCOS issues a LAN-routable config the client uses to bind), (3) WinUI Shell tile-grid realignment (Telemetry, Runtime, and the cross-tab footer all render the same per-endpoint tile shape), (4) Direct AI plugin slots for Claude Code / ChatGPT / Grok with mutual exclusion (v0.10.12+) plus reachability self-check (v0.10.13) and audit remediation (v0.10.14: `.mcp.json` portability, scribe handoffDir derivation, register-pools.ps1 `$projectRoot` derivation, tests/CMakeLists.txt include path fix, and retired-the in-process HTTP.sys adapter doc scrubbing).
 

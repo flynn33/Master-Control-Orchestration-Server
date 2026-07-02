@@ -33,8 +33,15 @@ function Write-Log {
     Add-Content -LiteralPath $LogPath -Value $line
 }
 
+# Re-invoke gates with the same PowerShell edition that is running this
+# script so the chain works under both Windows PowerShell and PowerShell 7.
+$hostExecutable = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell.exe' }
+
 function Invoke-GateScript {
-    param([string]$ScriptName)
+    param(
+        [string]$ScriptName,
+        [string[]]$ArgumentList = @('-RepoRoot', $RepoRoot, '-LogDirectory', $LogDirectory)
+    )
     $scriptPath = Join-Path $PSScriptRoot $ScriptName
     if (-not (Test-Path -LiteralPath $scriptPath)) {
         Write-Log "Missing gate script: $scriptPath" 'ERROR'
@@ -45,11 +52,9 @@ function Invoke-GateScript {
     $arguments = @(
         '-NoProfile',
         '-ExecutionPolicy', 'Bypass',
-        '-File', $scriptPath,
-        '-RepoRoot', $RepoRoot,
-        '-LogDirectory', $LogDirectory
-    )
-    & powershell.exe @arguments 2>&1 | ForEach-Object { Write-Host $_ }
+        '-File', $scriptPath
+    ) + $ArgumentList
+    & $hostExecutable @arguments 2>&1 | ForEach-Object { Write-Host $_ }
     $code = $LASTEXITCODE
     if ($code -ne 0) {
         Write-Log "Gate script failed: $ScriptName exit=$code" 'ERROR'
@@ -60,10 +65,26 @@ function Invoke-GateScript {
 }
 
 $failures = 0
+
+# Repository-health static gates run first: they are cheap, environment
+# independent, and catch metadata/doc drift before any build is attempted.
+foreach ($gate in @(
+    @{ Script = 'Test-MCOSJsonCorpus.ps1';          Arguments = @('-RepoRoot', $RepoRoot) },
+    @{ Script = 'Test-MCOSMarkdownLinks.ps1';       Arguments = @('-RepoRoot', $RepoRoot) },
+    @{ Script = 'Test-MCOSRepositoryMetadata.ps1';  Arguments = @('-RepoRoot', $RepoRoot) },
+    @{ Script = 'Sync-RepositoryVersionBadges.ps1'; Arguments = @('-CheckOnly') }
+)) {
+    $exitCode = Invoke-GateScript -ScriptName $gate.Script -ArgumentList $gate.Arguments
+    if ($exitCode -ne 0) { $failures++ }
+}
+
+# Existing security/static gates, then Forsetti compliance.
 foreach ($script in @('Test-MCOSSecurityDefaults.ps1', 'Test-MCOSStaticGates.ps1')) {
     $exitCode = Invoke-GateScript -ScriptName $script
     if ($exitCode -ne 0) { $failures++ }
 }
+$exitCode = Invoke-GateScript -ScriptName 'check-mastercontrol-forsetti.ps1' -ArgumentList @()
+if ($exitCode -ne 0) { $failures++ }
 
 if (-not $SkipBuild) {
     Write-Log 'Running optional release build/test gate commands.'

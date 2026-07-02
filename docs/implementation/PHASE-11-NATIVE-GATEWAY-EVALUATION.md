@@ -1,6 +1,6 @@
 # PHASE-11 — Native MCP Gateway Evaluation
 
-Status: **Evidence-based recommendation produced.** Final keep-or-replace decision is recorded in [ADR-003 — MCP Gateway Substrate Decision](../wiki/Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision.md).
+Status: **Evidence-based recommendation produced.** Final keep-or-replace decision is recorded in [ADR-003 — MCP Gateway Substrate Decision](../wiki/ADR-003-mcp-gateway-substrate-decision.md).
 
 Date: 2026-05-02
 Working tree: `master-control-dashboard-main`
@@ -208,4 +208,4 @@ If any of the following becomes true, escalate the native-gateway proposal from 
 
 **Propose a conditional PHASE-12 ("the in-process HTTP.sys adapter implementation") that fires only when one or more triggers in §4.3 is met.** That phase exists in the manifest in spirit; this memo is the hand-off if it ever needs to be authored.
 
-The formal record of this decision lives in [ADR-003](../wiki/Architecture-Decisions/ADR-003-mcp-gateway-substrate-decision.md).
+The formal record of this decision lives in [ADR-003](../wiki/ADR-003-mcp-gateway-substrate-decision.md).

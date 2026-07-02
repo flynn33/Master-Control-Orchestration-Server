@@ -69,7 +69,7 @@ packages/
 CMakeUserPresets.json
 
 # Historical autonomous-session workspace — kept untracked entirely so no
-# AI-scratch artifacts can slip into the repo. If you need a throwaway work
+# Local scratch artifacts can slip into the repo. If you need a throwaway work
 # area on your clone, this directory is still honored locally but nothing
 # inside it is ever committed.
 .claude-work/
@@ -93,3 +93,14 @@ CMakeUserPresets.json
 .vscode/*
 !.vscode/tasks.json
 !.vscode/launch.json
+
+# Claude Code local-only state. settings.local.json is machine-specific;
+# .claude/mcp-state/ holds runtime state (memory, sqlite, pids, logs) and is
+# never canonical source. pool-policy.json and pool0.json are the declared
+# seed fixtures and stay tracked; regenerate mcos-memory.json with
+# `py -3 .claude/scripts/seed-memory.py`.
+.claude/settings.local.json
+.claude/state/
+.claude/mcp-state/*
+!.claude/mcp-state/pool-policy.json
+!.claude/mcp-state/pool0.json

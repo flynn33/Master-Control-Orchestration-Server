@@ -83,4 +83,4 @@ PHASE-10 lifted the `noBumpUntilPhaseTen: true` rule from `handoff/realignment/m
 
 - [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode.md)
 - [Release Gate](Release-Gate.md)
-- [ADR-002](../Architecture-Decisions/ADR-002-gateway-first-mcp-realignment.md) — sections 10 (CI gate), 11 (vendoring)
+- [ADR-002](ADR-002-gateway-first-mcp-realignment.md) — sections 10 (CI gate), 11 (vendoring)

@@ -116,6 +116,6 @@ This ADR is docs-only. No runtime, no test, no schema, no contract changes. The 
 - [ADR-002 §11](ADR-002-gateway-first-mcp-realignment.md) — vendoring rules
 - [docs/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/implementation/PHASE-11-NATIVE-GATEWAY-EVALUATION.md) — full evaluation memo
 - [handoff/realignment/PHASE-11-native-gateway-option.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/PHASE-11-native-gateway-option.md) — phase file
-- [handoff/realignment/PHASE-02-completion-report.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/../handoff/realignment/PHASE-02-completion-report.md) — adapter spike
+- [handoff/realignment/PHASE-02-completion-report.md](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/docs/archive/realignment-release-reports/PHASE-02-completion-report.md) — adapter spike
 - [Packaging-and-Gateway-Binary](Packaging-and-Gateway-Binary) — operator guidance for the supervised path
 - [Gateway](Gateway) — current substrate behavior, native HTTP.sys configuration, stdio bridge

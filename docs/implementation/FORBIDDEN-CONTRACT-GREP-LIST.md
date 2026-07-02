@@ -339,7 +339,7 @@ Expected matches:
 - `src/MasterControlBootstrapper/main.cpp:637` — `runProcess` (no captured I/O; PHASE-10 known-issue, see comment at the call site).
 - `src/MasterControlBootstrapper/main.cpp:690` — `runProcessCapture` (classic single-pipe deadlock risk; PHASE-10 known-issue, see comment at the call site).
 
-These two pre-existing sites are flagged with `// PHASE-10 known-issue:` source comments and are listed in `handoff/realignment/PHASE-10-completion-report.md` deferred work. Any **new** match outside these two lines is a regression.
+These two pre-existing sites are flagged with `// PHASE-10 known-issue:` source comments and are listed in `docs/archive/realignment-release-reports/PHASE-10-completion-report.md` deferred work. Any **new** match outside these two lines is a regression.
 
 `WorkerSupervisor` and `NativeHttpSysGatewayAdapter` legitimately wait without timeout for their long-running supervised processes — Job Object containment (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) owns the kill path, and they don't appear in this grep because they don't call `WaitForSingleObject` on supervised children.
 

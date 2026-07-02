@@ -69,7 +69,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo MCOS gate: read CLAUDE.md, manifest.json, and active phase file before editing."
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .claude/scripts/repository-preflight.ps1"
           }
         ]
       }
@@ -80,7 +80,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo MCOS pre-edit gate: confirm active phase scope, file-by-file plan, and validation path."
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .claude/scripts/pre-edit-scope-gate.ps1"
           }
         ]
       }
@@ -90,7 +90,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo MCOS stop gate: include files changed, validation results, risks, and next phase status."
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File .claude/scripts/session-stop-report-gate.ps1"
           }
         ]
       }

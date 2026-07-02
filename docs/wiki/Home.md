@@ -1,13 +1,13 @@
 # Master Control Orchestration Server — Operator Wiki
 
-![version](https://img.shields.io/badge/version-v0.10.11-00f6ff?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--05--11-031018?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.11.0--alpha.3-00f6ff?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--07--02-031018?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-complete-1cf2c1?style=flat-square)
 ![purpose](https://img.shields.io/badge/purpose-internal%20tool-5a00e8?style=flat-square)
 
 Internal-tool documentation. Use this wiki to install MCOS, configure it, run it day to day, and use each feature. Architecture and decisions live at the back as reference for when something is not behaving the way it should.
 
-> **v0.10.11 sits on top of the v0.7.0 production architecture.** the legacy external gateway was retired in v0.9.0 — the only shipping gateway substrate is now the in-process Windows-native HTTP.sys adapter. The v0.9.x and v0.10.x lines added the Supervisor Agent Assignment Wizard (operator picks one supervisor model — `chatgpt` / `claude` / `grok` — and MCOS issues a LAN-routable config the client uses to bind), a footer-style tile-grid renderer used by Telemetry + Runtime + the cross-tab SUB-AGENT GRID, persistent Diagnostics logging, a hot-deploy helper (`scripts\Deploy-LocalLive.ps1`), and pool orchestration scaffolding under `.claude/`.
+> **v0.11.0-alpha.3 sits on top of the v0.7.0 production architecture.** The legacy external gateway was retired in v0.9.0 — the only shipping gateway substrate is the in-process Windows-native HTTP.sys adapter. The v0.9.x and v0.10.x lines added the Supervisor Agent Assignment Wizard (operator picks one supervisor model — `chatgpt` / `claude` / `grok` — and MCOS issues a LAN-routable config the client uses to bind), a footer-style tile-grid renderer used by Telemetry + Runtime + the cross-tab SUB-AGENT GRID, persistent Diagnostics logging, a hot-deploy helper (`scripts\Deploy-LocalLive.ps1`), and pool orchestration scaffolding under `.claude/`. The v0.11.0 alpha line completes the PHASE-14 diagnostics module end-to-end (SQLite-backed store, MCP plugin tools, WinUI Shell surface, browser dashboard tab), adds optional TLS on the MCP gateway and admin listener, and adds UDP beacon payload signing.
 
 ---
 
@@ -101,12 +101,12 @@ These pages explain why MCOS works the way it does. Read when something is not b
 
 | Field | Value |
 |---|---|
-| Version | `v0.10.11` |
-| Released | `2026-05-11` |
-| Theme | LAN MCP Gateway + Supervisor Agent Assignment Wizard + footer-style tile-grid shell |
-| Tag | [`v0.10.11`](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/v0.10.11) |
+| Version | `v0.11.0-alpha.3` |
+| Released | `2026-07-02` |
+| Theme | PHASE-14 diagnostics complete (Slices B–E) + security hardening (beacon signing, admin-listener TLS, cert auto-rotation) + 2026-06 bug campaign |
+| Tag | `v0.11.0-alpha.3` — GitHub Release cut pending the Windows Build, Test, and Package gate on the Windows host |
 | Gateway substrate | `native` (in-process Windows HTTP.sys) — only shipping substrate as of v0.9.0. the legacy external gateway was retired per operator directive. |
 | Supervisor wizard | Operator selects one of `chatgpt` / `claude` / `grok`; MCOS issues a LAN-routable config bundle the supervisor client uses to bind. Lifecycle off → config_generated → pending_connection → connected → disconnected \| revoked. |
 | Boot self-tests | 39 probes (was ~30 at v0.7.0). Failures dual-emit to the persistent Diagnostics log. |
-| Scheduled next | v1.0.0+ candidates: CLU Phase 2/3 (`enforceAction` wiring), PHASE-14 DiagnosticsSectionControl, telemetry log rotation, tile-grid expand-on-click. |
+| Scheduled next | v1.0.0+ candidates: PHASE-13 Win2D / Direct2D shell rendering, per-pass self-test rows in the persistent Diagnostics log (opt-in), app-layer auth for the retail build, end-to-end LAN client integration test. |
 | Repository | [Master-Control-Orchestration-Server](https://github.com/flynn33/Master-Control-Orchestration-Server) |

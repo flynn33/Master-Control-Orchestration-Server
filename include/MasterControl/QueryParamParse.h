@@ -81,7 +81,7 @@ inline std::string extractQueryParam(std::string_view query,
 // value is empty). Returns an empty string when no candidate is
 // present at all.
 //
-// Canonical-wins semantics (v0.11.0 hardening per Copilot review):
+// Canonical-wins semantics (v0.11.0 hardening per code review):
 // `?max=&limit=10` returns "" because the first candidate ("max")
 // is present in the query string -- even though its value is
 // empty. Pre-hardening behaviour skipped present-empty candidates

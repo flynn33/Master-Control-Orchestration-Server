@@ -139,7 +139,7 @@ Write-Host "    IP SANs:  $($ipSans -join ', ')"
 # -- 2. Generate self-signed cert in LocalMachine\My ----------------------
 # Reuse an existing cert with the same subject ONLY when it still covers
 # the current set of DNS + IP SANs AND has at least 90 days of validity
-# left. Pre-hardening (Copilot review) we reused any same-subject cert
+# left. Pre-hardening (code review) we reused any same-subject cert
 # blindly -- on hosts that gained a new LAN IP via DHCP / VPN / interface
 # change since the last run, that cert lacked the new IP SAN and strict
 # clients failed validation against `192.168.x.y is not in the SAN list`.
