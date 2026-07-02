@@ -22,6 +22,34 @@ Configured in `.mcp.json` at the project root. Claude Code loads them at session
 Verified launch (2026-05-08): sequential-thinking, filesystem, and sqlite all spawn cleanly via npx on this host.
 Verified launch (2026-05-10): mcos-watcher initialize + tools/list + watch_start + watch_list all return valid JSON-RPC; MCOS service responds 200 on `:7300/api/health` so mcos-bridge has a live target.
 
+### Reproducing the MCP setup (Windows)
+
+`.mcp.json` is Windows-first by design: the `py -3` entries need the Python launcher (ships with the python.org installer) and the `npx` entries need Node 18+. Nothing else is required — the npx servers self-install on first launch, and the project-local Python servers have no third-party dependencies. After editing `.mcp.json`, restart the Claude Code session.
+
+### Local state policy (`.claude/mcp-state/`)
+
+`.claude/mcp-state/` is the runtime state directory. Everything in it is ignored by git **except two declared seed fixtures**:
+
+| File | Status | Reset |
+|---|---|---|
+| `pool-policy.json` | Tracked seed fixture — the declared pool caps table below | Edit and restart the session |
+| `pool0.json` | Tracked seed fixture — initial pool definition | Edit and restart the session |
+| `mcos-memory.json` | Ignored runtime state | Regenerate with `py -3 .claude/scripts/seed-memory.py` |
+| `mcos-orchestration.sqlite` | Ignored runtime state | Created by the `sqlite` MCP server on first use |
+| `*.pid`, `*.log` | Ignored runtime state | Recreated by `pool-init.ps1` / `pool-sweeper.ps1` |
+
+`register-pools.ps1` lives in `.claude/scripts/` (it is a script, not state). `.claude/settings.local.json` is machine-local and ignored; copy `.claude/settings.local.example.json` to create it.
+
+### Session hooks (enforcing)
+
+`.claude/settings.json` wires three enforcing hooks under `.claude/scripts/`; each fails non-zero when its rule is violated instead of echoing a reminder:
+
+| Hook | Script | Enforces |
+|---|---|---|
+| `UserPromptSubmit` | `repository-preflight.ps1` | CLAUDE.md / AGENTS.md / VERSION.json / manifest.json exist and parse; protected attribution-guard paths present |
+| `PreToolUse` (Write/Edit/MultiEdit) | `pre-edit-scope-gate.ps1` | Protected attribution-guard paths are read-only; product-source edits require a file-by-file plan at `.claude/state/scope-plan.md` |
+| `Stop` | `session-stop-report-gate.ps1` | A session cannot end with uncommitted changes unless `.claude/state/stop-report.md` records Files changed / Validation / Risks |
+
 ### Capabilities provided by built-in tools / system MCPs (no project config needed)
 
 These items from the requested orchestration list do not need project-level MCP entries because they are already available through Claude Code's built-in tools or the user-global plugin set:
