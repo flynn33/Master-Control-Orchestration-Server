@@ -166,7 +166,7 @@ Each v0.6.x point release is hand-authored — the [`VERSION.json`](VERSION.json
 | PHASE-12 (follow-up) | Stdio bridge, real `tools/list` aggregation, real `tools/call` forwarding, URL ACL | v0.6.10 |
 | PHASE-13 | Win2D / Direct2D shell rendering | scheduled v0.7.x (visual polish, not architecture) |
 
-Each architectural phase has a written completion report in [`handoff/realignment/`](handoff/realignment/).
+Each architectural phase has a written completion report; historical phase completion reports and per-release reports are archived under [`docs/archive/realignment-release-reports/`](docs/archive/realignment-release-reports/), while the active phase plans and current-release reports stay in [`handoff/realignment/`](handoff/realignment/).
 
 ---
 
@@ -268,7 +268,8 @@ master-control-dashboard-main/
 │   ├── wiki/                          # Maintainer docs (mirror of GitHub wiki)
 │   └── implementation/                # Architecture, schemas, drift inventory,
 │                                      # FORBIDDEN-CONTRACT grep list
-├── handoff/realignment/               # Phase manifests + completion reports
+├── handoff/realignment/               # Phase plans, manifest, current release reports
+├── docs/archive/                      # Historical remediation, release, and proof reports
 ├── Forsetti-Framework-Windows-main/   # Vendored Forsetti — sealed by ADR-002 §11
 └── .github/workflows/                 # CI (windows-build-test-package, release,
                                        # forsetti-compliance, ai-contributor-guard)

@@ -98,7 +98,7 @@ The shell binary `MasterControlShell.exe` and the bootstrapper/launcher binaries
 - `CHANGELOG.md` lines 437–460, 537, 560, 572, 582–583, 594–595, 598, 687: version-history entries describing the provider-era removal.
 - `VERSION.json` lines 17, 100, 115, 157, 170–171, 185–186, 189, 291: provider-era diary entries.
 - `docs/wiki/Versions.md` lines 35–36, 116–119, 162: removed-surfaces summary.
-- `plans/PROOF-OF-WORKING/03-command-stream.md`, `08-starter-workflows.md`, `09-sub-agents.md`, `11-lan-client-end-to-end.md`, `17-soak-stability.md`, `plans/API-PROBE-RESULTS.md`, `plans/FEATURE-AUDIT.md`, `plans/PROOF-OF-WORKING.md`, `plans/remediation/01-gut-and-rebuild.md`, `plans/remediation/02-removal-inventory.md`: pre-removal planning evidence.
+- `docs/archive/proof-of-working/03-command-stream.md`, `08-starter-workflows.md`, `09-sub-agents.md`, `11-lan-client-end-to-end.md`, `17-soak-stability.md`, `plans/API-PROBE-RESULTS.md`, `plans/FEATURE-AUDIT.md`, `plans/PROOF-OF-WORKING.md`, `docs/archive/remediation/01-gut-and-rebuild.md`, `docs/archive/remediation/02-removal-inventory.md`: pre-removal planning evidence.
 - `docs/wiki/Architecture-Decisions/ADR-001-lan-client-control-plane.md`: the ADR that locked the removal decision.
 
 ## Verification commands (post-PHASE-01)

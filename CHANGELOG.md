@@ -603,7 +603,7 @@ The final phase of the rebuild. Wiki pages catch up to the new architecture, an 
   - [`docs/wiki/Privileges.md`](docs/wiki/Privileges.md) — the nine boolean flags, gate sites, autonomous-mode bypass, capability-driven privilege bundles.
   - [`docs/wiki/Client-Config-Bundle.md`](docs/wiki/Client-Config-Bundle.md) — schemaVersion-1.0 bundle field reference, agent consumption flow, re-issue triggers.
   - [`docs/wiki/Governance.md`](docs/wiki/Governance.md) — Forsetti-aligned doctrine, the two-stage gate, all 15 action kinds, default outcomes, autonomous-mode bypass, the maintainer approval queue.
-  - [`plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md`](plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md) — 13-step verification recipe with two simulated LAN clients (alpha autonomous, bravo no-privileges) hitting create/discover/deny/disable flows. Pass criteria and JSON-receipt instructions included so a maintainer can convert the recipe into a captured proof on their host.
+  - [`plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md`](docs/archive/proof-of-working/11-lan-client-end-to-end.md) — 13-step verification recipe with two simulated LAN clients (alpha autonomous, bravo no-privileges) hitting create/discover/deny/disable flows. Pass criteria and JSON-receipt instructions included so a maintainer can convert the recipe into a captured proof on their host.
 - New badges on `Home.md` reflecting `v0.5.0`, 16 modules, the LAN Client Control Plane summary.
 
 #### Rewritten

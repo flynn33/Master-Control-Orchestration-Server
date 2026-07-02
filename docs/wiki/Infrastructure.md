@@ -255,7 +255,7 @@ For the LAN client control plane use case, a single host is the right answer. AI
 | Repair | ✅ Acceptance harness | Re-registers service, replaces binaries |
 | Validate | ✅ Acceptance harness | Service running, ports bound, modules loaded |
 | Upgrade-from-legacy on Server Core | ⚠ untested | Server Core is unsupported anyway |
-| LAN client end-to-end | ⚠ recipe captured, live receipt pending | See `plans/PROOF-OF-WORKING/11-lan-client-end-to-end.md` |
+| LAN client end-to-end | ⚠ recipe captured, live receipt pending | See `docs/archive/proof-of-working/11-lan-client-end-to-end.md` |
 
 ---
 
