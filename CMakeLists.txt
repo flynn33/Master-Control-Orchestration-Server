@@ -233,7 +233,7 @@ install(
     DESTINATION "."
 )
 
-# v0.11.0-alpha.2 (Copilot-review-hardened): ship the operator-side TLS
+# v0.11.0-alpha.2 (review-hardened): ship the operator-side TLS
 # provisioning + rollback scripts in the MSI so post-install instructions
 # like `scripts\Configure-LocalServerCert.ps1` actually find the file under
 # `C:\Program Files\Master Control Orchestration Server\scripts\`.

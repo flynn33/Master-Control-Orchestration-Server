@@ -256,7 +256,7 @@ void TelemetrySectionControl::ApplySnapshot(const ::MasterControlShell::ShellSna
     // have no saturation percentage to overlay -- PDH gives us bytes/sec,
     // not a saturation ratio against an unknown link capacity.
     //
-    // Copilot-review-hardened: pre-hardening this called formatTraffic()
+    // Review-hardened: pre-hardening this called formatTraffic()
     // which renders "TX <raw bytes> B/s | RX <raw bytes> B/s" -- not the
     // KB/s/MB/s the operator expects to see and not consistent with the
     // adjacent TX/RX value tiles in the Live Traffic section. Switching

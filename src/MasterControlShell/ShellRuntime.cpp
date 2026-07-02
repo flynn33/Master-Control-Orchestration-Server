@@ -110,7 +110,7 @@ std::string narrowFromWide(const std::wstring& input) {
     return output;
 }
 
-// v0.11.0-alpha.3 (Copilot review): JSON string-literal escaper for the
+// v0.11.0-alpha.3 (code review): JSON string-literal escaper for the
 // hand-built request bodies in this TU (ShellRuntime does not pull in
 // nlohmann). Escapes every character JSON requires -- the two quote/
 // backslash specials PLUS the C0 control characters (\b \f \n \r \t and
@@ -3321,7 +3321,7 @@ bool ShellRuntime::RevokeSupervisor(const std::wstring& reason,
     if (reason.empty()) {
         body = "{}";
     } else {
-        // v0.11.0-alpha.3 (Copilot review): full JSON escaping via
+        // v0.11.0-alpha.3 (code review): full JSON escaping via
         // jsonEscapeInner. Pre-fix only `\` and `"` were escaped, so a
         // maintainer reason containing a newline/tab/control character
         // produced an invalid body the revoke route would reject.
@@ -3506,7 +3506,7 @@ ShellDiagnosticsExportResult ShellRuntime::FetchDiagnosticsExport(const std::wst
 ShellDiagnosticsClearResult ShellRuntime::ClearDiagnostics(const std::wstring& reason) const {
     ShellDiagnosticsClearResult out;
     const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
-    // Body: optional audited reason. v0.11.0-alpha.3 (Copilot review):
+    // Body: optional audited reason. v0.11.0-alpha.3 (code review):
     // full JSON escaping via jsonEscapeInner so a reason carrying a
     // newline/tab/control character produces valid JSON the clear route
     // can parse (pre-fix only `\` and `"` were escaped).

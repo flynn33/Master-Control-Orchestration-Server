@@ -310,7 +310,7 @@ inline void performRotationLocked(const std::filesystem::path& filePath) {
     std::error_code ec;
     auto rotated = filePath;
     rotated += ".1";
-    // v0.11.0 (Copilot review fix): preserve the prior rotated file
+    // v0.11.0 (code review fix): preserve the prior rotated file
     // unless the new rotation succeeds. Pre-v0.11.0 the function
     // removed <name>.1 BEFORE renaming the live file; if the rename
     // then failed (another reader holds the live handle on Windows,

@@ -5,7 +5,7 @@
 // DiagnosticsAggregator.h - testable helpers backing the v0.11.0
 // PHASE-14 Slice A /api/diagnostics/* HTTP surface.
 //
-// Pre-v0.11.0 (per Copilot review on PR #7) the aggregation logic
+// Pre-v0.11.0 (per code review on PR #7) the aggregation logic
 // lived inline as a lambda inside the route handler in
 // MasterControlApp/MasterControlRuntime.cpp. That made the new
 // public API surface impossible to cover with the existing custom

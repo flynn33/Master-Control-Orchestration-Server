@@ -69,7 +69,7 @@ packages/
 CMakeUserPresets.json
 
 # Historical autonomous-session workspace — kept untracked entirely so no
-# AI-scratch artifacts can slip into the repo. If you need a throwaway work
+# Local scratch artifacts can slip into the repo. If you need a throwaway work
 # area on your clone, this directory is still honored locally but nothing
 # inside it is ever committed.
 .claude-work/
