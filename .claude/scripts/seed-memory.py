@@ -69,47 +69,47 @@ def main():
 
     # ---------------- Phase state ----------------
     upsert_phase(state, "PHASE-00", "complete", "d8758ac",
-                 "handoff/realignment/PHASE-00-completion-report.md",
+                 "docs/archive/realignment-release-reports/PHASE-00-completion-report.md",
                  deferred=[],
                  notes="Repository baseline + ADR-002 + drift inventory + removal map + grep list. Docs only.")
     upsert_phase(state, "PHASE-01", "complete", "a784ffb",
-                 "handoff/realignment/PHASE-01-completion-report.md",
+                 "docs/archive/realignment-release-reports/PHASE-01-completion-report.md",
                  deferred=["WinUI shell residual cleanup"],
                  notes="Provider-era removal already mostly done (ADR-001); only WinUI shell had residual references. ~1100 lines net deletion.")
     upsert_phase(state, "PHASE-02", "complete", "86695c3",
-                 "handoff/realignment/PHASE-02-completion-report.md",
+                 "docs/archive/realignment-release-reports/PHASE-02-completion-report.md",
                  deferred=[],
                  notes="IMcpGateway + supervised-mock fallback. Gateway HTTP routes.")
     upsert_phase(state, "PHASE-03", "complete", "6f37cf0",
-                 "handoff/realignment/PHASE-03-completion-report.md",
+                 "docs/archive/realignment-release-reports/PHASE-03-completion-report.md",
                  deferred=[],
                  notes="DNS-SD service registration + /.well-known/mcos.json + /api/discovery + UDP beacon + AppConfiguration.instanceId.")
     upsert_phase(state, "PHASE-04", "complete", "f2d51bc",
-                 "handoff/realignment/PHASE-04-completion-report.md",
+                 "docs/archive/realignment-release-reports/PHASE-04-completion-report.md",
                  deferred=["ChatGPT connector-edge companion utility binary"],
                  notes="OnboardingProfile types + /api/onboarding/{clientType} for claude-code/codex/grok/chatgpt/generic-mcp.")
     upsert_phase(state, "PHASE-05", "complete", "aa4087a",
-                 "handoff/realignment/PHASE-05-completion-report.md",
+                 "docs/archive/realignment-release-reports/PHASE-05-completion-report.md",
                  deferred=[],
                  notes="GovernanceBundleService + bundle distribution routes + bcrypt link + Forsetti compliance script update (6 stale assertions retired).")
     upsert_phase(state, "PHASE-06", "complete", "c8077f0",
-                 "handoff/realignment/PHASE-06-completion-report.md",
+                 "docs/archive/realignment-release-reports/PHASE-06-completion-report.md",
                  deferred=["Real per-instance telemetry", "Pool persistence across restarts", "End-to-end pool spawn smoke"],
                  notes="WorkerSupervisor + Job Object containment + 7-state lifecycle + pool admin routes. (std::max) parenthesization needed for Windows.h max() macro.")
     upsert_phase(state, "PHASE-07", "complete", "0cb9b48",
-                 "handoff/realignment/PHASE-07-completion-report.md",
+                 "docs/archive/realignment-release-reports/PHASE-07-completion-report.md",
                  deferred=["Auto-fail-leases-on-failed-instance sweeper", "Multi-threaded scale-out load test"],
                  notes="ILeaseRouter + sticky-session for stateful + least-loaded for stateless + same-type scale-out. (std::numeric_limits<int>::max)() parenthesization.")
     upsert_phase(state, "PHASE-08", "complete", "228e944",
-                 "handoff/realignment/PHASE-08-completion-report.md",
+                 "docs/archive/realignment-release-reports/PHASE-08-completion-report.md",
                  deferred=["Auto-fail-leases sweeper", "PDH/DXGI host enrichment", "Heartbeat-decay to Stale presence", "End-to-end heartbeat scenario test"],
                  notes="ITelemetryAggregator + ClientHeartbeat with -1.0 unavailable sentinel + 1024-event ring + 4 telemetry routes. (std::min) parenthesization for Windows.h min() macro.")
     upsert_phase(state, "PHASE-09", "complete", "c241440",
-                 "handoff/realignment/PHASE-09-completion-report.md",
+                 "docs/archive/realignment-release-reports/PHASE-09-completion-report.md",
                  deferred=["Browser-side test harness (formatMetric unit + Playwright)", "WinUI shell realignment", "Pool CRUD UI", "SSE push for telemetry events"],
                  notes="Tron dashboard realigned to gateway-first. 11 destinations. formatMetric() honesty helper. DASHBOARD-ROUTE-MAP.md created.")
     upsert_phase(state, "PHASE-10", "complete", "d98b074",
-                 "handoff/realignment/PHASE-10-completion-report.md",
+                 "docs/archive/realignment-release-reports/PHASE-10-completion-report.md",
                  deferred=["Bootstrapper INFINITE-wait rewrite (runProcess + runProcessCapture)", "Install-use-uninstall round-trip on clean VM", "README full-badge expansion"],
                  notes="Windows release gate closed. release.yml verifies same-SHA windows-build-test-package run before publishing. VERSION.json bumped 0.5.0 -> 0.6.0.")
     upsert_phase(state, "PHASE-11", "pending", "", "",

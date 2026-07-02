@@ -35,7 +35,8 @@ foreach ($file in $files) {
     if ([string]::IsNullOrWhiteSpace($rawTarget)) { continue }
     if ($rawTarget.StartsWith('#')) { continue }
     if ($rawTarget -match '^[a-zA-Z][a-zA-Z0-9+.-]*:') { continue }
-    $target = $rawTarget
+    # Strip an optional CommonMark link title: [text](path "Title") / (path 'Title')
+    $target = $rawTarget -replace '\s+("[^"]*"|''[^'']*'')\s*$', ''
     if ($target.StartsWith('<') -and $target.Contains('>')) {
       $target = $target.Substring(1, $target.IndexOf('>') - 1)
     }

@@ -17,22 +17,26 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot (Join-Path '..' '..'))).Path
 
+$filePath = $null
 try {
     $payload = [Console]::In.ReadToEnd() | ConvertFrom-Json
-} catch {
-    # Malformed payload: do not block, but say so.
-    [Console]::Error.WriteLine("pre-edit-scope-gate: could not parse hook payload; allowing call.")
-    exit 0
-}
-
-$filePath = $null
-if ($payload.PSObject.Properties['tool_input'] -and $payload.tool_input.PSObject.Properties['file_path']) {
     $filePath = [string]$payload.tool_input.file_path
+} catch {
+    # Malformed or empty payload: do not block, but say so.
+    [Console]::Error.WriteLine("pre-edit-scope-gate: could not read a file_path from the hook payload; allowing call.")
+    exit 0
 }
 if ([string]::IsNullOrWhiteSpace($filePath)) { exit 0 }
 
-# Normalize to a repo-relative path with forward slashes for comparison.
-$normalized = $filePath -replace '\\', '/'
+# Canonicalize before comparing so '..' and '.' segments cannot dodge the
+# protected-path or scope checks, then reduce to a repo-relative path with
+# forward slashes.
+$candidate = $filePath -replace '\\', '/'
+if (-not [System.IO.Path]::IsPathRooted($candidate)) {
+    $candidate = Join-Path $repoRoot $candidate
+}
+$candidate = [System.IO.Path]::GetFullPath($candidate)
+$normalized = $candidate -replace '\\', '/'
 $rootNorm = ($repoRoot -replace '\\', '/').TrimEnd('/')
 if ($normalized.StartsWith($rootNorm, [System.StringComparison]::OrdinalIgnoreCase)) {
     $normalized = $normalized.Substring($rootNorm.Length).TrimStart('/')

@@ -1,7 +1,7 @@
 # Architecture
 
 ![governing](https://img.shields.io/badge/governing-ADR--002-5a00e8?style=flat-square)
-![version](https://img.shields.io/badge/version-v0.10.14-00f6ff?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.11.0--alpha.3-00f6ff?style=flat-square)
 ![layer](https://img.shields.io/badge/layer-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20vanilla%20JS-00f6ff?style=flat-square)
 ![toolchain](https://img.shields.io/badge/toolchain-VS2026%20%E2%80%A2%20v145%20%E2%80%A2%20CMake%204.x-5a00e8?style=flat-square)
 ![phases](https://img.shields.io/badge/architecture-PHASE--00..PHASE--14-00aacc?style=flat-square)

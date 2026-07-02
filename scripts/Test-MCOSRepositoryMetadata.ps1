@@ -57,12 +57,20 @@ if ($null -ne $version) {
     }
   }
   $readme = Read-Text 'README.md'
-  if ($readme -match 'v0\.11\.0-alpha\.1\s+—\s+first internal alpha' -and $current -ne '0.11.0-alpha.1') {
+  # Build the em dash from its code point so this script stays ASCII and the
+  # pattern survives Windows PowerShell 5.1 reading BOM-less files as ANSI.
+  $alphaOneResidue = 'v0\.11\.0-alpha\.1\s+' + [char]0x2014 + '\s+first internal alpha'
+  if ($readme -match $alphaOneResidue -and $current -ne '0.11.0-alpha.1') {
     Add-Failure 'README.md still opens with alpha.1 current-release language.'
   }
-  if ($current -ne '0.11.0-alpha.3') {
+  # Source annotations naming 0.11.0-alpha.3 are a drift problem only while
+  # that release is absent from the recorded version history. Once the
+  # release exists in history, references to it are legitimate historical
+  # record and must not fail future version bumps.
+  $historyVersions = @($version.history | ForEach-Object { [string]$_.version })
+  if ($current -ne '0.11.0-alpha.3' -and $historyVersions -notcontains '0.11.0-alpha.3') {
     $alpha3 = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force | Where-Object {
-      -not (Test-ExcludedPath $_.FullName.Substring($root.Length).TrimStart('\','/')) -and $_.Extension -in @('.cpp','.h','.hpp','.md','.json','.ps1','.txt','.xaml','.yml')
+      -not (Test-ExcludedPath $_.FullName.Substring($root.Length).TrimStart('\','/')) -and ($_.FullName -ne $PSCommandPath) -and $_.Extension -in @('.cpp','.h','.hpp','.md','.json','.ps1','.txt','.xaml','.yml')
     } | Where-Object { ([System.IO.File]::ReadAllText($_.FullName) -match 'v?0\.11\.0-alpha\.3') })
     if ($alpha3.Count -gt 0) { Add-Failure "Repository current version is $current but alpha.3 references remain in $($alpha3.Count) file(s)." }
   }
