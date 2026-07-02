@@ -85,6 +85,6 @@ Steps 1-5 must succeed before step 6. The version is therefore stamped, validate
 
 - [Packaging and Gateway Binary](Packaging-and-Gateway-Binary.md)
 - [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode.md)
-- [ADR-002](../Architecture-Decisions/ADR-002-gateway-first-mcp-realignment.md) — section 10
+- [ADR-002](ADR-002-gateway-first-mcp-realignment.md) — section 10
 - `.github/workflows/windows-build-test-package.yml`
 - `.github/workflows/release.yml`

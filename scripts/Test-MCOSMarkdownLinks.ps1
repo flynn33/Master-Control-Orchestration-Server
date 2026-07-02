@@ -19,8 +19,16 @@ $files = Get-ChildItem -LiteralPath $root -Recurse -File -Force -Filter '*.md' |
   $parts = $relative -split '[\\/]'
   -not ($parts | Where-Object { $ExcludeDirectory -contains $_ })
 }
+$blankEvaluator = [System.Text.RegularExpressions.MatchEvaluator]{
+  param($m) ($m.Value -replace '[^\r\n]', ' ')
+}
 foreach ($file in $files) {
   $text = [System.IO.File]::ReadAllText($file.FullName)
+  # Blank fenced code blocks and inline code spans (preserving offsets so
+  # reported line numbers stay accurate) so code samples that happen to
+  # contain [x](y) shapes are not treated as markdown links.
+  $text = [regex]::Replace($text, '(?ms)^[ \t]*```.*?^[ \t]*```[ \t]*$', $blankEvaluator)
+  $text = [regex]::Replace($text, '`[^`\r\n]+`', $blankEvaluator)
   $matches = $linkPattern.Matches($text)
   foreach ($match in $matches) {
     $rawTarget = $match.Groups[1].Value.Trim()
