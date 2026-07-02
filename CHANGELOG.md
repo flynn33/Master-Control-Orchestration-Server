@@ -6,14 +6,22 @@ The release-management and doc-sync GitHub agents that previously generated part
 
 ## [Unreleased]
 
-### Fixed (fix/bug-campaign-2026-06 branch)
+Nothing yet.
+
+## [0.11.0-alpha.3] - 2026-07-02
+
+### Summary
+
+**PHASE-14 completion (Slices B–E), security hardening, and the 2026-06 bug campaign.** The diagnostics module is now end-to-end — SQLite-backed store, MCP plugin tools, WinUI Shell surface, and browser dashboard tab — and three items deferred at the alpha.2 cut (beacon payload signing, admin-listener TLS, cert auto-rotation) are closed. The MSI cut for this version happens on the Windows host after the Windows Build, Test, and Package gate passes there; the VERSION.json history commit field stays `pending` until that cut.
+
+### Fixed
 
 - **Beacon advertised the admin port as `gatewayPort`.** `BeaconService::currentAdvertisement()` passed `configuration.browserPort` into both port slots of the `BeaconAdvertisement` aggregate, so `/api/beacon` (and the discovery-service-less fallback broadcast) advertised `gatewayPort=7300` instead of `cfg.mcpGateway.listenPort` (8080). Regression test added.
 - **Exports surface handed LAN clients a dead MCP URL.** `ExportService::generateExports` composed every client artifact (`.claude.json`, `Install-ClaudeGateway.ps1`, `codex-mcp.json`, openai/xai profiles) around `http://<host>:7200/mcp/gateway` — port 7200 belongs to the external gateway retired at v0.9.0 and `/mcp/gateway/{platform}` is an admin-port document route, not an MCP endpoint. Now composed from `cfg.mcpGateway.listenPort + mcpPath` (same realignment the v0.10.8 supervisor-config fix applied). The seeded `platform-gateway` inventory row likewise moved 7200 → 8080.
 - **Silent UDP beacon failures.** `sendto()`/`socket()` results were ignored; broadcast failures now emit edge-triggered diagnostics events (`beacon_broadcast_failed`/`_recovered`, `beacon_socket_create_failed`).
 - **Empty-`method` supervisor events in `/api/activity`.** The four supervisor lifecycle emit sites never stamped `evt.method` (the anomaly the 2026-04-19 operator probe flagged).
 
-### Added (fix/bug-campaign-2026-06 branch)
+### Added
 
 - Onboarding profile `governanceBundleUrl` platform-awareness: `/api/onboarding/{clientType}?platform=windows|macos|ios` (alias `?os=`); absent/unknown falls back to `windows` (the prior hardcoded value).
 - Persistent-log rotation age (14-day) + count (200k-row) bounds alongside the v0.10.21 50 MB size bound; deep checks throttled to once per 10 minutes per path.
@@ -47,13 +55,13 @@ App-layer auth remains intentionally deferred to retail — transport TLS is a s
 
 - **`McpGatewayConfiguration.tlsEnabled` / `tlsListenPort` (default 8443) / `tlsCertThumbprint`** — three new persistable fields on the gateway config block. Default state is `tlsEnabled=false`, so existing installs stay HTTP-only without operator intervention.
 - **TLS dual-bind in `NativeHttpSysGatewayAdapter::Start()`** — second `HttpAddUrlToUrlGroup(https://+:tlsListenPort/)` call after the existing HTTP prefix succeeds. Bind failures (URL ACL missing, prefix held by another process) are recorded in the gateway status message but do not fail Start — HTTP fallback continues serving.
-- **`GatewayStatus.tlsBound` / `mcpUrlTls` / `tlsCertThumbprint`** *(Copilot-review-hardened)* — runtime TLS readiness signal on the gateway status. `tlsBound=true` only when the HTTPS URL prefix registered AND `cfg.mcpGateway.tlsCertThumbprint` is non-empty (the operator's "I bound a cert" signal). Discovery + onboarding gate on this rather than the bare config flag.
+- **`GatewayStatus.tlsBound` / `mcpUrlTls` / `tlsCertThumbprint`** *(review-hardened)* — runtime TLS readiness signal on the gateway status. `tlsBound=true` only when the HTTPS URL prefix registered AND `cfg.mcpGateway.tlsCertThumbprint` is non-empty (the operator's "I bound a cert" signal). Discovery + onboarding gate on this rather than the bare config flag.
 - **`DiscoveryGateway.mcpUrlTls` / `healthUrlTls` / `tlsEnabled` / `tlsCertThumbprint`** — four new fields on the discovery doc's gateway block. Populated only when `GatewayStatus.tlsBound` is true. The thumbprint is echoed so operators can verify the wired cert via `/.well-known/mcos.json`.
 - **HTTPS-aware onboarding profile builder** — `OnboardingService::profileFor()` prefers `document.gateway.mcpUrlTls` over `mcpUrl` when TLS is bound at runtime. All five client types (`claude-code`, `codex`, `grok`, `chatgpt`, `generic`) emit `.mcp.json` snippets with `https://` URLs automatically.
-- **`scripts\Configure-LocalServerCert.ps1`** — idempotent self-signed cert provisioning. Generates cert with DNS + IP SANs in `Cert:\LocalMachine\My`, exports public key to `%PUBLIC%\Documents\Master Control Orchestration Server\certs\mcos-server-public.cer`, runs `netsh http add sslcert ipport=...`, opens firewall rule, optionally restarts the service. Prints the operator-facing `mcos.config.json` snippet. *Copilot-review-hardened:* validates existing-cert SAN coverage + 90-day renewal headroom before reuse; re-mints when the SAN set has drifted (DHCP/VPN-induced IP change) or expiry is within the renewal window.
+- **`scripts\Configure-LocalServerCert.ps1`** — idempotent self-signed cert provisioning. Generates cert with DNS + IP SANs in `Cert:\LocalMachine\My`, exports public key to `%PUBLIC%\Documents\Master Control Orchestration Server\certs\mcos-server-public.cer`, runs `netsh http add sslcert ipport=...`, opens firewall rule, optionally restarts the service. Prints the operator-facing `mcos.config.json` snippet. *Review-hardened:* validates existing-cert SAN coverage + 90-day renewal headroom before reuse; re-mints when the SAN set has drifted (DHCP/VPN-induced IP change) or expiry is within the renewal window.
 - **`scripts\Remove-LocalServerCert.ps1`** — companion rollback. Removes the binding, removes the firewall rule, optionally deletes the cert + exported `.cer`. Success message clarified to point operators at the right re-enable steps.
-- **MSI install rules for the TLS scripts** *(Copilot-review-hardened)* — `CMakeLists.txt` now installs `Configure-LocalServerCert.ps1` and `Remove-LocalServerCert.ps1` under `scripts/` in the MSI payload. Pre-hardening the scripts existed only in the repo, so post-install `scripts\Configure-LocalServerCert.ps1` invocations failed with "command not found."
-- **Discovery JSON round-trip test coverage for the TLS fields** *(Copilot-review-hardened)* — `testDiscoveryDocumentJsonRoundTrip` now exercises `gateway.tlsEnabled`, `mcpUrlTls`, `healthUrlTls`, and `tlsCertThumbprint` in both the TLS-on and TLS-off shapes so future schema/serialization changes cannot silently drop them.
+- **MSI install rules for the TLS scripts** *(review-hardened)* — `CMakeLists.txt` now installs `Configure-LocalServerCert.ps1` and `Remove-LocalServerCert.ps1` under `scripts/` in the MSI payload. Pre-hardening the scripts existed only in the repo, so post-install `scripts\Configure-LocalServerCert.ps1` invocations failed with "command not found."
+- **Discovery JSON round-trip test coverage for the TLS fields** *(review-hardened)* — `testDiscoveryDocumentJsonRoundTrip` now exercises `gateway.tlsEnabled`, `mcpUrlTls`, `healthUrlTls`, and `tlsCertThumbprint` in both the TLS-on and TLS-off shapes so future schema/serialization changes cannot silently drop them.
 - **`handoff/realignment/v0.11.0-alpha.2-tls-dual-bind.md`** — alpha.2 cut report covering scope, source changes, scripts, build pipeline notes, operator quickstart for HTTPS.
 
 ### Changed

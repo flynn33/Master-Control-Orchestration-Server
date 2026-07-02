@@ -56,7 +56,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterContro
 The MSI lands at:
 
 ```
-<REPO>\dist\packages\release\MasterControlOrchestrationServer-v0.10.14-win-x64\MasterControlOrchestrationServer-v0.10.14-win-x64.msi
+<REPO>\dist\packages\release\MasterControlOrchestrationServer-v0.11.0-alpha.3-win-x64\MasterControlOrchestrationServer-v0.11.0-alpha.3-win-x64.msi
 ```
 
 (Substitute the version from `VERSION.json` for the exact current value.)
@@ -66,7 +66,7 @@ The MSI lands at:
 ### 2. Run the installer
 
 ```powershell
-msiexec /i "<REPO>\dist\packages\release\MasterControlOrchestrationServer-v0.10.14-win-x64\MasterControlOrchestrationServer-v0.10.14-win-x64.msi"
+msiexec /i "<REPO>\dist\packages\release\MasterControlOrchestrationServer-v0.11.0-alpha.3-win-x64\MasterControlOrchestrationServer-v0.11.0-alpha.3-win-x64.msi"
 ```
 
 If you are reinstalling the same version on top of itself and notice files are not being replaced, force the file copies:

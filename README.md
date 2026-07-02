@@ -1,15 +1,15 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.11.0--alpha.2-00f6ff?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.11.0--alpha.3-00f6ff?style=flat-square)
 ![channel](https://img.shields.io/badge/channel-Internal%20Alpha-ff8c00?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--05--15-031018?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--07--02-031018?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%E2%80%A2%20Server%202022-0a1018?style=flat-square)
 ![toolchain](https://img.shields.io/badge/toolchain-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20CMake-00aacc?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
 ![governance](https://img.shields.io/badge/governance-CLU%20%2B%20Forsetti-5a00e8?style=flat-square)
 ![license](https://img.shields.io/badge/license-Proprietary-031018?style=flat-square)
 
-> **v0.11.0-alpha.1 — first internal alpha.** Packages the merged v0.11.0 tree (commit `94cad65`) as a Windows Installer MSI for LAN distribution. Closes operator-audit items 1–7 (PHASE-14 Slice A diagnostics surface + v0.10.21 supervisor/telemetry/rotation hardening + v0.10.15-20 query alias / SSE resume / JSON strictness / npx pool seeds / mcp-server-runtime routes). LAN trust posture intact — `auth=none, trust=lan` per the operator's secure-LAN directive. App-layer auth lands in the retail build. See [`handoff/realignment/v0.11.0-alpha.1-internal-alpha.md`](handoff/realignment/v0.11.0-alpha.1-internal-alpha.md) for the alpha cut report.
+> **v0.11.0-alpha.3 — PHASE-14 complete + security hardening.** Promotes the merged PHASE-14 Slice B–E / 2026-06 bug-campaign tree to the third internal alpha. The diagnostics module is end-to-end (SqliteDiagnosticsStore, six `mcos_diagnostics_*` MCP plugin tools, WinUI Shell DiagnosticsSectionControl, browser dashboard Diagnostics tab), and three alpha.2 deferrals are closed: UDP beacon payload signing, opt-in admin-listener SChannel TLS, and weekly cert auto-rotation. LAN trust posture intact — `auth=none, trust=lan` per the operator's secure-LAN directive. App-layer auth lands in the retail build. The alpha.3 MSI is cut on the Windows host once the Windows Build, Test, and Package gate passes there. See [`handoff/realignment/v0.11.0-alpha.3-release-report.md`](handoff/realignment/v0.11.0-alpha.3-release-report.md) for the promotion report.
 
 > **A Windows-native LAN MCP Gateway host.** External AI coding clients (Claude Code, Codex, Grok, ChatGPT, generic MCP) connect to one MCOS-advertised endpoint, consume server-generated onboarding profiles and CLU/Forsetti governance bundles, and operate against supervised MCP server and sub-agent worker pools. MCOS owns discovery, governance, telemetry, worker supervision, autoscaling, dashboarding, and Windows packaging.
 
@@ -87,9 +87,32 @@ Multiple AI coding clients on the same trusted LAN need to share an MCP server a
 
 ---
 
-## v0.11.0 — LAN MCP Gateway, Supervisor Wizard, Direct AI plugin slots, PHASE-14 Diagnostics Slice A
+## Current release
 
-The current release line, spanning v0.9.4 through v0.11.0 since the v0.7.0 production-milestone baseline.
+**`v0.11.0-alpha.3` — 2026-07-02**
+
+PHASE-14 completion (Slices B-E), security hardening, and the 2026-06 bug campaign. The diagnostics module is now end-to-end: SqliteDiagnosticsStore (WAL journal, schema_version migration) backs the /api/diagnostics/* routes with jsonl fallback, POST /api/diagnostics/clear is functional (clear-with-retention, replacing the Slice A 501), the mcos-bridge MCP plugin exposes six mcos_diagnostics_* tools, the WinUI Shell gains DiagnosticsSectionControl (severity/source filters, native save-dialog exports, ContentDialog-confirmed clear), and the browser dashboard gains a Diagnostics tab with Blob-download exports. Security hardening closes three items deferred at the alpha.2 cut: UDP beacon payload signing (HMAC-SHA256, key auto-generated on fresh installs; legacy configs broadcast unsigned exactly as before), opt-in SChannel TLS for the admin HTTP listener with plain-HTTP fallback on credential failure, and weekly cert auto-rotation via scripts\Register-CertAutoRotation.ps1. The bug campaign fixes the beacon gatewayPort confusion, the retired-port-7200 export artifacts, silent UDP beacon send failures, and empty-method supervisor events. This entry establishes 0.11.0-alpha.3 as the single current version; the MSI cut and commit backfill happen on the Windows host after the build/test/package gate passes there.
+
+- fix(beacon): BeaconService::currentAdvertisement() passed configuration.browserPort into both port slots of BeaconAdvertisement, so /api/beacon and the fallback broadcast advertised gatewayPort=7300 instead of cfg.mcpGateway.listenPort (8080). Regression test added.
+- fix(exports): ExportService::generateExports composed every client artifact (.claude.json, Install-ClaudeGateway.ps1, codex-mcp.json, openai/xai profiles) around http://<host>:7200/mcp/gateway - port 7200 belongs to the external gateway retired at v0.9.0. Now composed from cfg.mcpGateway.listenPort + mcpPath; the seeded platform-gateway inventory row likewise moved 7200 -> 8080.
+- fix(beacon): sendto()/socket() results are no longer ignored; broadcast failures emit edge-triggered diagnostics events (beacon_broadcast_failed/_recovered, beacon_socket_create_failed).
+- fix(telemetry): the four supervisor lifecycle emit sites now stamp evt.method, closing the empty-method /api/activity anomaly flagged by the 2026-04-19 operator probe.
+- feat(diagnostics): PHASE-14 Slice E - SqliteDiagnosticsStore (WAL, schema_version migration) + DiagnosticsService (1000-record ring + store, boot self-test persistence with last-50-boots retention, audited clear) + functional POST /api/diagnostics/clear with retention. Diagnostics routes are store-backed with jsonl fallback.
+- feat(plugin): PHASE-14 Slice B - six mcos_diagnostics_* tools (summary, events, self_test, export_markdown, export_json, clear) in the mcos-bridge MCP plugin, each mapping to the corresponding HTTP endpoint.
+- feat(shell): PHASE-14 Slice C - WinUI Shell DiagnosticsSectionControl with severity/source filters, native save-dialog exports, and ContentDialog-confirmed clear.
+- feat(dashboard): PHASE-14 Slice D - browser dashboard Diagnostics tab with Blob-download Export buttons.
+- feat(diagnostics): persistent-log rotation age (14-day) + count (200k-row) bounds alongside the v0.10.21 50 MB size bound; deep checks throttled to once per 10 minutes per path.
+- feat(security): UDP beacon payload signing - additive signature object (HMAC-SHA256 over the document's compact dump) gated on security.beaconSigningEnabled + security.beaconSigningKey; the key is auto-generated on fresh installs and legacy configs broadcast unsigned exactly as before.
+- feat(security): opt-in SChannel TLS for the admin HTTP listener (port 7300) via security.adminTlsEnabled + security.adminTlsCertThumbprint (default off). Credential failure falls back to plain HTTP with a diagnostics event so the admin surface cannot be bricked by a bad cert. Known limitation: SSE over the TLS listener returns 501; plain-HTTP SSE unchanged.
+- feat(scripts): new scripts\Register-CertAutoRotation.ps1 - weekly scheduled-task cert reuse-or-renew + cfg.mcpGateway.tlsCertThumbprint sync via POST /api/config. Ships in the MSI scripts/ payload.
+- feat(onboarding): governance bundle platform-awareness - /api/onboarding/{clientType}?platform=windows|macos|ios (alias ?os=); absent or unknown values fall back to windows (the prior hardcoded behavior).
+- feat(shell): tile-grid expand-on-click endpoint detail - tapping a compact tile reveals host:port plus the full active-client roster; hover shows host:port via tooltip.
+- docs(version): bump 0.11.0-alpha.2 -> 0.11.0-alpha.3. Backfill the v0.11.0-alpha.2 history commit to the alpha.2 cut commit (71d8f7f...) and advance last_release_commit to it.
+---
+
+## The v0.9.x – v0.11.0 release line (historical)
+
+The release line that led to the current cut, spanning v0.9.4 through v0.11.0 on top of the v0.7.0 production-milestone baseline: LAN MCP Gateway, Supervisor Wizard, Direct AI plugin slots, PHASE-14 Diagnostics Slice A.
 
 **Native HTTP.sys is the only shipping gateway substrate.** the legacy external gateway was retired before v0.9.0 per maintainer directive. `cfg.mcpGateway.type` is kept in the JSON schema for backward-compatible deserialization, but the runtime always uses the native HTTP.sys adapter. No external binary to supervise.
 
@@ -160,7 +183,7 @@ ctest --test-dir build/release -C Release --output-on-failure --timeout 300
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release -SkipBuild
 
 # 2. Install (interactive UI)
-msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.11.0-win-x64\MasterControlOrchestrationServer-v0.11.0-win-x64.msi"
+msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.11.0-alpha.3-win-x64\MasterControlOrchestrationServer-v0.11.0-alpha.3-win-x64.msi"
 
 # 3. Verify (after install)
 & "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output
