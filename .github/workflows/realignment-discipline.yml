@@ -257,3 +257,13 @@ jobs:
             exit 1
           fi
           echo "OK: all AI-attribution safeguard files present."
+
+      - name: Repository health static gates
+        shell: pwsh
+        run: |
+          # JSON corpus validity, markdown link integrity, repository
+          # metadata consistency (version authority, attribution residue
+          # outside protected paths, workflow dispatch rules), and
+          # version badge sync. Build gates run in the Windows product
+          # gate workflow, not here.
+          ./scripts/Invoke-MCOSRepositoryHealth.ps1 -RepoRoot . -SkipBuild
