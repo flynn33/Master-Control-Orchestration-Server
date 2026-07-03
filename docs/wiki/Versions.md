@@ -1,14 +1,14 @@
 # Versions
 
-![scheme](https://img.shields.io/badge/scheme-semver-00f6ff?style=flat-square)
-![current](https://img.shields.io/badge/current-v0.11.0--alpha.3-1cf2c1?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--07--02-031018?style=flat-square)
+![scheme](https://img.shields.io/badge/scheme-alpha--stage-00f6ff?style=flat-square)
+![current](https://img.shields.io/badge/current-vA3.11.0-1cf2c1?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--07--03-031018?style=flat-square)
 ![strategy](https://img.shields.io/badge/strategy-hand%20authored-5a00e8?style=flat-square)
 ![license](https://img.shields.io/badge/license-Proprietary-00aacc?style=flat-square)
 
-> **Semantic versioning, hand-authored entries.**
-> Versions are tracked in [`VERSION.json`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/VERSION.json) and tagged as GitHub Releases.
-> Strategy: `minor-on-architecture-change`. Releases are gated by the CI workflow pair (`windows-build-test-package.yml` + `release.yml`); see [Release Gate](Release-Gate).
+> **Alpha-stage versioning, hand-authored entries.**
+> While MCOS is in alpha, versions follow `<Stage><A>.<Feature>.<patch/hotfix>` — e.g. `A3.11.0` = third alpha, feature 11, patch 0. Versions are tracked in [`VERSION.json`](https://github.com/flynn33/Master-Control-Orchestration-Server/blob/main/VERSION.json); no GitHub Releases are cut during alpha.
+> Strategy: `A`-on-alpha-iteration, `Feature`-on-feature, `patch`-on-hotfix. The `windows-build-test-package.yml` CI gate validates every push and PR; see [Release Gate](Release-Gate). Pre-migration history keeps its original semver identifiers.
 
 ---
 
@@ -16,10 +16,10 @@
 
 | Field | Value |
 | --- | --- |
-| **Version** | `v0.11.0-alpha.3` |
-| **Released** | `2026-07-02` |
-| **Theme** | PHASE-14 completion (Slices B–E) + security hardening (beacon signing, admin-listener TLS, cert auto-rotation) + 2026-06 bug campaign |
-| **Tag** | `v0.11.0-alpha.3` — GitHub Release cut pending the Windows Build, Test, and Package gate on the Windows host |
+| **Version** | `vA3.11.0` |
+| **Released** | `2026-07-03` |
+| **Theme** | Alpha-stage scheme migration — same tree as `0.11.0-alpha.3`: PHASE-14 completion (Slices B–E) + security hardening (beacon signing, admin-listener TLS, cert auto-rotation) + 2026-06 bug campaign |
+| **Tag** | `vA3.11.0` — no GitHub Releases during alpha; the Windows Build, Test, and Package CI gate is the per-commit health check |
 | **Gateway substrate** | `native` (in-process Windows HTTP.sys) — only shipping substrate as of v0.9.0. the legacy external gateway retired per maintainer directive. `cfg.mcpGateway.type` is retained for back-compat deserialization only; runtime always uses the native adapter. |
 | **Live state on reference host** | 31/31 supervised worker pools healthy, 97 advertised gateway tools, 39/39 boot self-tests pass (observed on the v0.10.14 reference host) |
 | **Next** | v1.0.0+ candidates: PHASE-13 Win2D shell rendering, per-pass self-test rows in the persistent Diagnostics log (opt-in), app-layer auth for the retail build, end-to-end LAN client integration test |

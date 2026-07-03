@@ -54,6 +54,14 @@ function ConvertTo-MsiProductVersion {
     # alpha that will be replaced by the next MAJOR.MINOR.PATCH bump rather
     # than by a same-band retail build. Unknown pre-release prefixes (e.g.
     # -zeta.1) still throw.
+    # Alpha-stage scheme <Stage><A>.<Feature>.<patch/hotfix> (e.g. A3.11.0):
+    # map to ProductVersion <A>.<Feature>.<patch>.0 so successive alpha
+    # iterations (A3 -> A4), features, and patches all order correctly under
+    # Windows Installer upgrade comparison.
+    if ($Version -match '^[Aa](?<a>\d+)\.(?<feature>\d+)\.(?<patch>\d+)$') {
+        return "$($Matches['a']).$($Matches['feature']).$($Matches['patch']).0"
+    }
+
     if ($Version -match '^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:-(?:alpha|beta|rc)\.(?<build>\d+))?$') {
         $build = if ($Matches['build']) { $Matches['build'] } else { '0' }
         return "$($Matches['major']).$($Matches['minor']).$($Matches['patch']).$build"

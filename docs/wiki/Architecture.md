@@ -361,10 +361,9 @@ flowchart LR
     G --> H[Package-MasterControlOrchestrationServer.ps1]:::step
     H --> I[Build-Msi.ps1 via WiX v5]:::step
     I --> J[MSI artifact + bootstrapper preflight]:::gate
-    J --> K[Tag + GitHub Release via release.yml]:::gate
 ```
 
-The same pipeline runs in CI via `.github/workflows/windows-build-test-package.yml`. Releases gate on a successful same-SHA gate run; see [Release Gate](Release-Gate).
+The same pipeline runs in CI via `.github/workflows/windows-build-test-package.yml` on every push and PR. No GitHub releases are cut while MCOS is in alpha — the CI gate is the per-commit health check; see [Release Gate](Release-Gate).
 
 ---
 

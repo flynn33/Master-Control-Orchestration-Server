@@ -38,6 +38,9 @@ string(JSON _mc_current_version GET "${_mc_version_json}" "current_version")
 # Strip any pre-release suffix (e.g., "0.3.0-rc.1" → "0.3.0") for CMake project()
 # which only accepts MAJOR.MINOR.PATCH[.TWEAK].
 string(REGEX REPLACE "-.*$" "" _mc_base_version "${_mc_current_version}")
+# Alpha-stage scheme <Stage><A>.<Feature>.<patch/hotfix>: strip the leading
+# stage letter(s) so "A3.11.0" yields the numeric base "3.11.0".
+string(REGEX REPLACE "^[A-Za-z]+" "" _mc_base_version "${_mc_base_version}")
 string(REPLACE "." ";" _mc_version_parts "${_mc_base_version}")
 list(GET _mc_version_parts 0 _mc_ver_major)
 list(GET _mc_version_parts 1 _mc_ver_minor)

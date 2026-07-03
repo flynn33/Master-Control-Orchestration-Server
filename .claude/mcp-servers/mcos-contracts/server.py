@@ -81,8 +81,7 @@ CONTRACT_CHECKS: List[Dict[str, Any]] = [
         "id": "6.2",
         "label": "No workflow_dispatch on gating workflows",
         "args": ["git", "grep", "-nE", r"^[[:space:]]+workflow_dispatch:",
-                  "--", ".github/workflows/windows-build-test-package.yml",
-                  ".github/workflows/release.yml"],
+                  "--", ".github/workflows/windows-build-test-package.yml"],
         "expectedZero": True,
     },
     {

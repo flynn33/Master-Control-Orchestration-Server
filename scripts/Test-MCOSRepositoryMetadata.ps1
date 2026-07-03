@@ -100,7 +100,7 @@ foreach ($file in $scanFiles) {
     }
   }
 }
-foreach ($workflow in @('.github/workflows/release.yml','.github/workflows/windows-build-test-package.yml')) {
+foreach ($workflow in @('.github/workflows/windows-build-test-package.yml')) {
   $text = Read-Text $workflow
   if ($text -match '(?m)^\s*workflow_dispatch\s*:') { Add-Failure "$workflow must not contain workflow_dispatch." }
 }

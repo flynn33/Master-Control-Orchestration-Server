@@ -1,0 +1,14 @@
+# Master Control Orchestration Server - line-ending policy.
+#
+# The repository's canonical text encoding is LF. Windows checkouts with
+# core.autocrlf=true otherwise smudge the working tree to CRLF, which
+# breaks Test-MCOSMarkdownLinks.ps1 (its fence-blanking regex anchors on
+# LF-only line ends) and invalidates protected-path SHA-256 comparisons
+# against the handoff hash tables.
+* text=auto eol=lf
+
+# Binary payloads - never subject to EOL conversion.
+*.png binary
+*.ico binary
+*.bmp binary
+*.rtf binary

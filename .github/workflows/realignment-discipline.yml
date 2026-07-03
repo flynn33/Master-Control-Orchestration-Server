@@ -135,32 +135,31 @@ jobs:
           fi
           echo "OK: no McpJungleGatewayAdapter class reintroduction in src/ or include/."
 
-      - name: Rule PHASE-10 - release gate cannot be bypassed
+      - name: Rule PHASE-10 - product gate cannot be bypassed
         shell: bash
         run: |
-          # PHASE-10 release-gate hard rule: the same-SHA product
-          # gate (.github/workflows/windows-build-test-package.yml)
-          # and the tag-triggered release workflow
-          # (.github/workflows/release.yml) must not be
-          # workflow_dispatch-able. Manual dispatch would let a
-          # maintainer publish a release without a passing build, or
-          # re-run the gate from a clean state to bypass a failure.
+          # PHASE-10 hard rule (alpha-stage form): the same-SHA product
+          # gate (.github/workflows/windows-build-test-package.yml) must
+          # not be workflow_dispatch-able. Manual dispatch would let a
+          # maintainer re-run the gate from a clean state to bypass a
+          # failure. The tag-triggered release workflow was removed at
+          # A3.11.0 - no GitHub releases are cut while MCOS is in alpha.
           fail=0
-          for f in .github/workflows/windows-build-test-package.yml .github/workflows/release.yml; do
+          for f in .github/workflows/windows-build-test-package.yml; do
             if [ ! -f "$f" ]; then
               echo "::error::Required gate workflow missing: $f"
               fail=1
               continue
             fi
             if grep -E '^\s*workflow_dispatch\s*:' "$f" >/dev/null; then
-              echo "::error::$f carries a workflow_dispatch trigger. The PHASE-10 release-gate ADR forbids manual dispatch on the release/product-gate workflows; manual dispatch would let a maintainer bypass a failing CI run."
+              echo "::error::$f carries a workflow_dispatch trigger. The PHASE-10 ADR forbids manual dispatch on the product-gate workflow; manual dispatch would let a maintainer bypass a failing CI run."
               fail=1
             fi
           done
           if [ $fail -ne 0 ]; then
             exit 1
           fi
-          echo "OK: neither release workflow carries workflow_dispatch."
+          echo "OK: the product-gate workflow carries no workflow_dispatch."
 
       - name: Rule PHASE-10 - no hardcoded VS Enterprise paths
         shell: bash
