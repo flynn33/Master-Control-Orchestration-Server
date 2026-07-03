@@ -1,12 +1,31 @@
 # Changelog
 
-All notable changes to this repository are tracked here. Entries follow the [Keep a Changelog](https://keepachangelog.com/) shape: each release lists Added / Changed / Removed / Fixed / Notes. Versions follow semantic versioning; minor bumps mark architectural changes.
+All notable changes to this repository are tracked here. Entries follow the [Keep a Changelog](https://keepachangelog.com/) shape: each release lists Added / Changed / Removed / Fixed / Notes. Versions follow the alpha-stage scheme `<Stage><A>.<Feature>.<patch/hotfix>` (e.g. `A3.11.0` = third alpha, feature 11, patch 0) while MCOS is in alpha; pre-migration history below keeps its original semver identifiers.
 
 The release-management and doc-sync GitHub agents that previously generated parts of this file have been retired. CHANGELOG entries are now hand-authored alongside the change.
 
 ## [Unreleased]
 
 Nothing yet.
+
+## [A3.11.0] - 2026-07-03
+
+### Summary
+
+**Version-scheme migration and alpha-stage release-policy simplification.** Adopts the alpha-stage scheme `<Stage><A>.<Feature>.<patch/hotfix>`: `A3.11.0` (third alpha, feature 11, patch 0) re-expresses `0.11.0-alpha.3` without changing the tree it names.
+
+### Changed
+
+- **Version scheme.** `VERSION.json` `current_version` is now `A3.11.0`. `CMakeLists.txt` strips the stage prefix for `project(VERSION)` (numeric base `3.11.0`); `installer/Build-Msi.ps1` maps `A<a>.<feature>.<patch>` to MSI ProductVersion `<a>.<feature>.<patch>.0` so alpha iterations, features, and patches all order correctly for Windows Installer upgrades.
+
+### Removed
+
+- **`.github/workflows/release.yml`.** No GitHub releases are cut during alpha. The PHASE-10 no-`workflow_dispatch` rule now applies to `windows-build-test-package.yml` alone; `realignment-discipline.yml`, FORBIDDEN-CONTRACT §6.2, the mcos-contracts audit server, and `Test-MCOSRepositoryMetadata.ps1` were updated in the same change.
+- **All historical release tags** (v0.1.x–v0.4.x rc lines) — none correspond to a published release. Local tags deleted; remote deletion requires operator credentials.
+
+### Added
+
+- **`.gitattributes`** (`* text=auto eol=lf`; png/ico/bmp/rtf binary) making LF the canonical checkout encoding on every host, so Windows checkouts with `core.autocrlf=true` no longer break the markdown-link gate or protected-path hash comparisons.
 
 ## [0.11.0-alpha.3] - 2026-07-02
 

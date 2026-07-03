@@ -4,9 +4,10 @@ name: Windows Build, Test, and Package
 # This workflow is the same-SHA product gate. It MUST stay triggered by
 # `push` and `pull_request` only. DO NOT add `workflow_dispatch` here —
 # manual dispatch would let a maintainer bypass a failing CI run by re-running
-# from a clean state. The release workflow (.github/workflows/release.yml)
-# explicitly verifies that this workflow succeeded on the same SHA before
-# any artifact ships. FORBIDDEN-CONTRACT §6.2 greps for the bypass pattern.
+# from a clean state. During alpha no releases are cut (the tag-triggered
+# release workflow was removed at A3.11.0); this gate is the per-commit
+# build/test/package health check. FORBIDDEN-CONTRACT §6.2 greps for the
+# bypass pattern.
 on:
   push:
     branches: [main]
@@ -28,8 +29,7 @@ jobs:
     # Studio 18 / VS2026), which is not available on `windows-latest` (= VS2022
     # / v143). Per the GitHub runner-image roll-out for May 2026, the
     # `windows-2025` label redirects to `windows-2025-vs2026` and ships the
-    # v145 toolset preinstalled. If that label is renamed in the future, also
-    # update release.yml's runner.
+    # v145 toolset preinstalled.
     runs-on: windows-2025-vs2026
     env:
       PACKAGE_ROOT: dist/packages/release

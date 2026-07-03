@@ -303,15 +303,14 @@ git grep -nE 'Microsoft Visual Studio[/\\][0-9]+[/\\]Enterprise' \
 
 Expected: zero matches in workflows/scripts/CMake. PHASE-10 acceptance: toolchain discovery via `vswhere`/preset/`setup-msbuild`.
 
-### 6.2 No `workflow_dispatch` bypass on the product gate or release workflow (PHASE-10)
+### 6.2 No `workflow_dispatch` bypass on the product gate (PHASE-10, alpha-stage form)
 
 ```bash
 git grep -nE '^[[:space:]]+workflow_dispatch:' \
-  -- .github/workflows/windows-build-test-package.yml \
-     .github/workflows/release.yml
+  -- .github/workflows/windows-build-test-package.yml
 ```
 
-Expected: zero matches. ADR-002 §10: "Manual dispatch cannot bypass successful same-SHA build." Adding `workflow_dispatch:` as a YAML trigger to either workflow defeats the same-SHA gate. The grep matches the YAML trigger key specifically (indented, with colon) rather than the bare word, so file-level comments documenting the rule do not false-positive. The advisory workflows (`forsetti-compliance.yml`, `ai-contributor-guard.yml`) MAY have `workflow_dispatch` because they are not release-blocking; this grep is scoped to the two release-blocking workflows specifically.
+Expected: zero matches. ADR-002 §10: "Manual dispatch cannot bypass successful same-SHA build." Adding `workflow_dispatch:` as a YAML trigger to the product gate defeats the same-SHA rule. The grep matches the YAML trigger key specifically (indented, with colon) rather than the bare word, so file-level comments documenting the rule do not false-positive. The advisory workflows (`forsetti-compliance.yml`, `ai-contributor-guard.yml`) MAY have `workflow_dispatch` because they are not gate-blocking. The tag-triggered release workflow (`release.yml`) was removed at A3.11.0 — no GitHub releases are cut while MCOS is in alpha, so this grep is scoped to the product gate alone.
 
 ### 6.3 No hardcoded VS edition path in workflow files (PHASE-10)
 

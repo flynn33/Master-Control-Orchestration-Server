@@ -1,15 +1,15 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-v0.11.0--alpha.3-00f6ff?style=flat-square)
+![version](https://img.shields.io/badge/version-vA3.11.0-00f6ff?style=flat-square)
 ![channel](https://img.shields.io/badge/channel-Internal%20Alpha-ff8c00?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--07--02-031018?style=flat-square)
+![released](https://img.shields.io/badge/released-2026--07--03-031018?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%E2%80%A2%20Server%202022-0a1018?style=flat-square)
 ![toolchain](https://img.shields.io/badge/toolchain-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20CMake-00aacc?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
 ![governance](https://img.shields.io/badge/governance-CLU%20%2B%20Forsetti-5a00e8?style=flat-square)
 ![license](https://img.shields.io/badge/license-Proprietary-031018?style=flat-square)
 
-> **v0.11.0-alpha.3 — PHASE-14 complete + security hardening.** Promotes the merged PHASE-14 Slice B–E / 2026-06 bug-campaign tree to the third internal alpha. The diagnostics module is end-to-end (SqliteDiagnosticsStore, six `mcos_diagnostics_*` MCP plugin tools, WinUI Shell DiagnosticsSectionControl, browser dashboard Diagnostics tab), and three alpha.2 deferrals are closed: UDP beacon payload signing, opt-in admin-listener SChannel TLS, and weekly cert auto-rotation. LAN trust posture intact — `auth=none, trust=lan` per the operator's secure-LAN directive. App-layer auth lands in the retail build. The alpha.3 MSI is cut on the Windows host once the Windows Build, Test, and Package gate passes there. See [`handoff/realignment/v0.11.0-alpha.3-release-report.md`](handoff/realignment/v0.11.0-alpha.3-release-report.md) for the promotion report.
+> **vA3.11.0 — alpha-stage scheme migration of the PHASE-14-complete tree.** Versions now follow `<Stage><A>.<Feature>.<patch/hotfix>` while MCOS is in alpha: `A3.11.0` = third alpha, feature 11, patch 0 — the same tree previously identified as `0.11.0-alpha.3` (PHASE-14 Slices B–E, security hardening, 2026-06 bug campaign). No GitHub releases are cut during alpha; the Windows Build, Test, and Package CI gate remains the per-commit health check. The diagnostics module is end-to-end (SqliteDiagnosticsStore, six `mcos_diagnostics_*` MCP plugin tools, WinUI Shell DiagnosticsSectionControl, browser dashboard Diagnostics tab). LAN trust posture intact — `auth=none, trust=lan` per the operator's secure-LAN directive; app-layer auth lands in the retail build. See [`handoff/realignment/v0.11.0-alpha.3-release-report.md`](handoff/realignment/v0.11.0-alpha.3-release-report.md) for what this tree contains.
 
 > **A Windows-native LAN MCP Gateway host.** External AI coding clients (Claude Code, Codex, Grok, ChatGPT, generic MCP) connect to one MCOS-advertised endpoint, consume server-generated onboarding profiles and CLU/Forsetti governance bundles, and operate against supervised MCP server and sub-agent worker pools. MCOS owns discovery, governance, telemetry, worker supervision, autoscaling, dashboarding, and Windows packaging.
 
@@ -89,25 +89,15 @@ Multiple AI coding clients on the same trusted LAN need to share an MCP server a
 
 ## Current release
 
-**`v0.11.0-alpha.3` — 2026-07-02**
+**`vA3.11.0` — 2026-07-03**
 
-PHASE-14 completion (Slices B-E), security hardening, and the 2026-06 bug campaign. The diagnostics module is now end-to-end: SqliteDiagnosticsStore (WAL journal, schema_version migration) backs the /api/diagnostics/* routes with jsonl fallback, POST /api/diagnostics/clear is functional (clear-with-retention, replacing the Slice A 501), the mcos-bridge MCP plugin exposes six mcos_diagnostics_* tools, the WinUI Shell gains DiagnosticsSectionControl (severity/source filters, native save-dialog exports, ContentDialog-confirmed clear), and the browser dashboard gains a Diagnostics tab with Blob-download exports. Security hardening closes three items deferred at the alpha.2 cut: UDP beacon payload signing (HMAC-SHA256, key auto-generated on fresh installs; legacy configs broadcast unsigned exactly as before), opt-in SChannel TLS for the admin HTTP listener with plain-HTTP fallback on credential failure, and weekly cert auto-rotation via scripts\Register-CertAutoRotation.ps1. The bug campaign fixes the beacon gatewayPort confusion, the retired-port-7200 export artifacts, silent UDP beacon send failures, and empty-method supervisor events. This entry establishes 0.11.0-alpha.3 as the single current version; the MSI cut and commit backfill happen on the Windows host after the build/test/package gate passes there.
+Version-scheme migration and alpha-stage release-policy simplification. Adopts the alpha-stage scheme <Stage><A>.<Feature>.<patch/hotfix>: A3.11.0 (third alpha, feature 11, patch 0) re-expresses 0.11.0-alpha.3 without changing the tree it names. The tag-triggered GitHub release workflow (release.yml) is removed - nothing has been released during alpha and GitHub Releases are deferred until MCOS leaves alpha; windows-build-test-package.yml remains the same-SHA build/test/package CI gate on every push and PR and still must not be manually dispatchable. All historical release tags (v0.1.x-v0.4.x rc lines) are cleared because none correspond to a published release. A new .gitattributes makes LF the canonical text encoding so Windows checkouts with core.autocrlf=true no longer break the markdown-link gate or protected-path hash comparisons.
 
-- fix(beacon): BeaconService::currentAdvertisement() passed configuration.browserPort into both port slots of BeaconAdvertisement, so /api/beacon and the fallback broadcast advertised gatewayPort=7300 instead of cfg.mcpGateway.listenPort (8080). Regression test added.
-- fix(exports): ExportService::generateExports composed every client artifact (.claude.json, Install-ClaudeGateway.ps1, codex-mcp.json, openai/xai profiles) around http://<host>:7200/mcp/gateway - port 7200 belongs to the external gateway retired at v0.9.0. Now composed from cfg.mcpGateway.listenPort + mcpPath; the seeded platform-gateway inventory row likewise moved 7200 -> 8080.
-- fix(beacon): sendto()/socket() results are no longer ignored; broadcast failures emit edge-triggered diagnostics events (beacon_broadcast_failed/_recovered, beacon_socket_create_failed).
-- fix(telemetry): the four supervisor lifecycle emit sites now stamp evt.method, closing the empty-method /api/activity anomaly flagged by the 2026-04-19 operator probe.
-- feat(diagnostics): PHASE-14 Slice E - SqliteDiagnosticsStore (WAL, schema_version migration) + DiagnosticsService (1000-record ring + store, boot self-test persistence with last-50-boots retention, audited clear) + functional POST /api/diagnostics/clear with retention. Diagnostics routes are store-backed with jsonl fallback.
-- feat(plugin): PHASE-14 Slice B - six mcos_diagnostics_* tools (summary, events, self_test, export_markdown, export_json, clear) in the mcos-bridge MCP plugin, each mapping to the corresponding HTTP endpoint.
-- feat(shell): PHASE-14 Slice C - WinUI Shell DiagnosticsSectionControl with severity/source filters, native save-dialog exports, and ContentDialog-confirmed clear.
-- feat(dashboard): PHASE-14 Slice D - browser dashboard Diagnostics tab with Blob-download Export buttons.
-- feat(diagnostics): persistent-log rotation age (14-day) + count (200k-row) bounds alongside the v0.10.21 50 MB size bound; deep checks throttled to once per 10 minutes per path.
-- feat(security): UDP beacon payload signing - additive signature object (HMAC-SHA256 over the document's compact dump) gated on security.beaconSigningEnabled + security.beaconSigningKey; the key is auto-generated on fresh installs and legacy configs broadcast unsigned exactly as before.
-- feat(security): opt-in SChannel TLS for the admin HTTP listener (port 7300) via security.adminTlsEnabled + security.adminTlsCertThumbprint (default off). Credential failure falls back to plain HTTP with a diagnostics event so the admin surface cannot be bricked by a bad cert. Known limitation: SSE over the TLS listener returns 501; plain-HTTP SSE unchanged.
-- feat(scripts): new scripts\Register-CertAutoRotation.ps1 - weekly scheduled-task cert reuse-or-renew + cfg.mcpGateway.tlsCertThumbprint sync via POST /api/config. Ships in the MSI scripts/ payload.
-- feat(onboarding): governance bundle platform-awareness - /api/onboarding/{clientType}?platform=windows|macos|ios (alias ?os=); absent or unknown values fall back to windows (the prior hardcoded behavior).
-- feat(shell): tile-grid expand-on-click endpoint detail - tapping a compact tile reveals host:port plus the full active-client roster; hover shows host:port via tooltip.
-- docs(version): bump 0.11.0-alpha.2 -> 0.11.0-alpha.3. Backfill the v0.11.0-alpha.2 history commit to the alpha.2 cut commit (71d8f7f...) and advance last_release_commit to it.
+- docs(version): adopt the alpha-stage scheme <Stage><A>.<Feature>.<patch/hotfix>; current version A3.11.0 re-expresses 0.11.0-alpha.3. CMakeLists.txt strips the stage prefix for project(VERSION) (numeric base 3.11.0); installer/Build-Msi.ps1 maps A<a>.<feature>.<patch> to MSI ProductVersion <a>.<feature>.<patch>.0 so alpha iterations, features, and patches all order correctly for Windows Installer upgrades.
+- ci(release): remove .github/workflows/release.yml. No GitHub releases are cut during alpha. The PHASE-10 no-workflow_dispatch rule now applies to windows-build-test-package.yml alone; realignment-discipline.yml, FORBIDDEN-CONTRACT 6.2, the mcos-contracts audit server, and Test-MCOSRepositoryMetadata.ps1 were updated in the same change.
+- chore(tags): clear all historical release tags (v0.1.x-v0.4.x rc lines) - none correspond to a published release. Local tags deleted; remote deletion requires operator credentials.
+- build(repo): add .gitattributes (* text=auto eol=lf; png/ico/bmp/rtf binary) making LF the canonical checkout encoding on every host.
+- docs(wiki): Release-Gate.md rewritten as the alpha-stage CI-gate page; Versions.md, Home.md, Quick-Start.md, README.md, CHANGELOG.md, and Architecture.md updated to A3.11.0.
 ---
 
 ## The v0.9.x – v0.11.0 release line (historical)
