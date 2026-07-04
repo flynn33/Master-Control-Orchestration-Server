@@ -22,6 +22,7 @@
 #endif
 
 #include "MasterControl/McpGatewayAdapters.h"
+#include "MasterControl/McpToolNameResolver.h"
 #include "MasterControl/MasterControlVersion.h"
 
 #include <cctype>
@@ -1340,59 +1341,41 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
         std::string poolId;
         std::string localToolName = requestedName;
         std::vector<std::string> requiredCapabilities;
+        const auto ambiguousToolError = [&]() {
+            return buildJsonRpcError(-32602,
+                "tools/call: tool name '" + requestedName
+                + "' is exposed by multiple pools. Use the qualified "
+                  "form '<poolId>__<toolName>' returned by tools/list.", id);
+        };
+        const auto applyResolution = [&](const McpToolNameResolution& resolution) {
+            poolId.clear();
+            if (resolution.status != McpToolNameResolutionStatus::Found) {
+                return;
+            }
+            poolId = resolution.poolId;
+            localToolName = resolution.localToolName;
+            requiredCapabilities = resolution.requiredCapabilities;
+        };
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            // Pass 1: look for an exact qualified-name match.
-            for (const auto& descriptor : toolCatalogCache_) {
-                const std::string qualified = descriptor.serverName + "__" + descriptor.toolName;
-                if (qualified == requestedName) {
-                    poolId        = descriptor.serverName;
-                    localToolName = descriptor.toolName;
-                    requiredCapabilities = descriptor.requiredCapabilities;
-                    break;
-                }
+            const auto resolution =
+                McpToolNameResolver::resolve(toolCatalogCache_, requestedName);
+            if (resolution.status == McpToolNameResolutionStatus::Ambiguous) {
+                return ambiguousToolError();
             }
-            // Pass 2: if no qualified match, look for a unique unprefixed
-            // tool name across all pools.
-            if (poolId.empty()) {
-                std::string foundPool;
-                bool collision = false;
-                for (const auto& descriptor : toolCatalogCache_) {
-                    if (descriptor.toolName == requestedName) {
-                        if (!foundPool.empty() && foundPool != descriptor.serverName) {
-                            collision = true;
-                            break;
-                        }
-                        foundPool = descriptor.serverName;
-                        localToolName = descriptor.toolName;
-                        requiredCapabilities = descriptor.requiredCapabilities;
-                    }
-                }
-                if (collision) {
-                    return buildJsonRpcError(-32602,
-                        "tools/call: tool name '" + requestedName
-                        + "' is exposed by multiple pools. Use the qualified "
-                          "form '<poolId>__<toolName>' returned by tools/list.", id);
-                }
-                if (!foundPool.empty()) {
-                    poolId = foundPool;
-                }
-            }
+            applyResolution(resolution);
         }
         if (poolId.empty()) {
             // Tool catalog may be stale (no tools/list since the child started).
             // Refresh once and retry the lookup before giving up. The refresh
             // performs child stdio RPC, so it runs WITHOUT the gateway mutex.
             const auto refreshedCatalog = currentToolCatalog();
-            for (const auto& descriptor : refreshedCatalog) {
-                const std::string qualified = descriptor.serverName + "__" + descriptor.toolName;
-                if (qualified == requestedName || descriptor.toolName == requestedName) {
-                    poolId        = descriptor.serverName;
-                    localToolName = descriptor.toolName;
-                    requiredCapabilities = descriptor.requiredCapabilities;
-                    break;
-                }
+            const auto resolution =
+                McpToolNameResolver::resolve(refreshedCatalog, requestedName);
+            if (resolution.status == McpToolNameResolutionStatus::Ambiguous) {
+                return ambiguousToolError();
             }
+            applyResolution(resolution);
         }
         if (poolId.empty()) {
             return buildJsonRpcError(-32601,

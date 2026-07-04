@@ -15,6 +15,7 @@
 #include "MasterControl/DiagnosticsService.h"
 #include "MasterControl/DiagnosticsStore.h"
 #include "MasterControl/DiagnosticsTypes.h"
+#include "MasterControl/AdminRouteAuthorization.h"
 #include "MasterControl/AdminRouteRegistry.h"
 #include "MasterControl/EndpointAdvertisement.h"
 #include "MasterControl/HttpHeaderParse.h"
@@ -25,6 +26,7 @@
 #include "MasterControl/MasterControlModels.h"
 #include "MasterControl/MasterControlVersion.h"
 #include "MasterControl/McpGatewayAdapters.h"
+#include "MasterControl/McpToolNameResolver.h"
 #include "MasterControl/QueryParamParse.h"
 #include "MasterControl/SupervisorAssignment.h"
 #include "MasterControl/WorkflowReadiness.h"
@@ -338,6 +340,8 @@ bool testCapabilityMatrixDefaults() {
     const auto legacyCaps = MasterControl::capabilitiesForClient(legacy);
     ok &= expect(MasterControl::hasCapability(legacyCaps, MasterControl::kCapabilityInstallPackage),
                  "Legacy module privilege maps to install.package.");
+    ok &= expect(!MasterControl::hasCapability(legacyCaps, MasterControl::kCapabilityGovernanceModify),
+                 "Legacy module privilege does not imply governance.modify.");
     ok &= expect(MasterControl::hasCapability(legacyCaps, MasterControl::kCapabilityClientsManage),
                  "Legacy client privilege maps to clients.manage.");
     return ok;
@@ -3206,6 +3210,10 @@ bool testBridgeConfigUpdateUsesPatchRoute() {
     ok &= expect(!source.empty(), "Bridge server.py is readable from the repo root.");
     ok &= expect(source.find("_patch(\"/api/config\"") != std::string::npos,
                  "mcos_config_update patches via PATCH /api/config.");
+    ok &= expect(source.find("\"X-Confirm-Unsafe\": \"1\"") != std::string::npos,
+                 "mcos_config_update can send the unsafe-confirm header.");
+    ok &= expect(source.find("confirmUnsafe") != std::string::npos,
+                 "mcos_config_update advertises confirmUnsafe in its schema.");
     ok &= expect(source.find("_post(\"/api/config\"") == std::string::npos,
                  "No bridge tool POSTs a partial body to /api/config.");
     return ok;
@@ -3235,6 +3243,33 @@ bool testBrokenForsettiImportToolIsNotAdvertised() {
     return ok;
 }
 
+bool testBridgeGovernanceApproveRequiresConfirm() {
+    bool ok = true;
+    const auto source = readBridgeServerSource();
+    ok &= expect(source.find("_confirm_required(args, \"approve governance action\"") != std::string::npos,
+                 "Governance approve requires explicit confirmation.");
+    const auto approveSchema = source.find("(\"mcos_governance_approve\"");
+    const auto rejectSchema = source.find("(\"mcos_governance_reject\"");
+    ok &= expect(approveSchema != std::string::npos && rejectSchema != std::string::npos,
+                 "Governance approve/reject schemas are present.");
+    ok &= expect(approveSchema < rejectSchema &&
+                 source.find("\"confirm\": {\"type\": \"boolean\"}", approveSchema) < rejectSchema,
+                 "Governance approve schema advertises confirm.");
+    return ok;
+}
+
+bool testBridgeLogsTailAvoidsPowerShellPatternInterpolation() {
+    bool ok = true;
+    const auto source = readBridgeServerSource();
+    ok &= expect(source.find("Select-String -Pattern") == std::string::npos,
+                 "mcos_logs_tail no longer interpolates pattern into PowerShell.");
+    ok &= expect(source.find("deque(maxlen=count)") != std::string::npos,
+                 "mcos_logs_tail tails with Python stdlib buffering.");
+    ok &= expect(source.find("needle in line") != std::string::npos,
+                 "mcos_logs_tail filters locally by literal substring.");
+    return ok;
+}
+
 // Route-contract smoke test: every HTTP route the bridge references must
 // match an implemented backend route shape. Path parameters interpolated via
 // f-strings normalize to "*".
@@ -3243,50 +3278,24 @@ bool testBridgeRoutesMatchBackendContract() {
     const auto source = readBridgeServerSource();
     ok &= expect(!source.empty(), "Bridge server.py is readable.");
 
-    static const std::vector<std::string> kAllowedRoutes = {
-        "/api/health", "/api/dashboard", "/api/gateway/status", "/api/gateway/health",
-        "/api/gateway/tools", "/api/gateway/start", "/api/gateway/stop",
-        "/api/pools", "/api/pools/*", "/api/pools/*/leases", "/api/pools/*/saturation",
-        "/api/pools/*/scale", "/api/pools/*/drain", "/api/pools/*/remove",
-        "/api/leases/*/release",
-        "/api/telemetry/events", "/api/telemetry/clients", "/api/telemetry/gateway",
-        "/api/telemetry/heartbeat",
-        "/api/discovery", "/api/onboarding", "/api/onboarding/*",
-        "/api/governance/bundles/*", "/api/clu/approvals",
-        "/api/clu/approvals/*/approve", "/api/clu/approvals/*/reject",
-        "/api/clients", "/api/clients/*/privileges", "/api/clients/*/enable",
-        "/api/clients/*/disable",
-        "/api/config", "/api/activity",
-        "/api/forsetti/modules", "/api/forsetti/modules/state",
-        "/api/diagnostics/summary", "/api/diagnostics/events",
-        "/api/diagnostics/self-test", "/api/diagnostics/export", "/api/diagnostics/clear",
+    static const std::vector<std::pair<std::string, std::string>> kCallMarkers = {
+        {"_get(", "GET"},
+        {"_post(", "POST"},
+        {"_patch(", "PATCH"},
+        {"_delete(", "DELETE"},
     };
 
-    const auto matchesPattern = [](const std::string& route, const std::string& pattern) {
-        std::size_t r = 0;
-        std::size_t p = 0;
-        while (r < route.size() && p < pattern.size()) {
-            const auto routeSlash = route.find('/', r + 1);
-            const auto patternSlash = pattern.find('/', p + 1);
-            const std::string routeSegment = route.substr(r, (routeSlash == std::string::npos ? route.size() : routeSlash) - r);
-            const std::string patternSegment = pattern.substr(p, (patternSlash == std::string::npos ? pattern.size() : patternSlash) - p);
-            if (patternSegment != "/*" && patternSegment != routeSegment) {
-                return false;
-            }
-            if (routeSlash == std::string::npos || patternSlash == std::string::npos) {
-                return routeSlash == std::string::npos && patternSlash == std::string::npos;
-            }
-            r = routeSlash;
-            p = patternSlash;
+    const auto sampleConcreteRoute = [](std::string route) {
+        std::size_t wildcard = 0;
+        while ((wildcard = route.find('*', wildcard)) != std::string::npos) {
+            route.replace(wildcard, 1, "__route_param__");
+            wildcard += std::string("__route_param__").size();
         }
-        return r >= route.size() && p >= pattern.size();
+        return route;
     };
 
-    static const std::vector<std::string> kCallMarkers = {
-        "_get(", "_post(", "_patch(", "_delete(",
-    };
     std::size_t checkedRoutes = 0;
-    for (const auto& marker : kCallMarkers) {
+    for (const auto& [marker, method] : kCallMarkers) {
         std::size_t at = 0;
         while ((at = source.find(marker, at)) != std::string::npos) {
             std::size_t cursor = at + marker.size();
@@ -3331,21 +3340,102 @@ bool testBridgeRoutesMatchBackendContract() {
                 continue;  // helper signature or non-admin path
             }
             ++checkedRoutes;
-            bool matched = false;
-            for (const auto& pattern : kAllowedRoutes) {
-                if (matchesPattern(route, pattern)) {
-                    matched = true;
-                    break;
-                }
+            const auto concreteRoute = sampleConcreteRoute(route);
+            const auto registeredMethods = MasterControl::supportedMethodsForPath(concreteRoute);
+            const bool registered = !registeredMethods.empty();
+            const bool methodAllowed = std::find(
+                registeredMethods.begin(), registeredMethods.end(), method) != registeredMethods.end();
+            if (!registered || !methodAllowed) {
+                std::cerr << "Bridge route is not registered for " << method
+                          << ": " << route << '\n';
             }
-            if (!matched) {
-                std::cerr << "Bridge references a route with no backend contract: " << route << '\n';
-            }
-            ok &= expect(matched, "Every bridge route matches an implemented backend route.");
+            ok &= expect(registered && methodAllowed,
+                         "Every bridge route matches the typed backend route registry.");
         }
     }
     ok &= expect(checkedRoutes >= 30,
                  "Route-contract scan found the expected volume of bridge routes.");
+    return ok;
+}
+
+bool testMutatingAuthorizationGatePrecedesSupervisorDispatch() {
+    bool ok = true;
+    const auto source = readRepoTextFile(std::filesystem::path("src") / "MasterControlApp"
+                                        / "MasterControlRuntime.cpp");
+    const auto gateCall = source.find("if (auto denied = authorizeMutatingRequest())");
+    const auto supervisorSelect = source.find(
+        "if (request.method == \"POST\" && request.path == \"/api/supervisor/assignment/select\")");
+    const auto selfTestRun = source.find(
+        "if (request.method == \"POST\" && request.path == \"/api/self-tests/run\")");
+    const auto denialAudit = source.find("emitAdminActivity(*denied);");
+    ok &= expect(gateCall != std::string::npos,
+                 "The admin dispatcher invokes the mutating authorization gate.");
+    ok &= expect(supervisorSelect != std::string::npos,
+                 "The supervisor select route is present in the dispatcher.");
+    ok &= expect(selfTestRun != std::string::npos,
+                 "The self-test run route is present in the dispatcher.");
+    ok &= expect(gateCall < supervisorSelect,
+                 "Mutating authorization runs before supervisor mutation routes.");
+    ok &= expect(gateCall < selfTestRun,
+                 "Mutating authorization runs before the self-test mutation route.");
+    ok &= expect(denialAudit != std::string::npos && gateCall < denialAudit,
+                 "Pre-dispatch authorization denials are still written to the activity ring.");
+    return ok;
+}
+
+bool testAdminRouteCapabilityPolicyCoversAuditMutations() {
+    bool ok = true;
+    const auto capabilitiesFor = [](const std::string& method, const std::string& path) {
+        return MasterControl::AdminRouteCapabilityPolicy::requiredCapabilitiesForRoute(method, path);
+    };
+    const auto routeHasCapability = [&capabilitiesFor](
+        const std::string& method,
+        const std::string& path,
+        const std::string& capability) {
+        return MasterControl::hasCapability(capabilitiesFor(method, path), capability);
+    };
+
+    ok &= expect(!MasterControl::AdminRouteCapabilityPolicy::isMutatingMethod("GET"),
+                 "GET is not treated as a mutating admin method.");
+    ok &= expect(routeHasCapability(
+                     "POST",
+                     "/api/supervisor/assignment/select",
+                     MasterControl::kCapabilitySupervisorAssign),
+                 "Supervisor assignment selection requires supervisor.assign.");
+    ok &= expect(routeHasCapability(
+                     "POST",
+                     "/api/self-tests/run",
+                     MasterControl::kCapabilitySetupLocalOrAdmin),
+                 "Self-test execution requires the local/admin setup capability.");
+
+    const auto moduleCaps = capabilitiesFor("POST", "/api/forsetti/modules/state");
+    ok &= expect(MasterControl::hasCapability(moduleCaps, MasterControl::kCapabilityInstallPackage),
+                 "Forsetti module state aligns with canManageModules/install.package.");
+    ok &= expect(!MasterControl::hasCapability(moduleCaps, MasterControl::kCapabilityGovernanceModify),
+                 "Forsetti module state does not require the broader governance.modify capability.");
+
+    ok &= expect(routeHasCapability(
+                     "POST",
+                     "/api/chatgpt-plugin/toggle",
+                     MasterControl::kCapabilityInstallPackage),
+                 "ChatGPT plugin toggle requires install.package.");
+    ok &= expect(routeHasCapability(
+                     "POST",
+                     "/api/grok-plugin/toggle",
+                     MasterControl::kCapabilityInstallPackage),
+                 "Grok plugin toggle requires install.package.");
+    ok &= expect(routeHasCapability(
+                     "POST",
+                     "/api/diagnostics/clear",
+                     MasterControl::kCapabilityGovernanceModify),
+                 "Diagnostics clear requires governance.modify.");
+    ok &= expect(routeHasCapability(
+                     "POST",
+                     "/api/diagnostics/clear?reason=operator",
+                     MasterControl::kCapabilityGovernanceModify),
+                 "Diagnostics clear capability lookup strips query strings.");
+    ok &= expect(capabilitiesFor("GET", "/api/diagnostics/clear").empty(),
+                 "Read-style methods do not acquire mutation capabilities.");
     return ok;
 }
 
@@ -3366,6 +3456,14 @@ bool testAdminParserAcceptsLowercaseContentLength() {
     const auto parsedMixed = MasterControl::parseContentLengthHeader(mixed);
     ok &= expect(parsedMixed.present && parsedMixed.valid && parsedMixed.value == 7,
                  "Mixed-case Content-Length with padding parses correctly.");
+    const auto duplicateSame = MasterControl::parseContentLengthHeader(
+        "POST / HTTP/1.1\r\nContent-Length: 12\r\ncontent-length: 12\r\n\r\npayload");
+    ok &= expect(duplicateSame.present && duplicateSame.valid && duplicateSame.value == 12,
+                 "Duplicate identical Content-Length values are accepted.");
+    const auto commaSame = MasterControl::parseContentLengthHeader(
+        "POST / HTTP/1.1\r\nContent-Length: 12, 12\r\n\r\npayload");
+    ok &= expect(commaSame.present && commaSame.valid && commaSame.value == 12,
+                 "Comma-combined identical Content-Length values are accepted.");
     ok &= expect(MasterControl::findHeaderValueCaseInsensitive(raw, "Content-Length") == "12",
                  "Case-insensitive header lookup returns the trimmed value.");
     return ok;
@@ -3392,6 +3490,18 @@ bool testAdminParserRejectsInvalidContentLength() {
         "POST / HTTP/1.1\r\nX-Content-Length: 5\r\n\r\n");
     ok &= expect(!boundary.present,
                  "A different header sharing the suffix does not false-positive.");
+    const auto duplicateConflict = MasterControl::parseContentLengthHeader(
+        "POST / HTTP/1.1\r\nContent-Length: 5\r\ncontent-length: 6\r\n\r\npayload");
+    ok &= expect(duplicateConflict.present && !duplicateConflict.valid,
+                 "Conflicting duplicate Content-Length headers are invalid.");
+    const auto commaConflict = MasterControl::parseContentLengthHeader(
+        "POST / HTTP/1.1\r\nContent-Length: 5, 6\r\n\r\npayload");
+    ok &= expect(commaConflict.present && !commaConflict.valid,
+                 "Conflicting comma-combined Content-Length values are invalid.");
+    const auto emptyDuplicate = MasterControl::parseContentLengthHeader(
+        "POST / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length:\r\n\r\npayload");
+    ok &= expect(emptyDuplicate.present && !emptyDuplicate.valid,
+                 "Empty duplicate Content-Length value is invalid.");
     return ok;
 }
 
@@ -3428,6 +3538,43 @@ bool testSupportedMethodsIncludesPluginRoutes() {
     return ok;
 }
 
+bool testSupportedMethodsIncludesDynamicAdminRoutes() {
+    bool ok = true;
+    const auto hasMethod = [](const std::string& path, const std::string& method) {
+        const auto methods = MasterControl::supportedMethodsForPath(path);
+        return std::find(methods.begin(), methods.end(), method) != methods.end();
+    };
+    ok &= expect(hasMethod("/api/clients/client-1", "GET"),
+                 "Single-client lookup registers GET.");
+    ok &= expect(hasMethod("/api/clients/client-1", "DELETE"),
+                 "Single-client removal registers DELETE.");
+    ok &= expect(!hasMethod("/api/clients/client-1", "POST"),
+                 "Bare client resource does not over-advertise POST.");
+    ok &= expect(hasMethod("/api/clients/client-1/disable", "POST"),
+                 "Client disable registers POST.");
+    ok &= expect(!hasMethod("/api/clients/client-1/disable", "GET"),
+                 "Client disable does not advertise GET.");
+    ok &= expect(hasMethod("/api/clients/client-1/enable", "POST"),
+                 "Client enable registers POST.");
+    ok &= expect(hasMethod("/api/clients/client-1/privileges", "POST"),
+                 "Client privilege update registers POST.");
+    ok &= expect(hasMethod("/api/clients/client-1/autonomous-mode", "POST"),
+                 "Client autonomous-mode update registers POST.");
+    ok &= expect(hasMethod("/api/clu/approvals/deferred-1/approve", "POST"),
+                 "CLU approval approve registers POST.");
+    ok &= expect(!hasMethod("/api/clu/approvals/deferred-1/approve", "GET"),
+                 "CLU approval approve does not advertise GET.");
+    ok &= expect(hasMethod("/api/clu/approvals/deferred-1/reject", "POST"),
+                 "CLU approval reject registers POST.");
+    ok &= expect(hasMethod("/api/setup/workflow-templates/basic/instantiate", "POST"),
+                 "Workflow-template instantiation registers POST.");
+    ok &= expect(!hasMethod("/api/setup/workflow-templates/basic/instantiate", "DELETE"),
+                 "Workflow-template instantiation does not advertise DELETE.");
+    ok &= expect(MasterControl::supportedMethodsForPath("/api/clients/client-1/unknown").empty(),
+                 "Unknown client sub-resources are not treated as known routes.");
+    return ok;
+}
+
 bool testWrongMethodOnKnownRouteReturns405() {
     bool ok = true;
     // Registry contract behind the dispatcher's 405 path: a known route
@@ -3451,11 +3598,86 @@ bool testWrongMethodOnKnownRouteReturns405() {
     return ok;
 }
 
+bool testPlainHttpResponsesUseSendAllLoop() {
+    bool ok = true;
+    const auto source = readRepoTextFile(std::filesystem::path("src") / "MasterControlApp"
+                                        / "MasterControlRuntime.cpp");
+    ok &= expect(source.find("static bool sendAllPlainSocket") != std::string::npos,
+                 "Plain HTTP writes use a looped send helper.");
+    ok &= expect(source.find("send(client, data.c_str()") == std::string::npos,
+                 "Plain response body is not sent with one unchecked send().");
+    ok &= expect(source.find("::send(client, data.c_str()") == std::string::npos,
+                 "Raw saturation response is not sent with one unchecked send().");
+    ok &= expect(source.find("sendAllPlainSocket(client, data.data(), data.size())") != std::string::npos,
+                 "Serialized plain responses route through sendAllPlainSocket.");
+    ok &= expect(source.find("sendAllPlainSocket(client, headerBytes.data(), headerBytes.size())")
+                 != std::string::npos,
+                 "Plain SSE headers route through sendAllPlainSocket.");
+    return ok;
+}
+
 // ---------------------------------------------------------------------------
 // Gateway/worker remediation (MCOS-004..014): session routing, lease
 // lifetime, catalog lock hygiene, registration parity, JSON-safe errors,
 // PATH-resolved worker executables, and deterministic supervisor teardown.
 // ---------------------------------------------------------------------------
+
+bool testGatewayToolNameResolverRejectsDuplicateUnqualifiedNames() {
+    bool ok = true;
+    std::vector<MasterControl::McpToolDescriptor> catalog;
+    MasterControl::McpToolDescriptor first;
+    first.serverName = "pool-a";
+    first.toolName = "echo";
+    first.requiredCapabilities = { MasterControl::kCapabilityFilesystemRead };
+    catalog.push_back(first);
+    MasterControl::McpToolDescriptor second;
+    second.serverName = "pool-b";
+    second.toolName = "echo";
+    second.requiredCapabilities = { MasterControl::kCapabilityProcessExec };
+    catalog.push_back(second);
+    MasterControl::McpToolDescriptor unique;
+    unique.serverName = "pool-c";
+    unique.toolName = "status";
+    catalog.push_back(unique);
+
+    const auto qualified = MasterControl::McpToolNameResolver::resolve(catalog, "pool-a__echo");
+    ok &= expect(qualified.status == MasterControl::McpToolNameResolutionStatus::Found,
+                 "Qualified duplicate tool name resolves.");
+    ok &= expect(qualified.poolId == "pool-a" && qualified.localToolName == "echo",
+                 "Qualified duplicate resolves to the requested pool and local name.");
+    ok &= expect(MasterControl::hasCapability(
+                     qualified.requiredCapabilities,
+                     MasterControl::kCapabilityFilesystemRead),
+                 "Qualified resolution preserves required capabilities.");
+
+    const auto ambiguous = MasterControl::McpToolNameResolver::resolve(catalog, "echo");
+    ok &= expect(ambiguous.status == MasterControl::McpToolNameResolutionStatus::Ambiguous,
+                 "Duplicate unqualified tool name is rejected as ambiguous.");
+
+    const auto uniqueResult = MasterControl::McpToolNameResolver::resolve(catalog, "status");
+    ok &= expect(uniqueResult.status == MasterControl::McpToolNameResolutionStatus::Found
+                 && uniqueResult.poolId == "pool-c",
+                 "Unique unqualified tool name resolves.");
+
+    const auto missing = MasterControl::McpToolNameResolver::resolve(catalog, "missing");
+    ok &= expect(missing.status == MasterControl::McpToolNameResolutionStatus::NotFound,
+                 "Missing tool name reports not found.");
+    return ok;
+}
+
+bool testGatewayToolsCallRefreshUsesSharedNameResolver() {
+    bool ok = true;
+    const auto source = readRepoTextFile(std::filesystem::path("src") / "MasterControlApp"
+                                        / "McpGatewayAdapters.cpp");
+    ok &= expect(source.find("McpToolNameResolver::resolve(toolCatalogCache_, requestedName)") != std::string::npos,
+                 "tools/call cached lookup uses the shared resolver.");
+    ok &= expect(source.find("McpToolNameResolver::resolve(refreshedCatalog, requestedName)") != std::string::npos,
+                 "tools/call refresh-on-miss lookup uses the shared resolver.");
+    ok &= expect(source.find("qualified == requestedName || descriptor.toolName == requestedName")
+                 == std::string::npos,
+                 "Refresh-on-miss path no longer accepts the first duplicate unqualified tool.");
+    return ok;
+}
 
 // Test double for IWorkerSupervisor: serves one pool with a configurable
 // number of Ready instances; sendStdioJsonRpc optionally blocks to simulate
@@ -4101,7 +4323,11 @@ int main() {
     ok &= testBridgeConfigUpdateUsesPatchRoute();
     ok &= testForsettiModuleBridgeUsesStateRoute();
     ok &= testBrokenForsettiImportToolIsNotAdvertised();
+    ok &= testBridgeGovernanceApproveRequiresConfirm();
+    ok &= testBridgeLogsTailAvoidsPowerShellPatternInterpolation();
     ok &= testBridgeRoutesMatchBackendContract();
+    ok &= testMutatingAuthorizationGatePrecedesSupervisorDispatch();
+    ok &= testAdminRouteCapabilityPolicyCoversAuditMutations();
     // MCP transport contract (MCOS-008).
     ok &= testMcpTransportContractMatchesDocs();
     // Admin API remediation (MCOS-011/012/015).
@@ -4109,8 +4335,12 @@ int main() {
     ok &= testAdminParserRejectsInvalidContentLength();
     ok &= testSupportedMethodsIncludesDiagnosticsRoutes();
     ok &= testSupportedMethodsIncludesPluginRoutes();
+    ok &= testSupportedMethodsIncludesDynamicAdminRoutes();
     ok &= testWrongMethodOnKnownRouteReturns405();
+    ok &= testPlainHttpResponsesUseSendAllLoop();
     // Gateway/worker remediation (MCOS-004..014).
+    ok &= testGatewayToolNameResolverRejectsDuplicateUnqualifiedNames();
+    ok &= testGatewayToolsCallRefreshUsesSharedNameResolver();
     ok &= testGatewayStickySessionRoutesSameSessionToSameInstance();
     ok &= testGatewayDifferentSessionsCanDistributeAcrossInstances();
     ok &= testGatewayStatelessCallsReleaseLeaseAfterCall();

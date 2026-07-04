@@ -31,6 +31,42 @@
 
 namespace MasterControl {
 
+inline std::vector<std::string> splitRouteSegments(const std::string& path) {
+    std::vector<std::string> segments;
+    std::size_t start = 0;
+    while (start <= path.size()) {
+        const auto slash = path.find('/', start);
+        segments.push_back(path.substr(
+            start,
+            (slash == std::string::npos ? path.size() : slash) - start));
+        if (slash == std::string::npos) {
+            break;
+        }
+        start = slash + 1;
+    }
+    return segments;
+}
+
+inline bool routePatternMatches(const std::string& path, const std::string& pattern) {
+    const auto pathSegments = splitRouteSegments(path);
+    const auto patternSegments = splitRouteSegments(pattern);
+    if (pathSegments.size() != patternSegments.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < pathSegments.size(); ++i) {
+        if (patternSegments[i] == "*") {
+            if (pathSegments[i].empty()) {
+                return false;
+            }
+            continue;
+        }
+        if (pathSegments[i] != patternSegments[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // v0.9.28 origin: enumerate the supported methods for known operator API
 // paths so an unsupported method on a known path returns 405 with an
 // Allow header per RFC 7231 §6.5.5, instead of a 404 that hides whether
@@ -172,6 +208,18 @@ inline std::vector<std::string> supportedMethodsForPath(const std::string& path)
         {"/api/supervisor/reachability-check", {"GET"}},
     };
 
+    static const std::vector<std::pair<std::string, std::vector<std::string>>> kPatterns = {
+        {"/api/setup/workflow-templates/*/instantiate", {"POST"}},
+        {"/api/clients/*", {"GET", "DELETE"}},
+        {"/api/clients/*/config", {"GET"}},
+        {"/api/clients/*/disable", {"POST"}},
+        {"/api/clients/*/enable", {"POST"}},
+        {"/api/clients/*/privileges", {"POST"}},
+        {"/api/clients/*/autonomous-mode", {"POST"}},
+        {"/api/clu/approvals/*/approve", {"POST"}},
+        {"/api/clu/approvals/*/reject", {"POST"}},
+    };
+
     static const std::vector<std::pair<std::string, std::vector<std::string>>> kPrefix = {
         // Note: longer prefixes first so "/api/setup/dependencies/" wins
         // over "/api/setup/" if both ever overlap.
@@ -179,7 +227,6 @@ inline std::vector<std::string> supportedMethodsForPath(const std::string& path)
         {"/api/governance/bundles/", {"GET"}},
         {"/api/setup/dependencies/", {"POST"}},
         {"/api/platform-services/config/", {"GET"}},
-        {"/api/clients/", {"GET", "DELETE"}},
         {"/api/leases/", {"POST"}},
         {"/api/pools/", {"GET", "POST"}},
         {"/api/telemetry/events", {"GET"}},
@@ -196,6 +243,11 @@ inline std::vector<std::string> supportedMethodsForPath(const std::string& path)
     auto exact = kExact.find(p);
     if (exact != kExact.end()) {
         return exact->second;
+    }
+    for (const auto& entry : kPatterns) {
+        if (routePatternMatches(p, entry.first)) {
+            return entry.second;
+        }
     }
     for (const auto& entry : kPrefix) {
         const auto& prefix = entry.first;

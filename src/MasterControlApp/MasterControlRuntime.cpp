@@ -28,6 +28,7 @@
 #include "MasterControl/WorkflowReadiness.h"
 #include "MasterControl/JsonStrictness.h"   // v0.10.17: dropped-top-level-keys diagnostic.
 #include "MasterControl/JsonMerge.h"        // config-safety remediation: PATCH deep merge + partial-POST detection.
+#include "MasterControl/AdminRouteAuthorization.h"
 #include "MasterControl/AdminRouteRegistry.h"  // route-drift remediation: typed method-allow registry.
 #include "MasterControl/HttpHeaderParse.h"     // Content-Length remediation: case-insensitive header parse.
 #include "MasterControl/DiagnosticsAggregator.h"  // v0.11.0 Slice A: testable aggregator + markdown renderer.
@@ -13939,6 +13940,20 @@ HttpRequest SimpleHttpServer::parseRequest(const std::string& rawRequest) {
     return request;
 }
 
+static bool sendAllPlainSocket(SOCKET client, const char* data, const std::size_t size) {
+    std::size_t sentTotal = 0;
+    while (sentTotal < size) {
+        const auto remaining = size - sentTotal;
+        const int chunkSize = static_cast<int>(std::min<std::size_t>(remaining, 1024 * 1024));
+        const int sent = ::send(client, data + sentTotal, chunkSize, 0);
+        if (sent <= 0) {
+            return false;
+        }
+        sentTotal += static_cast<std::size_t>(sent);
+    }
+    return true;
+}
+
 void SimpleHttpServer::sendResponse(SOCKET client, const HttpResponse& response) {
     std::ostringstream stream;
     stream << "HTTP/1.1 " << response.statusCode << ' ' << reasonPhrase(response.statusCode) << "\r\n";
@@ -13972,7 +13987,7 @@ void SimpleHttpServer::sendResponse(SOCKET client, const HttpResponse& response)
     }
 
     const auto data = stream.str();
-    send(client, data.c_str(), static_cast<int>(data.size()), 0);
+    (void)sendAllPlainSocket(client, data.data(), data.size());
 }
 
 void SimpleHttpServer::run() {
@@ -14174,7 +14189,7 @@ void SimpleHttpServer::sendRawSaturationResponse(SOCKET client) {
            << "Connection: close\r\n\r\n"
            << kBody;
     const auto data = stream.str();
-    ::send(client, data.c_str(), static_cast<int>(data.size()), 0);
+    (void)sendAllPlainSocket(client, data.data(), data.size());
 }
 
 void SimpleHttpServer::handleClient(SOCKET client) {
@@ -14300,7 +14315,7 @@ void SimpleHttpServer::handleClient(SOCKET client) {
         hdr << "Access-Control-Allow-Methods: GET, OPTIONS\r\n";
         hdr << "\r\n";
         const auto headerBytes = hdr.str();
-        ::send(client, headerBytes.c_str(), static_cast<int>(headerBytes.size()), 0);
+        (void)sendAllPlainSocket(client, headerBytes.data(), headerBytes.size());
         auto handler = std::move(response.streamHandler);
         std::atomic<bool>* serverRunning = &running_;
         {
@@ -16698,86 +16713,6 @@ static std::string findHeaderCaseInsensitive(const std::unordered_map<std::strin
     return {};
 }
 
-// Route-drift remediation: supportedMethodsForPath and buildAllowHeader
-// moved to MasterControl/AdminRouteRegistry.h (typed, testable registry)
-// so the bool-style suite can pin the table to the implemented dispatch.
-// Add new routes THERE.
-static bool isMutatingMethod(const std::string& method) {
-    return method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE";
-}
-
-static std::vector<std::string> requiredCapabilitiesForRoute(const std::string& method,
-                                                             const std::string& path) {
-    if (!isMutatingMethod(method)) {
-        return {};
-    }
-
-    if (path == "/api/config" ||
-        path == "/api/governance/decisions" ||
-        path == "/api/client/governance/decisions" ||
-        path == "/api/clu/execute" ||
-        path == "/api/clu/apple-operations/cancel" ||
-        path == "/api/forsetti/modules/state" ||
-        path == "/api/platform-services/apple-hosts" ||
-        path == "/api/platform-services/apple-hosts/remove" ||
-        startsWith(path, "/mcp/governance/")) {
-        return { kCapabilityGovernanceModify };
-    }
-
-    if (path == "/api/gateway/start" ||
-        path == "/api/gateway/stop" ||
-        path == "/api/gateway/restart") {
-        return { kCapabilityNetworkAdmin };
-    }
-
-    if (path == "/api/clients" ||
-        startsWith(path, "/api/clients/")) {
-        return { kCapabilityClientsManage };
-    }
-
-    if (path == "/api/setup/start" ||
-        path == "/api/setup/complete" ||
-        path == "/api/setup/dismiss" ||
-        path == "/api/setup/reset" ||
-        startsWith(path, "/api/setup/workflow-templates/") ||
-        path == "/api/settings/advanced-mode" ||
-        path == "/api/self-tests/run") {
-        return { kCapabilitySetupLocalOrAdmin };
-    }
-
-    if (startsWith(path, "/api/setup/dependencies/") ||
-        path == "/api/install/package" ||
-        path == "/api/install/repo" ||
-        path == "/api/install/zip" ||
-        path == "/api/claude-plugin/toggle") {
-        return { kCapabilityInstallPackage };
-    }
-
-    if (path == "/api/pools" ||
-        startsWith(path, "/api/pools/") ||
-        startsWith(path, "/api/leases/") ||
-        path == "/api/runtime/mcp-servers" ||
-        path == "/api/runtime/mcp-servers/remove" ||
-        path == "/api/runtime/subagents" ||
-        path == "/api/runtime/subagents/remove" ||
-        path == "/api/runtime/subagent-groups" ||
-        path == "/api/runtime/subagent-groups/remove" ||
-        path == "/api/workflows" ||
-        startsWith(path, "/api/workflows/")) {
-        return { kCapabilityProcessExec };
-    }
-
-    if (path == "/api/supervisor/assignment/select" ||
-        path == "/api/supervisor/assignment/revoke" ||
-        path == "/api/supervisor/config/generate" ||
-        path == "/api/supervisor/connect/confirm" ||
-        path == "/api/supervisor/heartbeat") {
-        return { kCapabilitySupervisorAssign };
-    }
-
-    return {};
-}
-
 static bool contextHasRequiredCapabilities(const AuthenticatedRequestContext& context,
                                            const std::vector<std::string>& requiredCapabilities) {
     if (requiredCapabilities.empty()) return true;
@@ -16896,8 +16831,45 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         context = makeLocalOperatorContext(request.remoteAddress);
     }
 
+    // Capture every inbound admin API request into the live activity ring.
+    // Shell's own read-only poll targets are skipped so the poll loop doesn't
+    // thrash the ring. Mutating requests, including POST /api/config, remain
+    // auditable.
+    const auto requestStart = std::chrono::steady_clock::now();
+    const bool skipActivity =
+        request.method == "GET" &&
+        (request.path == "/api/dashboard" ||
+         request.path == "/api/config" ||
+         request.path == "/api/health");
+    const auto emitAdminActivity = [&](const HttpResponse& response) {
+        if (skipActivity || request.method.empty() || request.path.empty()) {
+            return;
+        }
+        const auto latency = static_cast<int>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - requestStart).count());
+        ActivityEvent event;
+        event.kind = "admin_api_request";
+        event.actor = context.actor;
+        event.method = request.method;
+        event.target = request.path;
+        event.statusCode = response.statusCode;
+        event.latencyMs = latency;
+        event.message = request.method + " " + request.path
+            + " -> " + std::to_string(response.statusCode)
+            + " (" + std::to_string(latency) + "ms)";
+        event.detail = nlohmann::json{
+            { "actor", context.actor },
+            { "remoteAddress", request.remoteAddress },
+            { "localRequest", context.isLocalRequest },
+            { "localBootstrap", context.isLocalBootstrap },
+            { "authenticated", context.client.has_value() }
+        }.dump();
+        globalActivityRing().append(event);
+    };
+
     auto authorizeMutatingRequest = [&]() -> std::optional<HttpResponse> {
-        if (!isMutatingMethod(request.method)) {
+        if (!MasterControl::AdminRouteCapabilityPolicy::isMutatingMethod(request.method)) {
             return std::nullopt;
         }
         if (identityFailure.has_value()) {
@@ -16916,7 +16888,9 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 }.dump()
             };
         }
-        const auto requiredCapabilities = requiredCapabilitiesForRoute(request.method, request.path);
+        const auto requiredCapabilities =
+            MasterControl::AdminRouteCapabilityPolicy::requiredCapabilitiesForRoute(
+                request.method, request.path);
         if (!contextHasRequiredCapabilities(context, requiredCapabilities)) {
             const auto required = joinCapabilities(requiredCapabilities);
             return HttpResponse{
@@ -16934,6 +16908,11 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         }
         return std::nullopt;
     };
+
+    if (auto denied = authorizeMutatingRequest()) {
+        emitAdminActivity(*denied);
+        return *denied;
+    }
 
     // v0.9.71: real-time push channel. /api/events upgrades to a
     // Server-Sent Events stream that emits the current dashboard
@@ -16997,15 +16976,13 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 }
                 frame << "\n";
                 const auto bytes = frame.str();
-                int sent = ::send(client, bytes.c_str(),
-                                  static_cast<int>(bytes.size()), 0);
-                return sent == static_cast<int>(bytes.size());
+                return sendAllPlainSocket(client, bytes.data(), bytes.size());
             };
             // Initial keepalive comment so EventSource clients fire
             // 'open' immediately. Per SSE spec, lines starting with
             // ':' are ignored by the client.
             const std::string hello = ": mcos sse stream open\n\n";
-            ::send(client, hello.c_str(), static_cast<int>(hello.size()), 0);
+            (void)sendAllPlainSocket(client, hello.data(), hello.size());
 
             // v0.10.16: resume from the caller's watermark when one
             // was supplied via Last-Event-ID or ?since=. Empty (the
@@ -17069,9 +17046,7 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 // / browsers don't time out the idle connection.
                 if (loopsWithoutChange > 0 && loopsWithoutChange % 15 == 0) {
                     const std::string ping = ": ping\n\n";
-                    if (::send(client, ping.c_str(),
-                               static_cast<int>(ping.size()), 0)
-                        != static_cast<int>(ping.size())) {
+                    if (!sendAllPlainSocket(client, ping.data(), ping.size())) {
                         break;
                     }
                 }
@@ -17776,17 +17751,6 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         return HttpResponse{ 200, "application/json", body.dump() };
     }
 
-    // Capture every inbound admin API request into the live activity ring.
-    // Shell's own read-only poll targets are skipped so the poll loop doesn't
-    // thrash the ring. Mutating requests, including POST /api/config, remain
-    // auditable.
-    const auto requestStart = std::chrono::steady_clock::now();
-    const bool skipActivity =
-        request.method == "GET" &&
-        (request.path == "/api/dashboard" ||
-         request.path == "/api/config" ||
-         request.path == "/api/health");
-
     // Phase 6 - privilege gate helper. Returns nullopt when the predicate
     // is satisfied, or a 403 HttpResponse otherwise. Captures the resolved
     // context by reference so each gate is one line at the call site.
@@ -17858,10 +17822,6 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
 
     const auto response = ([&]() -> HttpResponse {
     try {
-        if (auto denied = authorizeMutatingRequest()) {
-            return *denied;
-        }
-
         const auto gateways = platformServiceCatalogService_
             ? platformServiceCatalogService_->listGateways()
             : std::vector<PlatformGatewayDescriptor>{};
@@ -20324,8 +20284,8 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
         if (request.method == "POST" && request.path == "/api/config") {
             // v0.9.42: wrap parse-throws as 400 (continuation of v0.9.41
             // and v0.9.38 sweeps).
-            const bool confirmUnsafeChanges = request.headers.contains("X-Confirm-Unsafe") &&
-                request.headers.at("X-Confirm-Unsafe") == "1";
+            const bool confirmUnsafeChanges =
+                findHeaderCaseInsensitive(request.headers, "X-Confirm-Unsafe") == "1";
             try {
                 const auto result = adminApiService_->applyConfigurationJson(request.body, confirmUnsafeChanges);
                 // v0.7.4: emit a telemetry event on every successful configuration
@@ -20350,10 +20310,10 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             // Config-safety remediation: partial updates deep-merge into the
             // current document server-side, so omitted sections can never
             // reset to defaults. Same authorization as POST /api/config
-            // (requiredCapabilitiesForRoute matches the path for every
+            // (AdminRouteCapabilityPolicy matches the path for every
             // mutating verb) and the same X-Confirm-Unsafe semantics.
-            const bool confirmUnsafeChanges = request.headers.contains("X-Confirm-Unsafe") &&
-                request.headers.at("X-Confirm-Unsafe") == "1";
+            const bool confirmUnsafeChanges =
+                findHeaderCaseInsensitive(request.headers, "X-Confirm-Unsafe") == "1";
             try {
                 const auto parsed = nlohmann::json::parse(request.body);
                 const auto dropped = MasterControl::collectDroppedTopLevelKeys(parsed, AppConfiguration{});
@@ -21120,29 +21080,7 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
     // SimpleHttpServer::parseRequest produces with empty method/path. Those
     // were polluting the Live Command Stream with empty rows and rendering
     // as "  -> 200 (0ms)" in the dashboard.
-    if (!skipActivity && !request.method.empty() && !request.path.empty()) {
-        const auto latency = static_cast<int>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - requestStart).count());
-        ActivityEvent event;
-        event.kind = "admin_api_request";
-        event.actor = context.actor;
-        event.method = request.method;
-        event.target = request.path;
-        event.statusCode = response.statusCode;
-        event.latencyMs = latency;
-        event.message = request.method + " " + request.path
-            + " -> " + std::to_string(response.statusCode)
-            + " (" + std::to_string(latency) + "ms)";
-        event.detail = nlohmann::json{
-            { "actor", context.actor },
-            { "remoteAddress", request.remoteAddress },
-            { "localRequest", context.isLocalRequest },
-            { "localBootstrap", context.isLocalBootstrap },
-            { "authenticated", context.client.has_value() }
-        }.dump();
-        globalActivityRing().append(event);
-    }
+    emitAdminActivity(response);
 
     return response;
 }

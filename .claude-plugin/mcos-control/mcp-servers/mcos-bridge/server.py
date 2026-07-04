@@ -12,9 +12,11 @@
 
 from __future__ import annotations
 
+from collections import deque
 import json
 import os
 import platform
+from pathlib import Path
 import shlex
 import subprocess
 import sys
@@ -38,7 +40,8 @@ PLUGIN_USER_AGENT = f"mcos-control-plugin/{PLUGIN_VERSION}"
 # HTTP transport
 # ---------------------------------------------------------------------------
 def _http(method: str, path: str, body: Optional[Dict[str, Any]] = None,
-          base_url: Optional[str] = None, timeout: Optional[float] = None) -> Dict[str, Any]:
+          base_url: Optional[str] = None, timeout: Optional[float] = None,
+          extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """Make an HTTP call to MCOS. Returns a structured result dict.
 
     Success: {"ok": True, "status": <code>, "body": <parsed JSON or text>}
@@ -51,6 +54,8 @@ def _http(method: str, path: str, body: Optional[Dict[str, Any]] = None,
     if body is not None:
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
+    if extra_headers:
+        headers.update(extra_headers)
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout or DEFAULT_TIMEOUT) as resp:
@@ -105,8 +110,9 @@ def _post(path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return _http("POST", path, body=body)
 
 
-def _patch(path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    return _http("PATCH", path, body=body)
+def _patch(path: str, body: Optional[Dict[str, Any]] = None,
+           extra_headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    return _http("PATCH", path, body=body, extra_headers=extra_headers)
 
 
 def _delete(path: str) -> Dict[str, Any]:
@@ -193,7 +199,8 @@ def t_config_update(args):
                 "errorCode": "BAD_REQUEST"}
     # PATCH deep-merges the fields into the current configuration server-side.
     # POST /api/config is full-replacement and would reset omitted sections.
-    return _patch("/api/config", body=fields)
+    headers = {"X-Confirm-Unsafe": "1"} if args.get("confirmUnsafe") else None
+    return _patch("/api/config", body=fields, extra_headers=headers)
 
 def t_telemetry_heartbeat(args):
     return _post("/api/telemetry/heartbeat", body=args.get("payload") or {})
@@ -243,6 +250,8 @@ def t_gateway_stop(args):
 
 # ---- Write — governance ----
 def t_governance_approve(args):
+    refusal = _confirm_required(args, "approve governance action", args.get("id", ""))
+    if refusal: return refusal
     return _post(f"/api/clu/approvals/{args['id']}/approve")
 
 def t_governance_reject(args):
@@ -326,16 +335,28 @@ def t_service_status(args):
     )
 
 def t_logs_tail(args):
-    count = int(args.get("count", 50))
+    if platform.system() != "Windows":
+        return {"ok": False, "error": "Local diagnostics require Windows", "errorCode": "PLATFORM"}
+    count = max(1, min(int(args.get("count", 50)), 1000))
     pattern = args.get("pattern", "")
-    cmd = (
-        "$log = \"$env:ProgramData\\Master Control Orchestration Server\\runtime\\events.jsonl\"; "
-        "if (Test-Path $log) { "
-        f"Get-Content $log -Tail {count}"
-        + (f" | Select-String -Pattern '{pattern}'" if pattern else "")
-        + " } else { Write-Output 'log file not found' }"
-    )
-    return _powershell(cmd)
+    program_data = os.environ.get("ProgramData", r"C:\ProgramData")
+    log_path = Path(program_data) / "Master Control Orchestration Server" / "runtime" / "events.jsonl"
+    if not log_path.exists():
+        return {"ok": False, "error": "log file not found", "errorCode": "NOT_FOUND",
+                "logPath": str(log_path)}
+    lines = deque(maxlen=count)
+    try:
+        with log_path.open("r", encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                lines.append(line.rstrip("\r\n"))
+    except Exception as e:
+        return {"ok": False, "error": str(e), "errorCode": "READ_FAILED",
+                "logPath": str(log_path)}
+    results = list(lines)
+    if pattern:
+        needle = str(pattern)
+        results = [line for line in results if needle in line]
+    return {"ok": True, "logPath": str(log_path), "count": len(results), "lines": results}
 
 def t_firewall_check(args):
     return _powershell(
@@ -458,9 +479,10 @@ TOOLS_REGISTRY: List[Tuple[str, Dict[str, Any], callable]] = [
     ("mcos_config_update",
      {"description": "Patch configuration fields via PATCH /api/config. Deep-merges the given "
                      "fields into the current mcos.json; unrelated sections are preserved. "
-                     "Body: {fields: {...}}",
+                     "Body: {fields: {...}, confirmUnsafe?: true}",
       "inputSchema": {"type": "object",
-                      "properties": {"fields": {"type": "object"}},
+                      "properties": {"fields": {"type": "object"},
+                                     "confirmUnsafe": {"type": "boolean"}},
                       "required": ["fields"]}},
      t_config_update),
     ("mcos_telemetry_heartbeat",
@@ -513,8 +535,10 @@ TOOLS_REGISTRY: List[Tuple[str, Dict[str, Any], callable]] = [
 
     # --- Write — governance ---
     ("mcos_governance_approve",
-     {"description": "Approve a deferred governance action.",
-      "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}},
+     {"description": "Approve a deferred governance action. Requires confirm:true.",
+      "inputSchema": {"type": "object",
+                      "properties": {"id": {"type": "string"},
+                                     "confirm": {"type": "boolean"}},
                       "required": ["id"]}}, t_governance_approve),
     ("mcos_governance_reject",
      {"description": "Reject a deferred governance action with a reason. Requires confirm:true.",
@@ -567,7 +591,7 @@ TOOLS_REGISTRY: List[Tuple[str, Dict[str, Any], callable]] = [
      {"description": "Local: Get-Service MasterControlOrchestrationServer status (Windows-only).",
       "inputSchema": {"type": "object", "properties": {}}}, t_service_status),
     ("mcos_logs_tail",
-     {"description": "Local: tail %ProgramData%\\Master Control Orchestration Server\\runtime\\events.jsonl. Optional pattern filters via Select-String.",
+     {"description": "Local: tail %ProgramData%\\Master Control Orchestration Server\\runtime\\events.jsonl. Optional pattern filters by literal substring.",
       "inputSchema": {"type": "object",
                       "properties": {"count": {"type": "integer", "default": 50},
                                      "pattern": {"type": "string"}}}}, t_logs_tail),
