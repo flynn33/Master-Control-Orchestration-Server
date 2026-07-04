@@ -84,7 +84,16 @@ Invoke-RestMethod -Method Post -Uri http://<MCOS-IP>:8080/mcp `
   -Body $initBody -ContentType 'application/json'
 ```
 
-Expected reply: `serverInfo.name = "MCOS Native Gateway"`, `protocolVersion = "2025-03-26"`. A `GET /mcp` returns `405 Method Not Allowed` (proves the listener is alive). `GET /health` returns `200` with gateway-state JSON.
+Expected reply: `serverInfo.name = "MCOS Native Gateway"`, `protocolVersion = "2025-03-26"`. A `GET /mcp` returns `405 Method Not Allowed` with an `Allow: POST` header (proves the listener is alive). `GET /health` returns `200` with gateway-state JSON.
+
+### Transport profile (alpha): POST-only Streamable HTTP
+
+The native gateway implements the POST subset of MCP Streamable HTTP:
+
+- **Every client→server message is an HTTP `POST` to `/mcp`** carrying a JSON-RPC 2.0 envelope; the response is a single JSON body (or `204 No Content` for notifications).
+- **No SSE stream is offered.** `GET /mcp` answers `405 Method Not Allowed` with `Allow: POST` — a response the MCP Streamable HTTP specification explicitly permits for servers that do not offer a server-initiated stream. Clients that require an SSE stream should use the companion utility's stdio bridge (see [Onboarding](Onboarding)).
+- **Session identity:** the gateway honors the standard `Mcp-Session-Id` request header (`X-MCOS-Session-Id` is an MCOS-specific fallback). A session id makes `tools/call` routing **sticky**: repeat calls from the same session are served by the same pool instance for the session lifetime. Sessions the client abandons expire after the lease router's idle timeout (15 minutes), or can be released explicitly via `POST /api/leases/{leaseId}/release`. The gateway never invents a session id for clients that send none — sessionless calls route least-loaded and release per call.
+- **Backpressure:** the gateway executes MCP requests on a bounded worker pool; `/health` is always answered inline and never queues behind slow `tools/call` traffic. When the request queue is saturated the gateway answers a structured `503` with retry guidance.
 
 ### 3. Connect a client
 

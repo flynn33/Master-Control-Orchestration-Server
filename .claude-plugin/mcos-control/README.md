@@ -120,7 +120,7 @@ The bridge exposes 43 tools. Full reference in `skills/mcos-operations/SKILL.md`
 - **Write — gateway** (2 tools) — `mcos_gateway_start`, `mcos_gateway_stop`
 - **Write — governance** (2 tools) — `mcos_governance_approve`, `mcos_governance_reject`
 - **Write — operator surface** (4 tools) — `mcos_client_register`, `mcos_client_privileges`, `mcos_client_enable`, `mcos_client_disable`
-- **Write — Forsetti** (3 tools) — `mcos_forsetti_module_import`, `mcos_forsetti_module_enable`, `mcos_forsetti_module_disable`
+- **Write — Forsetti** (2 tools) — `mcos_forsetti_module_enable`, `mcos_forsetti_module_disable` (both drive `POST /api/forsetti/modules/state`; there is no import API — module manifests deploy on disk)
 - **Local diagnostics** (4 tools) — `mcos_service_status`, `mcos_logs_tail`, `mcos_firewall_check`, `mcos_dns_sd_check`
 
 Six destructive tools require `confirm: true`: `mcos_pool_drain`, `mcos_pool_remove`, `mcos_gateway_stop`, `mcos_governance_reject`, `mcos_client_disable`, `mcos_forsetti_module_disable`.

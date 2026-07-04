@@ -1,11 +1,11 @@
 ---
-description: Import a Forsetti module manifest into MCOS — registers entry points and surfaces module on the runtime.
+description: Validate a Forsetti module manifest and activate the module in MCOS — via manifest deployment plus the module state route.
 argument-hint: <path-to-manifest.json>
 ---
 
-Import a Forsetti module into the running MCOS.
+Validate and activate a Forsetti module in the running MCOS.
 
-**Important**: This imports a manifest that tells MCOS to register a module's entry points. It does NOT modify the vendored Forsetti framework code (`Forsetti-Framework-Windows-main/`) — that is sealed by ADR-002 §11 / FORBIDDEN-CONTRACT §5.1. Importing here means: the module's C++ implementation must already exist in the runtime (registered via `registerModule(name, factory)` in `MasterControlModules.cpp`); the manifest you import is the metadata that activates it.
+**Important**: MCOS has no runtime "import manifest" API — the admin surface deliberately exposes only `GET /api/forsetti/modules` (catalog) and `POST /api/forsetti/modules/state` (enable/disable/remove), because module registration is a code + on-disk-manifest concern, not a wire concern. This command therefore VALIDATES the manifest, helps deploy it, and activates the module through the state route. It does NOT modify the vendored Forsetti framework code (`Forsetti-Framework-Windows-main/`) — that is sealed by ADR-002 §11 / FORBIDDEN-CONTRACT §5.1. The module's C++ implementation must already exist in the runtime (registered via `registerModule(name, factory)` in `MasterControlModules.cpp`); the manifest is the metadata that activates it.
 
 Steps:
 
@@ -16,19 +16,19 @@ Steps:
    - `entryPoint` (must match a name registered in `MasterControlModules.cpp`)
    - `version`
    - `supportedPlatforms`
-3. **Pre-check**: confirm the `entryPoint` value is registered in MCOS by reading `src/MasterControlModules/MasterControlModules.cpp`. If the entry point is not registered, refuse to import — the manifest will load but `ModuleManager::makeModule` will throw `EntryPointNotFound` at boot.
+3. **Pre-check**: confirm the `entryPoint` value is registered in MCOS by reading `src/MasterControlModules/MasterControlModules.cpp`. If the entry point is not registered, refuse to continue — the manifest will load but `ModuleManager::makeModule` will throw `EntryPointNotFound` at boot.
 4. State to the operator:
    ```
-   Importing manifest:
+   Activating module:
      moduleID: <id>
      entryPoint: <name>      [registered in MasterControlModules.cpp: yes|no]
      version: <v>
      platforms: <list>
    ```
 5. Wait for confirmation.
-6. `mcos_forsetti_module_import manifest=<parsed JSON>`.
-7. `mcos_forsetti_modules` — verify the module appears in the registered list.
-8. To activate: `mcos_forsetti_module_enable moduleId=<id>`.
+6. Confirm the manifest file is deployed where the runtime discovers modules (the module manifest directory shipped with the install; see the Forsetti surface in `docs/wiki/`). If it is not, help the operator copy it there and restart the service so discovery picks it up.
+7. `mcos_forsetti_modules` — verify the module appears in the catalog.
+8. Activate: `mcos_forsetti_module_enable moduleId=<id>` (drives `POST /api/forsetti/modules/state` with `action=enable`).
 9. `mcos_dashboard` — confirm module count incremented and posture is still pass/warn (not blocked).
 
-If the import fails because the entry point is unregistered, surface the operator path: edit `src/MasterControlModules/MasterControlModules.cpp` to add `registry.registerModule("<entryPoint>", ...)`, rebuild, restart the service, then re-import. That's a code-level change, not a runtime change.
+If the module never appears in the catalog, the entry point is unregistered or the manifest is not in the discovery directory. The code-level path: edit `src/MasterControlModules/MasterControlModules.cpp` to add `registry.registerModule("<entryPoint>", ...)`, rebuild, restart the service, then re-run this command.

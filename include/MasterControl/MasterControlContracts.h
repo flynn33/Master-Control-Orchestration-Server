@@ -7,6 +7,7 @@
 #include "MasterControl/MasterControlModels.h"
 
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -352,6 +353,19 @@ public:
     virtual void InvalidateToolCatalog() {}
 };
 
+// Factories for the runtime-internal supervisor and lease-router
+// implementations. Both return the interface so callers (runtime wiring,
+// tests) never see the concrete types. leaseIdleTimeoutSeconds bounds the
+// lifetime of idle leases (sticky stateful sessions expire and Released
+// records are garbage-collected after this window); <= 0 expires idle
+// leases on the next sweep, which tests use to drive expiry
+// deterministically.
+std::shared_ptr<IWorkerSupervisor> createWorkerSupervisor(
+    std::shared_ptr<IConfigurationService> configurationService = {});
+std::shared_ptr<ILeaseRouter> createLeaseRouter(
+    std::shared_ptr<IWorkerSupervisor> workerSupervisor,
+    int leaseIdleTimeoutSeconds = 900);
+
 class IAdminApiService {
 public:
     virtual DashboardSnapshot snapshot() = 0;
@@ -360,6 +374,11 @@ public:
     virtual OperationResult cancelAppleOperationJson(const std::string& requestBody) = 0;
     virtual OperationResult applyConfigurationJson(const std::string& requestBody,
                                                    bool confirmUnsafeChanges) = 0;
+    // Partial configuration update: deep-merges the patch body into the
+    // current configuration document, then runs the same validation and
+    // persistence path as a full replacement. Rejects non-object bodies.
+    virtual OperationResult applyConfigurationPatchJson(const std::string& requestBody,
+                                                        bool confirmUnsafeChanges) = 0;
     virtual OperationResult upsertAppleRemoteHostJson(const std::string& requestBody) = 0;
     virtual OperationResult removeAppleRemoteHostJson(const std::string& requestBody) = 0;
     virtual OperationResult upsertMcpServerJson(const std::string& requestBody) = 0;

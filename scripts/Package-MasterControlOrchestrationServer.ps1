@@ -11,7 +11,9 @@ param(
     [string]$AcceptanceReportPath = "",
     [switch]$SkipBuild,
     [switch]$SkipTests,
-    [switch]$KeepStage
+    [switch]$KeepStage,
+    [switch]$AllowZipOnly,
+    [string]$ZipOnlyReason = ""
 )
 
 Set-StrictMode -Version Latest
@@ -417,9 +419,18 @@ if (-not [string]::IsNullOrWhiteSpace($AcceptanceReportPath)) {
 
 # ---------------------------------------------------------------------------
 # Build the Windows Installer (MSI). This is the primary user-facing install
-# artifact. Failing to build it is not fatal — the zip still ships for
-# headless / scripted rollouts — but we warn so CI catches the regression.
+# artifact. MSI build failure is FATAL by default: a package without the MSI
+# is not a normal installer release. Zip-only output requires the explicit
+# -AllowZipOnly opt-in, and the package metadata records that the zip-only
+# output was deliberate (zipOnlyExplicit + zipOnlyReason).
 # ---------------------------------------------------------------------------
+function Set-ZipOnlyMetadata {
+    param([string]$Reason)
+    $metadata | Add-Member -NotePropertyName zipOnlyExplicit -NotePropertyValue $true -Force
+    $metadata | Add-Member -NotePropertyName zipOnlyReason -NotePropertyValue $Reason -Force
+    $metadata | ConvertTo-Json -Depth 8 | Set-Content -Path $metadataPath -Encoding UTF8
+}
+
 $msiBuildScript = Join-Path $repoRoot "installer\Build-Msi.ps1"
 $msiBuildResult = $null
 if (Test-Path $msiBuildScript) {
@@ -446,10 +457,20 @@ if (Test-Path $msiBuildScript) {
         $metadata | Add-Member -NotePropertyName msiVersion -NotePropertyValue $msiBuildResult.MsiVersion -Force
         $metadata | ConvertTo-Json -Depth 8 | Set-Content -Path $metadataPath -Encoding UTF8
     } catch {
-        Write-Warning "MSI build failed: $($_.Exception.Message). Continuing with zip-only output."
+        if (-not $AllowZipOnly) {
+            throw "MSI build failed: $($_.Exception.Message). The MSI is the primary installer artifact; re-run with -AllowZipOnly (and a -ZipOnlyReason) only if a zip-only bundle is deliberately intended."
+        }
+        $reason = if ($ZipOnlyReason) { $ZipOnlyReason } else { "MSI build failed: $($_.Exception.Message)" }
+        Write-Warning "MSI build failed: $($_.Exception.Message). Producing zip-only output because -AllowZipOnly was specified. This bundle is NOT a normal installer release."
+        Set-ZipOnlyMetadata -Reason $reason
     }
 } else {
-    Write-Warning "installer\Build-Msi.ps1 not found. Skipping MSI build."
+    if (-not $AllowZipOnly) {
+        throw "installer\Build-Msi.ps1 not found. The MSI is the primary installer artifact; re-run with -AllowZipOnly (and a -ZipOnlyReason) only if a zip-only bundle is deliberately intended."
+    }
+    $reason = if ($ZipOnlyReason) { $ZipOnlyReason } else { "installer\Build-Msi.ps1 not found." }
+    Write-Warning "installer\Build-Msi.ps1 not found. Producing zip-only output because -AllowZipOnly was specified. This bundle is NOT a normal installer release."
+    Set-ZipOnlyMetadata -Reason $reason
 }
 
 if (Test-Path $zipPath) {

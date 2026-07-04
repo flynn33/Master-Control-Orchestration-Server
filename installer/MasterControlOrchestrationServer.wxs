@@ -75,7 +75,6 @@
     <Property Id="INSTALL_FIREWALL" Value="1" Secure="yes"/>
     <Property Id="INSTALL_START_MENU_SHORTCUT" Value="1" Secure="yes"/>
     <Property Id="INSTALL_DESKTOP_SHORTCUT" Value="1" Secure="yes"/>
-    <Property Id="INSTALL_CLAUDE_PLUGIN" Value="1" Secure="yes"/>
     <Property Id="LAUNCH_ON_EXIT" Value="1" Secure="yes"/>
 
     <!-- Use the full InstallDir dialog sequence and slot the Features page
@@ -147,10 +146,12 @@
         <Control Id="DesktopCheck" Type="CheckBox" X="20" Y="140" Width="330" Height="17"
                  Property="INSTALL_DESKTOP_SHORTCUT" CheckBoxValue="1"
                  Text="Create Desktop shortcut"/>
-        <Control Id="ClaudePluginCheck" Type="CheckBox" X="20" Y="170" Width="330" Height="17"
-                 Property="INSTALL_CLAUDE_PLUGIN" CheckBoxValue="1"
-                 Text="Register the mcos-control Claude Code plugin for the current user"/>
-        <Control Id="LaunchCheck" Type="CheckBox" X="20" Y="195" Width="330" Height="17"
+        <!-- Plugin registration is deliberately not an MSI option: the MSI runs
+             perMachine/elevated and cannot reliably target the interactive
+             user's profile. Registration happens through the dashboard plugin
+             toggle or scripts\Register-McosControlPlugin.ps1 (see
+             docs/wiki/Claude-Code-Plugin.md). -->
+        <Control Id="LaunchCheck" Type="CheckBox" X="20" Y="170" Width="330" Height="17"
                  Property="LAUNCH_ON_EXIT" CheckBoxValue="1"
                  Text="Launch the Master Control Orchestration Server Windows app after installation completes"/>
 

@@ -125,7 +125,7 @@ These don't change state — use freely.
 | `mcos_governance_reject` | **Yes** | Reason required |
 | `mcos_client_register` / `mcos_client_privileges` / `mcos_client_enable` | No | |
 | `mcos_client_disable` | **Yes** | |
-| `mcos_forsetti_module_import` / `mcos_forsetti_module_enable` | No | |
+| `mcos_forsetti_module_enable` | No | |
 | `mcos_forsetti_module_disable` | **Yes** | |
 
 ## Failure handling

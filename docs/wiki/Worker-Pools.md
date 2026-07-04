@@ -60,8 +60,8 @@ The wire shape uses these field names verbatim. Earlier copies of this page had 
 |---|---|
 | `kind` | `mcp-server` for generic backends; `sub-agent` for purpose-built specialized backends |
 | `logicalMcpUrl` | Stable URL for this pool. The lease router routes requests to one instance behind it. |
-| `template.executable` | Absolute Windows path to the worker binary (or `npx.cmd` / `cmd.exe` for indirection) |
-| `template.args` | Array of command-line args passed at spawn |
+| `template.executable` | Worker executable. Three accepted forms: an **absolute path** (used only if it exists), a **relative path containing a directory separator** (resolved against the service working directory), or a **bare command name** such as `npx.cmd` or `node`, resolved via Windows PATH search (`SearchPathW`) with `.exe`/`.cmd`/`.bat` probing when no extension is given. Resolution failures fail the instance with a diagnostic naming the executable. |
+| `template.args` | Array of command-line args passed at spawn. For `.cmd`/`.bat` workers MCOS launches through `cmd.exe /s /c` (required for spaced install paths), so cmd still expands `%VAR%` and treats `^`/`&` specially — avoid cmd metacharacters in args for batch-script workers. |
 | `template.workingDirectory` | CWD for the spawned process |
 | `template.environment` | Object — extra env vars merged onto the inherited block |
 | `template.transport` | `stdio` or `streamable_http` |
@@ -73,11 +73,11 @@ The wire shape uses these field names verbatim. Earlier copies of this page had 
 | `drainPolicy.drainStickySessions` (default `true`) | If `true`, lets sticky leases finish on a draining instance before reaping it |
 | `drainPolicy.drainTimeoutSeconds` (default `30`) | Hard ceiling on graceful drain |
 | `drainPolicy.routeNewSessionsToReplacement` (default `true`) | New stateful sessions skip the Draining instance |
-| `healthProbe.path` | HTTP path for `streamable_http` transports; ignored for stdio |
-| `healthProbe.transport` | `streamable_http` or empty for stdio |
-| `healthProbe.intervalMs` (default `5000`) | How often the supervisor probes the worker |
-| `healthProbe.timeoutMs` (default `1500`) | Per-probe timeout |
-| `healthProbe.unhealthyThreshold` (default `3`) | Consecutive failures before the instance is marked Failed |
+| `template.healthProbe.path` | HTTP path for `http` probe transports; ignored for stdio |
+| `template.healthProbe.transport` | `http`, `stdio_handshake`, or `none` |
+| `template.healthProbe.intervalMs` (default `5000`) | How often the supervisor probes the worker |
+| `template.healthProbe.timeoutMs` (default `1500`) | Per-probe timeout |
+| `template.healthProbe.unhealthyThreshold` (default `3`) | Consecutive failures before the instance is marked Failed |
 
 ---
 
@@ -168,47 +168,58 @@ classDiagram
     class ManagedEndpointPool {
         +string poolId
         +EndpointPoolKind kind
+        +string displayName
         +string logicalMcpUrl
         +EndpointTemplate template
         +ScalePolicy scalePolicy
         +DrainPolicy drainPolicy
-        +HealthProbeSpec healthProbe
         +vector~EndpointInstance~ instances
+        +string createdAtUtc
+        +string updatedAtUtc
+        +string quarantinedUntilUtc
     }
 
     class EndpointTemplate {
-        +McpServerTransport transport
-        +string executablePath
-        +vector~string~ arguments
-        +map~string,string~ environment
+        +string executable
+        +vector~string~ args
         +string workingDirectory
+        +map~string,string~ environment
+        +string transport
+        +HealthProbeSpec healthProbe
     }
 
     class ScalePolicy {
         +int minInstances
         +int maxInstances
         +int maxActiveLeasesPerInstance
+        +int scaleOutQueueWaitMs
+        +int scaleInIdleSeconds
     }
 
     class DrainPolicy {
-        +int gracefulSeconds
-        +bool forceTerminateOnTimeout
+        +int drainTimeoutSeconds
+        +bool drainStickySessions
+        +bool routeNewSessionsToReplacement
     }
 
     class HealthProbeSpec {
+        +string transport
         +string path
-        +int intervalSeconds
+        +int intervalMs
         +int timeoutMs
+        +int unhealthyThreshold
     }
 
     class EndpointInstance {
         +string instanceId
         +string poolId
         +EndpointInstanceState state
+        +uint32 processId
         +bool supervised
-        +int processId
-        +WorkerTelemetry telemetry
+        +string startedAtUtc
+        +string lastTransitionAtUtc
         +string statusMessage
+        +WorkerTelemetry telemetry
     }
 
     class EndpointLease {
@@ -220,6 +231,8 @@ classDiagram
         +string acquiredAtUtc
         +string releasedAtUtc
         +string statusMessage
+        +string clientIpAddress
+        +string clientType
     }
 
     class WorkerTelemetry {
@@ -235,7 +248,7 @@ classDiagram
     ManagedEndpointPool *-- EndpointTemplate
     ManagedEndpointPool *-- ScalePolicy
     ManagedEndpointPool *-- DrainPolicy
-    ManagedEndpointPool *-- HealthProbeSpec
+    EndpointTemplate *-- HealthProbeSpec
     ManagedEndpointPool *-- "*" EndpointInstance
     EndpointInstance *-- WorkerTelemetry
     EndpointLease ..> EndpointInstance : binds to
