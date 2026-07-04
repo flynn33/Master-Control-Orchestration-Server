@@ -190,6 +190,10 @@ private:
     // refresh anyway) are still visible after at most one TTL.
     mutable std::vector<McpToolDescriptor> toolCatalogCache_;
     mutable std::chrono::steady_clock::time_point toolCatalogCacheValidUntil_{};
+    // Guarded by mutex_. True while one thread runs the (unlocked) child
+    // RPC fan-out; concurrent TTL-miss callers serve the stale cache
+    // instead of duplicating the fan-out (review follow-up).
+    mutable bool toolCatalogRefreshInFlight_ = false;
     // monotonic JSON-RPC id counter used when the gateway speaks to its
     // own pool children (out-of-band from the LAN-client request stream).
     // Atomic so id generation never requires the gateway mutex during
@@ -207,7 +211,13 @@ private:
     struct GatewayRequestJob final {
         unsigned long long requestId = 0;   // HTTP_REQUEST_ID
         std::string path;
-        std::string body;
+        std::string body;                   // inline chunks copied at receive
+        // Review follow-up: when HTTP.sys leaves body bytes for explicit
+        // retrieval (fragmented body, Expect:100-continue, chunked), the
+        // WORKER drains them via HttpReceiveRequestEntityBody before
+        // executing -- the receive thread never blocks on a slow-trickle
+        // client, so /health and request intake stay responsive.
+        bool drainRemainingBody = false;
         std::string clientIpAddress;
         std::string clientType;
         std::string clientId;
@@ -218,6 +228,10 @@ private:
 
     static constexpr std::size_t kGatewayWorkerCount = 4;
     static constexpr std::size_t kGatewayJobQueueMaxDepth = 64;
+    // Upper bound on an MCP request body (declared Content-Length or
+    // accumulated drain). Oversized requests answer 413 instead of
+    // ballooning gateway memory.
+    static constexpr std::size_t kMaxGatewayRequestBytes = 10 * 1024 * 1024;
 
     HANDLE requestQueue_ = nullptr;
     uint64_t serverSessionId_ = 0;     // HTTP_SERVER_SESSION_ID

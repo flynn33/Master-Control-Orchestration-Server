@@ -8929,6 +8929,32 @@ private:
             return instance;
         }
 
+        // Review follow-up: batch-script workers launch through
+        // cmd.exe /s /c, where argument text containing cmd control
+        // operators would be interpreted as command syntax (chaining,
+        // redirection, escaping) instead of reaching the script. Reject
+        // such args with a clear diagnostic rather than corrupting the
+        // launch. %VAR% expansion inside quotes cannot be escaped for cmd
+        // and remains documented behavior in Worker-Pools.md.
+        {
+            const std::wstring probeExtension = resolvedExecutable->extension().wstring();
+            const bool launchesViaCmd =
+                _wcsicmp(probeExtension.c_str(), L".cmd") == 0 ||
+                _wcsicmp(probeExtension.c_str(), L".bat") == 0;
+            if (launchesViaCmd) {
+                for (const auto& arg : pool.template_.args) {
+                    if (arg.find_first_of("&|<>^\r\n") != std::string::npos) {
+                        instance.supervised = false;
+                        transitionInstanceLocked(instance, EndpointInstanceState::Failed,
+                            "Pool template argument '" + arg + "' contains cmd control "
+                            "characters (& | < > ^) that cannot be passed safely to a "
+                            ".cmd/.bat worker; no worker process was spawned.");
+                        return instance;
+                    }
+                }
+            }
+        }
+
 #if defined(_WIN32)
         ChildProcess child;
         child.stdioMutex = std::make_shared<std::mutex>();

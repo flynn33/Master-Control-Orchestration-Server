@@ -870,9 +870,13 @@ std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::currentToolCatalog()
     //   2. no gateway lock: collectToolCatalog() fans out tools/list to
     //      pool children over stdio;
     //   3. under mutex_: publish the cache + new TTL stamp.
-    // Two threads that both miss the TTL may refresh concurrently; both
-    // aggregate truthfully and the last writer wins, which is acceptable
-    // for a 30s-TTL catalog and far cheaper than serializing child RPC.
+    // Review follow-up: a single refresh runs at a time. A second caller
+    // that misses the TTL while a refresh is in flight serves the current
+    // (possibly stale) cache instead of doubling the child RPC fan-out --
+    // stale-while-revalidate, well within the 30s TTL tolerance. Note: an
+    // InvalidateToolCatalog() racing an in-flight refresh may be
+    // overwritten by that refresh's publish; the next TTL expiry (<= 30s)
+    // picks up the change, matching the pre-existing last-writer window.
     std::shared_ptr<IWorkerSupervisor> supervisor;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -887,12 +891,24 @@ std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::currentToolCatalog()
             toolCatalogCacheValidUntil_ = now + std::chrono::seconds(kToolCatalogCacheTtlSeconds);
             return toolCatalogCache_;
         }
+        if (toolCatalogRefreshInFlight_) {
+            return toolCatalogCache_;
+        }
+        toolCatalogRefreshInFlight_ = true;
         supervisor = workerSupervisor_;
     }
 
-    auto aggregated = collectToolCatalog(supervisor);
+    std::vector<McpToolDescriptor> aggregated;
+    try {
+        aggregated = collectToolCatalog(supervisor);
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        toolCatalogRefreshInFlight_ = false;
+        throw;
+    }
 
     std::lock_guard<std::mutex> lock(mutex_);
+    toolCatalogRefreshInFlight_ = false;
     toolCatalogCache_ = aggregated;
     toolCatalogCacheValidUntil_ =
         std::chrono::steady_clock::now() + std::chrono::seconds(kToolCatalogCacheTtlSeconds);
@@ -1630,7 +1646,7 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
             if (query != std::string::npos) path = path.substr(0, query);
         }
 
-        // Pull the body if present. HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY
+        // Pull the inline body chunks. HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY
         // copies as much of the body as fits in the receive buffer; if
         // the body is fragmented across packets or larger than fits with
         // headers, the remainder must be drained via
@@ -1638,6 +1654,13 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
         // (e.g. PowerShell Invoke-RestMethod with Expect:100-continue or
         // chunked transfer-encoding) send the body in a way that makes
         // HTTP.sys leave it for explicit retrieval rather than inlining.
+        //
+        // Review follow-up: the drain no longer happens here. A blocking
+        // HttpReceiveRequestEntityBody loop on the receive thread let one
+        // slow-trickle client stall /health and all request intake for the
+        // duration of its dribbled upload. The receive thread now only
+        // copies the inline chunks; MCP jobs carry a drain flag and the
+        // WORKER retrieves the remainder before executing.
         std::string body;
         for (USHORT i = 0; i < request->EntityChunkCount; ++i) {
             const auto& chunk = request->pEntityChunks[i];
@@ -1646,34 +1669,26 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
                             chunk.FromMemory.BufferLength);
             }
         }
-        // Drain the rest of the body, if any. Loop until ERROR_HANDLE_EOF
-        // or NO_MORE_DATA. 8 KB chunks is fine for typical MCP envelopes.
-        if ((request->Flags & HTTP_REQUEST_FLAG_MORE_ENTITY_BODY_EXISTS) != 0
-            || body.empty()) {
-            constexpr ULONG kBodyChunkBytes = 8 * 1024;
-            std::vector<uint8_t> bodyChunk(kBodyChunkBytes);
-            for (;;) {
-                ULONG bytesReturned = 0;
-                const ULONG entityResult = HttpReceiveRequestEntityBody(
-                    requestQueue_,
-                    request->RequestId,
-                    0,
-                    bodyChunk.data(),
-                    static_cast<ULONG>(bodyChunk.size()),
-                    &bytesReturned,
-                    nullptr);
-                if (entityResult == NO_ERROR) {
-                    if (bytesReturned > 0) {
-                        body.append(reinterpret_cast<const char*>(bodyChunk.data()),
-                                    bytesReturned);
-                    } else {
-                        break;
-                    }
-                } else if (entityResult == ERROR_HANDLE_EOF) {
-                    break;
-                } else {
-                    // ERROR_NO_MORE_BYTES (38) and others -- bail.
-                    break;
+        const bool drainRemainingBody =
+            (request->Flags & HTTP_REQUEST_FLAG_MORE_ENTITY_BODY_EXISTS) != 0
+            || body.empty();
+
+        // Size cap: reject an oversized declared Content-Length up front
+        // (the worker-side drain enforces the same cap on the accumulated
+        // bytes for chunked bodies that declare no length).
+        bool payloadTooLarge = body.size() > kMaxGatewayRequestBytes;
+        {
+            const auto& lengthHeader = request->Headers.KnownHeaders[HttpHeaderContentLength];
+            if (lengthHeader.pRawValue != nullptr && lengthHeader.RawValueLength > 0) {
+                const std::string declared(lengthHeader.pRawValue, lengthHeader.RawValueLength);
+                bool numeric = !declared.empty() && declared.size() <= 18;
+                unsigned long long declaredBytes = 0;
+                for (const char c : declared) {
+                    if (c < '0' || c > '9') { numeric = false; break; }
+                    declaredBytes = declaredBytes * 10 + static_cast<unsigned long long>(c - '0');
+                }
+                if (numeric && declaredBytes > kMaxGatewayRequestBytes) {
+                    payloadTooLarge = true;
                 }
             }
         }
@@ -1800,7 +1815,15 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
             // carries an accurate Allow: POST header and a valid JSON
             // body.
             const HTTP_VERB verb = request->Verb;
-            if (verb != HttpVerbPOST) {
+            if (payloadTooLarge) {
+                statusCode = 413;
+                reason = "Payload Too Large";
+                nlohmann::json err = {
+                    { "error", "MCP request body exceeds the gateway limit" },
+                    { "maxRequestBytes", kMaxGatewayRequestBytes }
+                };
+                responseBody = err.dump();
+            } else if (verb != HttpVerbPOST) {
                 statusCode = 405;
                 reason = "Method Not Allowed";
                 allowHeader = "POST";
@@ -1833,13 +1856,14 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
                     queueDepth = jobQueue_.size();
                     if (!jobQueueShutdown_ && queueDepth < kGatewayJobQueueMaxDepth) {
                         GatewayRequestJob job;
-                        job.requestId       = request->RequestId;
-                        job.path            = path;
-                        job.body            = body;
-                        job.clientIpAddress = clientIpAddress;
-                        job.clientType      = clientType;
-                        job.clientId        = clientId;
-                        job.sessionId       = sessionId;
+                        job.requestId          = request->RequestId;
+                        job.path               = path;
+                        job.body               = body;
+                        job.drainRemainingBody = drainRemainingBody;
+                        job.clientIpAddress    = clientIpAddress;
+                        job.clientType         = clientType;
+                        job.clientId           = clientId;
+                        job.sessionId          = sessionId;
                         jobQueue_.push_back(std::move(job));
                         enqueued = true;
                     }
@@ -1906,12 +1930,68 @@ void NativeHttpSysGatewayAdapter::processGatewayJob(const GatewayRequestJob& job
     std::string responseBody;
     USHORT statusCode = 200;
     std::string reason = "OK";
+
+    // Review follow-up: drain any remaining entity body HERE, on the
+    // worker, so a slow-trickle upload occupies one bounded worker slot
+    // instead of the receive thread. The accumulated size is capped; an
+    // oversized or broken body answers 413/400 without executing.
+    std::string body = job.body;
+    if (job.drainRemainingBody) {
+        constexpr ULONG kBodyChunkBytes = 8 * 1024;
+        std::vector<uint8_t> bodyChunk(kBodyChunkBytes);
+        bool bodyBroken = false;
+        for (;;) {
+            ULONG bytesReturned = 0;
+            const ULONG entityResult = HttpReceiveRequestEntityBody(
+                requestQueue_,
+                job.requestId,
+                0,
+                bodyChunk.data(),
+                static_cast<ULONG>(bodyChunk.size()),
+                &bytesReturned,
+                nullptr);
+            if (entityResult == NO_ERROR) {
+                if (bytesReturned > 0) {
+                    body.append(reinterpret_cast<const char*>(bodyChunk.data()),
+                                bytesReturned);
+                } else {
+                    break;
+                }
+            } else if (entityResult == ERROR_HANDLE_EOF) {
+                break;
+            } else if (entityResult == ERROR_CONNECTION_INVALID
+                       || entityResult == ERROR_OPERATION_ABORTED) {
+                // Client vanished or queue shut down mid-drain: nothing to
+                // answer.
+                bodyBroken = true;
+                break;
+            } else {
+                // ERROR_NO_MORE_BYTES (38) and others -- treat as end of
+                // body, matching the pre-split behavior.
+                break;
+            }
+            if (body.size() > kMaxGatewayRequestBytes) {
+                nlohmann::json err = {
+                    { "error", "MCP request body exceeds the gateway limit" },
+                    { "maxRequestBytes", kMaxGatewayRequestBytes }
+                };
+                sendGatewayHttpResponse(requestQueue_, job.requestId,
+                                        413, "Payload Too Large",
+                                        "application/json", err.dump(), nullptr);
+                return;
+            }
+        }
+        if (bodyBroken) {
+            return;
+        }
+    }
+
     // v0.9.48 defense-in-depth retained: any uncaught exception becomes a
     // 500 with a JSON-safe error envelope. BuildGatewayInternalErrorBody
     // escapes the exception text (the pre-remediation handler concatenated
     // ex.what() into raw JSON, corrupting the envelope on quotes/newlines).
     try {
-        responseBody = handleMcpRequest(job.path, job.body, job.clientIpAddress,
+        responseBody = handleMcpRequest(job.path, body, job.clientIpAddress,
                                         job.clientType, job.clientId, job.sessionId);
     } catch (const std::exception& ex) {
         statusCode = 500;

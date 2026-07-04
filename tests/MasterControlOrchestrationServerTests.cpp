@@ -3798,6 +3798,40 @@ bool testWorkerSupervisorPrefersCmdOverExtensionlessShim() {
     return ok;
 }
 
+bool testWorkerSupervisorRejectsCmdMetacharactersInBatchArgs() {
+    bool ok = true;
+    const auto dir = makeTempWorkerDir("metachar");
+    {
+        std::ofstream script(dir / "mcos-fake-worker3.cmd");
+        script << "@ping -n 5 127.0.0.1 >nul\r\n";
+    }
+    auto supervisor = MasterControl::createWorkerSupervisor();
+    MasterControl::ManagedEndpointPool pool;
+    pool.poolId = "metachar-worker";
+    pool.template_.executable = (dir / "mcos-fake-worker3.cmd").string();
+    pool.template_.args = { "safe", "a&b" };   // '&' would chain commands under cmd /c
+    pool.scalePolicy.minInstances = 1;
+    pool.scalePolicy.maxInstances = 1;
+    supervisor->upsertPool(pool);
+    supervisor->ensureMinInstances("metachar-worker");
+    const auto found = supervisor->findPool("metachar-worker");
+    ok &= expect(found.has_value() && !found->instances.empty(),
+                 "Rejected batch worker still records a failed instance for diagnostics.");
+    if (found.has_value() && !found->instances.empty()) {
+        const auto& instance = found->instances.front();
+        ok &= expect(instance.state == MasterControl::EndpointInstanceState::Failed
+                     && !instance.supervised,
+                     "Batch worker with cmd control characters in args does not spawn.");
+        ok &= expect(instance.statusMessage.find("cmd control") != std::string::npos
+                     && instance.statusMessage.find("a&b") != std::string::npos,
+                     "Diagnostic names the offending argument.");
+    }
+    supervisor->shutdownAll();
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    return ok;
+}
+
 bool testWorkerSupervisorRejectsMissingBareExecutable() {
     bool ok = true;
     auto supervisor = MasterControl::createWorkerSupervisor();
@@ -4088,6 +4122,7 @@ int main() {
 #if defined(_WIN32)
     ok &= testWorkerSupervisorResolvesPathExecutable();
     ok &= testWorkerSupervisorPrefersCmdOverExtensionlessShim();
+    ok &= testWorkerSupervisorRejectsCmdMetacharactersInBatchArgs();
     ok &= testWorkerSupervisorRejectsMissingBareExecutable();
     ok &= testWorkerSupervisorAcceptsAbsoluteExecutablePath();
     ok &= testWorkerSupervisorDestructorJoinsWatchdogWithoutDetach();
