@@ -139,12 +139,21 @@ file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/GeneratedVersion.h"
 ")
 message(STATUS "MasterControlShell: wrote GeneratedVersion.h with MASTERCONTROL_VERSION=${MASTERCONTROL_FULL_VERSION}")
 
+# WinUI Shell platform toolset. The project's CI runners (windows-2025-vs2026)
+# ship the v145 toolset (Visual Studio 2026), which is the canonical build
+# toolset, so v145 stays the default and CI behaviour is unchanged.
+# MasterControlShell.vcxproj is also v143-compatible, so a host with only
+# Visual Studio 2022 can build the Shell locally by overriding this:
+#   cmake --preset debug -DMASTERCONTROL_SHELL_PLATFORM_TOOLSET=v143
+set(MASTERCONTROL_SHELL_PLATFORM_TOOLSET "v145" CACHE STRING
+    "MSBuild PlatformToolset for the WinUI Shell (default v145 / VS2026; set v143 for VS2022).")
+
 add_custom_target(MasterControlShell ALL
     COMMAND "${MASTERCONTROL_MSBUILD}" "${MASTERCONTROL_SHELL_PROJECT}"
         /restore
         /t:Build
         /p:RestorePackagesConfig=true
-        /p:PlatformToolset=v145
+        /p:PlatformToolset=${MASTERCONTROL_SHELL_PLATFORM_TOOLSET}
         /p:Configuration=$<CONFIG>
         /p:Platform=x64
         /p:OutDir=${MASTERCONTROL_SHELL_OUTPUT_DIR}

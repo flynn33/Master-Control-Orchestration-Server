@@ -38,7 +38,12 @@ function Resolve-VisualStudioInstallationRoot {
 
     $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
     if (Test-Path $vswhere) {
-        $installationPath = (& $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null | Select-Object -First 1)
+        # -prerelease lets `vswhere -latest` return a prerelease Visual Studio
+        # (e.g. VS2026, which ships the v145 toolset the WinUI Shell targets)
+        # instead of skipping it so an older stable VS2022 (v143) wins -latest.
+        # This only matters on a mixed dev box with both installed; on the CI
+        # runner VS2026 is the sole/preferred install and is selected regardless.
+        $installationPath = (& $vswhere -latest -prerelease -products * -requires Microsoft.Component.MSBuild -property installationPath 2>$null | Select-Object -First 1)
         if (-not [string]::IsNullOrWhiteSpace($installationPath) -and (Test-Path $installationPath)) {
             return [System.IO.Path]::GetFullPath($installationPath.Trim())
         }
