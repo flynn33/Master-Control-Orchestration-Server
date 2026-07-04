@@ -61,7 +61,7 @@ The wire shape uses these field names verbatim. Earlier copies of this page had 
 | `kind` | `mcp-server` for generic backends; `sub-agent` for purpose-built specialized backends |
 | `logicalMcpUrl` | Stable URL for this pool. The lease router routes requests to one instance behind it. |
 | `template.executable` | Worker executable. Three accepted forms: an **absolute path** (used only if it exists), a **relative path containing a directory separator** (resolved against the service working directory), or a **bare command name** such as `npx.cmd` or `node`, resolved via Windows PATH search (`SearchPathW`) with `.exe`/`.cmd`/`.bat` probing when no extension is given. Resolution failures fail the instance with a diagnostic naming the executable. |
-| `template.args` | Array of command-line args passed at spawn. For `.cmd`/`.bat` workers MCOS launches through `cmd.exe /s /c` (required for spaced install paths), so cmd still expands `%VAR%` and treats `^`/`&` specially — avoid cmd metacharacters in args for batch-script workers. |
+| `template.args` | Array of command-line args passed at spawn. For `.cmd`/`.bat` workers MCOS launches through `cmd.exe /s /c` (required for spaced install paths); args containing cmd control characters (`&` `\|` `<` `>` `^`) are **rejected** with a clear instance diagnostic because cmd would interpret them as command syntax. `%VAR%` text is allowed but remains subject to cmd expansion. |
 | `template.workingDirectory` | CWD for the spawned process |
 | `template.environment` | Object — extra env vars merged onto the inherited block |
 | `template.transport` | `stdio` or `streamable_http` |
