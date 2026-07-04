@@ -22,7 +22,7 @@ Invoke-RestMethod 'http://localhost:7300/api/telemetry/events?max=200' |
   Format-Table timestamp, category, message -AutoSize
 
 # Stream from the file directly
-Get-Content "$env:ProgramData\Master Control Orchestration Server\runtime\events.jsonl" -Tail 50 -Wait
+Get-Content "$env:PUBLIC\Documents\Master Control Orchestration Server\logs\runtime\events.jsonl" -Tail 50 -Wait
 ```
 
 Dashboard surface: **Activity** destination, top card. Refreshes every 5 seconds.

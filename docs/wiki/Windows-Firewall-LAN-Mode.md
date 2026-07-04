@@ -8,16 +8,16 @@ MCOS exposes two logically distinct surfaces. Both run on the host but are scope
 
 | Surface | Audience | Auth | Trust | Where |
 |---|---|---|---|---|
-| AI-client MCP Gateway | AI clients on the trusted LAN (Claude Code, Codex, Grok, ChatGPT, generic MCP) | `auth=none` | `trust=lan` | Gateway port (default `8080`, configurable in `mcos.json`) at `/mcp` |
+| AI-client MCP Gateway | AI clients on the trusted LAN (Claude Code, Codex, Grok, ChatGPT, generic MCP) | `auth=none` | `trust=lan` | Gateway port (default `8080`, configurable through `mcpGateway.listenPort`) at `/mcp` |
 | Operator surface | The host operator(s) | LAN-trusted (no app-layer auth per ADR-001 §3) | `trust=lan` | Admin port — the dashboard at `/`, JSON API at `/api/*` |
 
 **The trust boundary is enforced at the network layer, not the application layer.** Windows Firewall is the load-bearing control. Both surfaces refuse to participate when reachable from a Public network profile.
 
 ## Default ports
 
-These are the values `buildDefaultConfiguration()` writes into `mcos.json` on first run. Adjust the firewall snippets below if your `mcos.json` has been edited:
+These are the values `buildDefaultConfiguration()` writes on first run. Adjust the firewall snippets below if the configuration has been edited:
 
-| Surface | Default port | Field in `mcos.json` |
+| Surface | Default port | Configuration field |
 |---|---|---|
 | Operator dashboard / admin API | TCP **7300** | `browserPort` |
 | Discovery beacon (UDP JSON broadcast) | UDP **7301** | `beaconPort` |
@@ -68,7 +68,7 @@ New-NetFirewallRule `
   -Program "C:\Program Files\Master Control Orchestration Server\MasterControlServiceHost.exe"
 ```
 
-Adjust `LocalPort` to match `mcos.json`'s `mcpGateway.listenPort`. The `Profile Private,Domain` value is the binding constraint: do not include `Public`. If your LAN is on the Public profile (rare, but possible on misconfigured hosts), change the profile classification on the connection rather than weakening this rule.
+Adjust `LocalPort` to match `mcpGateway.listenPort`. The `Profile Private,Domain` value is the binding constraint: do not include `Public`. If your LAN is on the Public profile (rare, but possible on misconfigured hosts), change the profile classification on the connection rather than weakening this rule.
 
 ### 2. Operator dashboard / admin API (LAN-only)
 
@@ -83,7 +83,7 @@ New-NetFirewallRule `
   -Program "C:\Program Files\Master Control Orchestration Server\MasterControlServiceHost.exe"
 ```
 
-Adjust `LocalPort` to match `mcos.json`'s `browserPort` (default `7300`). Same `Profile` constraint.
+Adjust `LocalPort` to match `browserPort` (default `7300`). Same `Profile` constraint.
 
 ### 3. DNS-SD / mDNS LAN advertising (PHASE-03)
 
@@ -113,13 +113,13 @@ New-NetFirewallRule `
   -Program "C:\Program Files\Master Control Orchestration Server\MasterControlServiceHost.exe"
 ```
 
-The beacon broadcasts on the configurable port `mcos.json::beaconPort` (default `7301`). Newer clients use DNS-SD; this rule keeps the legacy UDP-JSON browser tooling working.
+The beacon broadcasts on the configurable `beaconPort` (default `7301`). Newer clients use DNS-SD; this rule keeps the legacy UDP-JSON browser tooling working.
 
 ## Public profile blocks
 
 If MCOS is reachable on a Public profile, treat that as a misconfiguration and either:
 - Reclassify the connection (Settings → Network → set the network to Private), or
-- Bind MCOS to a specific LAN-only NIC via the `mcos.json` `bindAddress` field.
+- Bind MCOS to a specific LAN-only NIC via the `bindAddress` field.
 
 The Forsetti compliance script does **not** enforce this; it is host-administration policy.
 
@@ -130,13 +130,13 @@ After adding the rules, validate from another machine on the LAN:
 ```powershell
 # From another host on the LAN — replace <host-ip> with the MCOS host's IP.
 Test-NetConnection -ComputerName <host-ip> -Port 7300   # operator surface
-Test-NetConnection -ComputerName <host-ip> -Port 8080   # MCP Gateway (open only when a gateway binary is supervised)
+Test-NetConnection -ComputerName <host-ip> -Port 8080   # MCP Gateway (open only when enabled and listening)
 # DNS-SD validation requires Bonjour Browser or `dns-sd -B _mcos._tcp` (macOS),
 # `avahi-browse _mcos._tcp` (Linux), or PowerShell:
 Resolve-DnsName -Name _mcos._tcp.local -Type PTR -LlmnrFallback
 ```
 
-The MCP Gateway port (TCP 8080) only has a listener when a gateway substrate is supervising it (PHASE-02 honest-fallback rule from ADR-002 §9). The firewall rule is correct to open the port now — `Test-NetConnection` will report `False` until an `IMcpGateway` adapter is configured. The operator port (TCP 7300) listens unconditionally.
+The MCP Gateway port (TCP 8080) only has a listener when the native gateway is enabled and started. The firewall rule is correct to create before enabling the gateway; `Test-NetConnection` reports `False` until the listener exists. The operator port (TCP 7300) listens unconditionally.
 
 From a Public network, the same calls should fail. If they succeed, the Public profile is too permissive.
 

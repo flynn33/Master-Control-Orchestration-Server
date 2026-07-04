@@ -1,11 +1,11 @@
-## ADR-001 - MCOS is a LAN Client Control Plane
+# ADR-001 - MCOS is a LAN Client Control Plane
 
 - Status: Accepted (in part superseded — see [ADR-002](ADR-002-gateway-first-mcp-realignment.md))
 - Date: 2026-04-24
 - Deciders: Product owner, engineering
 - Supersedes: the embedded-provider direction in `docs/wiki/Auto-Connect-AI.md` and the provider-centric framing in `docs/wiki/Architecture.md`
 - Superseded in part by: [ADR-002 - MCOS is a Windows-Native LAN MCP Gateway Host (Gateway-First Realignment)](ADR-002-gateway-first-mcp-realignment.md). ADR-002 retains the no-provider-execution stance (§1, §2), the per-client privilege flags (§4), autonomous mode (§5), and CLU centrality (§7). It supersedes §3 (the `X-MCOS-Client-Id` model on the AI-client surface) and §6 (the catalog read surface as the AI-client tool path) — those become the operator surface only; AI clients reach tools through one MCOS-advertised MCP Gateway URL.
-- Related: `plans/dashboard/remote-client-onboarding.md`, `docs/archive/remediation/02-removal-inventory.md`, `docs/wiki/CLU-Governance.md`
+- Related: `plans/dashboard/remote-client-onboarding.md`, `docs/wiki/CLU-Governance.md`
 
 ### Context
 
@@ -39,8 +39,6 @@ Neutral. Sub-agents remain catalogued but their backing process fleet (`D:\Sub-A
 
 ### References
 
-- Remediation plan: `docs/archive/remediation/01-gut-and-rebuild.md` (extended draft), `C:\Users\Flynn\.claude\plans\g-claude-master-control-orchastration-s-giggly-hartmanis.md` (authoritative, concise).
-- Removal inventory: `docs/archive/remediation/02-removal-inventory.md`.
-- Deep research report: `G:\Claude\deep-research-report.md`.
+- Original remediation planning references are preserved in git history; current operator-facing architecture is documented in [Architecture](Architecture), [Gateway](Gateway), and [Configuration](Configuration).
 - Proof that current provider execute loop works end to end: `docs/archive/proof-of-working/11-ai-task-execution.md` (to be deleted in Phase 2; retained in git history).
 - Parallel architectural thread that pointed at this decision all along: `plans/dashboard/remote-client-onboarding.md`.

@@ -1,7 +1,7 @@
 # Architecture
 
 ![governing](https://img.shields.io/badge/governing-ADR--002-5a00e8?style=flat-square)
-![version](https://img.shields.io/badge/version-v0.11.0--alpha.3-00f6ff?style=flat-square)
+![version](https://img.shields.io/badge/version-vA3.11.0-00f6ff?style=flat-square)
 ![layer](https://img.shields.io/badge/layer-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20vanilla%20JS-00f6ff?style=flat-square)
 ![toolchain](https://img.shields.io/badge/toolchain-VS2026%20%E2%80%A2%20v145%20%E2%80%A2%20CMake%204.x-5a00e8?style=flat-square)
 ![phases](https://img.shields.io/badge/architecture-PHASE--00..PHASE--14-00aacc?style=flat-square)
@@ -9,7 +9,7 @@
 
 Canonical map of how MCOS is structured. When in doubt, the source files referenced here are ground truth — every assertion on this page points to a real header, route, or test.
 
-The architecture target is the **gateway-first MCP host** declared in [ADR-002](ADR-002-gateway-first-mcp-realignment). The substrate question was settled by [ADR-003](ADR-003-mcp-gateway-substrate-decision): the legacy external gateway was retired at v0.9.0; the sole current gateway substrate is the in-process `NativeHttpSysGatewayAdapter` on top of HTTP.sys. The original [ADR-001 LAN client identity model](ADR-001-lan-client-control-plane) survives as the maintainer surface that coexists with the AI-client gateway surface. v0.11.0-alpha.3 is the current target — phases PHASE-00 through PHASE-12 and PHASE-14 (comprehensive diagnostics, Slices A–E) are delivered; PHASE-13 (Win2D shell rendering) remains scheduled.
+The architecture target is the **gateway-first MCP host** declared in [ADR-002](ADR-002-gateway-first-mcp-realignment). The substrate question was settled by [ADR-003](ADR-003-mcp-gateway-substrate-decision): the legacy external gateway was retired at v0.9.0; the sole current gateway substrate is the in-process `NativeHttpSysGatewayAdapter` on top of HTTP.sys. The original [ADR-001 LAN client identity model](ADR-001-lan-client-control-plane) survives as the maintainer surface that coexists with the AI-client gateway surface. `vA3.11.0` is the current alpha version; see [Versions](Versions) for version policy and history.
 
 Three maintainer-deck features are part of the WinUI Shell Overview surface: **direct AI plugin slots** (v0.10.12+) let the maintainer activate exactly one of Claude Code, ChatGPT, or Grok as the connected client — the selections are mutually exclusive and MCOS issues the appropriate connector config on activation; the **Supervisor Wizard** (v0.9.76+) lets the maintainer pick a supervisor model (Claude/ChatGPT/Grok) and export a model-specific JSON config for LAN import; and the **reachability self-check** (v0.10.13) exposes `GET /api/supervisor/reachability-check`, which probes MCOS's own loopback and LAN-IP variants and reports results to the shell.
 
@@ -369,31 +369,36 @@ The same pipeline runs in CI via `.github/workflows/windows-build-test-package.y
 
 ## 11. Configuration
 
-`mcos.json` lives at `%ProgramData%\Master Control Orchestration Server\mcos.json` after install. Maintainers edit it directly or via the WinUI Settings panel. Key fields:
+The current configuration file lives at `%ProgramData%\MasterControlOrchestrationServer\config\master-control-orchestration-server.json` after install. The runtime still reads `%ProgramData%\MasterControlOrchestrationServer\config\master-control-program.json` as a legacy fallback, and it migrates the older `%ProgramData%\MasterControlProgram` data directory once when the new directory is absent.
+
+Fresh defaults are local-only. Maintainers can edit settings through the WinUI Settings panel or through `GET`, `POST`, and partial `PATCH` requests on `/api/config`. Unsafe network posture changes require `X-Confirm-Unsafe: true`. Key fields:
 
 ```json
 {
   "instanceId": "mcos-<uuid>",
   "instanceName": "Master Control Orchestration Server",
-  "bindAddress": "0.0.0.0",
+  "bindAddress": "127.0.0.1",
   "browserPort": 7300,
   "beaconPort": 7301,
-  "beaconEnabled": true,
+  "beaconEnabled": false,
   "mcpGateway": {
-    "type": "native",
+    "type": "Native",
     "enabled": false,
-    "binaryPath": "",
-    "listenHost": "0.0.0.0",
+    "listenHost": "127.0.0.1",
     "listenPort": 8080,
     "mcpPath": "/mcp",
     "healthPath": "/health",
-    "mode": "lan-trusted"
+    "mode": "local-only",
+    "tlsEnabled": false,
+    "tlsListenPort": 8443
   },
-  // "type" is retained for back-compat deserialization of pre-v0.9.0 config files only.
-  // The runtime always selects NativeHttpSysGatewayAdapter regardless of this field value.
-  // (legacy slugs were tolerated by the deserializer); it is no longer a valid substrate (retired v0.9.0).
-  "security": { "allowOpenLanAccess": false },
-  "resourcePolicy": {
+  "security": {
+    "enableTls": false,
+    "enableAuthentication": false,
+    "allowTroubleshootingBypass": false,
+    "allowOpenLanAccess": false
+  },
+  "resourceAllocation": {
     "cpuAllocationPercent": 50,
     "memoryAllocationPercent": 50,
     "bandwidthAllocationPercent": 100,
@@ -402,7 +407,7 @@ The same pipeline runs in CI via `.github/workflows/windows-build-test-package.y
 }
 ```
 
-Default values come from `buildDefaultConfiguration()` in `src/MasterControlApp/MasterControlDefaults.cpp`. The schema is documented in `docs/implementation/`.
+Default values come from `buildDefaultConfiguration()` in `src/MasterControlApp/MasterControlDefaults.cpp`. See [Configuration](Configuration) for the field-by-field schema, merge semantics, and LAN enablement guardrails.
 
 ---
 

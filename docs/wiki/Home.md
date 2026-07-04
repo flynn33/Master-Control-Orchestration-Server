@@ -1,112 +1,104 @@
-# Master Control Orchestration Server — Operator Wiki
+# Master Control Orchestration Server Operator Wiki
 
-![version](https://img.shields.io/badge/version-vA3.11.0-00f6ff?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--07--03-031018?style=flat-square)
-![architecture](https://img.shields.io/badge/architecture-complete-1cf2c1?style=flat-square)
-![purpose](https://img.shields.io/badge/purpose-internal%20tool-5a00e8?style=flat-square)
+This wiki is the operator manual for MCOS, a Windows-native LAN MCP Gateway
+host. Use it to install the service, configure the gateway, connect trusted-LAN
+clients, operate worker pools, review diagnostics, and troubleshoot the host.
 
-Internal-tool documentation. Use this wiki to install MCOS, configure it, run it day to day, and use each feature. Architecture and decisions live at the back as reference for when something is not behaving the way it should.
-
-> **vA3.11.0 (the alpha-stage re-expression of v0.11.0-alpha.3) sits on top of the v0.7.0 production architecture.** The legacy external gateway was retired in v0.9.0 — the only shipping gateway substrate is the in-process Windows-native HTTP.sys adapter. The v0.9.x and v0.10.x lines added the Supervisor Agent Assignment Wizard (operator picks one supervisor model — `chatgpt` / `claude` / `grok` — and MCOS issues a LAN-routable config the client uses to bind), a footer-style tile-grid renderer used by Telemetry + Runtime + the cross-tab SUB-AGENT GRID, persistent Diagnostics logging, a hot-deploy helper (`scripts\Deploy-LocalLive.ps1`), and pool orchestration scaffolding under `.claude/`. The v0.11.0 alpha line completes the PHASE-14 diagnostics module end-to-end (SQLite-backed store, MCP plugin tools, WinUI Shell surface, browser dashboard tab), adds optional TLS on the MCP gateway and admin listener, and adds UDP beacon payload signing.
-
----
-
-## I want to...
-
-### Set it up
-| Task | Page |
-|---|---|
-| Install MCOS for the first time | [Quick Start](Quick-Start) |
-| Configure ports, instance name, resource % | [Configuration](Configuration) |
-| Make MCOS discoverable on the LAN | [LAN Discovery](LAN-Discovery) + [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) |
-| Gateway substrate (native HTTP.sys is the only shipping path as of v0.9.0) | [Gateway](Gateway) §Native HTTP.sys substrate |
-| Assign a supervisor model (chatgpt / claude / grok) | [Sub-Agents](Sub-Agents) §Supervisor Agent Assignment Wizard |
-| Add Start Menu / Desktop shortcuts (or remove them) | [Maintenance](Maintenance) §Shortcuts |
-
-### Connect AI clients
-| Task | Page |
-|---|---|
-| Onboard Claude Code | [Onboarding](Onboarding) §Claude Code |
-| Onboard Codex | [Onboarding](Onboarding) §Codex |
-| Onboard Grok | [Onboarding](Onboarding) §Grok |
-| Onboard ChatGPT (connector-edge) | [Onboarding](Onboarding) §ChatGPT |
-| Onboard a generic MCP client | [Onboarding](Onboarding) §Generic |
-| Hand a client a governance bundle | [CLU Governance](CLU-Governance) §How to download a bundle |
-
-### Use it day to day
-| Task | Page |
-|---|---|
-| Check that everything is healthy | [Daily Operations](Daily-Operations) §Health check |
-| See what AI clients are connected right now | [Daily Operations](Daily-Operations) §Connected clients |
-| See what just happened on the host | [Daily Operations](Daily-Operations) §Activity stream |
-| Add a managed MCP server pool | [Worker Pools](Worker-Pools) §How to add a pool |
-| Drain a pool for maintenance | [Worker Pools](Worker-Pools) §How to drain |
-| Force scale a pool to its minimum | [Worker Pools](Worker-Pools) §How to scale |
-| Approve / reject a pending governance action | [Governance](Governance) §Approval queue |
-| Change a setting (port, beacon, resources) | [Configuration](Configuration) §Editing live |
-| Pull a config bundle for a LAN client | [Client Config Bundle](Client-Config-Bundle) |
-| Drive MCOS from a Claude Code session | [Claude Code Plugin](Claude-Code-Plugin) |
-
-### Maintain it
-| Task | Page |
-|---|---|
-| Update to a new MCOS version | [Maintenance](Maintenance) §Upgrade |
-| Repair a broken installation | [Maintenance](Maintenance) §Repair |
-| Back up configuration + data | [Maintenance](Maintenance) §Backup |
-| Uninstall cleanly | [Maintenance](Maintenance) §Uninstall |
-| Build a fresh MSI from source | [Operations](Operations) §Build pipeline |
-| Run the release gate locally | [Release Gate](Release-Gate) |
-
-### Diagnose a problem
-| Symptom | Page |
-|---|---|
-| LAN clients can't find the host | [Troubleshooting](Troubleshooting) §LAN discovery |
-| Gateway shows `state=running, health=unknown` | [Troubleshooting](Troubleshooting) §Gateway supervised-mock |
-| `Get-NetFirewallRule -DisplayName 'MCOS *'` returns nothing | [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) |
-| Service won't start | [Troubleshooting](Troubleshooting) §Service hung |
-| Clients connect but get 403 on a privileged action | [Troubleshooting](Troubleshooting) §Missing privilege |
-| Where are the logs? | [Troubleshooting](Troubleshooting) §Where are the logs |
-
-### Look something up
-| Topic | Page |
-|---|---|
-| Every HTTP route the runtime exposes | [API Reference](API-Reference) |
-| Every field of `mcos.json` | [Configuration](Configuration) |
-| Dashboard destinations and what each one does | [Dashboard](Dashboard) |
-| What's tracked as telemetry, what's "unavailable" vs "idle" | [Telemetry and Activity](Telemetry-and-Activity) |
-
----
-
-## Reference (architecture and decisions)
-
-These pages explain why MCOS works the way it does. Read when something is not behaving as expected, or before making structural changes.
-
-| Reference | Page |
-|---|---|
-| Runtime composition + diagrams | [Architecture](Architecture) |
-| Why each design choice was made | [Architecture Decisions](Architecture-Decisions) |
-| ADR-001 LAN client identity model | [ADR-001](ADR-001-lan-client-control-plane) |
-| ADR-002 gateway-first realignment | [ADR-002](ADR-002-gateway-first-mcp-realignment) |
-| ADR-003 substrate decision (status-updated for PHASE-12 ship) | [ADR-003](ADR-003-mcp-gateway-substrate-decision) |
-| What the IMcpGateway adapter actually does | [Gateway](Gateway) |
-| How worker pools are supervised | [Worker Pools](Worker-Pools) |
-| How LAN discovery is wired | [LAN Discovery](LAN-Discovery) |
-| Release / packaging flow | [Operations](Operations) + [Release Gate](Release-Gate) |
-| Per-release notes (v0.6.0..v0.7.0) and full phase ledger | [Versions](Versions) |
-| Tron palette + motion (UI) | [Tron UI Theme](Tron-UI-Theme) |
-
----
-
-## Current release
+## Current Alpha
 
 | Field | Value |
 |---|---|
-| Version | `vA3.11.0` |
+| Current version | `vA3.11.0` |
+| Version source | `VERSION.json` |
 | Released | `2026-07-03` |
-| Theme | Alpha-stage scheme migration — same tree as `0.11.0-alpha.3`: PHASE-14 diagnostics complete (Slices B–E) + security hardening (beacon signing, admin-listener TLS, cert auto-rotation) + 2026-06 bug campaign |
-| Tag | `vA3.11.0` — no GitHub Releases during alpha; the Windows Build, Test, and Package CI gate is the per-commit health check |
-| Gateway substrate | `native` (in-process Windows HTTP.sys) — only shipping substrate as of v0.9.0. the legacy external gateway was retired per operator directive. |
-| Supervisor wizard | Operator selects one of `chatgpt` / `claude` / `grok`; MCOS issues a LAN-routable config bundle the supervisor client uses to bind. Lifecycle off → config_generated → pending_connection → connected → disconnected \| revoked. |
-| Boot self-tests | 39 probes (was ~30 at v0.7.0). Failures dual-emit to the persistent Diagnostics log. |
-| Scheduled next | v1.0.0+ candidates: PHASE-13 Win2D / Direct2D shell rendering, per-pass self-test rows in the persistent Diagnostics log (opt-in), app-layer auth for the retail build, end-to-end LAN client integration test. |
-| Repository | [Master-Control-Orchestration-Server](https://github.com/flynn33/Master-Control-Orchestration-Server) |
+| Channel | Internal alpha |
+| Version meaning | `A3.11.0` is the alpha-stage expression of the tree previously documented as `0.11.0-alpha.3`. |
+| Release policy | No GitHub Releases during alpha; the Windows Build, Test, and Package workflow is the repository health gate. |
+| Gateway substrate | Native in-process HTTP.sys behind `IMcpGateway`; no external gateway binary is required. |
+| Trust posture | `auth=none, trust=lan`; app-layer authentication is deferred to a later hardening track. |
+
+MCOS is internal alpha software. Repository checks and tests validate the source
+tree, but each target Windows host still needs environment-specific validation
+for HTTP.sys binding, TLS binding, MSI installation, service behavior, DNS-SD
+visibility, and live LAN-client interoperability.
+
+Archived documents are historical evidence only. They are not current
+installation, operation, release, or implementation guidance.
+
+## Set Up
+
+| Task | Page |
+|---|---|
+| Install or build from source | [Quick Start](Quick-Start) |
+| Configure ports, identity, gateway, security, and resource fields | [Configuration](Configuration) |
+| Enable gateway or admin TLS | [TLS and HTTPS](TLS-and-HTTPS) |
+| Open Windows Firewall for LAN use | [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) |
+| Understand MSI and package artifacts | [Packaging and Gateway Binary](Packaging-and-Gateway-Binary) |
+
+## Connect Clients
+
+| Task | Page |
+|---|---|
+| Generate per-client onboarding profiles | [Onboarding](Onboarding) |
+| Inspect client bundle fields | [Client Config Bundle](Client-Config-Bundle) |
+| Verify DNS-SD, UDP beacon, and discovery documents | [LAN Discovery](LAN-Discovery) |
+| Manage LAN client identity and capabilities | [LAN Clients](LAN-Clients) |
+| Connect a remote trusted-LAN peer | [Remote Client](Remote-Client) |
+| Use the local bridge plugin | [Claude Code Plugin](Claude-Code-Plugin) |
+
+## Operate
+
+| Task | Page |
+|---|---|
+| Run daily health checks | [Daily Operations](Daily-Operations) |
+| Use the browser dashboard and WinUI shell | [Dashboard](Dashboard) |
+| Interpret activity, diagnostics, and unavailable metrics | [Telemetry and Activity](Telemetry-and-Activity) |
+| Start, stop, and inspect the MCP gateway | [Gateway](Gateway) |
+| Add, drain, scale, and remove worker pools | [Worker Pools](Worker-Pools) |
+| Understand sub-agent behavior | [Sub-Agents](Sub-Agents) |
+| Review CLU/Forsetti governance | [Governance](Governance) and [CLU Governance](CLU-Governance) |
+| Grant least-privilege capabilities | [Privileges](Privileges) |
+
+## Maintain And Troubleshoot
+
+| Task | Page |
+|---|---|
+| Back up, restore, repair, upgrade, or uninstall | [Maintenance](Maintenance) |
+| Run build, test, package, and local operations commands | [Operations](Operations) |
+| Understand alpha release gates | [Release Gate](Release-Gate) |
+| Review service, ProgramData, HTTP.sys, firewall, and discovery infrastructure | [Infrastructure](Infrastructure) |
+| Inspect existing automation surfaces | [Automation](Automation) |
+| Diagnose common failures | [Troubleshooting](Troubleshooting) |
+
+## Reference
+
+| Topic | Page |
+|---|---|
+| Runtime architecture | [Architecture](Architecture) |
+| ADR index | [Architecture Decisions](Architecture-Decisions) |
+| LAN client control-plane decision | [ADR-001](ADR-001-lan-client-control-plane) |
+| Gateway-first MCP decision | [ADR-002](ADR-002-gateway-first-mcp-realignment) |
+| Gateway substrate decision | [ADR-003](ADR-003-mcp-gateway-substrate-decision) |
+| Admin API routes and capability requirements | [API Reference](API-Reference) |
+| Version scheme and release history | [Versions](Versions) |
+| UI theme notes | [Tron UI Theme](Tron-UI-Theme) |
+
+## Source Notes
+
+- Version authority: `VERSION.json`
+- Route registry: `include/MasterControl/AdminRouteRegistry.h`
+- Capability policy: `include/MasterControl/AdminRouteAuthorization.h`
+- Configuration defaults and paths: `src/MasterControlApp/MasterControlDefaults.cpp`
+- Gateway adapter: `src/MasterControlApp/McpGatewayAdapters.cpp`
+- Packaging: `scripts/Package-MasterControlOrchestrationServer.ps1` and `installer/Build-Msi.ps1`
+
+## Related Pages
+
+[Quick Start](Quick-Start) |
+[Configuration](Configuration) |
+[TLS and HTTPS](TLS-and-HTTPS) |
+[Gateway](Gateway) |
+[Worker Pools](Worker-Pools) |
+[API Reference](API-Reference) |
+[Troubleshooting](Troubleshooting) |
+[Versions](Versions)

@@ -97,25 +97,30 @@ $body = @{
   kind          = 'mcp-server'
   logicalMcpUrl = 'http://localhost:18443/mcp/shell'
   template      = @{
-    transport       = 'streamable_http'
-    executablePath  = 'C:\Program Files\...\my-mcp-shell.exe'
-    arguments       = @()
-    environment     = @{}
+    executable       = 'C:\Program Files\my-mcp-shell\my-mcp-shell.exe'
+    args             = @('--port', '18443')
     workingDirectory = ''
+    environment      = @{}
+    transport        = 'streamable_http'
+    healthProbe      = @{
+      transport          = 'http'
+      path               = '/health'
+      intervalMs         = 5000
+      timeoutMs          = 1500
+      unhealthyThreshold = 3
+    }
   }
   scalePolicy   = @{
     minInstances              = 0
     maxInstances              = 4
     maxActiveLeasesPerInstance = 8
+    scaleOutQueueWaitMs        = 1500
+    scaleInIdleSeconds         = 120
   }
   drainPolicy   = @{
-    gracefulSeconds         = 30
-    forceTerminateOnTimeout = $true
-  }
-  healthProbe   = @{
-    path            = '/health'
-    intervalSeconds = 10
-    timeoutMs       = 1500
+    drainStickySessions           = $true
+    drainTimeoutSeconds           = 30
+    routeNewSessionsToReplacement = $true
   }
 } | ConvertTo-Json -Depth 6
 
@@ -164,7 +169,7 @@ Hot-migration is forbidden — stateful sessions complete on their original inst
 Invoke-RestMethod -Method POST http://localhost:7300/api/pools/mcos-shell-tools/remove
 ```
 
-Removing a pool also removes the persisted definition from `mcos.json`. Existing in-flight leases on running instances complete first; the supervisor reaps the workers under Job Object closure.
+Removing a pool also removes the persisted definition from the configuration file. Existing in-flight leases on running instances complete first; the supervisor reaps the workers under Job Object closure.
 
 ---
 
@@ -234,23 +239,23 @@ Dashboard surface: **Governance** → "Governance bundles" card has tabs and a d
 If the field is on the WinUI Settings panel, edit there and click Apply Host Settings. Otherwise:
 
 ```powershell
-# Edit
-notepad "$env:ProgramData\Master Control Orchestration Server\mcos.json"
+# Edit the current configuration file.
+notepad "$env:ProgramData\MasterControlOrchestrationServer\config\master-control-orchestration-server.json"
 
 # Restart so the runtime re-reads
 Restart-Service MasterControlProgram
 ```
 
-Some changes (instance name, browser port, beacon port, beacon enabled, resource policy) hot-apply via `POST /api/config`. See [Configuration](Configuration) for the field-by-field reference.
+Some changes hot-apply through `POST /api/config` or a partial `PATCH /api/config` request. Unsafe network posture changes require `X-Confirm-Unsafe: true`. See [Configuration](Configuration) for the field-by-field reference.
 
 ---
 
 ## Watch logs in real time
 
-Logs land under `%ProgramData%\Master Control Orchestration Server\runtime\`.
+Diagnostics logs land under `%PUBLIC%\Documents\Master Control Orchestration Server\logs\runtime\`.
 
 ```powershell
-$log = "$env:ProgramData\Master Control Orchestration Server\runtime\events.jsonl"
+$log = "$env:PUBLIC\Documents\Master Control Orchestration Server\logs\runtime\events.jsonl"
 Get-Content $log -Wait -Tail 50
 
 # Or filter by category

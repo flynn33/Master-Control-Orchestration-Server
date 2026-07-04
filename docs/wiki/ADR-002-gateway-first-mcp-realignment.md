@@ -1,4 +1,4 @@
-## ADR-002 - MCOS is a Windows-Native LAN MCP Gateway Host (Gateway-First Realignment)
+# ADR-002 - MCOS is a Windows-Native LAN MCP Gateway Host (Gateway-First Realignment)
 
 - Status: Accepted
 - Date: 2026-04-30
@@ -45,7 +45,7 @@ Specific consequences locked by this decision:
 
 8. **Autoscaling is sticky-session safe.** When a pool saturates, MCOS scales out the same logical pool. Stateful MCP sessions stay sticky to their existing instance; new sessions/leases route to the new instance. MCOS does not hot-migrate active in-flight stateful streams unless a backend-specific migration contract exists. Drain preserves existing sessions; forced retirement may require client reinitialize.
 
-9. **Telemetry is honest.** Host telemetry uses PDH (CPU/disk/network/process counters) and DXGI (GPU memory where available). Activity uses ETW/TraceLogging where appropriate. Worker telemetry comes from the supervised process tree (CPU/memory/I/O) plus pool metrics (active leases, queue depth, inflight calls). Per-AI-client CPU/GPU/disk telemetry exists only when the client supplies it via heartbeat or sidecar; otherwise the dashboard shows an honest "unavailable" state. No fake utilization, no fake live infrastructure, no placeholder success states.
+9. **Telemetry is honest.** Host telemetry uses PDH (CPU/disk/network/process counters) and DXGI (GPU memory where available). Activity uses ETW/TraceLogging where appropriate. Worker telemetry comes from the supervised process tree (CPU/memory/I/O) plus pool metrics (active leases, queue depth, inflight calls). Per-AI-client CPU/GPU/disk telemetry exists only when the client supplies it via heartbeat or sidecar; otherwise the dashboard shows an honest "unavailable" state. No fake utilization, no fake live infrastructure, no invented success states.
 
 10. **Windows-native first.** Service hosting via Windows SCM patterns. HTTP front door via HTTP.sys (or a clearly justified transitional layer). Outbound HTTP via WinHTTP. LAN discovery via Win32 DNS-SD APIs (`DnsServiceRegister`, `DnsServiceBrowse`); Bonjour/mDNSResponder is a deliberate fallback only. No Java or interpreted runtime in core MCOS. Python is permitted for test tooling only. the external substrate runs as a supervised child process behind the C++ adapter. Docker is a development/testing option, not the required production path.
 

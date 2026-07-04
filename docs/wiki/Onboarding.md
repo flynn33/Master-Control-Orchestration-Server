@@ -101,7 +101,7 @@ Invoke-RestMethod -Method POST -Uri "http://<mcos-host>:8080/mcp" `
   -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-If that works but your client doesn't see tools, the issue is on the client side. If it doesn't work even from PowerShell, see [Troubleshooting](Troubleshooting) §LAN discovery and §Gateway supervised-mock.
+If that works but your client doesn't see tools, the issue is on the client side. If it doesn't work even from PowerShell, see [Troubleshooting](Troubleshooting) for LAN discovery and gateway listener diagnostics.
 
 You can also watch presence land in real time:
 ```powershell
@@ -357,7 +357,7 @@ The discovery document at `/.well-known/mcos.json` includes the onboarding paths
 }
 ```
 
-A capable client can chain: discover via DNS-SD → fetch `mcos.json` → fetch its `clientType` profile → apply the snippet — all without operator intervention. Most clients today still expect a human to copy and paste; the discovery path is forward-compatible for the day they catch up.
+A capable client can chain: discover via DNS-SD → fetch the well-known discovery document → fetch its `clientType` profile → apply the snippet — all without operator intervention. Most clients today still expect a human to copy and paste; the discovery path is forward-compatible for the day they catch up.
 
 ---
 

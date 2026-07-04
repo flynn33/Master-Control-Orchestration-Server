@@ -56,7 +56,7 @@ flowchart LR
 | `ShellHotGlowBrush` | `#2200F6FF` (22 alpha) | Diffuse glow under hot elements |
 | `TextPrimaryBrush` | `#E6FCFF` | Body and label text |
 | `TextMutedBrush` | `#8CB7C4` | Secondary text |
-| `TextFaintBrush` | `#6A8B95` | Disabled / placeholder |
+| `TextFaintBrush` | `#6A8B95` | Disabled and empty-state text |
 | `SuccessBrush` | `#1CF2C1` | OK states, 2xx events |
 | `WarningBrush` | `#FFC857` | Caution states, 4xx events |
 | `DangerBrush` | `#FF6A80` | Failure, 5xx events |

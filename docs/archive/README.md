@@ -1,19 +1,26 @@
 # Archive
 
-Historical evidence, preserved for audit and provenance. **Nothing in this tree is a current instruction.** Current guidance lives in:
+This directory is historical evidence only. It is not current installation,
+operation, release, or implementation guidance. Current operator documentation
+lives in `docs/wiki/`; current release metadata lives in `VERSION.json` and
+`CHANGELOG.md`.
 
-- [`README.md`](../../README.md) — product overview, quick start, build/validate/package
-- [`docs/wiki/`](../wiki/) — operator documentation and ADRs
-- [`handoff/realignment/`](../../handoff/realignment/) — active phase plans, the program manifest, and current-release reports
-- [`VERSION.json`](../../VERSION.json) — the canonical version authority
-- [`CHANGELOG.md`](../../CHANGELOG.md) — hand-authored release history
+## Current Guidance
 
-## Contents
+- Product overview and build commands: [`README.md`](../../README.md)
+- Operator documentation and ADRs: [`docs/wiki/`](../wiki/)
+- Active realignment manifest and phase material: [`handoff/realignment/`](../../handoff/realignment/)
+- Version authority: [`VERSION.json`](../../VERSION.json)
+- Release notes: [`CHANGELOG.md`](../../CHANGELOG.md)
 
-| Directory | What it holds |
-| --- | --- |
-| [`remediation/`](remediation/) | The pre-realignment remediation program: workstream completion reports (from `docs/remediation/`) and the original gut-and-rebuild remediation plans (from `plans/remediation/`). |
-| [`realignment-release-reports/`](realignment-release-reports/) | Per-release reports for the v0.9.x and v0.10.x lines and PHASE-00 – PHASE-11 completion reports (from `handoff/realignment/`). |
-| [`proof-of-working/`](proof-of-working/) | The 2026-04 proof-of-working receipts: feature verification transcripts, probe outputs, and the receipts index (from `plans/PROOF-OF-WORKING/`). |
+## Retained Historical Evidence
 
-Files were moved here by the 2026-07-02 repository cleanup (`repo-cleanup/metadata-docs-ci`). Relative links inside archived files were adjusted for the new location; the content itself is unchanged and describes the repository as it was when each file was written.
+| Directory | What it holds | Current replacement |
+|---|---|---|
+| [`realignment-release-reports/`](realignment-release-reports/) | Per-release reports for the v0.9.x and v0.10.x lines plus PHASE-00 through PHASE-11 completion reports. | [`docs/wiki/Versions.md`](../wiki/Versions.md) and [`CHANGELOG.md`](../../CHANGELOG.md) |
+| [`proof-of-working/`](proof-of-working/) | 2026-04 proof receipts, feature verification transcripts, and probe outputs retained for provenance. | [`docs/wiki/Quick-Start.md`](../wiki/Quick-Start.md), [`docs/wiki/API-Reference.md`](../wiki/API-Reference.md), and [`docs/wiki/Troubleshooting.md`](../wiki/Troubleshooting.md) |
+| [`documentation-alignment-2026-07-04.md`](documentation-alignment-2026-07-04.md) | Evidence report for the repository documentation and wiki alignment pass. | [`docs/wiki/Home.md`](../wiki/Home.md), [`docs/wiki/Versions.md`](../wiki/Versions.md), and the live wiki |
+
+One-off remediation and cleanup handoff artifacts were removed from this active
+repository surface during the documentation alignment pass. Historical release
+records remain only where they help explain prior shipped states.

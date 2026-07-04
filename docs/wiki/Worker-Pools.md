@@ -107,7 +107,7 @@ Hot-migration is forbidden — a stateful session never gets re-bound to a diffe
 ```powershell
 Invoke-RestMethod -Method POST http://localhost:7300/api/pools/<poolId>/remove
 ```
-Removes the pool definition from `mcos.json`. The supervisor reaps any running instances under Job Object closure.
+Removes the pool definition from the configuration file. The supervisor reaps any running instances under Job Object closure.
 
 ---
 

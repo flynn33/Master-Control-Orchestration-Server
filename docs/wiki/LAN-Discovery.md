@@ -67,7 +67,7 @@ Re-enable with `Enable-NetFirewallRule`.
 
 ## How to change the instance label
 
-The DNS-SD instance label comes from `mcos.json` `instanceId`. Edit it to a recognizable name:
+The DNS-SD instance label comes from the configuration `instanceId`. Edit it to a recognizable name:
 
 ```powershell
 $body = @{ instanceId = 'mcos-eng-lab-1' } | ConvertTo-Json
@@ -93,7 +93,7 @@ flowchart LR
 
     Host[MCOS host]:::accent
     DnsSD[Win32 DnsServiceRegister<br/>UDP 5353 mDNS]:::accent
-    Beacon[UDP JSON beacon<br/>UDP 24567 default]:::accent
+    Beacon[UDP JSON beacon<br/>UDP 7301 default]:::accent
     HttpDoc[GET /.well-known/mcos.json<br/>HTTP]:::accent
 
     Host --> DnsSD
@@ -230,7 +230,7 @@ The well-known path is the canonical client-facing URL. The `/api/discovery` rou
 
 ## 5. The UDP beacon
 
-A separate `BeaconService` broadcasts the `DiscoveryDocument` over UDP every few seconds. The default port is `24567` (configurable via `mcos.json` `beaconPort`). Set `beaconEnabled=false` to disable.
+A separate `BeaconService` broadcasts the `DiscoveryDocument` over UDP every few seconds. The default port is `7301` (configurable via `beaconPort`). Set `beaconEnabled=false` to disable.
 
 ```mermaid
 sequenceDiagram
@@ -253,9 +253,9 @@ The beacon exists as the legacy / browser-tooling-friendly path. Newer integrati
 
 ## 6. The instance ID
 
-Every MCOS host gets a stable `instanceId` of the form `mcos-<uuid>` written into `mcos.json` on first run (Win32 `UuidCreate`). The value is used as the per-DNS-SD instance label so multiple MCOS hosts on the same LAN don't collide.
+Every MCOS host gets a stable `instanceId` of the form `mcos-<uuid>` written into the configuration file on first run (Win32 `UuidCreate`). The value is used as the per-DNS-SD instance label so multiple MCOS hosts on the same LAN don't collide.
 
-Operators can override in `mcos.json` if they want a recognizable name:
+Operators can override it if they want a recognizable name:
 
 ```json
 {
@@ -308,7 +308,7 @@ flowchart TB
 
     D --> D1{Resolve-DnsName<br/>_mcos._tcp.local}
     D1 -->|PTR returned| E[Discovery doc?]:::step
-    D1 -->|Empty| Derr[Check Win32 DnsServiceRegister<br/>error in service-events.jsonl]:::bad
+    D1 -->|Empty| Derr[Check Win32 DnsServiceRegister<br/>error in runtime events.jsonl]:::bad
 
     E --> E1{Invoke-RestMethod<br/>http://host:7300/.well-known/mcos.json}
     E1 -->|JSON returned| Done([LAN discovery healthy]):::good

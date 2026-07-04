@@ -84,18 +84,9 @@ Server-authored bundles for download (operator surface from ADR-001). Manual dow
 
 ADR-002 §9 forbids fabricated metrics. The dashboard enforces this at the render layer: every numeric value from `ClientHeartbeat` or `WorkerTelemetry` routes through `formatMetric()` in `resources/web/app.js`, which:
 
-```javascript
-function formatMetric(value, options) {
-  options = options || {};
-  if (value == null) return options.placeholder || 'unavailable';
-  const num = Number(value);
-  if (!Number.isFinite(num)) return options.placeholder || 'unavailable';
-  if (num < 0) return 'unavailable';                    // -1.0 sentinel
-  const digits = options.digits != null ? options.digits : 0;
-  const suffix = options.suffix != null ? options.suffix : '';
-  return num.toFixed(digits) + suffix;
-}
-```
+`formatMetric()` returns `unavailable` for missing, non-numeric, or negative
+sentinel values. Valid numeric values are formatted with the caller's digit and
+suffix options.
 
 ```mermaid
 flowchart LR
