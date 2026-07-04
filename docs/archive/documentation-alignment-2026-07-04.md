@@ -4,7 +4,7 @@
 
 - Repository branch: `docs/repository-documentation-alignment`
 - Repository commit: branch head containing this report
-- Wiki repository commit: `b41ec82`
+- Wiki repository commit: `6d93c38`
 - Date: 2026-07-04
 - Operator: repository maintainer
 
@@ -24,7 +24,7 @@ implementation, web runtime assets, or attribution guard assets were changed.
 | `VERSION.json current_tag` | `vA3.11.0` |
 | README current version | `vA3.11.0`, released `2026-07-03` |
 | `docs/wiki/Home.md` current version | `vA3.11.0` |
-| live wiki Home current version | `vA3.11.0` after wiki commit `b41ec82` |
+| live wiki Home current version | `vA3.11.0` after wiki commit `6d93c38` |
 
 ## Deleted Stale Artifacts
 
@@ -162,7 +162,7 @@ Forbidden surfaces touched: none under src/, include/, tests/, scripts/, install
 | Configuration truth | Pass | Config path and POST/PATCH docs match runtime defaults and merge helper. |
 | API reference truth | Pass | Route families cross-checked against route registry and authorization policy. |
 | Wiki quality | Pass | H1/wording scan passed for all wiki pages. |
-| Live wiki synchronization | Pass | Wiki commit `b41ec82` pushed and verified from clean clone. |
+| Live wiki synchronization | Pass | Wiki commit `6d93c38` pushed and verified from clean clone. |
 | Archive labeling | Pass | `docs/archive/README.md` states archive material is historical evidence only. |
 | No attribution drift | Pass | No branch, commit message, or new file name introduces attribution wording. |
 | Completion evidence | Pass | This report records validation, scope, deletion inventory, and wiki commit. |

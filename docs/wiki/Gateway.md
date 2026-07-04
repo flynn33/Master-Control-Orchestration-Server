@@ -93,6 +93,17 @@ Expected indicators:
 - `GET /mcp` is not the MCP request path; the current native gateway uses
   POST-based MCP requests.
 
+## Transport Contract
+
+The alpha gateway implements the **POST-only Streamable HTTP** subset of MCP:
+each client request is a JSON-RPC 2.0 envelope sent with `POST /mcp`, and each
+response is returned as a single JSON body. Server-initiated SSE upgrade is not
+implemented in this build.
+
+Non-POST requests to `/mcp` return `405 Method Not Allowed` with `Allow: POST`.
+Stateful routing honors the standard `Mcp-Session-Id` header, with the
+MCOS-specific `X-MCOS-Session-Id` retained as a compatibility fallback.
+
 ## HTTP And HTTPS
 
 HTTP and HTTPS are separate binds:
