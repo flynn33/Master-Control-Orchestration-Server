@@ -24,6 +24,27 @@ These are the values `buildDefaultConfiguration()` writes on first run. Adjust t
 | MCP Gateway (AI-client surface) | TCP **8080** | `mcpGateway.listenPort` |
 | DNS-SD / mDNS | UDP **5353** (Win32 fixed) | n/a |
 
+## Who creates these rules
+
+Windows Firewall rules are **installer-managed by default**. The MSI's
+**Configure Windows Firewall rules for the LAN admin UI** checkbox (checked by
+default) invokes `MasterControlBootstrapper.exe`, which creates the inbound
+rules through `netsh advfirewall` as part of a normal install, scoped to the
+`Private,Domain` profiles. A default uninstall removes them again.
+
+| | Installer-managed (default) | Manual fallback |
+|---|---|---|
+| Applied by | The MSI/bootstrapper on install (checkbox on) | The operator, from the snippets below |
+| Display-name prefix | `Master Control Orchestration Server - …` | `MCOS - …` |
+| Removed on uninstall | Yes — a default uninstall deletes them | Yes — uninstall also sweeps `MCOS *` rules |
+
+You only need the manual snippets on this page when the firewall checkbox was
+**unticked**, for a **zip-only / console-mode** run that never went through the
+MSI, or to **repair** rules on a host where they were removed. The
+bootstrapper-created rules and the manual rules are equivalent in effect; the
+bootstrapper's own rules use the longer `Master Control Orchestration Server -`
+prefix, while the manual snippets below use the shorter `MCOS -` prefix.
+
 ## One-shot apply (self-elevating PowerShell)
 
 Most operators want all four rules with one paste. The block below works from any non-elevated PowerShell — it triggers a UAC prompt, applies the rules from the elevated child shell, and exits cleanly. The dashboard's **Settings → LAN Advertising and Windows Firewall** card emits the same snippets templated to the live ports of the running instance.
@@ -51,15 +72,19 @@ Get-NetFirewallRule -DisplayName 'MCOS *' | Format-Table DisplayName, Enabled, D
 
 If you'd rather paste rules one at a time from an already-elevated PowerShell, the four explicit snippets are below.
 
-## Required Windows Firewall rules
+## Firewall rules (manual fallback)
 
-After installation, add the following inbound rules. The `New-NetFirewallRule` snippets below are run as administrator.
+Use these only when the installer did **not** configure the firewall (checkbox
+unticked, a zip-only / console-mode run, or a manual repair). A default MSI
+install already creates the equivalent rules through the bootstrapper. The
+`New-NetFirewallRule` snippets below are run as administrator and create
+`MCOS -` prefixed rules on the `Private,Domain` profiles.
 
 ### 1. AI-client MCP Gateway (LAN-only)
 
 ```powershell
 New-NetFirewallRule `
-  -DisplayName "MCOS — MCP Gateway (LAN)" `
+  -DisplayName "MCOS - MCP Gateway (LAN)" `
   -Direction Inbound `
   -Action Allow `
   -Protocol TCP `
@@ -74,7 +99,7 @@ Adjust `LocalPort` to match `mcpGateway.listenPort`. The `Profile Private,Domain
 
 ```powershell
 New-NetFirewallRule `
-  -DisplayName "MCOS — Operator Surface (LAN)" `
+  -DisplayName "MCOS - Operator Surface (LAN)" `
   -Direction Inbound `
   -Action Allow `
   -Protocol TCP `
@@ -89,7 +114,7 @@ Adjust `LocalPort` to match `browserPort` (default `7300`). Same `Profile` const
 
 ```powershell
 New-NetFirewallRule `
-  -DisplayName "MCOS — DNS-SD/mDNS (LAN)" `
+  -DisplayName "MCOS - DNS-SD/mDNS (LAN)" `
   -Direction Inbound `
   -Action Allow `
   -Protocol UDP `
@@ -104,7 +129,7 @@ The Win32 DNS-SD APIs (`DnsServiceRegister`, `DnsServiceBrowse`) bind to UDP 535
 
 ```powershell
 New-NetFirewallRule `
-  -DisplayName "MCOS — Discovery Beacon (LAN)" `
+  -DisplayName "MCOS - Discovery Beacon (LAN)" `
   -Direction Inbound `
   -Action Allow `
   -Protocol UDP `
@@ -142,10 +167,18 @@ From a Public network, the same calls should fail. If they succeed, the Public p
 
 ## Removing the rules
 
-Uninstalling MCOS does NOT remove the firewall rules (the MSI does not own that policy state). To clean up:
+A default (managed) uninstall **already removes** the firewall rules: the
+bootstrapper deletes the four `Master Control Orchestration Server - …` rules it
+created and additionally sweeps any `MCOS *` rules (including the manual snippets
+above). You only need to clean up by hand if the firewall integration was
+skipped (`--skip-firewall` / checkbox off), or to remove leftover
+manually-created rules:
 
 ```powershell
-Get-NetFirewallRule -DisplayName "MCOS *" | Remove-NetFirewallRule
+# Installer-created rules (present after a default MSI install):
+Get-NetFirewallRule -DisplayName 'Master Control Orchestration Server - *' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+# Manually-created fallback rules:
+Get-NetFirewallRule -DisplayName 'MCOS *' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 ```
 
 ## See also

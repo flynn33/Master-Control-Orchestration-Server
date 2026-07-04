@@ -15,7 +15,7 @@ clients, operate worker pools, review diagnostics, and troubleshoot the host.
 | Released | `2026-07-03` |
 | Channel | Internal alpha |
 | Version meaning | `A3.11.0` is the alpha-stage expression of the tree previously documented as `0.11.0-alpha.3`. |
-| Release policy | No GitHub Releases during alpha; the Windows Build, Test, and Package workflow is the repository health gate. |
+| Release policy | Alpha versions are published as GitHub pre-releases with the MSI installer; the Windows Build, Test, and Package workflow is the repository health gate. |
 | Gateway substrate | Native in-process HTTP.sys behind `IMcpGateway`; no external gateway binary is required. |
 | Trust posture | `auth=none, trust=lan`; app-layer authentication is deferred to a later hardening track. |
 
@@ -68,6 +68,7 @@ installation, operation, release, or implementation guidance.
 | Back up, restore, repair, upgrade, or uninstall | [Maintenance](Maintenance) |
 | Run build, test, package, and local operations commands | [Operations](Operations) |
 | Understand alpha release gates | [Release Gate](Release-Gate) |
+| Validate an installed host with non-destructive runtime probes | [Deployment Acceptance](Deployment-Acceptance) |
 | Review service, ProgramData, HTTP.sys, firewall, and discovery infrastructure | [Infrastructure](Infrastructure) |
 | Inspect existing automation surfaces | [Automation](Automation) |
 | Diagnose common failures | [Troubleshooting](Troubleshooting) |

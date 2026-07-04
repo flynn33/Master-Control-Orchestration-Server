@@ -75,7 +75,7 @@ alpha-stage versions to Windows Installer ProductVersion:
 ## Post-Install Checks
 
 ```powershell
-& "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output
+& "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json
 Get-Service MasterControlProgram
 Invoke-RestMethod http://localhost:7300/api/health | ConvertTo-Json
 Invoke-RestMethod http://localhost:7300/api/gateway/status | ConvertTo-Json -Depth 4

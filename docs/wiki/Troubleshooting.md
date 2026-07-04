@@ -482,7 +482,7 @@ flowchart TB
     B1 -->|Private or DomainAuthenticated| C[Firewall rules?]:::step
     B1 -->|Public| Berr[Reclassify network<br/>or bind to LAN-only NIC]:::bad
 
-    C --> C1{Get-NetFirewallRule<br/>-DisplayName 'MCOS *'<br/>count?}
+    C --> C1{Get-NetFirewallRule<br/>-DisplayName 'Master Control<br/>Orchestration Server - *'<br/>count?}
     C1 -->|4 rules present + Enabled| D[DNS-SD broadcasting?]:::step
     C1 -->|Less than 4 / Disabled| Cerr[Re-run MSI with firewall<br/>checkbox on, OR copy<br/>snippets from Settings panel]:::bad
 

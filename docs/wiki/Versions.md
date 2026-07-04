@@ -16,7 +16,7 @@ authority.
 | Released | `2026-07-03` |
 | Channel | Internal alpha |
 | Previous expression for the same tree | `0.11.0-alpha.3` |
-| Release policy | No GitHub Releases during alpha. |
+| Release policy | Alpha versions published as GitHub pre-releases with the MSI. |
 
 `A3.11.0` re-expresses the same source tree that was previously described as
 `0.11.0-alpha.3`. The change is a versioning and release-policy alignment, not
@@ -48,7 +48,7 @@ ProductVersion. `A3.11.0` maps to `3.11.0.0`.
   `last_release_commit`.
 - `CHANGELOG.md` records human-readable release history and `[Unreleased]`
   documentation or maintenance changes.
-- GitHub Releases are deferred until MCOS leaves alpha.
+- Each alpha version is published as a GitHub pre-release with the MSI installer.
 - The Windows Build, Test, and Package workflow is the per-commit health gate.
 - Historical semver-alpha entries remain historical and should not be presented
   as the current release.

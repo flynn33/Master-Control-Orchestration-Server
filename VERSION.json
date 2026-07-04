@@ -1,6 +1,6 @@
 {
   "scheme": "alpha-stage: <Stage><A>.<Feature>.<patch/hotfix>",
-  "strategy": "A-on-alpha-iteration, Feature-on-feature, patch-on-hotfix; no GitHub releases while MCOS is in alpha",
+  "strategy": "A-on-alpha-iteration, Feature-on-feature, patch-on-hotfix; alpha versions are published as GitHub pre-releases with the MSI installer",
   "current_version": "A3.11.0",
   "current_tag": "vA3.11.0",
   "released_at": "2026-07-03",

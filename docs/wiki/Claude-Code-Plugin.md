@@ -122,7 +122,7 @@ Pulls the onboarding profile, presents manual instructions + copyable snippets v
 /mcos:firewall-rules
 ```
 
-Reads live ports from the current configuration, surfaces four `New-NetFirewallRule` snippets templated with those ports for the operator to run from elevated PowerShell. MCOS does not run elevated; firewall is operator-driven.
+Reads live ports from the current configuration, surfaces four `New-NetFirewallRule` snippets templated with those ports for the operator to run from elevated PowerShell. The MSI configures the firewall by default (an elevated install custom action); these snippets are the fallback when the firewall checkbox was unticked or MCOS is run without the MSI.
 
 ### Review and approve governance
 

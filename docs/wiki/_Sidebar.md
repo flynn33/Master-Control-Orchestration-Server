@@ -32,6 +32,7 @@
 - [Maintenance](Maintenance)
 - [Operations](Operations)
 - [Release Gate](Release-Gate)
+- [Deployment Acceptance](Deployment-Acceptance)
 - [Infrastructure](Infrastructure)
 - [Automation](Automation)
 

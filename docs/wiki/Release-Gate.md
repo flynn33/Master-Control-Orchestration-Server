@@ -7,7 +7,7 @@ repository health gate. It does not add new workflow requirements.
 
 While MCOS is in alpha:
 
-- No GitHub Releases are cut.
+- Alpha versions are published as GitHub pre-releases with the MSI installer.
 - `VERSION.json` is the version authority.
 - Versions use `A{alphaIteration}.{feature}.{patch}`.
 - The Windows Build, Test, and Package workflow is the product health gate for

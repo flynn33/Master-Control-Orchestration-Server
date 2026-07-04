@@ -18,8 +18,9 @@ surfaces for operations.
 Current release: `vA3.11.0`, released `2026-07-03`.
 `A3.11.0` is the alpha-stage re-expression of the tree previously documented as
 `0.11.0-alpha.3`. During alpha, versions use
-`A{alphaIteration}.{feature}.{patch}`. No GitHub Releases are cut during alpha;
-the Windows Build, Test, and Package workflow is the repository health gate.
+`A{alphaIteration}.{feature}.{patch}`. Alpha versions are published as GitHub
+pre-releases with the MSI installer; the Windows Build, Test, and Package
+workflow is the repository health gate.
 `VERSION.json` is the version authority.
 
 ## Current Alpha State
@@ -104,7 +105,7 @@ msiexec /i "dist\packages\release\MasterControlOrchestrationServer-vA3.11.0-win-
 Basic local checks:
 
 ```powershell
-& "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output
+& "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json
 Invoke-RestMethod http://localhost:7300/api/health | ConvertTo-Json
 Invoke-RestMethod http://localhost:7300/api/discovery | ConvertTo-Json -Depth 6
 Invoke-RestMethod http://localhost:7300/api/gateway/status | ConvertTo-Json -Depth 4
