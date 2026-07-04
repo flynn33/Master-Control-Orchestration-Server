@@ -1,5 +1,7 @@
 # Versions
 
+![current](https://img.shields.io/badge/current-vA3.11.0-00f6ff?style=flat-square)
+
 This page explains the current alpha-stage version scheme, the active version,
 and where historical release records live. `VERSION.json` is the version
 authority.
@@ -8,6 +10,7 @@ authority.
 
 | Field | Value |
 |---|---|
+| **Version** | `vA3.11.0` |
 | Current version | `A3.11.0` |
 | Current tag | `vA3.11.0` |
 | Released | `2026-07-03` |

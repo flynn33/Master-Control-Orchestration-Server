@@ -1,5 +1,7 @@
 # Master Control Orchestration Server Operator Wiki
 
+![version](https://img.shields.io/badge/version-vA3.11.0-00f6ff?style=flat-square)
+
 This wiki is the operator manual for MCOS, a Windows-native LAN MCP Gateway
 host. Use it to install the service, configure the gateway, connect trusted-LAN
 clients, operate worker pools, review diagnostics, and troubleshoot the host.
@@ -8,7 +10,7 @@ clients, operate worker pools, review diagnostics, and troubleshoot the host.
 
 | Field | Value |
 |---|---|
-| Current version | `vA3.11.0` |
+| Version | `vA3.11.0` |
 | Version source | `VERSION.json` |
 | Released | `2026-07-03` |
 | Channel | Internal alpha |

@@ -13,6 +13,8 @@ MCP server and sub-agent worker pools, distributes onboarding profiles and
 CLU/Forsetti governance bundles, and provides browser plus WinUI maintainer
 surfaces for operations.
 
+> **vA3.11.0** - 2026-07-03
+
 Current release: `vA3.11.0`, released `2026-07-03`.
 `A3.11.0` is the alpha-stage re-expression of the tree previously documented as
 `0.11.0-alpha.3`. During alpha, versions use
