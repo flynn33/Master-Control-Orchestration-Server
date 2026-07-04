@@ -16,6 +16,14 @@ target_include_directories(MasterControlOrchestrationServerTests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 
+# Repo root for tests that verify cross-file contracts against sources that
+# are not compiled into the binary (e.g. the mcos-bridge tool registry in
+# .claude-plugin/mcos-control/mcp-servers/mcos-bridge/server.py must only
+# call admin routes the backend actually implements).
+target_compile_definitions(MasterControlOrchestrationServerTests PRIVATE
+    MCOS_REPO_ROOT="${CMAKE_SOURCE_DIR}"
+)
+
 # v0.11.0-alpha.3: MasterControlApp now links the vcpkg sqlite3 port,
 # which on the x64-windows triplet is a DLL. The test executable runs
 # directly via ctest, so sqlite3.dll (and any other transitive runtime

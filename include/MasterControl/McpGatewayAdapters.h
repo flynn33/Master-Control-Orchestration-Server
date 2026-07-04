@@ -17,6 +17,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -100,31 +103,48 @@ public:
 
 private:
     void serveLoop();
-    void teardownHttpSysLocked();
+    // Closes HTTP.sys handles only. Caller holds mutex_. Thread joins
+    // happen in Stop() OUTSIDE the gateway mutex -- never join a thread
+    // that can itself acquire mutex_ (Probe from the /health route) while
+    // holding it.
+    void closeHttpSysHandlesLocked();
     // v0.7.2: handleMcpRequest gains optional clientIpAddress + clientType
     // arguments so the gateway can attribute leases to the originating
     // LAN client. serveLoop fills both from HTTP_REQUEST::Address and
     // headers (X-MCOS-Client-Id, X-MCOS-Client-Type, falling back to
     // best-effort User-Agent inference). Empty strings are valid -- the
     // dashboard renders 'unknown' honestly when either field is absent.
+    //
+    // Session remediation: sessionId carries the client-provided MCP
+    // session identifier (Mcp-Session-Id header, X-MCOS-Session-Id as the
+    // MCOS-specific fallback). Empty when the client sent neither -- the
+    // gateway never invents session ids. A non-empty session id makes
+    // tools/call leases stateful (sticky to one instance for the session
+    // lifetime; expiry via the lease router's idle timeout).
     std::string handleMcpRequest(const std::string& path,
                                  const std::string& body,
                                  const std::string& clientIpAddress = std::string{},
                                  const std::string& clientType = std::string{},
-                                 const std::string& clientId = std::string{});
+                                 const std::string& clientId = std::string{},
+                                 const std::string& sessionId = std::string{});
     CapabilityAuthorizationContext resolveCapabilities(
         const std::string& clientId,
         const std::string& clientIpAddress) const;
     void auditCapabilityDenial(const CapabilityDenialAuditEvent& event) const;
 
-    // PHASE-12 follow-up (v0.6.10): walk every pool's first Ready instance,
-    // ask it tools/list via the stdio bridge, and rebuild the cached
-    // catalog. Returns the full catalog (serverName-attributed). Caller
-    // holds mutex_.
-    // v0.9.3: const so it can be called from ListTools() (const).
-    // Mutates only `toolCatalogCache_` and `bridgeRequestIdCounter_`,
-    // both already declared `mutable`.
-    std::vector<McpToolDescriptor> refreshToolCatalogLocked() const;
+    // PHASE-12 follow-up (v0.6.10), lock-hygiene remediation: the catalog
+    // path snapshots state under mutex_, performs every child stdio RPC
+    // with NO gateway lock held, then reacquires mutex_ only to publish
+    // the cache. Pre-remediation refreshToolCatalogLocked() ran up to 5s
+    // of child tools/list RPC per pool while holding mutex_, stalling
+    // every other gateway method.
+    //
+    // currentToolCatalog(): TTL-checked entry point (returns the cache or
+    // refreshes it). collectToolCatalog(): pure aggregation over the
+    // snapshotted supervisor -- caller must NOT hold mutex_.
+    std::vector<McpToolDescriptor> currentToolCatalog() const;
+    std::vector<McpToolDescriptor> collectToolCatalog(
+        const std::shared_ptr<IWorkerSupervisor>& supervisor) const;
 
     // v0.9.6: explicit cache invalidation hook. Operator pool changes
     // (POST /api/pools, POST /api/pools/{id}/{remove,scale,drain})
@@ -136,6 +156,11 @@ private:
     void InvalidateToolCatalog() override;
 
     mutable std::mutex mutex_;
+    // Serializes Start()/Stop() end-to-end (review fix). Distinct from
+    // mutex_ so state reads (CurrentStatus/Probe, i.e. /health) never wait
+    // behind a Stop() that is joining threads. Lock order: lifecycleMutex_
+    // before mutex_; nothing that holds mutex_ ever takes lifecycleMutex_.
+    std::mutex lifecycleMutex_;
     McpGatewayConfiguration configuration_;
     GatewayStatus status_;
     std::map<std::string, McpServerRegistration> registry_;
@@ -166,18 +191,56 @@ private:
     mutable std::vector<McpToolDescriptor> toolCatalogCache_;
     mutable std::chrono::steady_clock::time_point toolCatalogCacheValidUntil_{};
     // monotonic JSON-RPC id counter used when the gateway speaks to its
-    // own pool children (out-of-band from the LAN-client request stream)
-    mutable uint64_t bridgeRequestIdCounter_ = 1;
+    // own pool children (out-of-band from the LAN-client request stream).
+    // Atomic so id generation never requires the gateway mutex during
+    // child RPC (lock-hygiene remediation).
+    mutable std::atomic<std::uint64_t> bridgeRequestIdCounter_{ 1 };
 
 #if defined(_WIN32)
+    // Concurrency remediation: the receive loop and request execution are
+    // split. serveLoop() only receives, answers /health and other cheap
+    // routes inline, and enqueues MCP work as value-copied jobs; a small
+    // bounded worker pool executes handleMcpRequest so one slow
+    // tools/call can never block /health or other gateway requests. A
+    // saturated queue answers with a structured HTTP 503 instead of
+    // growing without bound.
+    struct GatewayRequestJob final {
+        unsigned long long requestId = 0;   // HTTP_REQUEST_ID
+        std::string path;
+        std::string body;
+        std::string clientIpAddress;
+        std::string clientType;
+        std::string clientId;
+        std::string sessionId;
+    };
+    void workerLoop();
+    void processGatewayJob(const GatewayRequestJob& job);
+
+    static constexpr std::size_t kGatewayWorkerCount = 4;
+    static constexpr std::size_t kGatewayJobQueueMaxDepth = 64;
+
     HANDLE requestQueue_ = nullptr;
     uint64_t serverSessionId_ = 0;     // HTTP_SERVER_SESSION_ID
     uint64_t urlGroupId_ = 0;          // HTTP_URL_GROUP_ID
     bool httpInitialized_ = false;
     std::thread serveThread_;
+    std::vector<std::thread> workerThreads_;
     std::atomic<bool> running_{ false };
+    // Job queue state guarded by jobQueueMutex_ (deliberately separate
+    // from mutex_ so enqueue/dequeue never contends with gateway state).
+    std::deque<GatewayRequestJob> jobQueue_;
+    std::mutex jobQueueMutex_;
+    std::condition_variable jobQueueCv_;
+    bool jobQueueShutdown_ = false;
 #endif
 };
+
+// JSON-safe internal-error envelope for the gateway's exception paths.
+// Built with nlohmann::json so exception text containing quotes, control
+// characters, or invalid UTF-8 still produces a parseable JSON-RPC error
+// document. Free function so the bool-style test suite can verify the
+// escaping without binding HTTP.sys.
+std::string BuildGatewayInternalErrorBody(const std::string& detail);
 
 // In-process fake. State transitions and registry behavior match the
 // IMcpGateway contract; Probe() returns whatever the test scripts via

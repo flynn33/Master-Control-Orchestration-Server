@@ -27,6 +27,9 @@
 #include "MasterControl/QueryParamParse.h"  // v0.10.15: alias-aware ?param= extractor.
 #include "MasterControl/WorkflowReadiness.h"
 #include "MasterControl/JsonStrictness.h"   // v0.10.17: dropped-top-level-keys diagnostic.
+#include "MasterControl/JsonMerge.h"        // config-safety remediation: PATCH deep merge + partial-POST detection.
+#include "MasterControl/AdminRouteRegistry.h"  // route-drift remediation: typed method-allow registry.
+#include "MasterControl/HttpHeaderParse.h"     // Content-Length remediation: case-insensitive header parse.
 #include "MasterControl/DiagnosticsAggregator.h"  // v0.11.0 Slice A: testable aggregator + markdown renderer.
 #include "MasterControl/DiagnosticsService.h"     // v0.11.0-alpha.3 Slice E: SqliteDiagnosticsStore-backed central service.
 
@@ -69,6 +72,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <limits>
@@ -1006,6 +1010,64 @@ std::optional<std::filesystem::path> findCommandOnPath(const std::vector<std::ws
     for (const auto& fileName : fileNames) {
         std::array<wchar_t, 4096> buffer{};
         const DWORD length = SearchPathW(nullptr, fileName.c_str(), nullptr, static_cast<DWORD>(buffer.size()), buffer.data(), nullptr);
+        if (length > 0 && length < buffer.size()) {
+            return std::filesystem::path(buffer.data());
+        }
+    }
+    return std::nullopt;
+}
+
+// Worker-executable resolver backing WorkerSupervisor::startInstanceLocked.
+// Pre-remediation the supervisor required template.executable to pass a raw
+// std::filesystem::exists() check, so PATH-resolved commands ("npx.cmd",
+// "node") could never start even though CreateProcessW could have found
+// them. Resolution rules:
+//   - absolute paths are accepted only when they exist on disk;
+//   - relative paths containing a directory separator are resolved against
+//     the current directory and accepted only when they exist;
+//   - bare command names use Windows search semantics (SearchPathW over the
+//     process PATH), probing .exe/.cmd/.bat when no extension is given.
+// Returns the fully resolved path CreateProcessW should launch, or nullopt
+// when nothing resolves (caller emits the diagnostic).
+std::optional<std::filesystem::path> resolveWorkerExecutable(const std::string& executable) {
+    if (executable.empty()) {
+        return std::nullopt;
+    }
+    const std::filesystem::path raw(executable);
+    std::error_code ec;
+    if (raw.is_absolute()) {
+        if (std::filesystem::exists(raw, ec)) {
+            return raw;
+        }
+        return std::nullopt;
+    }
+    if (raw.has_parent_path()) {
+        if (std::filesystem::exists(raw, ec)) {
+            auto absolute = std::filesystem::absolute(raw, ec);
+            return ec ? raw : absolute;
+        }
+        return std::nullopt;
+    }
+    const std::wstring wide = wideFromUtf8(executable);
+    std::vector<std::wstring> candidates;
+    if (raw.extension().empty()) {
+        // Review fix: probe Windows-executable extensions FIRST. Node-style
+        // installs ship an extensionless POSIX shim ("npx", an sh script
+        // for Git-Bash) NEXT TO "npx.cmd" on PATH; probing the bare name
+        // first found the shim, which CreateProcessW cannot launch
+        // (ERROR_BAD_EXE_FORMAT). The bare name stays as a LAST resort for
+        // the rare PE image shipped without an extension.
+        candidates.push_back(wide + L".exe");
+        candidates.push_back(wide + L".cmd");
+        candidates.push_back(wide + L".bat");
+        candidates.push_back(wide);
+    } else {
+        candidates.push_back(wide);
+    }
+    for (const auto& fileName : candidates) {
+        std::array<wchar_t, 4096> buffer{};
+        const DWORD length = SearchPathW(nullptr, fileName.c_str(), nullptr,
+                                         static_cast<DWORD>(buffer.size()), buffer.data(), nullptr);
         if (length > 0 && length < buffer.size()) {
             return std::filesystem::path(buffer.data());
         }
@@ -8415,18 +8477,6 @@ void appendPoolLifecycleActivity(const std::string& kind,
                                  const std::string& message,
                                  int statusCodeHint);
 
-// v0.9.10: separate helper for the supervisor-shutdown wedge event.
-// Same pattern as appendPoolLifecycleActivity -- defined alongside
-// the global activity ring and forward-declared here so the
-// supervisor destructor can call it without visibility into the
-// ActivityEventRing class. Pre-v0.9.10 the destructor's detach path
-// silently swallowed the wedge; now operators see exactly when the
-// watchdog had to be detached and what state the supervisor was in
-// at that moment.
-void appendSupervisorWedgeActivity(const std::string& message,
-                                   int poolCount,
-                                   int childCount);
-
 class WorkerSupervisor final : public IWorkerSupervisor {
 public:
     explicit WorkerSupervisor(std::shared_ptr<IConfigurationService> configurationService = {})
@@ -8503,95 +8553,36 @@ public:
     }
 
     ~WorkerSupervisor() override {
-        // v0.9.9: bounded shutdown. Pre-v0.9.9 the destructor called
-        // watchdogThread_.join() unconditionally, which blocks
-        // indefinitely if the watchdog is wedged inside a long reap
-        // (e.g., a CreateProcessW that's hanging while the auto-
-        // respawn path tries to spin up a fresh child during the
-        // service-stop signal). The v0.9.8 deploy hit this directly:
-        // SCM showed the service in StopPending for 60+ seconds and
-        // had to be force-killed. Now the destructor:
+        // Deterministic join-only teardown. The earlier bounded-join
+        // design (v0.9.9) detached the watchdog on timeout; that is
+        // unsafe because the watchdog lambda captures `this` and would
+        // race member destruction if it ever unblocked after the
+        // detach. The detach existed to protect SCM against a wedge
+        // inside CreateProcessW on the auto-respawn path -- teardown
+        // now removes that hazard at the source instead:
         //
-        //   1. Flips watchdogRunning_ to false (the loop's 100ms
-        //      sleep step picks this up within 100ms when the loop
-        //      is between cycles).
-        //   2. Joins with a bounded deadline. The watchdog should
-        //      observe the flag and exit within one cycle (~2.1s
-        //      worst case = sleep + reap). We give it 5s to be
-        //      generous.
-        //   3. If join doesn't complete in time, detach the thread.
-        //      The process is exiting anyway; the OS will reclaim
-        //      the thread when the process terminates. This is
-        //      strictly better than blocking SCM forever.
-        watchdogRunning_ = false;
-        // v0.9.12: notify the watchdog's sleep cv so it observes the
-        // flag immediately. Pre-v0.9.12 the destructor relied on the
-        // watchdog's 100ms polled sleep step picking up the flag,
-        // which added up to 100ms before the reap-and-exit path
-        // could run. Now the watchdog wakes within the cv-wakeup
-        // latency (microseconds) and exits.
+        //   1. shuttingDown_ gates every spawn path (watchdog auto-
+        //      respawn, ensureMinInstances, scaleUpOnce), so no new
+        //      CreateProcessW call can begin once teardown starts.
+        //   2. watchdogRunning_ + the cv notify wake the watchdog out
+        //      of its wait immediately.
+        //   3. shutdownAll() terminates every supervised child under
+        //      mutex_. Whatever cycle the watchdog is mid-way through
+        //      afterwards only reaps an empty children_ map and drains
+        //      events -- bounded, fast, and free of child-process
+        //      blocking calls.
+        //   4. join() unconditionally. Never detach a thread that can
+        //      touch WorkerSupervisor state.
+        shuttingDown_.store(true, std::memory_order_release);
+        watchdogRunning_.store(false, std::memory_order_release);
         {
             std::lock_guard<std::mutex> lock(watchdogSleepMutex_);
             watchdogSleepCv_.notify_all();
         }
-        if (watchdogThread_.joinable()) {
-            // std::thread doesn't expose a join-with-timeout natively.
-            // Spin a helper thread that joins, and time-bound the
-            // wait via a future. If the helper finishes within the
-            // deadline, the watchdog joined cleanly; otherwise we
-            // detach and proceed.
-            std::atomic<bool> joinComplete{ false };
-            std::thread joiner([this, &joinComplete]() {
-                if (watchdogThread_.joinable()) {
-                    watchdogThread_.join();
-                }
-                joinComplete.store(true, std::memory_order_release);
-            });
-            const auto deadline = std::chrono::steady_clock::now()
-                                + std::chrono::milliseconds(kShutdownJoinTimeoutMs);
-            while (std::chrono::steady_clock::now() < deadline
-                   && !joinComplete.load(std::memory_order_acquire)) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            }
-            if (joinComplete.load(std::memory_order_acquire)) {
-                joiner.join();
-            } else {
-                // v0.9.10: surface the wedge in two places so the
-                // operator (and post-mortem analysis) can see WHY
-                // the process took the detach path instead of a
-                // clean join. globalActivityRing() is fine to
-                // touch here because shutdownAll hasn't run yet
-                // and the activity ring is thread-safe + a process-
-                // global static with a stable lifetime. We capture
-                // a coarse snapshot of supervisor state (pool count,
-                // child count) to help spot patterns -- e.g. if all
-                // wedges happen with a respawn-in-flight, the
-                // pattern is CreateProcessW slowness, not a
-                // deadlock.
-                const int poolCount = [&]() {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    return static_cast<int>(pools_.size());
-                }();
-                const int childCount = [&]() {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    return static_cast<int>(children_.size());
-                }();
-                appendSupervisorWedgeActivity(
-                    "Watchdog did not exit within "
-                    + std::to_string(kShutdownJoinTimeoutMs)
-                    + "ms of watchdogRunning_=false. Detaching.",
-                    poolCount, childCount);
-
-                // Watchdog wedged. Detach both the watchdog (so its
-                // destructor doesn't terminate() the program) and
-                // the joiner (it will return when the watchdog
-                // eventually unblocks; until then the process is
-                // already exiting and we don't care).
-                watchdogThread_.detach();
-                joiner.detach();
-            }
-        }
         (void)shutdownAll();
+        if (watchdogThread_.joinable()) {
+            watchdogThread_.join();
+        }
     }
 
     std::vector<ManagedEndpointPool> listPools() const override {
@@ -8709,6 +8700,10 @@ public:
     }
 
     OperationResult ensureMinInstances(const std::string& poolId) override {
+        if (shuttingDown_.load(std::memory_order_acquire)) {
+            return OperationResult{ false, false,
+                "Supervisor is shutting down; no new instances will be started." };
+        }
         std::lock_guard<std::mutex> lock(mutex_);
         // v0.9.5: reap before counting -- a dead worker that has not yet
         // been reaped would otherwise count toward the "current" total
@@ -8762,6 +8757,9 @@ public:
         // are at maxActiveLeasesPerInstance and the pool has not yet
         // reached scalePolicy.maxInstances. Spawns one new instance and
         // returns its id (empty if the pool is already at max).
+        if (shuttingDown_.load(std::memory_order_acquire)) {
+            return std::string();
+        }
         std::lock_guard<std::mutex> lock(mutex_);
         // v0.9.5: reap first so the maxInstances cap reflects healthy
         // count rather than including dead-but-unreaped placeholders.
@@ -8787,6 +8785,12 @@ public:
     }
 
     OperationResult shutdownAll() override {
+        // Terminal by contract: after shutdownAll the supervisor never
+        // starts another child. The flag is observed by the watchdog's
+        // auto-respawn pass, ensureMinInstances, and scaleUpOnce, so a
+        // watchdog cycle racing this call cannot respawn what we are
+        // terminating.
+        shuttingDown_.store(true, std::memory_order_release);
         std::lock_guard<std::mutex> lock(mutex_);
         for (auto& [_, pool] : pools_) {
             terminateInstancesLocked(pool);
@@ -8831,7 +8835,14 @@ private:
         // stdioMutex, so no atomic is needed.
         HANDLE childStdoutRead = nullptr;
         HANDLE childStdinWrite = nullptr;
-        std::unique_ptr<std::mutex> stdioMutex;
+        // shared_ptr (review fix): sendStdioJsonRpc copies the pointer and
+        // holds the mutex across a call that can outlive this ChildProcess
+        // entry (watchdog reap / terminate / write-failure cleanup all
+        // erase children_ under only the supervisor mutex). Shared
+        // ownership guarantees the mutex is never destroyed while locked;
+        // the erased-entry case degrades to the handled "instance
+        // disappeared" error.
+        std::shared_ptr<std::mutex> stdioMutex;
         std::string stdioReadBuffer;
         uint64_t nextRequestId = 1;
         // v0.9.4: lazy MCP initialize handshake state. Spec-compliant
@@ -8906,17 +8917,21 @@ private:
         instance.lastTransitionAtUtc = instance.startedAtUtc;
         instance.statusMessage = "Instance starting.";
 
-        if (pool.template_.executable.empty()
-            || !std::filesystem::exists(std::filesystem::path(pool.template_.executable))) {
+        const auto resolvedExecutable = resolveWorkerExecutable(pool.template_.executable);
+        if (!resolvedExecutable) {
             instance.supervised = false;
             transitionInstanceLocked(instance, EndpointInstanceState::Failed,
-                                     "Pool template executable is missing; no worker process was spawned.");
+                pool.template_.executable.empty()
+                    ? std::string("Pool template executable is empty; no worker process was spawned.")
+                    : "Pool template executable '" + pool.template_.executable +
+                      "' was not found (checked as absolute/relative path and via Windows "
+                      "PATH search with .exe/.cmd/.bat probing); no worker process was spawned.");
             return instance;
         }
 
 #if defined(_WIN32)
         ChildProcess child;
-        child.stdioMutex = std::make_unique<std::mutex>();
+        child.stdioMutex = std::make_shared<std::mutex>();
         child.jobObject = CreateJobObjectW(nullptr, nullptr);
         if (child.jobObject == nullptr) {
             transitionInstanceLocked(instance, EndpointInstanceState::Failed,
@@ -8973,10 +8988,49 @@ private:
             if (parentStdinWrite) { CloseHandle(parentStdinWrite); parentStdinWrite = nullptr; }
         }
 
-        std::wstring commandLine = quoteWindowsArgument(wideFromUtf8(pool.template_.executable));
+        // Launch the RESOLVED path (not the raw template string) so bare
+        // PATH commands like "npx.cmd" spawn deterministically regardless of
+        // the service account's working directory.
+        //
+        // Review fix (.cmd/.bat launch): CreateProcessW relaunches batch
+        // scripts through cmd.exe implicitly, and cmd's /C quote handling
+        // corrupts command lines in which the script path AND any argument
+        // are both quoted (a spaced install path such as
+        // "C:\Program Files\nodejs\npx.cmd" plus one quoted arg makes cmd
+        // strip the outer quotes and reparse: '"C:\Program' ... is not
+        // recognized). Batch workers therefore launch explicitly as
+        //   "<cmd.exe>" /d /s /c ""<script>" <args>"
+        // with lpApplicationName pinned to the command processor; /S makes
+        // cmd strip exactly the one outer quote pair, leaving standard
+        // CommandLineToArgvW quoting intact for the script. Note that cmd
+        // still performs %VAR% expansion inside the payload -- pool
+        // templates are operator-owned configuration and the Worker Pool
+        // docs call this out.
+        std::wstring payload = quoteWindowsArgument(resolvedExecutable->wstring());
         for (const auto& arg : pool.template_.args) {
-            commandLine.push_back(L' ');
-            commandLine += quoteWindowsArgument(wideFromUtf8(arg));
+            payload.push_back(L' ');
+            payload += quoteWindowsArgument(wideFromUtf8(arg));
+        }
+
+        const std::wstring resolvedExtension = resolvedExecutable->extension().wstring();
+        const bool isBatchScript =
+            _wcsicmp(resolvedExtension.c_str(), L".cmd") == 0 ||
+            _wcsicmp(resolvedExtension.c_str(), L".bat") == 0;
+        std::wstring applicationName;
+        std::wstring commandLine;
+        if (isBatchScript) {
+            const auto commandProcessor = resolveCommandProcessorPath();
+            if (commandProcessor.has_value()) {
+                applicationName = commandProcessor->wstring();
+                commandLine = quoteWindowsArgument(applicationName)
+                    + L" /d /s /c \"" + payload + L"\"";
+            } else {
+                // No cmd.exe found (pathological host): fall back to the
+                // implicit relaunch behavior rather than refusing outright.
+                commandLine = std::move(payload);
+            }
+        } else {
+            commandLine = std::move(payload);
         }
         std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
         mutableCommandLine.push_back(L'\0');
@@ -9058,7 +9112,7 @@ private:
         const DWORD creationFlags = CREATE_NO_WINDOW | CREATE_SUSPENDED |
             (environmentBlock != nullptr ? CREATE_UNICODE_ENVIRONMENT : 0);
         const BOOL launched = CreateProcessW(
-            nullptr,
+            applicationName.empty() ? nullptr : applicationName.c_str(),
             mutableCommandLine.data(),
             nullptr, nullptr,
             bridgeAvailable ? TRUE : FALSE,
@@ -9422,7 +9476,13 @@ private:
         // Operators can force re-spawn by POST /api/pools/{id}/scale
         // (which calls ensureMinInstances; ensureMinInstances does
         // not consult the quarantine, so it's the explicit override).
+        // Teardown guard: once shutdownAll()/the destructor has begun,
+        // respawning would race child termination and could leave fresh
+        // processes running after the supervisor is gone.
         for (auto& [poolId, pool] : pools_) {
+            if (shuttingDown_.load(std::memory_order_acquire)) {
+                break;
+            }
             if (isPoolQuarantinedLocked(poolId)) {
                 continue;
             }
@@ -9604,17 +9664,16 @@ private:
     // "auto-recovery happens within a couple seconds" without
     // generating noisy reap traffic on quiet LANs.
     static constexpr int kWatchdogIntervalMs = 2000;
-    // v0.9.9: bounded shutdown deadline -- if the watchdog can't stop
-    // within this many milliseconds, the destructor detaches the
-    // thread and proceeds. Strictly larger than one full reap cycle
-    // (~2.1s worst case) so a clean watchdog always joins; large
-    // enough to avoid false-positive detachment under transient
-    // CreateProcessW slowness during a respawn spawned right at
-    // shutdown time. 5 seconds is the SCM patience threshold most
-    // operators tolerate.
-    static constexpr int kShutdownJoinTimeoutMs = 5000;
     std::thread watchdogThread_;
     std::atomic<bool> watchdogRunning_{ false };
+    // Teardown gate observed by every spawn path (watchdog auto-respawn,
+    // ensureMinInstances, scaleUpOnce). Set by shutdownAll() and the
+    // destructor BEFORE children are terminated so no spawn can race
+    // teardown; never cleared -- shutdownAll is terminal by contract.
+    // This is what makes the destructor's unconditional join safe: with
+    // spawning suppressed and children terminated, the watchdog's final
+    // cycle is bounded and free of blocking child-process calls.
+    std::atomic<bool> shuttingDown_{ false };
     // v0.9.12: condition variable for the watchdog sleep, symmetric
     // with BeaconService's v0.9.11 sleep model. Pre-v0.9.12 the
     // watchdog used a 100ms-step polled sleep that observed
@@ -9792,7 +9851,7 @@ StdioBridgeResult WorkerSupervisor::sendStdioJsonRpc(const std::string& instance
     // are not throttled by long RPCs.
     HANDLE writeHandle = nullptr;
     HANDLE readHandle  = nullptr;
-    std::mutex* perInstanceMutex = nullptr;
+    std::shared_ptr<std::mutex> perInstanceMutex;
     bool needsHandshake = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -9816,7 +9875,7 @@ StdioBridgeResult WorkerSupervisor::sendStdioJsonRpc(const std::string& instance
         }
         writeHandle      = child.childStdinWrite;
         readHandle       = child.childStdoutRead;
-        perInstanceMutex = child.stdioMutex.get();
+        perInstanceMutex = child.stdioMutex;   // shared ownership (review fix)
         needsHandshake   = !child.mcpInitialized;
     }
 
@@ -10226,8 +10285,16 @@ StdioBridgeResult WorkerSupervisor::sendStdioJsonRpc(const std::string& instance
 //      a saturation message; the caller can retry.
 class LeaseRouter final : public ILeaseRouter {
 public:
-    explicit LeaseRouter(std::shared_ptr<IWorkerSupervisor> workerSupervisor)
-        : workerSupervisor_(std::move(workerSupervisor)) {}
+    // Gateway session remediation: stateful (sticky-session) leases are no
+    // longer released after every tools/call, so they need a lifetime
+    // bound. idleTimeoutSeconds is the sliding idle window after which an
+    // Active lease with no acquire-side activity expires and a Released
+    // lease record is garbage-collected. Injected so tests can drive the
+    // expiry deterministically; <= 0 means "expire on the next sweep".
+    explicit LeaseRouter(std::shared_ptr<IWorkerSupervisor> workerSupervisor,
+                         int idleTimeoutSeconds = kDefaultLeaseIdleTimeoutSeconds)
+        : workerSupervisor_(std::move(workerSupervisor)),
+          leaseIdleTimeout_(std::chrono::seconds((std::max)(0, idleTimeoutSeconds))) {}
 
     EndpointLease acquireLease(const LeaseRequest& request) override {
         if (request.poolId.empty()) {
@@ -10238,21 +10305,7 @@ public:
         }
 
         std::lock_guard<std::mutex> lock(mutex_);
-
-        // 1) Sticky session: if the request carries a sessionId that maps
-        //    to an active lease, return it verbatim. Active stateful
-        //    streams must not be hot-migrated (ADR-002 §8).
-        if (!request.sessionId.empty()) {
-            const auto sessionIterator = stickySessions_.find(stickyKey(request.poolId, request.sessionId));
-            if (sessionIterator != stickySessions_.end()) {
-                const auto leaseIterator = leases_.find(sessionIterator->second);
-                if (leaseIterator != leases_.end() && leaseIterator->second.state == LeaseState::Active) {
-                    return leaseIterator->second;
-                }
-                // Sticky entry pointed at a stale lease; clean up.
-                stickySessions_.erase(sessionIterator);
-            }
-        }
+        pruneExpiredLeasesLocked();
 
         const auto poolOpt = workerSupervisor_ ? workerSupervisor_->findPool(request.poolId) : std::optional<ManagedEndpointPool>{};
         if (!poolOpt.has_value()) {
@@ -10264,6 +10317,44 @@ public:
         }
         const ManagedEndpointPool& pool = *poolOpt;
         const int maxLeasesPerInstance = (std::max)(1, pool.scalePolicy.maxActiveLeasesPerInstance);
+
+        // 1) Sticky session: if the request carries a sessionId that maps
+        //    to an active lease, return it verbatim. Active stateful
+        //    streams must not be hot-migrated (ADR-002 §8).
+        //    Review fix: only when the bound instance is still live.
+        //    Instance ids are never reused, so a crash + watchdog respawn
+        //    leaves the sticky lease pointing at a dead instance -- and
+        //    because every retry refreshes the idle window, the session
+        //    would stay wedged forever. A dead binding releases the lease
+        //    and falls through so the session transparently rebinds.
+        if (!request.sessionId.empty()) {
+            const auto sessionIterator = stickySessions_.find(stickyKey(request.poolId, request.sessionId));
+            if (sessionIterator != stickySessions_.end()) {
+                const auto leaseIterator = leases_.find(sessionIterator->second);
+                if (leaseIterator != leases_.end() && leaseIterator->second.state == LeaseState::Active) {
+                    const auto& boundInstanceId = leaseIterator->second.instanceId;
+                    const bool instanceLive = std::any_of(
+                        pool.instances.begin(), pool.instances.end(),
+                        [&boundInstanceId](const EndpointInstance& instance) {
+                            return instance.instanceId == boundInstanceId
+                                && (instance.state == EndpointInstanceState::Ready
+                                    || instance.state == EndpointInstanceState::Busy);
+                        });
+                    if (instanceLive) {
+                        // Sliding idle window: session traffic keeps the lease alive.
+                        leaseActivity_[leaseIterator->first] = std::chrono::steady_clock::now();
+                        return leaseIterator->second;
+                    }
+                    leaseIterator->second.state = LeaseState::Released;
+                    leaseIterator->second.releasedAtUtc = timestampNowUtc();
+                    leaseIterator->second.statusMessage =
+                        "Sticky lease released: bound instance is no longer live; session rebinds.";
+                    leaseActivity_[leaseIterator->first] = std::chrono::steady_clock::now();
+                }
+                // Sticky entry pointed at a stale lease; clean up.
+                stickySessions_.erase(sessionIterator);
+            }
+        }
 
         // 2) Pick the Ready instance with the fewest active leases.
         const auto choice = selectLeastLoadedReadyLocked(pool, maxLeasesPerInstance);
@@ -10303,11 +10394,15 @@ public:
         if (!lease.sessionId.empty()) {
             stickySessions_.erase(stickyKey(lease.poolId, lease.sessionId));
         }
+        // Stamp release time so the Released record is garbage-collected
+        // after the idle window instead of accumulating forever.
+        leaseActivity_[leaseId] = std::chrono::steady_clock::now();
         return OperationResult{ true, false, "Lease released." };
     }
 
     std::vector<EndpointLease> activeLeases(const std::string& poolId) const override {
         std::lock_guard<std::mutex> lock(mutex_);
+        pruneExpiredLeasesLocked();
         std::vector<EndpointLease> result;
         for (const auto& [_, lease] : leases_) {
             if (lease.poolId == poolId && lease.state == LeaseState::Active) {
@@ -10323,6 +10418,7 @@ public:
 
     PoolSaturation saturationFor(const std::string& poolId) const override {
         std::lock_guard<std::mutex> lock(mutex_);
+        pruneExpiredLeasesLocked();
         PoolSaturation saturation;
         saturation.poolId = poolId;
         const auto poolOpt = workerSupervisor_ ? workerSupervisor_->findPool(poolId) : std::optional<ManagedEndpointPool>{};
@@ -10355,6 +10451,43 @@ public:
 private:
     static std::string stickyKey(const std::string& poolId, const std::string& sessionId) {
         return poolId + "::" + sessionId;
+    }
+
+    // Sliding-idle-window sweep, run opportunistically under mutex_ from
+    // acquireLease/activeLeases (no dedicated GC thread):
+    //   - Active leases with no acquire-side activity inside the idle
+    //     window expire to Released (sticky mapping removed), so stateful
+    //     session leases cannot leak when a client walks away without an
+    //     explicit release.
+    //   - Released lease records older than the idle window are erased
+    //     entirely, bounding leases_ growth.
+    void pruneExpiredLeasesLocked() const {
+        const auto now = std::chrono::steady_clock::now();
+        for (auto iterator = leases_.begin(); iterator != leases_.end();) {
+            EndpointLease& lease = iterator->second;
+            const auto activityIterator = leaseActivity_.find(iterator->first);
+            const auto lastActivity = activityIterator != leaseActivity_.end()
+                ? activityIterator->second
+                : now;
+            const bool idleExpired = (now - lastActivity) >= leaseIdleTimeout_;
+            if (lease.state == LeaseState::Active && idleExpired) {
+                lease.state = LeaseState::Released;
+                lease.releasedAtUtc = timestampNowUtc();
+                lease.statusMessage = "Lease expired after the idle timeout with no session activity.";
+                if (!lease.sessionId.empty()) {
+                    stickySessions_.erase(stickyKey(lease.poolId, lease.sessionId));
+                }
+                leaseActivity_[iterator->first] = now;
+                ++iterator;
+                continue;
+            }
+            if (lease.state != LeaseState::Active && idleExpired) {
+                leaseActivity_.erase(iterator->first);
+                iterator = leases_.erase(iterator);
+                continue;
+            }
+            ++iterator;
+        }
     }
 
     std::optional<std::string> selectLeastLoadedReadyLocked(const ManagedEndpointPool& pool,
@@ -10413,14 +10546,22 @@ private:
             ? "Lease bound to freshly-spawned instance after pool scale-out."
             : "Lease bound to least-loaded Ready instance.";
         leases_[lease.leaseId] = lease;
+        leaseActivity_[lease.leaseId] = std::chrono::steady_clock::now();
         return lease;
     }
 
+    // 15 minutes: generous against the 30s tools/call ceiling, short
+    // enough that an abandoned stateful session frees its instance slot
+    // within an operator-noticeable window.
+    static constexpr int kDefaultLeaseIdleTimeoutSeconds = 900;
+
     mutable std::mutex mutex_;
     std::shared_ptr<IWorkerSupervisor> workerSupervisor_;
-    std::map<std::string, EndpointLease> leases_;
-    std::map<std::string, std::string> stickySessions_;
+    mutable std::map<std::string, EndpointLease> leases_;
+    mutable std::map<std::string, std::string> stickySessions_;
+    mutable std::map<std::string, std::chrono::steady_clock::time_point> leaseActivity_;
     std::atomic<uint64_t> nextLeaseSerial_{ 1 };
+    const std::chrono::seconds leaseIdleTimeout_;
 };
 
 // PHASE-08 (ADR-002 §9): TelemetryAggregator. Holds the in-memory
@@ -10925,7 +11066,11 @@ private:
             "Confirm GET /.well-known/mcos.json reports gateway.state=running.",
         };
         profile.caveats = {
-            "Claude Code consumes Streamable HTTP MCP servers natively; no companion utility is required."
+            "Claude Code consumes Streamable HTTP MCP servers natively; no companion utility is required.",
+            "Transport profile (alpha): the gateway serves the POST-only Streamable HTTP subset. "
+            "Responses are single JSON bodies; no SSE stream is offered (GET /mcp returns 405 with "
+            "Allow: POST, as the MCP specification permits). The Mcp-Session-Id header is honored "
+            "for sticky session routing."
         };
     }
 
@@ -11031,6 +11176,9 @@ private:
             "Confirm governance bundle retrieval."
         };
         profile.caveats = {
+            "Transport profile (alpha): POST-only Streamable HTTP. Responses are single JSON bodies; "
+            "no SSE stream is offered (GET /mcp returns 405 with Allow: POST). Clients that require "
+            "an SSE stream should use the companion utility's stdio bridge.",
             "Unknown client types fall through to this profile; replace it with a typed profile if your client has a documented MCP setup."
         };
     }
@@ -12427,7 +12575,50 @@ public:
 
     OperationResult applyConfigurationJson(const std::string& requestBody,
                                            bool confirmUnsafeChanges) override {
-        return configurationService_->update(nlohmann::json::parse(requestBody).get<AppConfiguration>(), confirmUnsafeChanges);
+        // Review fix: admin requests now execute concurrently (worker
+        // pool), so configuration writes serialize here to keep the
+        // read-merge-write PATCH path atomic with every other write.
+        std::lock_guard<std::mutex> writeLock(configurationWriteMutex_);
+        const auto parsed = nlohmann::json::parse(requestBody);
+        if (!parsed.is_object()) {
+            return OperationResult{ false, false,
+                "Configuration replacement body must be a JSON object." };
+        }
+        // POST /api/config is full replacement: deserializing a partial
+        // top-level document would reset every omitted section to defaults.
+        // Reject partial bodies and direct callers to PATCH /api/config.
+        // Full documents emitted by GET /api/config always pass this check.
+        const auto missing = missingTopLevelKeysForFullDocument(parsed, AppConfiguration{});
+        if (!missing.empty()) {
+            std::string message =
+                "POST /api/config replaces the full configuration document, but this "
+                "body omits top-level section(s): ";
+            for (std::size_t i = 0; i < missing.size(); ++i) {
+                if (i > 0) {
+                    message += ", ";
+                }
+                message += missing[i];
+            }
+            message += ". Use PATCH /api/config for partial updates, or send the "
+                       "complete document returned by GET /api/config.";
+            return OperationResult{ false, false, message };
+        }
+        return configurationService_->update(parsed.get<AppConfiguration>(), confirmUnsafeChanges);
+    }
+
+    OperationResult applyConfigurationPatchJson(const std::string& requestBody,
+                                                bool confirmUnsafeChanges) override {
+        // Review fix: current()+merge+update() must be atomic against
+        // concurrent config writes -- without this lock two simultaneous
+        // PATCHes read the same snapshot and the second silently reverts
+        // the first's section while both report success.
+        std::lock_guard<std::mutex> writeLock(configurationWriteMutex_);
+        const auto patch = nlohmann::json::parse(requestBody);
+        const auto outcome = mergeConfigurationPatch(nlohmann::json(configurationService_->current()), patch);
+        if (!outcome.valid) {
+            return OperationResult{ false, false, outcome.message };
+        }
+        return configurationService_->update(outcome.merged.get<AppConfiguration>(), confirmUnsafeChanges);
     }
 
     OperationResult upsertAppleRemoteHostJson(const std::string& requestBody) override {
@@ -12515,6 +12706,11 @@ public:
     }
 
 private:
+    // Review fix: serializes the configuration write paths
+    // (applyConfigurationJson / applyConfigurationPatchJson) so the PATCH
+    // route's read-merge-write cannot lose updates under the concurrent
+    // admin worker pool.
+    std::mutex configurationWriteMutex_;
     std::shared_ptr<ITelemetryService> telemetryService_;
     std::shared_ptr<IRuntimeInventoryService> inventoryService_;
     std::shared_ptr<IConfigurationService> configurationService_;
@@ -12939,28 +13135,6 @@ void appendPoolLifecycleActivity(const std::string& kind,
     event.target = poolId;         // for joins with /api/pools by poolId
     event.statusCode = statusCodeHint;
     event.message = message;
-    globalActivityRing().append(event);
-}
-
-// v0.9.10: emit a supervisor_shutdown_wedge ActivityEvent from the
-// supervisor's destructor when the watchdog had to be detached.
-// Captures the supervisor's pool/child count at detach time so
-// post-mortem analysis can spot patterns (e.g. always wedges when
-// children > N, or always wedges with a respawn-in-flight).
-// Forward-declared near the supervisor class for visibility-without-
-// dependency reasons; defined here so the ActivityEvent struct is
-// fully visible.
-void appendSupervisorWedgeActivity(const std::string& message,
-                                   int poolCount,
-                                   int childCount) {
-    ActivityEvent event;
-    event.kind   = "supervisor_shutdown_wedge";
-    event.actor  = "supervisor-destructor";
-    event.target = "watchdog-thread";
-    event.statusCode = 504;        // gateway-timeout flavor
-    event.message = message
-        + " supervisor-state-at-detach: pools=" + std::to_string(poolCount)
-        + " children=" + std::to_string(childCount) + ".";
     globalActivityRing().append(event);
 }
 
@@ -13489,6 +13663,15 @@ private:
     // an indirection inside handleClient) so the plain-HTTP behavior
     // is untouched when security.adminTlsEnabled is off.
     void handleClientTls(SOCKET client);
+    // Admin-concurrency remediation: the accept loop hands accepted
+    // sockets to a bounded worker pool instead of serving each request
+    // inline, so a slow admin handler cannot block /api/health or the
+    // dashboard. SSE connections already move to their own detached
+    // thread inside handleClient, so they occupy a pool worker only for
+    // the header exchange. A saturated queue answers a structured 503.
+    void dispatchClient(SOCKET client);
+    void connectionWorkerLoop();
+    static void sendRawSaturationResponse(SOCKET client);
 
     std::string bindAddress_;
     uint16_t port_;
@@ -13513,6 +13696,36 @@ private:
     CredHandle tlsCredentials_{};
     bool tlsCredentialsValid_ = false;
     bool tlsHandshakeFailureReported_ = false;
+    // Admin-concurrency remediation state. The queue holds accepted
+    // sockets awaiting a worker; guarded by connectionQueueMutex_
+    // (separate from startup synchronization). Request bodies are also
+    // bounded (kMaxAdminRequestBytes) so a hostile or broken client
+    // cannot balloon the accept-side buffers.
+    static constexpr std::size_t kAdminWorkerCount = 8;
+    static constexpr std::size_t kAdminConnectionQueueMaxDepth = 64;
+    static constexpr std::size_t kMaxAdminRequestBytes = 10 * 1024 * 1024;
+    std::vector<std::thread> connectionWorkers_;
+    std::deque<SOCKET> connectionQueue_;
+    std::mutex connectionQueueMutex_;
+    std::condition_variable connectionQueueCv_;
+    bool connectionQueueShutdown_ = false;
+    // Review fix: SSE stream threads are TRACKED and joined at stop()
+    // instead of detached. A detached stream thread captured `&running_`
+    // and the runtime Impl; at service stop it could wake inside its 1s
+    // sleep after those objects were destroyed (use-after-free during the
+    // exact phase SCM watches for a clean stop). std::list keeps node
+    // addresses stable so the stream thread can flag its own entry.
+    // Ownership: the stream thread only shutdown()s its socket when the
+    // handler exits; closesocket() happens exactly once, on the registry
+    // side (opportunistic reap on the next SSE registration, or stop()),
+    // so a recycled descriptor can never be shut down by mistake.
+    struct SseStream final {
+        SOCKET socket = INVALID_SOCKET;
+        std::atomic<bool> finished{ false };
+        std::thread thread;
+    };
+    std::mutex sseMutex_;
+    std::list<SseStream> sseStreams_;
 };
 
 bool SimpleHttpServer::start() {
@@ -13555,6 +13768,14 @@ bool SimpleHttpServer::start() {
 
     startupComplete_ = false;
     startupSucceeded_ = false;
+    {
+        std::lock_guard<std::mutex> queueLock(connectionQueueMutex_);
+        connectionQueueShutdown_ = false;
+    }
+    connectionWorkers_.reserve(kAdminWorkerCount);
+    for (std::size_t workerIndex = 0; workerIndex < kAdminWorkerCount; ++workerIndex) {
+        connectionWorkers_.emplace_back([this]() { connectionWorkerLoop(); });
+    }
     worker_ = std::thread([this]() { run(); });
 
     std::unique_lock<std::mutex> lock(startupMutex_);
@@ -13571,11 +13792,53 @@ void SimpleHttpServer::stop() {
     if (worker_.joinable()) {
         worker_.join();
     }
+    // Admin-concurrency remediation: retire the connection workers after
+    // the accept thread, then close any sockets that never got served.
+    {
+        std::lock_guard<std::mutex> queueLock(connectionQueueMutex_);
+        connectionQueueShutdown_ = true;
+    }
+    connectionQueueCv_.notify_all();
+    for (auto& connectionWorker : connectionWorkers_) {
+        if (connectionWorker.joinable()) {
+            connectionWorker.join();
+        }
+    }
+    connectionWorkers_.clear();
+    {
+        std::lock_guard<std::mutex> queueLock(connectionQueueMutex_);
+        while (!connectionQueue_.empty()) {
+            ::closesocket(connectionQueue_.front());
+            connectionQueue_.pop_front();
+        }
+    }
+    // Review fix: retire the tracked SSE stream threads. running_ is
+    // already false, so each handler exits within one loop iteration
+    // (~1s); shutting the sockets down first also breaks any blocking
+    // send immediately. No new stream can be registered here because the
+    // connection workers are already joined.
+    {
+        std::lock_guard<std::mutex> sseLock(sseMutex_);
+        for (auto& stream : sseStreams_) {
+            if (!stream.finished.load(std::memory_order_acquire)) {
+                ::shutdown(stream.socket, SD_BOTH);
+            }
+        }
+    }
+    for (auto& stream : sseStreams_) {
+        if (stream.thread.joinable()) {
+            stream.thread.join();
+        }
+    }
+    for (auto& stream : sseStreams_) {
+        ::closesocket(stream.socket);
+    }
+    sseStreams_.clear();
     // v0.11.0-alpha.3: release the shared SChannel credentials after
-    // the accept thread has joined (TLS connections are handled
-    // synchronously on that thread, so nothing can still be using the
-    // handle here). Guarded so stop() stays safe to call repeatedly
-    // and on a never-started/credentials-failed server.
+    // every thread that can touch them has joined (TLS connections are
+    // handled on the connection workers). Guarded so stop() stays safe
+    // to call repeatedly and on a never-started/credentials-failed
+    // server.
     if (tlsCredentialsValid_) {
         FreeCredentialsHandle(&tlsCredentials_);
         tlsCredentialsValid_ = false;
@@ -13592,6 +13855,7 @@ std::string SimpleHttpServer::reasonPhrase(const int statusCode) {
         case 404: return "Not Found";
         case 405: return "Method Not Allowed";
         case 409: return "Conflict";
+        case 413: return "Payload Too Large";
         case 500: return "Internal Server Error";
         // v0.11.0-alpha.3: produced only by the TLS path's SSE-
         // unsupported response; no plain-HTTP route returns 501.
@@ -13668,8 +13932,8 @@ void SimpleHttpServer::sendResponse(SOCKET client, const HttpResponse& response)
     // local file or a dev server on a different port) can now make
     // cross-origin XHR/fetch calls without a 404 on preflight.
     stream << "Access-Control-Allow-Origin: *\r\n";
-    stream << "Access-Control-Allow-Methods: GET, HEAD, POST, OPTIONS\r\n";
-    stream << "Access-Control-Allow-Headers: Content-Type, Authorization, X-MCOS-Admin-Token, X-MCOS-Client-Id, X-MCOS-Client-Type\r\n";
+    stream << "Access-Control-Allow-Methods: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS\r\n";
+    stream << "Access-Control-Allow-Headers: Content-Type, Authorization, X-MCOS-Admin-Token, X-MCOS-Client-Id, X-MCOS-Client-Type, X-Confirm-Unsafe\r\n";
     stream << "Access-Control-Max-Age: 86400\r\n";
     // v0.9.28: emit any additional response-specific headers
     // (e.g. Allow on a 405) before terminating the header block.
@@ -13742,16 +14006,11 @@ void SimpleHttpServer::run() {
                         if (running_) continue;
                         break;
                     }
-                    // v0.11.0-alpha.3: TLS dispatch. When credentials
-                    // were acquired at start() every connection goes
-                    // through the SChannel path (which owns closing the
-                    // socket on all of its paths); otherwise the plain
-                    // path below runs exactly as before.
-                    if (tlsCredentialsValid_) {
-                        handleClientTls(client);
-                    } else {
-                        handleClient(client);
-                    }
+                    // Admin-concurrency remediation: hand the socket to
+                    // the bounded worker pool. TLS-vs-plain dispatch
+                    // happens on the worker; each handler owns closing
+                    // its socket on every path.
+                    dispatchClient(client);
                 }
                 return;
             }
@@ -13824,39 +14083,123 @@ void SimpleHttpServer::run() {
         if (client == INVALID_SOCKET) {
             continue;
         }
-        // v0.11.0-alpha.3: TLS dispatch (see the dual-stack loop above).
-        // handleClientTls closes the socket on every one of its paths,
-        // so the extra closesocket stays confined to the plain branch.
+        // Admin-concurrency remediation: worker-pool dispatch (see the
+        // dual-stack loop above). handleClient/handleClientTls own
+        // closing the socket on every path, which also retires the old
+        // double-closesocket in this legacy branch.
+        dispatchClient(client);
+    }
+}
+
+void SimpleHttpServer::dispatchClient(SOCKET client) {
+    bool enqueued = false;
+    {
+        std::lock_guard<std::mutex> queueLock(connectionQueueMutex_);
+        if (!connectionQueueShutdown_
+            && connectionQueue_.size() < kAdminConnectionQueueMaxDepth) {
+            connectionQueue_.push_back(client);
+            enqueued = true;
+        }
+    }
+    if (enqueued) {
+        connectionQueueCv_.notify_one();
+        return;
+    }
+    // Bounded-queue backpressure: answer a structured 503 instead of
+    // queueing without bound. (Over a TLS-enabled listener the raw bytes
+    // will not decrypt; the client still sees a prompt connection close
+    // rather than a hang.)
+    sendRawSaturationResponse(client);
+    ::shutdown(client, SD_BOTH);
+    ::closesocket(client);
+}
+
+void SimpleHttpServer::connectionWorkerLoop() {
+    for (;;) {
+        SOCKET client = INVALID_SOCKET;
+        {
+            std::unique_lock<std::mutex> lock(connectionQueueMutex_);
+            connectionQueueCv_.wait(lock, [this]() {
+                return connectionQueueShutdown_ || !connectionQueue_.empty();
+            });
+            if (connectionQueueShutdown_) {
+                // stop() closes any sockets left in the queue.
+                return;
+            }
+            client = connectionQueue_.front();
+            connectionQueue_.pop_front();
+        }
         if (tlsCredentialsValid_) {
             handleClientTls(client);
         } else {
             handleClient(client);
-            closesocket(client);
         }
     }
+}
+
+void SimpleHttpServer::sendRawSaturationResponse(SOCKET client) {
+    static const char kBody[] =
+        R"({"succeeded":false,"message":"Admin request queue is saturated; retry shortly."})";
+    std::ostringstream stream;
+    stream << "HTTP/1.1 503 Service Unavailable\r\n"
+           << "Content-Type: application/json\r\n"
+           << "Content-Length: " << (sizeof(kBody) - 1) << "\r\n"
+           << "Access-Control-Allow-Origin: *\r\n"
+           << "Connection: close\r\n\r\n"
+           << kBody;
+    const auto data = stream.str();
+    ::send(client, data.c_str(), static_cast<int>(data.size()), 0);
 }
 
 void SimpleHttpServer::handleClient(SOCKET client) {
     std::string requestBuffer;
     char chunk[4096]{};
     int bytesRead = 0;
+    bool invalidContentLength = false;
+    bool requestTooLarge = false;
     while ((bytesRead = recv(client, chunk, static_cast<int>(sizeof(chunk)), 0)) > 0) {
         requestBuffer.append(chunk, chunk + bytesRead);
+        if (requestBuffer.size() > kMaxAdminRequestBytes) {
+            requestTooLarge = true;
+            break;
+        }
         const auto headerEnd = requestBuffer.find("\r\n\r\n");
         if (headerEnd == std::string::npos) {
             continue;
         }
-        const auto contentLengthPosition = requestBuffer.find("Content-Length:");
-        if (contentLengthPosition == std::string::npos) {
+        // Content-Length remediation: header names are case-insensitive
+        // (RFC 9110 §5.1) -- parse via the shared helper so `content-
+        // length` from proxies/minimal clients is honored, and answer
+        // invalid values with HTTP 400 instead of feeding them to
+        // std::stoi (which threw out of the accept path).
+        const auto contentLength = parseContentLengthHeader(requestBuffer);
+        if (!contentLength.present) {
             break;
         }
+        if (!contentLength.valid) {
+            invalidContentLength = true;
+            break;
+        }
+        if (contentLength.value > kMaxAdminRequestBytes) {
+            requestTooLarge = true;
+            break;
+        }
+        if (requestBuffer.size() >= headerEnd + 4 + contentLength.value) {
+            break;
+        }
+    }
 
-        const auto lineEnd = requestBuffer.find("\r\n", contentLengthPosition);
-        const auto value = requestBuffer.substr(contentLengthPosition + 15, lineEnd - (contentLengthPosition + 15));
-        const auto contentLength = static_cast<size_t>(std::stoi(value));
-        if (requestBuffer.size() >= headerEnd + 4 + contentLength) {
-            break;
-        }
+    if (invalidContentLength || requestTooLarge) {
+        HttpResponse rejected;
+        rejected.statusCode = invalidContentLength ? 400 : 413;
+        rejected.contentType = "application/json";
+        rejected.body = invalidContentLength
+            ? R"({"succeeded":false,"message":"Invalid Content-Length header."})"
+            : R"({"succeeded":false,"message":"Request exceeds the admin listener size limit."})";
+        sendResponse(client, rejected);
+        ::shutdown(client, SD_BOTH);
+        ::closesocket(client);
+        return;
     }
 
     auto request = parseRequest(requestBuffer);
@@ -13884,6 +14227,11 @@ void SimpleHttpServer::handleClient(SOCKET client) {
         // Allow-* headers (added below for every response).
         cors.suppressBody = true;
         sendResponse(client, cors);
+        // Ownership fix: handleClient owns the socket on every path. The
+        // OPTIONS short-circuit used to return without closing, leaking
+        // the socket on the dual-stack accept path.
+        ::shutdown(client, SD_BOTH);
+        ::closesocket(client);
         return;
     }
 
@@ -13929,11 +14277,33 @@ void SimpleHttpServer::handleClient(SOCKET client) {
         ::send(client, headerBytes.c_str(), static_cast<int>(headerBytes.size()), 0);
         auto handler = std::move(response.streamHandler);
         std::atomic<bool>* serverRunning = &running_;
-        std::thread([client, serverRunning, handler = std::move(handler)]() {
-            handler(client, serverRunning);
-            ::shutdown(client, SD_BOTH);
-            ::closesocket(client);
-        }).detach();
+        {
+            std::lock_guard<std::mutex> sseLock(sseMutex_);
+            // Opportunistic reap: join finished streams and close their
+            // sockets so a long-lived server does not accumulate entries.
+            for (auto iterator = sseStreams_.begin(); iterator != sseStreams_.end();) {
+                if (iterator->finished.load(std::memory_order_acquire)) {
+                    if (iterator->thread.joinable()) {
+                        iterator->thread.join();
+                    }
+                    ::closesocket(iterator->socket);
+                    iterator = sseStreams_.erase(iterator);
+                } else {
+                    ++iterator;
+                }
+            }
+            sseStreams_.emplace_back();
+            SseStream& stream = sseStreams_.back();
+            stream.socket = client;
+            stream.thread = std::thread(
+                [client, serverRunning, handler = std::move(handler), &stream]() {
+                    handler(client, serverRunning);
+                    ::shutdown(client, SD_BOTH);
+                    // closesocket happens on the registry side (reap or
+                    // stop()) so the descriptor is released exactly once.
+                    stream.finished.store(true, std::memory_order_release);
+                });
+        }
         return;
     }
     sendResponse(client, response);
@@ -13953,8 +14323,8 @@ void SimpleHttpServer::sendResponseTls(SchannelStreamAdapter& tls, const HttpRes
     stream << "Content-Type: " << response.contentType << "\r\n";
     stream << "Content-Length: " << response.body.size() << "\r\n";
     stream << "Access-Control-Allow-Origin: *\r\n";
-    stream << "Access-Control-Allow-Methods: GET, HEAD, POST, OPTIONS\r\n";
-    stream << "Access-Control-Allow-Headers: Content-Type, Authorization, X-MCOS-Admin-Token, X-MCOS-Client-Id, X-MCOS-Client-Type\r\n";
+    stream << "Access-Control-Allow-Methods: GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS\r\n";
+    stream << "Access-Control-Allow-Headers: Content-Type, Authorization, X-MCOS-Admin-Token, X-MCOS-Client-Id, X-MCOS-Client-Type, X-Confirm-Unsafe\r\n";
     stream << "Access-Control-Max-Age: 86400\r\n";
     for (const auto& [name, value] : response.extraHeaders) {
         stream << name << ": " << value << "\r\n";
@@ -14003,21 +14373,32 @@ void SimpleHttpServer::handleClientTls(SOCKET client) {
     std::string requestBuffer;
     char chunk[4096]{};
     int bytesRead = 0;
+    bool invalidContentLength = false;
+    bool requestTooLarge = false;
     while ((bytesRead = tls.recvPlain(chunk, static_cast<int>(sizeof(chunk)))) > 0) {
         requestBuffer.append(chunk, chunk + bytesRead);
+        if (requestBuffer.size() > kMaxAdminRequestBytes) {
+            requestTooLarge = true;
+            break;
+        }
         const auto headerEnd = requestBuffer.find("\r\n\r\n");
         if (headerEnd == std::string::npos) {
             continue;
         }
-        const auto contentLengthPosition = requestBuffer.find("Content-Length:");
-        if (contentLengthPosition == std::string::npos) {
+        // Content-Length remediation -- same contract as handleClient.
+        const auto contentLength = parseContentLengthHeader(requestBuffer);
+        if (!contentLength.present) {
             break;
         }
-
-        const auto lineEnd = requestBuffer.find("\r\n", contentLengthPosition);
-        const auto value = requestBuffer.substr(contentLengthPosition + 15, lineEnd - (contentLengthPosition + 15));
-        const auto contentLength = static_cast<size_t>(std::stoi(value));
-        if (requestBuffer.size() >= headerEnd + 4 + contentLength) {
+        if (!contentLength.valid) {
+            invalidContentLength = true;
+            break;
+        }
+        if (contentLength.value > kMaxAdminRequestBytes) {
+            requestTooLarge = true;
+            break;
+        }
+        if (requestBuffer.size() >= headerEnd + 4 + contentLength.value) {
             break;
         }
     }
@@ -14027,6 +14408,18 @@ void SimpleHttpServer::handleClientTls(SOCKET client) {
         ::shutdown(client, SD_BOTH);
         ::closesocket(client);
     };
+
+    if (invalidContentLength || requestTooLarge) {
+        HttpResponse rejected;
+        rejected.statusCode = invalidContentLength ? 400 : 413;
+        rejected.contentType = "application/json";
+        rejected.body = invalidContentLength
+            ? R"({"succeeded":false,"message":"Invalid Content-Length header."})"
+            : R"({"succeeded":false,"message":"Request exceeds the admin listener size limit."})";
+        sendResponseTls(tls, rejected);
+        closeConnection();
+        return;
+    }
 
     auto request = parseRequest(requestBuffer);
     request.remoteAddress = peerAddressForSocket(client);
@@ -14646,6 +15039,22 @@ inline nlohmann::json composeDirectAIPluginConfigBody(const std::string& provide
 
 } // namespace
 
+// Interface-returning factories for the worker supervisor and lease router.
+// The concrete classes are internal to this translation unit; the runtime,
+// tests, and future embedders construct them through these factories so the
+// contract surface stays IWorkerSupervisor / ILeaseRouter (constructor
+// injection preserved, no concrete types leak).
+std::shared_ptr<IWorkerSupervisor> createWorkerSupervisor(
+        std::shared_ptr<IConfigurationService> configurationService) {
+    return std::make_shared<WorkerSupervisor>(std::move(configurationService));
+}
+
+std::shared_ptr<ILeaseRouter> createLeaseRouter(
+        std::shared_ptr<IWorkerSupervisor> workerSupervisor,
+        int leaseIdleTimeoutSeconds) {
+    return std::make_shared<LeaseRouter>(std::move(workerSupervisor), leaseIdleTimeoutSeconds);
+}
+
 class MasterControlApplication::Impl final {
 public:
     Impl()
@@ -14662,6 +15071,7 @@ public:
     GovernanceToolResult executeGovernanceToolJson(const std::string& requestBody) { return adminApiService_->executeGovernanceToolJson(requestBody); }
     OperationResult cancelAppleOperationJson(const std::string& requestBody) { return adminApiService_->cancelAppleOperationJson(requestBody); }
     OperationResult applyConfigurationJson(const std::string& requestBody, bool confirmUnsafeChanges) { return adminApiService_->applyConfigurationJson(requestBody, confirmUnsafeChanges); }
+    OperationResult applyConfigurationPatchJson(const std::string& requestBody, bool confirmUnsafeChanges) { return adminApiService_->applyConfigurationPatchJson(requestBody, confirmUnsafeChanges); }
     OperationResult upsertAppleRemoteHostJson(const std::string& requestBody) { return adminApiService_->upsertAppleRemoteHostJson(requestBody); }
     OperationResult removeAppleRemoteHostJson(const std::string& requestBody) { return adminApiService_->removeAppleRemoteHostJson(requestBody); }
     OperationResult upsertMcpServerJson(const std::string& requestBody) { return adminApiService_->upsertMcpServerJson(requestBody); }
@@ -16262,204 +16672,10 @@ static std::string findHeaderCaseInsensitive(const std::unordered_map<std::strin
     return {};
 }
 
-// v0.9.28: enumerate the supported methods for known operator API
-// paths so an unsupported method on a known path returns 405 with
-// an Allow header per RFC 7231 §6.5.5, instead of falling through
-// to a 404 that hides whether the path exists at all.
-//
-// Maintenance: when adding a new route to handleHttpRequest below,
-// add the (path, methods) pair here so verb-mismatch on the new
-// route returns 405. The exact-match table covers literal path
-// matches; the prefix table covers the routes that use
-// startsWith() / rfind(... , 0) == 0 dispatch. HEAD and OPTIONS are
-// added to every entry's Allow header automatically because the
-// HEAD->GET rewrite and OPTIONS preflight short-circuit live in
-// SimpleHttpServer::handleClient and apply universally.
-static std::vector<std::string> supportedMethodsForPath(const std::string& path) {
-    // Strip query string for the lookup -- /api/foo?bar=baz is the
-    // same logical resource as /api/foo for method-allow purposes.
-    std::string p = path;
-    const auto q = p.find('?');
-    if (q != std::string::npos) {
-        p = p.substr(0, q);
-    }
-
-    static const std::unordered_map<std::string, std::vector<std::string>> kExact = {
-        // Liveness / version
-        {"/api/health", {"GET"}},
-        {"/api/version", {"GET"}},
-        {"/api/health/summary", {"GET"}},
-        {"/api/host/telemetry", {"GET"}},
-        {"/api/readiness", {"GET"}},
-        {"/api/activity/health", {"GET"}},
-        // Discovery / onboarding / governance
-        {"/.well-known/mcos.json", {"GET"}},
-        {"/api/discovery", {"GET"}},
-        {"/api/onboarding", {"GET"}},
-        {"/api/beacon", {"GET"}},
-        {"/api/environment-hints", {"GET"}},
-        {"/api/governance/profile", {"GET"}},
-        {"/api/governance/bundles", {"GET"}},
-        {"/api/governance/decisions", {"GET", "POST"}},
-        // Snapshot / config
-        {"/api/dashboard", {"GET"}},
-        {"/api/config", {"GET", "POST"}},
-        {"/api/exports", {"GET"}},
-        {"/api/workflows", {"GET", "POST"}},
-        {"/api/clu", {"GET"}},
-        {"/api/clu/tools", {"GET"}},
-        {"/api/clu/apple-operations", {"GET"}},
-        {"/api/clu/apple-operations/cancel", {"POST"}},
-        {"/api/clu/approvals", {"GET"}},
-        {"/api/clu/execute", {"POST"}},
-        {"/api/forsetti/surface", {"GET"}},
-        {"/api/forsetti/modules", {"GET"}},
-        {"/api/forsetti/modules/state", {"POST"}},
-        // Pools
-        {"/api/pools", {"GET", "POST"}},
-        // Telemetry
-        {"/api/telemetry/clients", {"GET"}},
-        {"/api/telemetry/gateway", {"GET"}},
-        {"/api/telemetry/heartbeat", {"POST"}},
-        // Gateway control
-        {"/api/gateway/status", {"GET"}},
-        {"/api/gateway/health", {"GET"}},
-        {"/api/gateway/tools", {"GET"}},
-        {"/api/gateway/start", {"POST"}},
-        {"/api/gateway/stop", {"POST"}},
-        {"/api/gateway/restart", {"POST"}},
-        // Client surfaces
-        {"/api/client/mcp-servers", {"GET"}},
-        {"/api/client/sub-agents", {"GET"}},
-        {"/api/client/activity", {"GET"}},
-        {"/api/client/governance/profile", {"GET"}},
-        {"/api/client/governance/decisions", {"POST"}},
-        {"/api/client/heartbeat", {"POST"}},
-        {"/api/clients", {"GET", "POST"}},
-        // Setup / install
-        {"/api/setup/state", {"GET"}},
-        {"/api/setup/start", {"POST"}},
-        {"/api/setup/complete", {"POST"}},
-        {"/api/setup/dismiss", {"POST"}},
-        {"/api/setup/reset", {"POST"}},
-        {"/api/setup/dependencies", {"GET"}},
-        {"/api/setup/workflow-templates", {"GET"}},
-        {"/api/install/history", {"GET"}},
-        {"/api/install/package", {"POST"}},
-        {"/api/install/repo", {"POST"}},
-        {"/api/install/zip", {"POST"}},
-        // Settings / runtime registration
-        {"/api/settings/advanced-mode", {"POST"}},
-        {"/api/runtime/mcp-servers", {"POST"}},
-        {"/api/runtime/mcp-servers/remove", {"POST"}},
-        {"/api/runtime/subagents", {"POST"}},
-        {"/api/runtime/subagents/remove", {"POST"}},
-        {"/api/runtime/subagent-groups", {"POST"}},
-        {"/api/runtime/subagent-groups/remove", {"POST"}},
-        // Platform services
-        {"/api/platform-services", {"GET"}},
-        {"/api/platform-services/gateways", {"GET"}},
-        {"/api/platform-services/governance", {"GET"}},
-        {"/api/platform-services/apple-hosts", {"GET", "POST"}},
-        {"/api/platform-services/apple-hosts/remove", {"POST"}},
-        // Plugin status
-        {"/api/claude-plugin/status", {"GET"}},
-        {"/api/claude-plugin/toggle", {"POST"}},
-        // v0.9.56: operator-facing diagnostic surface. Returns the
-        // same per-entry runtime stats as /api/dashboard but bundled
-        // with an aggregate count by installState so the operator
-        // can answer "how many of my catalog entries are actually
-        // live, supervised, or just placeholders?" in one request.
-        {"/api/diagnostics/runtime-stats", {"GET"}},
-        // v0.9.69: boot-time self-test snapshot + re-run trigger.
-        {"/api/self-tests",     {"GET"}},
-        {"/api/self-tests/run", {"POST"}},
-        // v0.9.71: real-time SSE push channel for dashboard +
-        // activity events. Connection stays open until the client
-        // disconnects or the server stops.
-        {"/api/events",         {"GET"}},
-        // v0.9.73: Forsetti Agentic Edition governance surface.
-        // The manifest endpoint catalogs vendored documents +
-        // policies + agents + contracts + schemas + standards by
-        // path; the document endpoint serves them by relative path.
-        {"/api/governance/agentic-edition/manifest", {"GET"}},
-        // v0.9.76: Supervisor Agent Assignment Wizard surface.
-        {"/api/supervisor/assignment",        {"GET"}},
-        {"/api/supervisor/assignment/select", {"POST"}},
-        {"/api/supervisor/assignment/revoke", {"POST"}},
-        {"/api/supervisor/config/generate",   {"POST"}},
-        {"/api/supervisor/connect/confirm",   {"POST"}},
-        {"/api/supervisor/heartbeat",         {"POST"}},
-        {"/api/supervisor/status",            {"GET"}},
-        // v0.10.13: server-side reachability self-check. Probes the
-        // URLs the wizard would issue, from inside the runtime, so the
-        // operator can prove MCOS itself is reachable on the LAN IP
-        // even when a cloud supervisor reports connection_refused.
-        {"/api/supervisor/reachability-check", {"GET"}},
-    };
-
-    static const std::vector<std::pair<std::string, std::vector<std::string>>> kPrefix = {
-        // Note: longer prefixes first so "/api/setup/dependencies/" wins
-        // over "/api/setup/" if both ever overlap.
-        {"/api/onboarding/", {"GET"}},
-        {"/api/governance/bundles/", {"GET"}},
-        {"/api/setup/dependencies/", {"POST"}},
-        {"/api/platform-services/config/", {"GET"}},
-        {"/api/clients/", {"GET", "DELETE"}},
-        {"/api/leases/", {"POST"}},
-        {"/api/pools/", {"GET", "POST"}},
-        {"/api/telemetry/events", {"GET"}},
-        {"/api/activity", {"GET"}},
-        {"/api/workflows/", {"GET", "POST", "DELETE"}},
-        {"/mcp/gateway/", {"GET"}},
-        {"/mcp/governance/", {"GET", "POST"}},
-        // v0.9.73: prefix route for fetching individual Forsetti
-        // Agentic Edition documents by relative path. Manifest
-        // endpoint is exact-match above.
-        {"/api/governance/agentic-edition/document/", {"GET"}},
-    };
-
-    auto exact = kExact.find(p);
-    if (exact != kExact.end()) {
-        return exact->second;
-    }
-    for (const auto& entry : kPrefix) {
-        const auto& prefix = entry.first;
-        if (p.size() >= prefix.size()
-            && p.compare(0, prefix.size(), prefix) == 0) {
-            return entry.second;
-        }
-    }
-    return {};
-}
-
-// v0.9.28: build a canonical Allow-header value from a route's
-// supported method list. Always surfaces HEAD when GET is supported
-// (the HEAD->GET rewrite makes this transparently true) and always
-// surfaces OPTIONS (preflight short-circuit handles it for every
-// path). Keeps the header in stable verb order so caches don't see
-// spurious vary churn between requests.
-static std::string buildAllowHeader(const std::vector<std::string>& methods) {
-    static const std::vector<std::string> kOrder = {
-        "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"
-    };
-    std::unordered_set<std::string> set(methods.begin(), methods.end());
-    if (set.count("GET")) {
-        set.insert("HEAD");
-    }
-    set.insert("OPTIONS");
-    std::string allow;
-    for (const auto& verb : kOrder) {
-        if (set.count(verb)) {
-            if (!allow.empty()) {
-                allow += ", ";
-            }
-            allow += verb;
-        }
-    }
-    return allow;
-}
-
+// Route-drift remediation: supportedMethodsForPath and buildAllowHeader
+// moved to MasterControl/AdminRouteRegistry.h (typed, testable registry)
+// so the bool-style suite can pin the table to the implemented dispatch.
+// Add new routes THERE.
 static bool isMutatingMethod(const std::string& method) {
     return method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE";
 }
@@ -20104,6 +20320,35 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                     std::string("Invalid configuration payload: ") + ex.what() }, 400);
             }
         }
+        if (request.method == "PATCH" && request.path == "/api/config") {
+            // Config-safety remediation: partial updates deep-merge into the
+            // current document server-side, so omitted sections can never
+            // reset to defaults. Same authorization as POST /api/config
+            // (requiredCapabilitiesForRoute matches the path for every
+            // mutating verb) and the same X-Confirm-Unsafe semantics.
+            const bool confirmUnsafeChanges = request.headers.contains("X-Confirm-Unsafe") &&
+                request.headers.at("X-Confirm-Unsafe") == "1";
+            try {
+                const auto parsed = nlohmann::json::parse(request.body);
+                const auto dropped = MasterControl::collectDroppedTopLevelKeys(parsed, AppConfiguration{});
+                const auto result = adminApiService_->applyConfigurationPatchJson(request.body, confirmUnsafeChanges);
+                if (result.succeeded && telemetryAggregator_) {
+                    TelemetryEvent evt;
+                    evt.category = TelemetryCategory::System;
+                    evt.severity = TelemetrySeverity::Info;
+                    evt.message  = "Configuration patched via PATCH /api/config.";
+                    telemetryAggregator_->recordEvent(std::move(evt));
+                }
+                nlohmann::json body = result;
+                if (!dropped.empty()) {
+                    body["droppedKeys"] = MasterControl::droppedKeysToJson(dropped);
+                }
+                return HttpResponse{ result.succeeded ? 200 : 400, "application/json", body.dump() };
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid configuration patch payload: ") + ex.what() }, 400);
+            }
+        }
         if (request.method == "POST" && request.path == "/api/platform-services/apple-hosts") {
             try {
                 const auto result = adminApiService_->upsertAppleRemoteHostJson(request.body);
@@ -20957,6 +21202,10 @@ OperationResult MasterControlApplication::cancelAppleOperationJson(const std::st
 
 OperationResult MasterControlApplication::applyConfigurationJson(const std::string& requestBody, bool confirmUnsafeChanges) {
     return impl_->applyConfigurationJson(requestBody, confirmUnsafeChanges);
+}
+
+OperationResult MasterControlApplication::applyConfigurationPatchJson(const std::string& requestBody, bool confirmUnsafeChanges) {
+    return impl_->applyConfigurationPatchJson(requestBody, confirmUnsafeChanges);
 }
 
 OperationResult MasterControlApplication::upsertAppleRemoteHostJson(const std::string& requestBody) {

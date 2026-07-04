@@ -138,7 +138,7 @@ Hands off to the `mcos-governance-reviewer` sub-agent. Lists pending CLU actions
 /mcos:forsetti-import path\to\module-manifest.json
 ```
 
-Validates the manifest's `entryPoint` matches a name registered in `src/MasterControlModules/MasterControlModules.cpp`, surfaces the diff, applies via `mcos_forsetti_module_import` and `mcos_forsetti_module_enable`.
+Validates the manifest's `entryPoint` matches a name registered in `src/MasterControlModules/MasterControlModules.cpp`, surfaces the diff, confirms the manifest is deployed in the runtime's module discovery directory, and activates via `mcos_forsetti_module_enable` (there is no runtime import API — registration is manifest-on-disk plus a compiled entry point).
 
 ### Watch activity
 

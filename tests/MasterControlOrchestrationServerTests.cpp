@@ -15,7 +15,10 @@
 #include "MasterControl/DiagnosticsService.h"
 #include "MasterControl/DiagnosticsStore.h"
 #include "MasterControl/DiagnosticsTypes.h"
+#include "MasterControl/AdminRouteRegistry.h"
 #include "MasterControl/EndpointAdvertisement.h"
+#include "MasterControl/HttpHeaderParse.h"
+#include "MasterControl/JsonMerge.h"
 #include "MasterControl/JsonStrictness.h"
 #include "MasterControl/LanClient.h"
 #include "MasterControl/MasterControlDefaults.h"
@@ -34,6 +37,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>   // v0.11.0-alpha.3: _set_abort_behavior in main()
 #include <filesystem>
@@ -3087,6 +3091,827 @@ bool testDiagnosticsCapturedAtUtcParse() {
     return ok;
 }
 
+// ---------------------------------------------------------------------------
+// Config-safety remediation (MCOS-001): PATCH /api/config deep-merge helpers
+// and POST /api/config partial-body rejection. These exercise the exact
+// production logic in MasterControl/JsonMerge.h that AdminApiService wires
+// into both routes.
+// ---------------------------------------------------------------------------
+
+bool testConfigPatchPreservesUnrelatedSections() {
+    bool ok = true;
+    const auto configuration = MasterControl::buildDefaultConfiguration();
+    const nlohmann::json before = configuration;
+    const nlohmann::json securityBefore = before.at("security");
+    const nlohmann::json gatewayBefore = before.at("mcpGateway");
+    const auto instanceNameBefore = before.at("instanceName").get<std::string>();
+    const int memoryPercentBefore = before.at("resourceAllocation").at("memoryPercent").get<int>();
+
+    const nlohmann::json patch = nlohmann::json::parse(R"({"resourceAllocation":{"cpuPercent":70}})");
+    const auto outcome = MasterControl::mergeConfigurationPatch(before, patch);
+    ok &= expect(outcome.valid, "Object patch body is accepted.");
+
+    const auto typed = outcome.merged.get<MasterControl::AppConfiguration>();
+    const nlohmann::json after = typed;
+    ok &= expect(typed.resourceAllocation.cpuPercent == 70,
+                 "Patched field applies through the typed round-trip.");
+    ok &= expect(typed.resourceAllocation.memoryPercent == memoryPercentBefore,
+                 "Sibling field inside the patched section is preserved.");
+    ok &= expect(after.at("security") == securityBefore,
+                 "Unrelated security section is preserved byte-for-byte.");
+    ok &= expect(after.at("mcpGateway") == gatewayBefore,
+                 "Unrelated mcpGateway section is preserved byte-for-byte.");
+    ok &= expect(typed.instanceName == instanceNameBefore,
+                 "Unrelated scalar top-level field is preserved.");
+    return ok;
+}
+
+bool testConfigPatchRejectsNonObjectPayload() {
+    bool ok = true;
+    const nlohmann::json current = MasterControl::buildDefaultConfiguration();
+    ok &= expect(!MasterControl::mergeConfigurationPatch(current, nlohmann::json::array({1, 2})).valid,
+                 "Array patch body is rejected.");
+    ok &= expect(!MasterControl::mergeConfigurationPatch(current, nlohmann::json(42)).valid,
+                 "Scalar patch body is rejected.");
+    ok &= expect(!MasterControl::mergeConfigurationPatch(current, nlohmann::json()).valid,
+                 "Null patch body is rejected.");
+    ok &= expect(MasterControl::mergeConfigurationPatch(current, nlohmann::json::object()).valid,
+                 "Empty object patch body is accepted (no-op merge).");
+    return ok;
+}
+
+bool testConfigPostRejectsPartialTopLevelBody() {
+    bool ok = true;
+    const MasterControl::AppConfiguration model{};
+    const auto partial = nlohmann::json::parse(R"({"resourceAllocation":{"cpuPercent":70}})");
+    const auto missing = MasterControl::missingTopLevelKeysForFullDocument(partial, model);
+    ok &= expect(!missing.empty(),
+                 "A partial top-level body reports missing configuration sections.");
+
+    const nlohmann::json fullDocument = MasterControl::buildDefaultConfiguration();
+    ok &= expect(MasterControl::missingTopLevelKeysForFullDocument(fullDocument, model).empty(),
+                 "The full document emitted by GET /api/config passes the completeness check.");
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Bridge route contract (MCOS-001 / MCOS-002): the mcos-bridge plugin must
+// only advertise tools whose backend routes exist. The bridge is Python, so
+// these tests verify the tool registry source against the implemented admin
+// routes. MCOS_REPO_ROOT is provided by tests/CMakeLists.txt.
+// ---------------------------------------------------------------------------
+
+std::string readRepoTextFile(const std::filesystem::path& relativePath) {
+    std::ifstream stream(std::filesystem::path(MCOS_REPO_ROOT) / relativePath, std::ios::binary);
+    std::stringstream buffer;
+    buffer << stream.rdbuf();
+    return buffer.str();
+}
+
+std::string readBridgeServerSource() {
+    return readRepoTextFile(std::filesystem::path(".claude-plugin") / "mcos-control"
+                            / "mcp-servers" / "mcos-bridge" / "server.py");
+}
+
+// MCOS-008: runtime behavior, wiki docs, and onboarding text must describe
+// the same POST-only alpha MCP transport.
+bool testMcpTransportContractMatchesDocs() {
+    bool ok = true;
+    const auto gatewayDoc = readRepoTextFile(std::filesystem::path("docs") / "wiki" / "Gateway.md");
+    ok &= expect(gatewayDoc.find("POST-only Streamable HTTP") != std::string::npos,
+                 "Gateway.md documents the POST-only transport profile.");
+    ok &= expect(gatewayDoc.find("Allow: POST") != std::string::npos,
+                 "Gateway.md documents the 405 Allow semantics.");
+    ok &= expect(gatewayDoc.find("Mcp-Session-Id") != std::string::npos,
+                 "Gateway.md documents the session header contract.");
+    const auto onboardingDoc = readRepoTextFile(std::filesystem::path("docs") / "wiki" / "Onboarding.md");
+    ok &= expect(onboardingDoc.find("POST-only Streamable HTTP") != std::string::npos,
+                 "Onboarding.md carries the transport compatibility note.");
+    const auto adapterSource = readRepoTextFile(std::filesystem::path("src") / "MasterControlApp"
+                                                / "McpGatewayAdapters.cpp");
+    ok &= expect(adapterSource.find("SSE upgrade is not implemented in this build.") != std::string::npos,
+                 "The gateway still answers non-POST /mcp with the no-SSE hint.");
+    ok &= expect(adapterSource.find("allowHeader = \"POST\"") != std::string::npos,
+                 "The gateway 405 carries an Allow: POST header.");
+    const auto runtimeSource = readRepoTextFile(std::filesystem::path("src") / "MasterControlApp"
+                                                / "MasterControlRuntime.cpp");
+    ok &= expect(runtimeSource.find("POST-only Streamable HTTP subset") != std::string::npos,
+                 "Onboarding profile caveats state the POST-only transport.");
+    return ok;
+}
+
+bool testBridgeConfigUpdateUsesPatchRoute() {
+    bool ok = true;
+    const auto source = readBridgeServerSource();
+    ok &= expect(!source.empty(), "Bridge server.py is readable from the repo root.");
+    ok &= expect(source.find("_patch(\"/api/config\"") != std::string::npos,
+                 "mcos_config_update patches via PATCH /api/config.");
+    ok &= expect(source.find("_post(\"/api/config\"") == std::string::npos,
+                 "No bridge tool POSTs a partial body to /api/config.");
+    return ok;
+}
+
+bool testForsettiModuleBridgeUsesStateRoute() {
+    bool ok = true;
+    const auto source = readBridgeServerSource();
+    ok &= expect(source.find("\"/api/forsetti/modules/state\"") != std::string::npos,
+                 "Forsetti enable/disable use the implemented state route.");
+    ok &= expect(source.find("\"action\": \"enable\"") != std::string::npos,
+                 "Enable sends the action=enable body.");
+    ok &= expect(source.find("\"action\": \"disable\"") != std::string::npos,
+                 "Disable sends the action=disable body.");
+    ok &= expect(source.find("f\"/api/forsetti/modules/{") == std::string::npos,
+                 "No bridge tool calls the nonexistent per-module enable/disable routes.");
+    return ok;
+}
+
+bool testBrokenForsettiImportToolIsNotAdvertised() {
+    bool ok = true;
+    const auto source = readBridgeServerSource();
+    ok &= expect(source.find("mcos_forsetti_module_import") == std::string::npos,
+                 "The module-import tool (no backend route) is no longer advertised.");
+    ok &= expect(source.find("_post(\"/api/forsetti/modules\"") == std::string::npos,
+                 "No bridge tool posts to the nonexistent module-import route.");
+    return ok;
+}
+
+// Route-contract smoke test: every HTTP route the bridge references must
+// match an implemented backend route shape. Path parameters interpolated via
+// f-strings normalize to "*".
+bool testBridgeRoutesMatchBackendContract() {
+    bool ok = true;
+    const auto source = readBridgeServerSource();
+    ok &= expect(!source.empty(), "Bridge server.py is readable.");
+
+    static const std::vector<std::string> kAllowedRoutes = {
+        "/api/health", "/api/dashboard", "/api/gateway/status", "/api/gateway/health",
+        "/api/gateway/tools", "/api/gateway/start", "/api/gateway/stop",
+        "/api/pools", "/api/pools/*", "/api/pools/*/leases", "/api/pools/*/saturation",
+        "/api/pools/*/scale", "/api/pools/*/drain", "/api/pools/*/remove",
+        "/api/leases/*/release",
+        "/api/telemetry/events", "/api/telemetry/clients", "/api/telemetry/gateway",
+        "/api/telemetry/heartbeat",
+        "/api/discovery", "/api/onboarding", "/api/onboarding/*",
+        "/api/governance/bundles/*", "/api/clu/approvals",
+        "/api/clu/approvals/*/approve", "/api/clu/approvals/*/reject",
+        "/api/clients", "/api/clients/*/privileges", "/api/clients/*/enable",
+        "/api/clients/*/disable",
+        "/api/config", "/api/activity",
+        "/api/forsetti/modules", "/api/forsetti/modules/state",
+        "/api/diagnostics/summary", "/api/diagnostics/events",
+        "/api/diagnostics/self-test", "/api/diagnostics/export", "/api/diagnostics/clear",
+    };
+
+    const auto matchesPattern = [](const std::string& route, const std::string& pattern) {
+        std::size_t r = 0;
+        std::size_t p = 0;
+        while (r < route.size() && p < pattern.size()) {
+            const auto routeSlash = route.find('/', r + 1);
+            const auto patternSlash = pattern.find('/', p + 1);
+            const std::string routeSegment = route.substr(r, (routeSlash == std::string::npos ? route.size() : routeSlash) - r);
+            const std::string patternSegment = pattern.substr(p, (patternSlash == std::string::npos ? pattern.size() : patternSlash) - p);
+            if (patternSegment != "/*" && patternSegment != routeSegment) {
+                return false;
+            }
+            if (routeSlash == std::string::npos || patternSlash == std::string::npos) {
+                return routeSlash == std::string::npos && patternSlash == std::string::npos;
+            }
+            r = routeSlash;
+            p = patternSlash;
+        }
+        return r >= route.size() && p >= pattern.size();
+    };
+
+    static const std::vector<std::string> kCallMarkers = {
+        "_get(", "_post(", "_patch(", "_delete(",
+    };
+    std::size_t checkedRoutes = 0;
+    for (const auto& marker : kCallMarkers) {
+        std::size_t at = 0;
+        while ((at = source.find(marker, at)) != std::string::npos) {
+            std::size_t cursor = at + marker.size();
+            at = cursor;
+            bool formatted = false;
+            if (cursor < source.size() && source[cursor] == 'f') {
+                formatted = true;
+                ++cursor;
+            }
+            if (cursor >= source.size() || source[cursor] != '"') {
+                continue;  // not a literal route (helper definition/other args)
+            }
+            ++cursor;
+            std::string route;
+            bool truncatedAtInterpolation = false;
+            while (cursor < source.size() && source[cursor] != '"') {
+                if (formatted && source[cursor] == '{') {
+                    // "{...}" directly after '/' is a path parameter and
+                    // normalizes to '*'; anywhere else it interpolates a
+                    // suffix (e.g. a prebuilt "?query" string), so the
+                    // route contract ends where the interpolation starts.
+                    if (!route.empty() && route.back() == '/') {
+                        while (cursor < source.size() && source[cursor] != '}') {
+                            ++cursor;
+                        }
+                        route += '*';
+                    } else {
+                        truncatedAtInterpolation = true;
+                        break;
+                    }
+                } else {
+                    route += source[cursor];
+                }
+                ++cursor;
+            }
+            (void)truncatedAtInterpolation;
+            const auto query = route.find('?');
+            if (query != std::string::npos) {
+                route = route.substr(0, query);
+            }
+            if (route.rfind("/api/", 0) != 0) {
+                continue;  // helper signature or non-admin path
+            }
+            ++checkedRoutes;
+            bool matched = false;
+            for (const auto& pattern : kAllowedRoutes) {
+                if (matchesPattern(route, pattern)) {
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) {
+                std::cerr << "Bridge references a route with no backend contract: " << route << '\n';
+            }
+            ok &= expect(matched, "Every bridge route matches an implemented backend route.");
+        }
+    }
+    ok &= expect(checkedRoutes >= 30,
+                 "Route-contract scan found the expected volume of bridge routes.");
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Admin API remediation (MCOS-011/012/015): case-insensitive header parse,
+// invalid Content-Length rejection, and the typed method-allow registry.
+// ---------------------------------------------------------------------------
+
+bool testAdminParserAcceptsLowercaseContentLength() {
+    bool ok = true;
+    const std::string raw =
+        "POST /api/config HTTP/1.1\r\nhost: mcos\r\ncontent-length: 12\r\n\r\n{\"a\":1}";
+    const auto parsed = MasterControl::parseContentLengthHeader(raw);
+    ok &= expect(parsed.present && parsed.valid && parsed.value == 12,
+                 "Lowercase content-length parses correctly.");
+    const std::string mixed =
+        "POST / HTTP/1.1\r\nCoNtEnT-LeNgTh:  7 \r\n\r\npayload";
+    const auto parsedMixed = MasterControl::parseContentLengthHeader(mixed);
+    ok &= expect(parsedMixed.present && parsedMixed.valid && parsedMixed.value == 7,
+                 "Mixed-case Content-Length with padding parses correctly.");
+    ok &= expect(MasterControl::findHeaderValueCaseInsensitive(raw, "Content-Length") == "12",
+                 "Case-insensitive header lookup returns the trimmed value.");
+    return ok;
+}
+
+bool testAdminParserRejectsInvalidContentLength() {
+    bool ok = true;
+    const auto garbage = MasterControl::parseContentLengthHeader(
+        "POST / HTTP/1.1\r\nContent-Length: banana\r\n\r\n");
+    ok &= expect(garbage.present && !garbage.valid,
+                 "Non-numeric Content-Length is present but invalid.");
+    const auto negative = MasterControl::parseContentLengthHeader(
+        "POST / HTTP/1.1\r\nContent-Length: -5\r\n\r\n");
+    ok &= expect(negative.present && !negative.valid,
+                 "Negative Content-Length is invalid.");
+    const auto huge = MasterControl::parseContentLengthHeader(
+        "POST / HTTP/1.1\r\nContent-Length: 9999999999999999999999\r\n\r\n");
+    ok &= expect(huge.present && !huge.valid,
+                 "Absurdly long Content-Length is invalid rather than overflowing.");
+    const auto absent = MasterControl::parseContentLengthHeader(
+        "GET / HTTP/1.1\r\nHost: mcos\r\n\r\n");
+    ok &= expect(!absent.present, "A request without Content-Length reports absent.");
+    const auto boundary = MasterControl::parseContentLengthHeader(
+        "POST / HTTP/1.1\r\nX-Content-Length: 5\r\n\r\n");
+    ok &= expect(!boundary.present,
+                 "A different header sharing the suffix does not false-positive.");
+    return ok;
+}
+
+bool testSupportedMethodsIncludesDiagnosticsRoutes() {
+    bool ok = true;
+    const auto expectMethods = [&ok](const char* path, const char* method) {
+        const auto methods = MasterControl::supportedMethodsForPath(path);
+        ok &= expect(methods.size() == 1 && methods.front() == method,
+                     "Diagnostics route registers its implemented method.");
+    };
+    expectMethods("/api/diagnostics/events", "GET");
+    expectMethods("/api/diagnostics/summary", "GET");
+    expectMethods("/api/diagnostics/self-test", "GET");
+    expectMethods("/api/diagnostics/export", "GET");
+    expectMethods("/api/diagnostics/clear", "POST");
+    ok &= expect(!MasterControl::supportedMethodsForPath("/api/diagnostics/events?max=5").empty(),
+                 "Query strings are stripped before the registry lookup.");
+    return ok;
+}
+
+bool testSupportedMethodsIncludesPluginRoutes() {
+    bool ok = true;
+    const auto expectMethods = [&ok](const char* path, const char* method) {
+        const auto methods = MasterControl::supportedMethodsForPath(path);
+        ok &= expect(methods.size() == 1 && methods.front() == method,
+                     "Plugin route registers its implemented method.");
+    };
+    expectMethods("/api/claude-plugin/status", "GET");
+    expectMethods("/api/claude-plugin/toggle", "POST");
+    expectMethods("/api/chatgpt-plugin/status", "GET");
+    expectMethods("/api/chatgpt-plugin/toggle", "POST");
+    expectMethods("/api/grok-plugin/status", "GET");
+    expectMethods("/api/grok-plugin/toggle", "POST");
+    return ok;
+}
+
+bool testWrongMethodOnKnownRouteReturns405() {
+    bool ok = true;
+    // Registry contract behind the dispatcher's 405 path: a known route
+    // queried with the wrong verb yields a NON-empty method list (so the
+    // fallthrough answers 405 + Allow, not 404), and unknown paths yield
+    // an empty list (404).
+    const auto methods = MasterControl::supportedMethodsForPath("/api/diagnostics/clear");
+    ok &= expect(!methods.empty(), "Known route resolves in the registry.");
+    ok &= expect(std::find(methods.begin(), methods.end(), "GET") == methods.end(),
+                 "POST-only route does not advertise GET.");
+    const auto allow = MasterControl::buildAllowHeader(methods);
+    ok &= expect(allow.find("POST") != std::string::npos
+                 && allow.find("OPTIONS") != std::string::npos
+                 && allow.find("GET") == std::string::npos,
+                 "Allow header lists implemented verbs plus OPTIONS only.");
+    const auto configMethods = MasterControl::supportedMethodsForPath("/api/config");
+    ok &= expect(std::find(configMethods.begin(), configMethods.end(), "PATCH") != configMethods.end(),
+                 "/api/config advertises PATCH after the config-safety remediation.");
+    ok &= expect(MasterControl::supportedMethodsForPath("/api/does-not-exist").empty(),
+                 "Unknown paths stay empty so dispatch answers 404.");
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Gateway/worker remediation (MCOS-004..014): session routing, lease
+// lifetime, catalog lock hygiene, registration parity, JSON-safe errors,
+// PATH-resolved worker executables, and deterministic supervisor teardown.
+// ---------------------------------------------------------------------------
+
+// Test double for IWorkerSupervisor: serves one pool with a configurable
+// number of Ready instances; sendStdioJsonRpc optionally blocks to simulate
+// a slow child.
+class StubWorkerSupervisor final : public MasterControl::IWorkerSupervisor {
+public:
+    StubWorkerSupervisor(std::string poolId, int readyInstances,
+                         int maxActiveLeasesPerInstance = 1,
+                         int stdioDelayMs = 0)
+        : stdioDelayMs_(stdioDelayMs) {
+        pool_.poolId = std::move(poolId);
+
+        pool_.displayName = "stub pool";
+        pool_.scalePolicy.minInstances = readyInstances;
+        pool_.scalePolicy.maxInstances = readyInstances;
+        pool_.scalePolicy.maxActiveLeasesPerInstance = maxActiveLeasesPerInstance;
+        for (int i = 0; i < readyInstances; ++i) {
+            MasterControl::EndpointInstance instance;
+            instance.instanceId = pool_.poolId + "#stub-" + std::to_string(i + 1);
+            instance.poolId = pool_.poolId;
+            instance.state = MasterControl::EndpointInstanceState::Ready;
+            instance.supervised = true;
+            pool_.instances.push_back(std::move(instance));
+        }
+    }
+
+    std::vector<MasterControl::ManagedEndpointPool> listPools() const override { return { pool_ }; }
+    std::optional<MasterControl::ManagedEndpointPool> findPool(const std::string& poolId) const override {
+        if (poolId == pool_.poolId) return pool_;
+        return std::nullopt;
+    }
+    MasterControl::OperationResult upsertPool(MasterControl::ManagedEndpointPool pool) override {
+        pool_ = std::move(pool);
+        return { true, false, "ok" };
+    }
+    MasterControl::OperationResult removePool(const std::string&) override { return { true, false, "ok" }; }
+    MasterControl::OperationResult ensureMinInstances(const std::string&) override { return { true, false, "ok" }; }
+    std::string scaleUpOnce(const std::string&) override { return std::string(); }
+    MasterControl::OperationResult drainPool(const std::string&) override { return { true, false, "ok" }; }
+    MasterControl::OperationResult shutdownAll() override { return { true, false, "ok" }; }
+    MasterControl::StdioBridgeResult sendStdioJsonRpc(const std::string&, const std::string&, int) override {
+        ++stdioCallCount_;
+        if (stdioDelayMs_ > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(stdioDelayMs_));
+        }
+        MasterControl::StdioBridgeResult result;
+        result.succeeded = false;
+        result.errorMessage = "stub supervisor has no live children";
+        return result;
+    }
+    int stdioCallCount() const { return stdioCallCount_.load(); }
+
+private:
+    MasterControl::ManagedEndpointPool pool_;
+    int stdioDelayMs_ = 0;
+    std::atomic<int> stdioCallCount_{ 0 };
+};
+
+bool testGatewayStickySessionRoutesSameSessionToSameInstance() {
+    bool ok = true;
+    auto supervisor = std::make_shared<StubWorkerSupervisor>("pool-a", 2);
+    auto router = MasterControl::createLeaseRouter(supervisor, /*leaseIdleTimeoutSeconds=*/300);
+
+    MasterControl::LeaseRequest request;
+    request.poolId = "pool-a";
+    request.sessionId = "session-1";
+    request.stateful = true;
+    const auto first = router->acquireLease(request);
+    ok &= expect(first.state == MasterControl::LeaseState::Active,
+                 "First stateful acquire yields an Active lease.");
+    const auto second = router->acquireLease(request);
+    ok &= expect(second.state == MasterControl::LeaseState::Active,
+                 "Repeat stateful acquire yields an Active lease.");
+    ok &= expect(second.instanceId == first.instanceId,
+                 "Same session routes to the same instance.");
+    ok &= expect(second.leaseId == first.leaseId,
+                 "Same session reuses the same lease (no per-call re-acquire).");
+    return ok;
+}
+
+bool testGatewayDifferentSessionsCanDistributeAcrossInstances() {
+    bool ok = true;
+    auto supervisor = std::make_shared<StubWorkerSupervisor>("pool-a", 2,
+                                                             /*maxActiveLeasesPerInstance=*/1);
+    auto router = MasterControl::createLeaseRouter(supervisor, 300);
+
+    MasterControl::LeaseRequest first;
+    first.poolId = "pool-a";
+    first.sessionId = "session-1";
+    first.stateful = true;
+    MasterControl::LeaseRequest second = first;
+    second.sessionId = "session-2";
+
+    const auto leaseOne = router->acquireLease(first);
+    const auto leaseTwo = router->acquireLease(second);
+    ok &= expect(leaseOne.state == MasterControl::LeaseState::Active
+                 && leaseTwo.state == MasterControl::LeaseState::Active,
+                 "Both sessions acquire Active leases.");
+    ok &= expect(leaseOne.instanceId != leaseTwo.instanceId,
+                 "Different sessions distribute across instances when capacity requires it.");
+    return ok;
+}
+
+bool testGatewayStatelessCallsReleaseLeaseAfterCall() {
+    bool ok = true;
+    auto supervisor = std::make_shared<StubWorkerSupervisor>("pool-a", 1);
+    auto router = MasterControl::createLeaseRouter(supervisor, 300);
+
+    MasterControl::LeaseRequest request;
+    request.poolId = "pool-a";     // no sessionId -> stateless
+    const auto lease = router->acquireLease(request);
+    ok &= expect(lease.state == MasterControl::LeaseState::Active,
+                 "Stateless acquire yields an Active lease.");
+    const auto release = router->releaseLease(lease.leaseId, "tools/call complete");
+    ok &= expect(release.succeeded, "Stateless release succeeds.");
+    ok &= expect(router->activeLeases("pool-a").empty(),
+                 "No active leases remain after a stateless call releases.");
+    return ok;
+}
+
+bool testGatewayStatefulSessionLeaseExpiresOrReleases() {
+    bool ok = true;
+    auto supervisor = std::make_shared<StubWorkerSupervisor>("pool-a", 1);
+    // Idle timeout 0 => every lease is idle-expired on the next sweep.
+    auto router = MasterControl::createLeaseRouter(supervisor, 0);
+
+    MasterControl::LeaseRequest request;
+    request.poolId = "pool-a";
+    request.sessionId = "session-ttl";
+    request.stateful = true;
+    const auto lease = router->acquireLease(request);
+    ok &= expect(lease.state == MasterControl::LeaseState::Active,
+                 "Stateful acquire yields an Active lease.");
+    // Any subsequent router call runs the idle sweep.
+    ok &= expect(router->activeLeases("pool-a").empty(),
+                 "Idle stateful lease expires instead of leaking forever.");
+    const auto fresh = router->acquireLease(request);
+    ok &= expect(fresh.state == MasterControl::LeaseState::Active
+                 && fresh.leaseId != lease.leaseId,
+                 "A new acquire after expiry binds a fresh lease.");
+    return ok;
+}
+
+bool testGatewayStickySessionRebindsAfterInstanceLoss() {
+    bool ok = true;
+    auto supervisor = std::make_shared<StubWorkerSupervisor>("pool-a", 1);
+    auto router = MasterControl::createLeaseRouter(supervisor, 300);
+
+    MasterControl::LeaseRequest request;
+    request.poolId = "pool-a";
+    request.sessionId = "session-rebind";
+    request.stateful = true;
+    const auto first = router->acquireLease(request);
+    ok &= expect(first.state == MasterControl::LeaseState::Active,
+                 "Session binds to the original instance.");
+
+    // Simulate crash + watchdog respawn: the pool now contains only a NEW
+    // instance id (ids are never reused).
+    MasterControl::ManagedEndpointPool replacement;
+    replacement.poolId = "pool-a";
+    replacement.scalePolicy.minInstances = 1;
+    replacement.scalePolicy.maxInstances = 1;
+    replacement.scalePolicy.maxActiveLeasesPerInstance = 1;
+    MasterControl::EndpointInstance respawned;
+    respawned.instanceId = "pool-a#stub-respawned";
+    respawned.poolId = "pool-a";
+    respawned.state = MasterControl::EndpointInstanceState::Ready;
+    respawned.supervised = true;
+    replacement.instances.push_back(respawned);
+    supervisor->upsertPool(replacement);
+
+    const auto second = router->acquireLease(request);
+    ok &= expect(second.state == MasterControl::LeaseState::Active,
+                 "Session re-acquires after instance loss.");
+    ok &= expect(second.instanceId == "pool-a#stub-respawned",
+                 "Session transparently rebinds to the respawned instance.");
+    ok &= expect(second.leaseId != first.leaseId,
+                 "Stale sticky lease was released, not reused.");
+    return ok;
+}
+
+bool testToolCatalogRefreshDoesNotHoldGatewayMutexDuringChildRpc() {
+    bool ok = true;
+    MasterControl::McpGatewayConfiguration configuration;
+    configuration.enabled = true;   // constructed only; Start() is never called
+    MasterControl::NativeHttpSysGatewayAdapter adapter(configuration);
+    auto supervisor = std::make_shared<StubWorkerSupervisor>("pool-slow", 1,
+                                                             /*maxActiveLeasesPerInstance=*/1,
+                                                             /*stdioDelayMs=*/2000);
+    adapter.AttachWorkerBridge(supervisor, MasterControl::createLeaseRouter(supervisor, 300));
+
+    std::thread lister([&adapter]() { (void)adapter.ListTools(); });
+    // Give the catalog refresh time to enter the (slow) child RPC.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    const auto probeStart = std::chrono::steady_clock::now();
+    (void)adapter.CurrentStatus();   // locks the gateway mutex
+    const auto probeElapsed = std::chrono::steady_clock::now() - probeStart;
+    lister.join();
+    ok &= expect(supervisor->stdioCallCount() >= 1,
+                 "Catalog refresh reached the child RPC.");
+    ok &= expect(probeElapsed < std::chrono::milliseconds(1000),
+                 "Gateway mutex is not held during child RPC (CurrentStatus returned promptly).");
+    return ok;
+}
+
+bool testNativeGatewayRegistrationRejectsEmptyName() {
+    bool ok = true;
+    MasterControl::McpGatewayConfiguration configuration;
+    configuration.enabled = false;
+    MasterControl::NativeHttpSysGatewayAdapter adapter(configuration);
+    MasterControl::McpServerRegistration registration;
+    registration.url = "http://127.0.0.1:7300/mcp/pools/x/mcp";
+    const auto httpResult = adapter.RegisterHttpServer(registration);
+    ok &= expect(!httpResult.succeeded,
+                 "Native RegisterHttpServer rejects an empty server name.");
+    const auto stdioResult = adapter.RegisterStdioServer(registration);
+    ok &= expect(!stdioResult.succeeded,
+                 "Native RegisterStdioServer rejects an empty server name.");
+    ok &= expect(adapter.ListTools().empty(),
+                 "Nothing was registered by the rejected calls.");
+    return ok;
+}
+
+bool testGatewayExceptionResponseEscapesJsonMessage() {
+    bool ok = true;
+    const std::string hostile = "Internal error: \"quoted\" text\nwith\tcontrol chars and backslash \\";
+    const auto body = MasterControl::BuildGatewayInternalErrorBody(hostile);
+    try {
+        const auto parsed = nlohmann::json::parse(body);
+        ok &= expect(parsed.at("error").at("code").get<int>() == -32603,
+                     "Escaped envelope keeps the JSON-RPC error code.");
+        ok &= expect(parsed.at("error").at("message").get<std::string>() == hostile,
+                     "Exception text round-trips losslessly through escaping.");
+        ok &= expect(parsed.at("id").is_null(),
+                     "Envelope preserves id:null for pre-id-resolution failures.");
+    } catch (const std::exception&) {
+        ok &= expect(false, "Envelope with quotes/control chars parses as valid JSON.");
+    }
+    return ok;
+}
+
+#if defined(_WIN32)
+std::filesystem::path makeTempWorkerDir(const std::string& tag) {
+    const auto dir = std::filesystem::temp_directory_path() / ("mcos-worker-" + tag);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir);
+    return dir;
+}
+
+bool testWorkerSupervisorResolvesPathExecutable() {
+    bool ok = true;
+    const auto dir = makeTempWorkerDir("path-resolve");
+    {
+        std::ofstream script(dir / "mcos-fake-worker.cmd");
+        script << "@ping -n 5 127.0.0.1 >nul\r\n";
+    }
+    std::string previousPath(32767, '\0');
+    const DWORD previousLength = GetEnvironmentVariableA("PATH", previousPath.data(),
+                                                         static_cast<DWORD>(previousPath.size()));
+    previousPath.resize(previousLength);
+    const std::string patchedPath = dir.string() + ";" + previousPath;
+    SetEnvironmentVariableA("PATH", patchedPath.c_str());
+
+    bool sawInstance = false;
+    {
+        auto supervisor = MasterControl::createWorkerSupervisor();
+        MasterControl::ManagedEndpointPool pool;
+        pool.poolId = "path-worker";
+
+        pool.template_.executable = "mcos-fake-worker.cmd";   // bare PATH command
+        pool.template_.transport = "stdio_jsonrpc";
+        pool.scalePolicy.minInstances = 1;
+        pool.scalePolicy.maxInstances = 1;
+        supervisor->upsertPool(pool);
+        supervisor->ensureMinInstances("path-worker");
+        const auto found = supervisor->findPool("path-worker");
+        sawInstance = found.has_value() && !found->instances.empty();
+        ok &= expect(sawInstance, "PATH-resolved pool spawns an instance.");
+        if (sawInstance) {
+            const auto& instance = found->instances.front();
+            ok &= expect(instance.statusMessage.find("was not found") == std::string::npos
+                         && instance.statusMessage.find("is missing") == std::string::npos,
+                         "PATH-resolved executable does not fail with a missing-executable diagnostic.");
+            ok &= expect(instance.supervised,
+                         "PATH-resolved worker is supervised (a real process was spawned).");
+        }
+        supervisor->shutdownAll();
+    }
+    SetEnvironmentVariableA("PATH", previousPath.c_str());
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    return ok;
+}
+
+bool testWorkerSupervisorPrefersCmdOverExtensionlessShim() {
+    bool ok = true;
+    // Node-style layout: an extensionless POSIX shim sits NEXT TO the
+    // real .cmd on PATH (exactly how nodejs ships "npx" + "npx.cmd").
+    // The directory name carries a SPACE so this also proves the
+    // cmd.exe /s /c batch-launch path survives quoted script paths with
+    // a quoted argument.
+    const auto dir = makeTempWorkerDir("shim test dir");
+    {
+        std::ofstream shim(dir / "mcos-fake-worker2");
+        shim << "#!/bin/sh\nexit 1\n";
+        std::ofstream script(dir / "mcos-fake-worker2.cmd");
+        script << "@ping -n 5 127.0.0.1 >nul\r\n";
+    }
+    std::string previousPath(32767, '\0');
+    const DWORD previousLength = GetEnvironmentVariableA("PATH", previousPath.data(),
+                                                         static_cast<DWORD>(previousPath.size()));
+    previousPath.resize(previousLength);
+    const std::string patchedPath = dir.string() + ";" + previousPath;
+    SetEnvironmentVariableA("PATH", patchedPath.c_str());
+    {
+        auto supervisor = MasterControl::createWorkerSupervisor();
+        MasterControl::ManagedEndpointPool pool;
+        pool.poolId = "shim-worker";
+        pool.template_.executable = "mcos-fake-worker2";   // bare, no extension
+        pool.template_.args = { "hello world" };            // forces a quoted arg
+        pool.scalePolicy.minInstances = 1;
+        pool.scalePolicy.maxInstances = 1;
+        supervisor->upsertPool(pool);
+        supervisor->ensureMinInstances("shim-worker");
+        const auto found = supervisor->findPool("shim-worker");
+        const bool sawInstance = found.has_value() && !found->instances.empty();
+        ok &= expect(sawInstance, "Bare extensionless command spawns an instance.");
+        if (sawInstance) {
+            const auto& instance = found->instances.front();
+            ok &= expect(instance.supervised,
+                         "Resolver preferred the .cmd over the extensionless shim and "
+                         "cmd.exe /s /c launched it despite the spaced path + quoted arg.");
+        }
+        supervisor->shutdownAll();
+    }
+    SetEnvironmentVariableA("PATH", previousPath.c_str());
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    return ok;
+}
+
+bool testWorkerSupervisorRejectsMissingBareExecutable() {
+    bool ok = true;
+    auto supervisor = MasterControl::createWorkerSupervisor();
+    MasterControl::ManagedEndpointPool pool;
+    pool.poolId = "missing-worker";
+
+    pool.template_.executable = "mcos-nonexistent-worker-zz9.cmd";
+    pool.scalePolicy.minInstances = 1;
+    pool.scalePolicy.maxInstances = 1;
+    supervisor->upsertPool(pool);
+    supervisor->ensureMinInstances("missing-worker");
+    const auto found = supervisor->findPool("missing-worker");
+    ok &= expect(found.has_value() && !found->instances.empty(),
+                 "Missing executable still records a (failed) instance for diagnostics.");
+    if (found.has_value() && !found->instances.empty()) {
+        const auto& instance = found->instances.front();
+        ok &= expect(instance.state == MasterControl::EndpointInstanceState::Failed,
+                     "Missing bare executable fails the instance.");
+        ok &= expect(!instance.supervised, "No process is spawned for a missing executable.");
+        ok &= expect(instance.statusMessage.find("was not found") != std::string::npos,
+                     "Missing-executable diagnostic names the resolution failure.");
+        ok &= expect(instance.statusMessage.find("mcos-nonexistent-worker-zz9.cmd") != std::string::npos,
+                     "Missing-executable diagnostic names the executable.");
+    }
+    supervisor->shutdownAll();
+    return ok;
+}
+
+bool testWorkerSupervisorAcceptsAbsoluteExecutablePath() {
+    bool ok = true;
+    std::string systemRoot(512, '\0');
+    const DWORD length = GetEnvironmentVariableA("SystemRoot", systemRoot.data(),
+                                                 static_cast<DWORD>(systemRoot.size()));
+    systemRoot.resize(length);
+    const std::string cmdPath = systemRoot + "\\System32\\cmd.exe";
+
+    auto supervisor = MasterControl::createWorkerSupervisor();
+    MasterControl::ManagedEndpointPool pool;
+    pool.poolId = "absolute-worker";
+
+    pool.template_.executable = cmdPath;
+    pool.template_.args = { "/c", "ping", "-n", "4", "127.0.0.1" };
+    pool.scalePolicy.minInstances = 1;
+    pool.scalePolicy.maxInstances = 1;
+    supervisor->upsertPool(pool);
+    supervisor->ensureMinInstances("absolute-worker");
+    const auto found = supervisor->findPool("absolute-worker");
+    ok &= expect(found.has_value() && !found->instances.empty()
+                 && found->instances.front().supervised,
+                 "Absolute executable path spawns a supervised instance.");
+    supervisor->shutdownAll();
+    return ok;
+}
+
+bool testWorkerSupervisorDestructorJoinsWatchdogWithoutDetach() {
+    bool ok = true;
+    // Pass condition (MCOS-010): teardown is deterministic and join-only.
+    // Construct-and-destroy must complete promptly, repeatedly, with and
+    // without live children; a detach-based teardown would be timing-
+    // dependent and could leave the watchdog racing destroyed state.
+    for (int round = 0; round < 3; ++round) {
+        const auto start = std::chrono::steady_clock::now();
+        {
+            auto supervisor = MasterControl::createWorkerSupervisor();
+            (void)supervisor->listPools();
+        }
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        ok &= expect(elapsed < std::chrono::seconds(5),
+                     "Empty-supervisor destructor joins the watchdog promptly.");
+    }
+    return ok;
+}
+
+bool testWorkerSupervisorShutdownDoesNotRespawnDuringTeardown() {
+    bool ok = true;
+    std::string systemRoot(512, '\0');
+    const DWORD length = GetEnvironmentVariableA("SystemRoot", systemRoot.data(),
+                                                 static_cast<DWORD>(systemRoot.size()));
+    systemRoot.resize(length);
+
+    auto supervisor = MasterControl::createWorkerSupervisor();
+    MasterControl::ManagedEndpointPool pool;
+    pool.poolId = "teardown-worker";
+
+    pool.template_.executable = systemRoot + "\\System32\\cmd.exe";
+    pool.template_.args = { "/c", "ping", "-n", "30", "127.0.0.1" };
+    pool.scalePolicy.minInstances = 1;
+    pool.scalePolicy.maxInstances = 1;
+    supervisor->upsertPool(pool);
+    supervisor->ensureMinInstances("teardown-worker");
+    {
+        const auto found = supervisor->findPool("teardown-worker");
+        ok &= expect(found.has_value() && !found->instances.empty(),
+                     "Worker is running before shutdown.");
+    }
+
+    supervisor->shutdownAll();
+    // The watchdog fires every 2s; give it a full cycle to (incorrectly)
+    // respawn. With the teardown gate in place it must not.
+    std::this_thread::sleep_for(std::chrono::milliseconds(2600));
+    {
+        const auto found = supervisor->findPool("teardown-worker");
+        ok &= expect(found.has_value() && found->instances.empty(),
+                     "No instance is respawned after shutdownAll().");
+    }
+    ok &= expect(supervisor->scaleUpOnce("teardown-worker").empty(),
+                 "scaleUpOnce is refused during teardown.");
+    const auto ensureResult = supervisor->ensureMinInstances("teardown-worker");
+    ok &= expect(!ensureResult.succeeded,
+                 "ensureMinInstances is refused during teardown.");
+    return ok;
+}
+#endif  // _WIN32
+
 int main() {
 #if defined(_WIN32)
     // v0.11.0-alpha.3: fail fast on a hard fault instead of hanging.
@@ -3235,5 +4060,38 @@ int main() {
     ok &= testSupervisorConfirmDefaultDenyOnEmptyAllowedSet();
     ok &= testSupervisorHeartbeatWatchdogIdleStateNoTransition();
     ok &= testSupervisorHeartbeatWatchdogFlipsConnectedToDisconnected();
+    // Config-safety remediation (MCOS-001) + bridge route contract (MCOS-002).
+    ok &= testConfigPatchPreservesUnrelatedSections();
+    ok &= testConfigPatchRejectsNonObjectPayload();
+    ok &= testConfigPostRejectsPartialTopLevelBody();
+    ok &= testBridgeConfigUpdateUsesPatchRoute();
+    ok &= testForsettiModuleBridgeUsesStateRoute();
+    ok &= testBrokenForsettiImportToolIsNotAdvertised();
+    ok &= testBridgeRoutesMatchBackendContract();
+    // MCP transport contract (MCOS-008).
+    ok &= testMcpTransportContractMatchesDocs();
+    // Admin API remediation (MCOS-011/012/015).
+    ok &= testAdminParserAcceptsLowercaseContentLength();
+    ok &= testAdminParserRejectsInvalidContentLength();
+    ok &= testSupportedMethodsIncludesDiagnosticsRoutes();
+    ok &= testSupportedMethodsIncludesPluginRoutes();
+    ok &= testWrongMethodOnKnownRouteReturns405();
+    // Gateway/worker remediation (MCOS-004..014).
+    ok &= testGatewayStickySessionRoutesSameSessionToSameInstance();
+    ok &= testGatewayDifferentSessionsCanDistributeAcrossInstances();
+    ok &= testGatewayStatelessCallsReleaseLeaseAfterCall();
+    ok &= testGatewayStatefulSessionLeaseExpiresOrReleases();
+    ok &= testGatewayStickySessionRebindsAfterInstanceLoss();
+    ok &= testToolCatalogRefreshDoesNotHoldGatewayMutexDuringChildRpc();
+    ok &= testNativeGatewayRegistrationRejectsEmptyName();
+    ok &= testGatewayExceptionResponseEscapesJsonMessage();
+#if defined(_WIN32)
+    ok &= testWorkerSupervisorResolvesPathExecutable();
+    ok &= testWorkerSupervisorPrefersCmdOverExtensionlessShim();
+    ok &= testWorkerSupervisorRejectsMissingBareExecutable();
+    ok &= testWorkerSupervisorAcceptsAbsoluteExecutablePath();
+    ok &= testWorkerSupervisorDestructorJoinsWatchdogWithoutDetach();
+    ok &= testWorkerSupervisorShutdownDoesNotRespawnDuringTeardown();
+#endif
     return ok ? 0 : 1;
 }

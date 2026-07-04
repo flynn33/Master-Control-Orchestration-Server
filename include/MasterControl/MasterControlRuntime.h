@@ -30,6 +30,8 @@ public:
     OperationResult cancelAppleOperationJson(const std::string& requestBody);
     OperationResult applyConfigurationJson(const std::string& requestBody,
                                            bool confirmUnsafeChanges);
+    OperationResult applyConfigurationPatchJson(const std::string& requestBody,
+                                                bool confirmUnsafeChanges);
     OperationResult upsertAppleRemoteHostJson(const std::string& requestBody);
     OperationResult removeAppleRemoteHostJson(const std::string& requestBody);
     OperationResult upsertMcpServerJson(const std::string& requestBody);

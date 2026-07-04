@@ -204,12 +204,27 @@ GatewayHealth FakeMcpGatewayAdapter::Probe() {
     return health;
 }
 
-RegistrationResult FakeMcpGatewayAdapter::RegisterHttpServer(const McpServerRegistration& server) {
-    RegistrationResult result;
+namespace {
+
+// Registration-validation parity: the fake and native adapters enforce
+// the same rules through this single helper, so tests exercising the fake
+// prove the native contract too. Returns false (and fills `result`) when
+// the registration is invalid.
+bool validateServerRegistration(const McpServerRegistration& server, RegistrationResult& result) {
     result.serverName = server.name;
     if (server.name.empty()) {
         result.succeeded = false;
         result.message = "Logical server name is required.";
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+RegistrationResult FakeMcpGatewayAdapter::RegisterHttpServer(const McpServerRegistration& server) {
+    RegistrationResult result;
+    if (!validateServerRegistration(server, result)) {
         return result;
     }
     std::lock_guard<std::mutex> lock(mutex_);
@@ -224,10 +239,7 @@ RegistrationResult FakeMcpGatewayAdapter::RegisterHttpServer(const McpServerRegi
 
 RegistrationResult FakeMcpGatewayAdapter::RegisterStdioServer(const McpServerRegistration& server) {
     RegistrationResult result;
-    result.serverName = server.name;
-    if (server.name.empty()) {
-        result.succeeded = false;
-        result.message = "Logical server name is required.";
+    if (!validateServerRegistration(server, result)) {
         return result;
     }
     std::lock_guard<std::mutex> lock(mutex_);
@@ -356,6 +368,15 @@ NativeHttpSysGatewayAdapter::~NativeHttpSysGatewayAdapter() {
 }
 
 GatewayStatus NativeHttpSysGatewayAdapter::Start() {
+    // Lifecycle serialization (review fix): Start() and Stop() are mutually
+    // exclusive end-to-end via lifecycleMutex_. The admin listener now
+    // serves requests on a worker pool, so /api/gateway/start|stop|restart
+    // can genuinely race; without this lock a Start() could interleave
+    // with Stop()'s unlocked join phase (joinable-thread reassignment ->
+    // std::terminate, workerThreads_ vector races, jobQueueShutdown_
+    // flag reversal). lifecycleMutex_ is DISTINCT from mutex_ so Probe()
+    // and /health keep working while a Stop is joining threads.
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (!configuration_.enabled) {
@@ -399,7 +420,7 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
     if (groupResult != NO_ERROR) {
         status_.state = GatewayState::Failed;
         status_.message = "HttpCreateUrlGroup failed (code " + std::to_string(groupResult) + ").";
-        teardownHttpSysLocked();
+        closeHttpSysHandlesLocked();
         return status_;
     }
     urlGroupId_ = urlGroupId;
@@ -451,7 +472,7 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
             status_.message = "HttpAddUrlToUrlGroup failed (code "
                 + std::to_string(addUrlResult) + ").";
         }
-        teardownHttpSysLocked();
+        closeHttpSysHandlesLocked();
         return status_;
     }
 
@@ -520,7 +541,7 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
         status_.state = GatewayState::Failed;
         status_.message = "HttpCreateRequestQueue failed (code "
             + std::to_string(queueResult) + ").";
-        teardownHttpSysLocked();
+        closeHttpSysHandlesLocked();
         return status_;
     }
     requestQueue_ = queue;
@@ -536,12 +557,25 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
         status_.state = GatewayState::Failed;
         status_.message = "HttpSetUrlGroupProperty(BindingProperty) failed (code "
             + std::to_string(bindResult) + ").";
-        teardownHttpSysLocked();
+        closeHttpSysHandlesLocked();
         return status_;
     }
 
     running_ = true;
+    {
+        std::lock_guard<std::mutex> queueLock(jobQueueMutex_);
+        jobQueueShutdown_ = false;
+        jobQueue_.clear();
+    }
     serveThread_ = std::thread(&NativeHttpSysGatewayAdapter::serveLoop, this);
+    // Bounded execution pool (concurrency remediation): MCP requests are
+    // value-copied into jobQueue_ by the receive loop and executed here,
+    // so a slow tools/call occupies one worker instead of the receive
+    // path. /health never queues -- serveLoop answers it inline.
+    workerThreads_.reserve(kGatewayWorkerCount);
+    for (std::size_t workerIndex = 0; workerIndex < kGatewayWorkerCount; ++workerIndex) {
+        workerThreads_.emplace_back(&NativeHttpSysGatewayAdapter::workerLoop, this);
+    }
 
     status_.state = GatewayState::Running;
     // tlsBound on the gateway status is the runtime signal that downstream surfaces gate on. It
@@ -598,43 +632,89 @@ GatewayStatus NativeHttpSysGatewayAdapter::Start() {
 }
 
 GatewayStatus NativeHttpSysGatewayAdapter::Stop() {
-    std::lock_guard<std::mutex> lock(mutex_);
 #if defined(_WIN32)
-    if (!running_ && requestQueue_ == nullptr) {
-        // Nothing to do.
-        if (status_.state != GatewayState::Disabled) {
-            status_.state = GatewayState::Stopped;
-            status_.startedAtUtc.clear();
-            status_.message = "the in-process HTTP.sys adapter stopped.";
+    // Shutdown-deadlock remediation: never join the serve/worker threads
+    // while holding mutex_. The serve thread's /health route calls Probe()
+    // (which locks mutex_); pre-remediation Stop() held mutex_ across
+    // teardownHttpSysLocked()'s serveThread_.join(), so a /health request
+    // in flight at stop time deadlocked the process. Lifecycle now:
+    //   1. under mutex_: validate state, mark Stopping, snapshot handles;
+    //   2. no locks: shut down the HTTP.sys queue, signal the job queue,
+    //      join receive + worker threads;
+    //   3. under mutex_ again: close handles, finalize Stopped state.
+    // Lifecycle serialization (review fix): held for the whole teardown so
+    // no Start() or second Stop() can overlap the unlocked join phase.
+    // Also makes destruction safe: ~NativeHttpSysGatewayAdapter's Stop()
+    // waits here for any in-flight teardown instead of returning early
+    // while another thread is still joining member threads.
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
+    HANDLE queueToShutdown = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (status_.state == GatewayState::Stopping) {
+            // Defensive only: unreachable while lifecycleMutex_ serializes
+            // Stop() callers, but kept so a crashed teardown cannot be
+            // re-entered.
+            return status_;
         }
-        return status_;
+        if (!running_ && requestQueue_ == nullptr) {
+            // Nothing to do.
+            if (status_.state != GatewayState::Disabled) {
+                status_.state = GatewayState::Stopped;
+                status_.startedAtUtc.clear();
+                status_.message = "the in-process HTTP.sys adapter stopped.";
+            }
+            return status_;
+        }
+        status_.state = GatewayState::Stopping;
+        running_ = false;
+        queueToShutdown = requestQueue_;
     }
-    status_.state = GatewayState::Stopping;
-    teardownHttpSysLocked();
+
+    if (queueToShutdown != nullptr) {
+        // Triggers ERROR_OPERATION_ABORTED in the blocked
+        // HttpReceiveHttpRequest call inside serveLoop, which causes the
+        // receive loop to exit promptly.
+        HttpShutdownRequestQueue(queueToShutdown);
+    }
+    {
+        std::lock_guard<std::mutex> queueLock(jobQueueMutex_);
+        jobQueueShutdown_ = true;
+    }
+    jobQueueCv_.notify_all();
+    if (serveThread_.joinable()) {
+        serveThread_.join();
+    }
+    for (auto& worker : workerThreads_) {
+        if (worker.joinable()) {
+            worker.join();
+        }
+    }
+    workerThreads_.clear();
+    {
+        std::lock_guard<std::mutex> queueLock(jobQueueMutex_);
+        jobQueue_.clear();
+        jobQueueShutdown_ = false;   // allow a future Start()
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    closeHttpSysHandlesLocked();
     status_.state = GatewayState::Stopped;
     status_.startedAtUtc.clear();
     status_.message = "the in-process HTTP.sys adapter stopped. Registry preserved in-memory.";
-#endif
     return status_;
+#else
+    std::lock_guard<std::mutex> lock(mutex_);
+    return status_;
+#endif
 }
 
 #if defined(_WIN32)
-void NativeHttpSysGatewayAdapter::teardownHttpSysLocked() {
+void NativeHttpSysGatewayAdapter::closeHttpSysHandlesLocked() {
     running_ = false;
     if (requestQueue_ != nullptr) {
-        // Closing the request queue triggers ERROR_OPERATION_ABORTED in
-        // the blocked HttpReceiveHttpRequest call inside serveLoop, which
-        // causes the loop to exit promptly.
-        HttpShutdownRequestQueue(requestQueue_);
-        if (serveThread_.joinable()) {
-            serveThread_.join();
-        }
         HttpCloseRequestQueue(requestQueue_);
         requestQueue_ = nullptr;
-    } else if (serveThread_.joinable()) {
-        // Defensive: thread without a queue. Should not happen but join
-        // defensively to keep state consistent.
-        serveThread_.join();
     }
     if (urlGroupId_ != 0) {
         HttpCloseUrlGroup(urlGroupId_);
@@ -687,22 +767,26 @@ GatewayHealth NativeHttpSysGatewayAdapter::Probe() {
 }
 
 RegistrationResult NativeHttpSysGatewayAdapter::RegisterHttpServer(const McpServerRegistration& server) {
+    RegistrationResult result;
+    if (!validateServerRegistration(server, result)) {
+        return result;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     registry_[server.name] = server;
-    RegistrationResult result;
     result.succeeded = true;
-    result.serverName = server.name;
     result.registeredAtUtc = timestampNowUtc();
     result.message = "Logical HTTP-server endpoint registered with the native gateway.";
     return result;
 }
 
 RegistrationResult NativeHttpSysGatewayAdapter::RegisterStdioServer(const McpServerRegistration& server) {
+    RegistrationResult result;
+    if (!validateServerRegistration(server, result)) {
+        return result;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     registry_[server.name] = server;
-    RegistrationResult result;
     result.succeeded = true;
-    result.serverName = server.name;
     result.registeredAtUtc = timestampNowUtc();
     result.message = "Logical stdio-backed pool registered with the native gateway.";
     return result;
@@ -723,29 +807,11 @@ DeregistrationResult NativeHttpSysGatewayAdapter::DeregisterServer(const std::st
 }
 
 std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::ListTools() const {
-    // v0.9.3: prime the cache on the first ListTools() call. Pre-v0.9.3
-    // ListTools() returned the cache verbatim, which was empty until a
-    // LAN MCP client had issued tools/list -- so the admin-side
-    // /api/gateway/tools route reported [] on a fresh boot even though
-    // the supervised pool was Ready and ready to serve. The "honest
-    // empty" doctrine still applies (no fabrication), but if we have a
-    // bridge attached AND a Ready instance is reachable, we can refresh
-    // the cache truthfully right here. If the bridge isn't attached or
-    // every pool's stdio is wedged, refreshToolCatalogLocked clears
-    // the cache and we return the empty list, exactly the same outcome.
-    std::lock_guard<std::mutex> lock(mutex_);
-    // v0.10.19: always defer to refreshToolCatalogLocked so cache-invalidation
-    // by upsertPool / InvalidateToolCatalog actually surfaces here. Pre-
-    // v0.10.19 this branch only refreshed when the cache was EMPTY, which
-    // meant /api/health/summary.gateway.toolCount stayed at the first-priming
-    // count for the lifetime of the process even as pools registered and
-    // contributed new tools. refreshToolCatalogLocked already self-bypasses
-    // when toolCatalogCacheValidUntil_ is still in the future, so this
-    // is a no-op on the hot path.
-    if (workerSupervisor_) {
-        refreshToolCatalogLocked();
-    }
-    return toolCatalogCache_;
+    // v0.9.3 primed the cache here; v0.10.19 made every call defer to the
+    // refresh path so InvalidateToolCatalog() surfaces immediately. The
+    // lock-hygiene remediation keeps both behaviors but moves the child
+    // stdio RPC outside the gateway mutex -- see currentToolCatalog().
+    return currentToolCatalog();
 }
 
 std::string NativeHttpSysGatewayAdapter::GatewayMcpUrl() const {
@@ -796,26 +862,53 @@ namespace {
 constexpr int kToolCatalogCacheTtlSeconds = 30;
 } // namespace
 
-std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::refreshToolCatalogLocked() const {
-    // v0.9.5: serve from the in-memory cache if it's still warm. The
-    // cache validity stamp is set at the bottom of this function on
-    // every successful aggregation; a default-constructed
-    // toolCatalogCacheValidUntil_ (epoch) means "never refreshed" and
-    // forces a fresh pass.
-    const auto now = std::chrono::steady_clock::now();
-    if (now < toolCatalogCacheValidUntil_) {
-        return toolCatalogCache_;
+std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::currentToolCatalog() const {
+    // Lock-hygiene remediation (was refreshToolCatalogLocked, which ran
+    // child stdio RPC for up to 5s per pool WHILE holding mutex_ and
+    // stalled every other gateway method). Three phases:
+    //   1. under mutex_: TTL check + supervisor snapshot;
+    //   2. no gateway lock: collectToolCatalog() fans out tools/list to
+    //      pool children over stdio;
+    //   3. under mutex_: publish the cache + new TTL stamp.
+    // Two threads that both miss the TTL may refresh concurrently; both
+    // aggregate truthfully and the last writer wins, which is acceptable
+    // for a 30s-TTL catalog and far cheaper than serializing child RPC.
+    std::shared_ptr<IWorkerSupervisor> supervisor;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto now = std::chrono::steady_clock::now();
+        if (now < toolCatalogCacheValidUntil_) {
+            return toolCatalogCache_;
+        }
+        if (!workerSupervisor_) {
+            toolCatalogCache_.clear();
+            // Even on the no-supervisor path, mark the cache valid for the
+            // TTL window so we don't loop on this branch every call.
+            toolCatalogCacheValidUntil_ = now + std::chrono::seconds(kToolCatalogCacheTtlSeconds);
+            return toolCatalogCache_;
+        }
+        supervisor = workerSupervisor_;
     }
 
+    auto aggregated = collectToolCatalog(supervisor);
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    toolCatalogCache_ = aggregated;
+    toolCatalogCacheValidUntil_ =
+        std::chrono::steady_clock::now() + std::chrono::seconds(kToolCatalogCacheTtlSeconds);
+    return aggregated;
+}
+
+std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::collectToolCatalog(
+    const std::shared_ptr<IWorkerSupervisor>& supervisor) const {
+    // Caller must NOT hold mutex_: every sendStdioJsonRpc below can block
+    // for up to 5s per pool. bridgeRequestIdCounter_ is atomic precisely
+    // so id generation here needs no gateway lock.
     std::vector<McpToolDescriptor> aggregated;
-    if (!workerSupervisor_) {
-        toolCatalogCache_.clear();
-        // Even on the no-supervisor path, mark the cache valid for the
-        // TTL window so we don't loop on this branch every call.
-        toolCatalogCacheValidUntil_ = now + std::chrono::seconds(kToolCatalogCacheTtlSeconds);
+    if (!supervisor) {
         return aggregated;
     }
-    const auto pools = workerSupervisor_->listPools();
+    const auto pools = supervisor->listPools();
     for (const auto& pool : pools) {
         // Find a Ready instance to query. Drained, Starting, Failed, and
         // Stopped instances are skipped. If none is Ready we silently skip
@@ -846,7 +939,7 @@ std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::refreshToolCatalogLo
         // Forward via the stdio bridge with a short timeout (5s) -- if
         // the child is wedged we don't want LAN client tools/list to
         // hang on it.
-        const auto bridgeResult = workerSupervisor_->sendStdioJsonRpc(
+        const auto bridgeResult = supervisor->sendStdioJsonRpc(
             instanceId, envelope, /*timeoutMs=*/5000);
         if (!bridgeResult.succeeded || bridgeResult.responseBody.empty()) {
             // Child unreachable, timed out, or did not implement
@@ -899,12 +992,6 @@ std::vector<McpToolDescriptor> NativeHttpSysGatewayAdapter::refreshToolCatalogLo
             continue;
         }
     }
-    toolCatalogCache_ = aggregated;
-    // v0.9.5: refresh the cache validity window. Subsequent calls
-    // within the TTL serve directly from toolCatalogCache_ without
-    // re-fanning-out tools/list to every pool's child.
-    toolCatalogCacheValidUntil_ =
-        std::chrono::steady_clock::now() + std::chrono::seconds(kToolCatalogCacheTtlSeconds);
     return aggregated;
 }
 
@@ -996,11 +1083,31 @@ void NativeHttpSysGatewayAdapter::auditCapabilityDenial(
     }
 }
 
+std::string BuildGatewayInternalErrorBody(const std::string& detail) {
+    // JSON-safe internal-error envelope (exception-escaping remediation):
+    // built with nlohmann so quotes, control characters, and invalid
+    // UTF-8 in exception text (error_handler_t::replace) still produce a
+    // parseable JSON-RPC error document. The pre-remediation handler
+    // concatenated ex.what() into a raw string literal, which corrupted
+    // the JSON whenever the message contained a quote or newline.
+    try {
+        const nlohmann::json envelope = {
+            { "jsonrpc", "2.0" },
+            { "id", nullptr },
+            { "error", { { "code", -32603 }, { "message", detail } } }
+        };
+        return envelope.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    } catch (...) {
+        return R"({"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"Internal error."}})";
+    }
+}
+
 std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& path,
                                                           const std::string& body,
                                                           const std::string& clientIpAddress,
                                                           const std::string& clientType,
-                                                          const std::string& clientId) {
+                                                          const std::string& clientId,
+                                                          const std::string& sessionId) {
     // path is reserved for v0.6.11 path-based pool scoping (/mcp/{poolId}).
     // v0.6.10 routes by `params.name` -> cached toolCatalog -> serverName.
     // v0.7.2: clientIpAddress + clientType are best-effort attribution
@@ -1122,15 +1229,11 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
     if (method == "tools/list") {
         // PHASE-12 follow-up (v0.6.10): aggregate tools/list from every
         // supervised pool's first Ready instance via the stdio bridge.
-        // refreshToolCatalogLocked builds a fresh catalog and updates the
-        // cache so subsequent tools/call can resolve names. If the bridge
-        // is not attached (workerSupervisor_ is null), returns an empty
-        // honest array per ADR-002 §9.
-        std::vector<McpToolDescriptor> catalog;
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            catalog = refreshToolCatalogLocked();
-        }
+        // currentToolCatalog builds a fresh catalog (child RPC outside the
+        // gateway mutex) and updates the cache so subsequent tools/call can
+        // resolve names. If the bridge is not attached (workerSupervisor_
+        // is null), returns an empty honest array per ADR-002 §9.
+        const std::vector<McpToolDescriptor> catalog = currentToolCatalog();
         const auto capabilityContext = resolveCapabilities(clientId, clientIpAddress);
         nlohmann::json toolsArray = nlohmann::json::array();
         for (const auto& descriptor : catalog) {
@@ -1262,18 +1365,16 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
         }
         if (poolId.empty()) {
             // Tool catalog may be stale (no tools/list since the child started).
-            // Refresh once and retry the lookup before giving up.
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                refreshToolCatalogLocked();
-                for (const auto& descriptor : toolCatalogCache_) {
-                    const std::string qualified = descriptor.serverName + "__" + descriptor.toolName;
-                    if (qualified == requestedName || descriptor.toolName == requestedName) {
-                        poolId        = descriptor.serverName;
-                        localToolName = descriptor.toolName;
-                        requiredCapabilities = descriptor.requiredCapabilities;
-                        break;
-                    }
+            // Refresh once and retry the lookup before giving up. The refresh
+            // performs child stdio RPC, so it runs WITHOUT the gateway mutex.
+            const auto refreshedCatalog = currentToolCatalog();
+            for (const auto& descriptor : refreshedCatalog) {
+                const std::string qualified = descriptor.serverName + "__" + descriptor.toolName;
+                if (qualified == requestedName || descriptor.toolName == requestedName) {
+                    poolId        = descriptor.serverName;
+                    localToolName = descriptor.toolName;
+                    requiredCapabilities = descriptor.requiredCapabilities;
+                    break;
                 }
             }
         }
@@ -1310,18 +1411,34 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
                 id);
         }
 
-        // Acquire a lease for the resolved pool.
+        // Build the forwarded envelope BEFORE acquiring the lease so a
+        // serialization throw (e.g. invalid UTF-8 in the body) cannot
+        // happen between acquire and release. We REPLACE the request id
+        // with a bridge-internal id so the child's response can be matched
+        // by the supervisor's stdio correlator without colliding with
+        // other in-flight bridge requests. We also rewrite params.name to
+        // the unprefixed local form so the child sees its own tool name,
+        // not ours. The id counter is atomic -- no gateway lock needed.
+        nlohmann::json forwarded = req;
+        const uint64_t bridgeId = bridgeRequestIdCounter_++;
+        forwarded["id"] = bridgeId;
+        forwarded["params"]["name"] = localToolName;
+        const std::string forwardedBody = forwarded.dump();
+
+        // Acquire a lease for the resolved pool. Session contract
+        // (session remediation): a client-provided session id (from the
+        // Mcp-Session-Id header, X-MCOS-Session-Id fallback) makes the
+        // lease stateful -- the router pins the session to one instance
+        // and repeat calls reuse that lease. The gateway never invents
+        // session ids for clients that sent none.
+        // v0.7.2: client identity stamped so LeaseRouter::bindLeaseLocked
+        // carries it into the bound lease and the dashboard's
+        // per-sub-agent active-clients panel can attribute usage. Any of
+        // these fields may be empty -- the dashboard renders 'unknown'.
         LeaseRequest leaseRequest;
-        leaseRequest.poolId = poolId;
-        // sessionId is empty for the gateway path -- the gateway is the
-        // session-aggregating front for many anonymous LAN clients.
-        // Future: pass the AI client's session token through to enable
-        // sticky routing per-client. v0.6.10 routes least-loaded.
-        // v0.7.2: stamp client identity onto the lease request so
-        // LeaseRouter::bindLeaseLocked carries it into the bound lease
-        // and the dashboard's per-sub-agent active-clients panel can
-        // attribute usage. Either field may be empty -- the dashboard
-        // handles 'unknown' gracefully.
+        leaseRequest.poolId          = poolId;
+        leaseRequest.sessionId       = sessionId;
+        leaseRequest.stateful        = !sessionId.empty();
         leaseRequest.clientIpAddress = clientIpAddress;
         leaseRequest.clientType      = clientType;
         EndpointLease lease = router->acquireLease(leaseRequest);
@@ -1331,40 +1448,37 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
                 + poolId + "'. " + lease.statusMessage, id);
         }
 
-        // Build the forwarded envelope. We REPLACE the request id with a
-        // bridge-internal id so the child's response can be matched by
-        // the supervisor's stdio correlator without colliding with other
-        // in-flight bridge requests. We also rewrite params.name to the
-        // unprefixed local form so the child sees its own tool name, not
-        // ours.
-        nlohmann::json forwarded = req;
-        const uint64_t bridgeId = [&] {
-            std::lock_guard<std::mutex> lock(mutex_);
-            return bridgeRequestIdCounter_++;
-        }();
-        forwarded["id"] = bridgeId;
-        forwarded["params"]["name"] = localToolName;
+        // Lease lifetime (continues the v0.9.34 leak fix, now exception-
+        // safe via a scope guard): stateless calls release on completion;
+        // stateful session leases stay bound for the session lifetime and
+        // are reclaimed by the router's idle timeout or an explicit
+        // /api/leases/{leaseId}/release. releaseLease is idempotent on
+        // unknown ids, so racing scenarios (e.g. supervisor reaping the
+        // instance mid-call) are safe.
+        struct StatelessLeaseReleaseGuard final {
+            std::shared_ptr<ILeaseRouter> router;
+            std::string leaseId;
+            bool engaged = false;
+            ~StatelessLeaseReleaseGuard() {
+                if (engaged && router) {
+                    router->releaseLease(leaseId, "tools/call complete");
+                }
+            }
+        } releaseGuard{ router, lease.leaseId, !leaseRequest.stateful };
 
         const auto bridgeResult = supervisor->sendStdioJsonRpc(
-            lease.instanceId, forwarded.dump(), /*timeoutMs=*/30000);
-
-        // v0.9.34: release the lease unconditionally after the bridge
-        // call returns. Pre-v0.9.34 the comment that used to live here
-        // promised "the call site is below" but no releaseLease() call
-        // followed -- every tools/call leaked one lease. The bug-hunt
-        // probed it: 10 parallel tools/call requests left
-        // activeLeaseCount=10 forever, with all leases still in
-        // state="active" and releasedAtUtc="". With
-        // maxActiveLeasesPerInstance=64 the leak only manifests as
-        // dashboard noise + premature scale-out, but a long-running
-        // gateway would eventually saturate and start rejecting calls
-        // with "could not acquire instance lease."
-        // LeaseRouter::releaseLease is idempotent on unknown ids, so
-        // racing scenarios (e.g. supervisor reaping the instance mid-
-        // call) are safe.
-        router->releaseLease(lease.leaseId, "tools/call complete");
+            lease.instanceId, forwardedBody, /*timeoutMs=*/30000);
 
         if (!bridgeResult.succeeded) {
+            // Review fix: a failed bridge call must not keep a stateful
+            // session pinned to a (likely dead) instance -- release the
+            // sticky lease so the next call for this session rebinds to a
+            // healthy instance (the router also validates instance
+            // liveness on the sticky path). releaseLease is idempotent.
+            if (leaseRequest.stateful) {
+                router->releaseLease(lease.leaseId,
+                    "stdio bridge failure; session will rebind on the next call");
+            }
             return buildJsonRpcError(-32603,
                 "tools/call: stdio bridge to instance '" + lease.instanceId
                 + "' failed. " + bridgeResult.errorMessage, id);
@@ -1394,17 +1508,88 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
     return buildJsonRpcError(-32601, "Method not implemented: " + method, id);
 }
 
+namespace {
+
+// Single response-send path shared by the receive loop (inline health /
+// 405 / 404 / 503 answers) and the worker pool (MCP responses). 204 No
+// Content suppresses body + Content-Type per RFC 7230; an optional Allow
+// header (must point at storage that outlives the call, e.g. a string
+// literal) backs accurate 405 semantics. Send failures are benign during
+// shutdown races and are intentionally not checked, matching the
+// pre-remediation behavior.
+void sendGatewayHttpResponse(HANDLE requestQueue,
+                             HTTP_REQUEST_ID requestId,
+                             USHORT statusCode,
+                             const std::string& reason,
+                             const std::string& contentType,
+                             const std::string& responseBody,
+                             const char* allowHeader) {
+    HTTP_RESPONSE response{};
+    response.StatusCode = statusCode;
+    response.pReason = reason.c_str();
+    response.ReasonLength = static_cast<USHORT>(reason.size());
+
+    std::string lengthStr;
+    HTTP_DATA_CHUNK dataChunk{};
+    if (statusCode != 204) {
+        response.Headers.KnownHeaders[HttpHeaderContentType].pRawValue = contentType.c_str();
+        response.Headers.KnownHeaders[HttpHeaderContentType].RawValueLength
+            = static_cast<USHORT>(contentType.size());
+
+        lengthStr = std::to_string(responseBody.size());
+        response.Headers.KnownHeaders[HttpHeaderContentLength].pRawValue = lengthStr.c_str();
+        response.Headers.KnownHeaders[HttpHeaderContentLength].RawValueLength
+            = static_cast<USHORT>(lengthStr.size());
+
+        dataChunk.DataChunkType = HttpDataChunkFromMemory;
+        dataChunk.FromMemory.pBuffer = const_cast<char*>(responseBody.data());
+        dataChunk.FromMemory.BufferLength = static_cast<ULONG>(responseBody.size());
+        response.EntityChunkCount = 1;
+        response.pEntityChunks = &dataChunk;
+    } else {
+        response.EntityChunkCount = 0;
+        response.pEntityChunks = nullptr;
+    }
+    if (allowHeader != nullptr) {
+        response.Headers.KnownHeaders[HttpHeaderAllow].pRawValue = allowHeader;
+        response.Headers.KnownHeaders[HttpHeaderAllow].RawValueLength
+            = static_cast<USHORT>(std::char_traits<char>::length(allowHeader));
+    }
+
+    ULONG bytesSent = 0;
+    HttpSendHttpResponse(
+        requestQueue,
+        requestId,
+        0,
+        &response,
+        nullptr,
+        &bytesSent,
+        nullptr,
+        0,
+        nullptr,
+        nullptr);
+}
+
+} // namespace
+
 void NativeHttpSysGatewayAdapter::serveLoop() {
     // Working buffer for HTTP_REQUEST. Per HTTP.sys docs we typically
     // need 4 KB for headers + a separate body buffer. Allocate 16 KB to
     // cover larger MCP request envelopes inline.
     std::vector<uint8_t> requestBuffer(16 * 1024);
+    // Review fix (ERROR_MORE_DATA): once a receive fails with
+    // ERROR_MORE_DATA the request is pinned to the RequestId returned in
+    // the partial HTTP_REQUEST and MUST be re-received by that id -- a
+    // HTTP_NULL_ID receive only returns other requests, orphaning the
+    // oversized one until the connection times out. Track the id across
+    // the retry.
+    HTTP_REQUEST_ID pendingRequestId = HTTP_NULL_ID;
 
     while (running_) {
         ULONG bytesRead = 0;
         ULONG receiveResult = HttpReceiveHttpRequest(
             requestQueue_,
-            HTTP_NULL_ID,
+            pendingRequestId,
             HTTP_RECEIVE_REQUEST_FLAG_COPY_BODY,
             reinterpret_cast<PHTTP_REQUEST>(requestBuffer.data()),
             static_cast<ULONG>(requestBuffer.size()),
@@ -1415,11 +1600,19 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
             break; // queue shut down
         }
         if (receiveResult == ERROR_MORE_DATA) {
-            // The request didn't fit. Resize and retry. The first call
-            // populates RequestId so we can reissue with the larger buf.
+            // The request didn't fit. Remember its id, enlarge the buffer,
+            // and re-receive THAT request.
+            pendingRequestId = reinterpret_cast<PHTTP_REQUEST>(requestBuffer.data())->RequestId;
             requestBuffer.resize(bytesRead);
             continue;
         }
+        if (receiveResult == ERROR_CONNECTION_INVALID && pendingRequestId != HTTP_NULL_ID) {
+            // The pinned request's connection went away between receives;
+            // drop back to normal intake.
+            pendingRequestId = HTTP_NULL_ID;
+            continue;
+        }
+        pendingRequestId = HTTP_NULL_ID;
         if (receiveResult != NO_ERROR) {
             // Transient or fatal -- backoff briefly and retry.
             Sleep(50);
@@ -1514,13 +1707,16 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
 
         std::string clientId;
         std::string clientType;
+        std::string mcpSessionId;
+        std::string mcosSessionId;
         // Walk the unknown-headers list (HTTP.sys puts custom X- headers
         // here) and the User-Agent slot in known-headers.
         for (USHORT h = 0; h < request->Headers.UnknownHeaderCount; ++h) {
             const auto& uh = request->Headers.pUnknownHeaders[h];
             if (uh.pName == nullptr || uh.pRawValue == nullptr) continue;
             std::string name(uh.pName, uh.NameLength);
-            // Case-insensitive compare against X-MCOS-Client-Type / -Id.
+            // Case-insensitive compare against X-MCOS-Client-Type / -Id
+            // and the session headers.
             std::string lower;
             lower.reserve(name.size());
             for (char c : name) {
@@ -1530,8 +1726,17 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
                 clientId.assign(uh.pRawValue, uh.RawValueLength);
             } else if (lower == "x-mcos-client-type") {
                 clientType.assign(uh.pRawValue, uh.RawValueLength);
+            } else if (lower == "mcp-session-id") {
+                mcpSessionId.assign(uh.pRawValue, uh.RawValueLength);
+            } else if (lower == "x-mcos-session-id") {
+                mcosSessionId.assign(uh.pRawValue, uh.RawValueLength);
             }
         }
+        // Session contract (session remediation): the standard MCP
+        // Mcp-Session-Id header wins; X-MCOS-Session-Id is the
+        // MCOS-specific fallback. Empty when the client sent neither --
+        // the gateway never invents a session id.
+        const std::string sessionId = !mcpSessionId.empty() ? mcpSessionId : mcosSessionId;
         if (clientType.empty() && !clientId.empty()) {
             clientType = clientId;
         }
@@ -1553,56 +1758,56 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
             }
         }
 
-        // Route. /health returns adapter state; any /mcp* path goes to
-        // the MCP handler; everything else 404s with structured JSON.
+        // Route (concurrency remediation). The receive thread answers
+        // /health, wrong-verb, unknown-path, and queue-saturated responses
+        // inline -- all cheap, none touch child processes. Well-formed MCP
+        // POSTs are value-copied into the bounded job queue and executed
+        // by the worker pool, so one slow tools/call can never block
+        // /health or the receive loop.
         std::string responseBody;
         std::string contentType = "application/json";
         USHORT statusCode = 200;
         std::string reason = "OK";
+        const char* allowHeader = nullptr;
 
         const auto& healthPath = configuration_.healthPath.empty()
             ? std::string("/health") : configuration_.healthPath;
         const auto& mcpPath = configuration_.mcpPath.empty()
             ? std::string("/mcp") : configuration_.mcpPath;
 
-        // v0.9.4: the MCP route can legitimately produce an empty body
-        // (a JSON-RPC 2.0 notification has no response per §4.1). Track
-        // whether we routed through MCP so we can translate empty
-        // responseBody to HTTP 204 No Content below; healthPath and the
-        // 404 fallthrough always produce a body.
-        bool wentThroughMcpRoute = false;
         if (path == healthPath || (path.size() > healthPath.size()
                                    && path.rfind(healthPath, 0) == 0
                                    && path[healthPath.size()] == '/')) {
             const auto health = Probe();
+            // Locked snapshot -- the pre-remediation code read status_
+            // unlocked here, racing Stop()'s state transitions.
+            const GatewayStatus statusSnapshot = CurrentStatus();
             nlohmann::json body_j = {
                 { "adapterType", AdapterType() },
-                { "state", to_string(status_.state) },
+                { "state", to_string(statusSnapshot.state) },
                 { "health", to_string(health.status) },
-                { "message", status_.message }
+                { "message", statusSnapshot.message }
             };
             responseBody = body_j.dump();
         } else if (path == mcpPath || (path.size() > mcpPath.size()
                                        && path.rfind(mcpPath, 0) == 0
                                        && path[mcpPath.size()] == '/')) {
             // v0.9.10: only POST belongs on the MCP path. JSON-RPC over
-            // Streamable HTTP uses POST for client->server messages;
-            // GET on /mcp is reserved for opening an SSE stream
-            // (which this gateway does not currently implement -- a
-            // future SSE upgrade would route GET separately). Pre-
-            // v0.9.10 a GET against /mcp produced HTTP 204 No
-            // Content because the empty body parsed to {} which the
-            // dispatcher classified as a notification; from the
-            // operator/client perspective that was an opaque success
-            // for a request that should have been refused. Now we
-            // explicitly return 405 with a helpful hint.
+            // Streamable HTTP uses POST for client->server messages; GET
+            // on /mcp is reserved for opening an SSE stream, which this
+            // build intentionally does not implement (POST-only alpha
+            // transport -- onboarding profiles say the same). The 405
+            // carries an accurate Allow: POST header and a valid JSON
+            // body.
             const HTTP_VERB verb = request->Verb;
             if (verb != HttpVerbPOST) {
                 statusCode = 405;
                 reason = "Method Not Allowed";
+                allowHeader = "POST";
                 nlohmann::json err = {
                     { "error", "MCP path requires POST" },
                     { "path", path },
+                    { "allow", "POST" },
                     { "method_received",
                       verb == HttpVerbGET     ? "GET"     :
                       verb == HttpVerbPUT     ? "PUT"     :
@@ -1621,28 +1826,43 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
                 };
                 responseBody = err.dump();
             } else {
-                // v0.9.48: defense-in-depth try/catch around the
-                // request handler. The buildJsonRpcError fix below
-                // closes the specific UTF-8 dump() crash that started
-                // this iteration, but ANY uncaught exception out of
-                // handleMcpRequest would propagate out of serveLoop and
-                // tripped std::terminate. Catching at the dispatcher
-                // boundary turns "service crashes" into "client gets a
-                // 500 with a generic JSON-RPC error envelope and the
-                // gateway thread keeps going."
-                try {
-                    responseBody = handleMcpRequest(path, body, clientIpAddress, clientType, clientId);
-                } catch (const std::exception& ex) {
-                    statusCode = 500;
-                    reason = "Internal Server Error";
-                    responseBody = std::string(R"({"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"Internal error: )")
-                        + ex.what() + R"("}})";
-                } catch (...) {
-                    statusCode = 500;
-                    reason = "Internal Server Error";
-                    responseBody = std::string(R"({"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"Internal error: unknown exception."}})");
+                bool enqueued = false;
+                std::size_t queueDepth = 0;
+                {
+                    std::lock_guard<std::mutex> queueLock(jobQueueMutex_);
+                    queueDepth = jobQueue_.size();
+                    if (!jobQueueShutdown_ && queueDepth < kGatewayJobQueueMaxDepth) {
+                        GatewayRequestJob job;
+                        job.requestId       = request->RequestId;
+                        job.path            = path;
+                        job.body            = body;
+                        job.clientIpAddress = clientIpAddress;
+                        job.clientType      = clientType;
+                        job.clientId        = clientId;
+                        job.sessionId       = sessionId;
+                        jobQueue_.push_back(std::move(job));
+                        enqueued = true;
+                    }
                 }
-                wentThroughMcpRoute = true;
+                if (enqueued) {
+                    jobQueueCv_.notify_one();
+                    // The worker pool owns the response; receive the next
+                    // request immediately.
+                    continue;
+                }
+                // Bounded-queue backpressure: a saturated queue answers
+                // with a structured 503 instead of allocating without
+                // bound.
+                statusCode = 503;
+                reason = "Service Unavailable";
+                nlohmann::json err = {
+                    { "error", "Gateway request queue is saturated" },
+                    { "queueDepth", queueDepth },
+                    { "maxQueueDepth", kGatewayJobQueueMaxDepth },
+                    { "hint", "Retry shortly. Long-running tools/call requests are occupying "
+                              "all gateway workers and the bounded request queue is full." }
+                };
+                responseBody = err.dump();
             }
         } else {
             statusCode = 404;
@@ -1655,66 +1875,67 @@ void NativeHttpSysGatewayAdapter::serveLoop() {
             responseBody = err.dump();
         }
 
-        // v0.9.4: empty MCP-route response means handleMcpRequest
-        // recognized a JSON-RPC notification (no `id` field) and
-        // intentionally produced no envelope per spec. Reply with HTTP
-        // 204 No Content -- no body, no Content-Type header. Pre-v0.9.4
-        // the dispatcher would have returned a -32601 envelope here,
-        // which strict MCP clients (TS + Python SDKs) treat as a
-        // protocol violation when received in response to a
-        // notification.
-        if (wentThroughMcpRoute && responseBody.empty()) {
-            statusCode = 204;
-            reason = "No Content";
-        }
-
-        // Build and send the HTTP response.
-        HTTP_RESPONSE response{};
-        response.StatusCode = statusCode;
-        response.pReason = reason.c_str();
-        response.ReasonLength = static_cast<USHORT>(reason.size());
-
-        HTTP_UNKNOWN_HEADER unused{};
-        (void)unused;
-
-        // 204 No Content has no body and no Content-Type per RFC 7230;
-        // suppress both header slots so HTTP.sys does not emit them.
-        // Other status codes always set Content-Type + Content-Length.
-        std::string lengthStr;
-        HTTP_DATA_CHUNK dataChunk{};
-        if (statusCode != 204) {
-            response.Headers.KnownHeaders[HttpHeaderContentType].pRawValue = contentType.c_str();
-            response.Headers.KnownHeaders[HttpHeaderContentType].RawValueLength
-                = static_cast<USHORT>(contentType.size());
-
-            lengthStr = std::to_string(responseBody.size());
-            response.Headers.KnownHeaders[HttpHeaderContentLength].pRawValue = lengthStr.c_str();
-            response.Headers.KnownHeaders[HttpHeaderContentLength].RawValueLength
-                = static_cast<USHORT>(lengthStr.size());
-
-            dataChunk.DataChunkType = HttpDataChunkFromMemory;
-            dataChunk.FromMemory.pBuffer = const_cast<char*>(responseBody.data());
-            dataChunk.FromMemory.BufferLength = static_cast<ULONG>(responseBody.size());
-            response.EntityChunkCount = 1;
-            response.pEntityChunks = &dataChunk;
-        } else {
-            response.EntityChunkCount = 0;
-            response.pEntityChunks = nullptr;
-        }
-
-        ULONG bytesSent = 0;
-        HttpSendHttpResponse(
-            requestQueue_,
-            request->RequestId,
-            0,
-            &response,
-            nullptr,
-            &bytesSent,
-            nullptr,
-            0,
-            nullptr,
-            nullptr);
+        sendGatewayHttpResponse(requestQueue_, request->RequestId,
+                                statusCode, reason, contentType,
+                                responseBody, allowHeader);
     }
+}
+
+void NativeHttpSysGatewayAdapter::workerLoop() {
+    for (;;) {
+        GatewayRequestJob job;
+        {
+            std::unique_lock<std::mutex> lock(jobQueueMutex_);
+            jobQueueCv_.wait(lock, [this]() {
+                return jobQueueShutdown_ || !jobQueue_.empty();
+            });
+            if (jobQueueShutdown_) {
+                // Stop() has shut the HTTP.sys queue; queued requests can
+                // no longer be answered. Exit promptly so Stop()'s join
+                // is bounded by at most one in-flight handleMcpRequest.
+                return;
+            }
+            job = std::move(jobQueue_.front());
+            jobQueue_.pop_front();
+        }
+        processGatewayJob(job);
+    }
+}
+
+void NativeHttpSysGatewayAdapter::processGatewayJob(const GatewayRequestJob& job) {
+    std::string responseBody;
+    USHORT statusCode = 200;
+    std::string reason = "OK";
+    // v0.9.48 defense-in-depth retained: any uncaught exception becomes a
+    // 500 with a JSON-safe error envelope. BuildGatewayInternalErrorBody
+    // escapes the exception text (the pre-remediation handler concatenated
+    // ex.what() into raw JSON, corrupting the envelope on quotes/newlines).
+    try {
+        responseBody = handleMcpRequest(job.path, job.body, job.clientIpAddress,
+                                        job.clientType, job.clientId, job.sessionId);
+    } catch (const std::exception& ex) {
+        statusCode = 500;
+        reason = "Internal Server Error";
+        responseBody = BuildGatewayInternalErrorBody(std::string("Internal error: ") + ex.what());
+    } catch (...) {
+        statusCode = 500;
+        reason = "Internal Server Error";
+        responseBody = BuildGatewayInternalErrorBody("Internal error: unknown exception.");
+    }
+    // v0.9.4: empty MCP response means handleMcpRequest recognized a
+    // JSON-RPC notification (no `id` field) and intentionally produced no
+    // envelope per spec -- reply 204 No Content (no body, no Content-Type)
+    // so strict MCP clients don't see a protocol violation.
+    if (statusCode == 200 && responseBody.empty()) {
+        statusCode = 204;
+        reason = "No Content";
+    }
+    // requestQueue_ stays valid for the worker's lifetime: Stop() closes
+    // the handle only after joining the worker threads. A send racing
+    // HttpShutdownRequestQueue fails benignly.
+    sendGatewayHttpResponse(requestQueue_, job.requestId,
+                            statusCode, reason, "application/json",
+                            responseBody, nullptr);
 }
 #endif
 

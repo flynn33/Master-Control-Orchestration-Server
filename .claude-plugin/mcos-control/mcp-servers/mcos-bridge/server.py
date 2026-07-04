@@ -105,6 +105,10 @@ def _post(path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return _http("POST", path, body=body)
 
 
+def _patch(path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    return _http("PATCH", path, body=body)
+
+
 def _delete(path: str) -> Dict[str, Any]:
     return _http("DELETE", path)
 
@@ -187,7 +191,9 @@ def t_config_update(args):
     if not fields:
         return {"ok": False, "error": "fields is required (object of mcos.json keys to set)",
                 "errorCode": "BAD_REQUEST"}
-    return _post("/api/config", body=fields)
+    # PATCH deep-merges the fields into the current configuration server-side.
+    # POST /api/config is full-replacement and would reset omitted sections.
+    return _patch("/api/config", body=fields)
 
 def t_telemetry_heartbeat(args):
     return _post("/api/telemetry/heartbeat", body=args.get("payload") or {})
@@ -264,20 +270,15 @@ def t_client_disable(args):
 
 
 # ---- Write — Forsetti modules ----
-def t_forsetti_module_import(args):
-    manifest = args.get("manifest")
-    if not manifest:
-        return {"ok": False, "error": "manifest object required (Forsetti module manifest JSON)",
-                "errorCode": "BAD_REQUEST"}
-    return _post("/api/forsetti/modules", body=manifest)
-
 def t_forsetti_module_enable(args):
-    return _post(f"/api/forsetti/modules/{args['moduleId']}/enable")
+    return _post("/api/forsetti/modules/state",
+                 body={"moduleId": args["moduleId"], "action": "enable"})
 
 def t_forsetti_module_disable(args):
     refusal = _confirm_required(args, "disable Forsetti module", args.get("moduleId", ""))
     if refusal: return refusal
-    return _post(f"/api/forsetti/modules/{args['moduleId']}/disable")
+    return _post("/api/forsetti/modules/state",
+                 body={"moduleId": args["moduleId"], "action": "disable"})
 
 
 # ---- PHASE-14 Slice B: centralized diagnostics surface ----
@@ -455,7 +456,9 @@ TOOLS_REGISTRY: List[Tuple[str, Dict[str, Any], callable]] = [
 
     # --- Write — config ---
     ("mcos_config_update",
-     {"description": "Write fields back to mcos.json via POST /api/config. Body: {fields: {...}}",
+     {"description": "Patch configuration fields via PATCH /api/config. Deep-merges the given "
+                     "fields into the current mcos.json; unrelated sections are preserved. "
+                     "Body: {fields: {...}}",
       "inputSchema": {"type": "object",
                       "properties": {"fields": {"type": "object"}},
                       "required": ["fields"]}},
@@ -544,10 +547,10 @@ TOOLS_REGISTRY: List[Tuple[str, Dict[str, Any], callable]] = [
                       "required": ["clientId"]}}, t_client_disable),
 
     # --- Write — Forsetti modules ---
-    ("mcos_forsetti_module_import",
-     {"description": "Import a Forsetti module manifest (registers the module's entry points).",
-      "inputSchema": {"type": "object", "properties": {"manifest": {"type": "object"}},
-                      "required": ["manifest"]}}, t_forsetti_module_import),
+    # Module import is intentionally not offered: the backend has no module
+    # import route, so advertising one would be a false capability. Modules
+    # register through the runtime's module discovery; enable/disable state
+    # is managed via POST /api/forsetti/modules/state below.
     ("mcos_forsetti_module_enable",
      {"description": "Enable a registered Forsetti module.",
       "inputSchema": {"type": "object", "properties": {"moduleId": {"type": "string"}},

@@ -189,7 +189,7 @@ Every profile is a `OnboardingProfile` JSON document containing:
 | `clientType` | The slug (`claude-code`, `codex`, etc.) |
 | `displayName` | Human label for the dashboard |
 | `gatewayMcpUrl` | The single MCP URL the client should target — pulled live from the gateway's current state |
-| `transport` | `streamable_http` for most clients; some legacy paths use `stdio` |
+| `transport` | `streamable_http` for most clients; some legacy paths use `stdio`. **Alpha compatibility note:** the gateway serves the POST-only Streamable HTTP subset — every response is a single JSON body, no SSE stream is offered (`GET /mcp` returns `405` with `Allow: POST`, as the MCP spec permits), and the standard `Mcp-Session-Id` header is honored for sticky session routing. Clients that require an SSE stream should use the companion utility's stdio bridge. |
 | `authRequired` | **Always `false`** for the AI-client surface. ADR-002 §1. |
 | `trust` | **Always `lan`**. ADR-002 §1. |
 | `governanceBundleUrl` | Pointer to `/api/governance/bundles/{platform}` |
