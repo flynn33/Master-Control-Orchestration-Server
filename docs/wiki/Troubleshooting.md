@@ -148,12 +148,12 @@ flowchart TD
 ### Resolution
 
 ```powershell
-# Edit AppConfiguration to pin LAN IP
-$config = Get-Content "$env:ProgramData\Master Control Orchestration Server\config\app-configuration.json" | ConvertFrom-Json
-$config.activeProfile.preferredBindAddress = "192.168.1.10"
-$config | ConvertTo-Json -Depth 10 | Set-Content "$env:ProgramData\Master Control Orchestration Server\config\app-configuration.json"
-
-Restart-Service MasterControlProgram
+# Pin the LAN IP through the configuration API.
+$body = @{ bindAddress = "192.168.1.10" } | ConvertTo-Json
+Invoke-RestMethod -Method PATCH `
+  -Uri http://127.0.0.1:7300/api/config `
+  -ContentType 'application/json' `
+  -Body $body
 
 # Re-issue the bundle (mcosServer will now resolve correctly)
 curl http://127.0.0.1:7300/api/clients/alpha/config > alpha.json
@@ -311,7 +311,7 @@ Update CMake to find v145 — the preset `debug` already targets it via the `Vis
 | --- | --- |
 | Installer (real log) | `%PUBLIC%\Documents\Master Control Orchestration Server\logs\installer\` |
 | Installer (pointer file) | `~\Desktop\MasterControlOrchestrationServer-install-log-pointer.txt` |
-| Service host | `%ProgramData%\Master Control Orchestration Server\logs\service\` |
+| Service host | `%PUBLIC%\Documents\Master Control Orchestration Server\logs\runtime\` |
 | Shell (when used) | `%LOCALAPPDATA%\Master Control Orchestration Server\logs\shell\` |
 | Sub-agent fleet | `D:\Sub-Agents\logs\<agent>-<date>.log` |
 
@@ -322,7 +322,7 @@ flowchart TD
 
     Issue[Issue observed] --> Q{component?}
     Q -->|installer| L1[%PUBLIC%\Documents\<br/>...installer\]:::accent
-    Q -->|service runtime| L2[%ProgramData%\<br/>...logs\service\]:::accent
+    Q -->|service runtime| L2[%PUBLIC%\Documents\<br/>...logs\runtime\]:::accent
     Q -->|shell| L3[%LOCALAPPDATA%\<br/>...logs\shell\]:::accent
     Q -->|sub-agent| L4[D:\Sub-Agents\logs\]:::accent
     L1 --> Tail[Get-Content -Tail 200]:::good
@@ -333,7 +333,7 @@ flowchart TD
 
 ```powershell
 # Tail the active service log
-Get-Content "$env:ProgramData\Master Control Orchestration Server\logs\service\service-$(Get-Date -Format yyyyMMdd).log" -Tail 200 -Wait
+Get-Content "$env:PUBLIC\Documents\Master Control Orchestration Server\logs\runtime\events.jsonl" -Tail 200 -Wait
 ```
 
 ---
@@ -377,7 +377,7 @@ flowchart LR
     C -->|yes| D[Start-Service]:::good
     C -->|no| E[taskkill /PID <pid> /F]:::warn
     E --> F[Investigate via Process Explorer<br/>or hung-thread dump]:::accent
-    F --> G[Capture %ProgramData%\...\logs\service\]:::accent
+    F --> G[Capture %PUBLIC%\Documents\...\logs\runtime\]:::accent
     G --> H[File issue with log excerpt]:::good
 ```
 
@@ -460,7 +460,7 @@ Make sure the control is inside a `RootGrid` with `RequestedTheme="Dark"` and th
 | Agent stale tag | §13 |
 | Tron palette wrong (shell) | §14 |
 | LAN clients can't find the host | §16 |
-| Gateway stuck in supervised-mock | §17 |
+| Gateway disabled or not listening | §17 |
 
 ---
 
@@ -488,7 +488,7 @@ flowchart TB
 
     D --> D1{Resolve-DnsName<br/>-Name _mcos._tcp.local<br/>-Type PTR<br/>-LlmnrFallback}
     D1 -->|PTR returned| E[Discovery doc reachable?]:::step
-    D1 -->|Empty| Derr[Check service-events.jsonl<br/>for DnsServiceRegister error code]:::bad
+    D1 -->|Empty| Derr[Check runtime events.jsonl<br/>for DnsServiceRegister error code]:::bad
 
     E --> E1{Invoke-RestMethod<br/>http://host:7300/.well-known/mcos.json}
     E1 -->|JSON returned| Done([Discovery healthy<br/>verify from a remote machine]):::good
@@ -499,20 +499,42 @@ flowchart TB
 
 **Common cause #2** — the MSI was installed without the firewall checkbox. Either re-run the MSI with the checkbox on, or copy the four `New-NetFirewallRule` snippets from the **Settings → LAN Advertising and Windows Firewall** card (also available on the dashboard's Discovery destination) and run them from elevated PowerShell.
 
-**Common cause #3** — the host is multi-homed and bound to the wrong NIC. Set `bindAddress` in `mcos.json` to the LAN-facing IP and restart the service.
+**Common cause #3** — the host is multi-homed and bound to the wrong NIC. Set `bindAddress` in the current configuration file to the LAN-facing IP and restart the service.
 
 ---
 
-## 17. Gateway state stuck in supervised-mock
+## 17. Gateway disabled or not listening
 
-Symptom: the Gateway destination shows `state=running, health=unknown, message="No gateway binary configured."`
+Symptom: the Gateway destination shows the gateway as disabled, stopped, or unreachable from another LAN host.
 
-This is the documented honest fallback (PHASE-02 / ADR-002 §9). It is not a bug. Two ways to move out of supervised-mock:
+The current alpha uses the in-process HTTP.sys gateway. No external gateway binary is installed or configured. Check the native gateway settings instead:
 
-1. **Install the in-process HTTP.sys adapter and point at it.** Download or build the gateway binary, copy it somewhere stable (e.g. `C:\Program Files\Master Control Orchestration Server\bin\the in-process HTTP.sys adapter\`), and set `mcpGateway.binaryPath` in `mcos.json` to its absolute path. Restart the service. The adapter spawns it under a Job Object on next start. See [Packaging and Gateway Binary](Packaging-and-Gateway-Binary).
-2. **Confirm `mcpGateway.enabled=true`** in `mcos.json`. The adapter refuses to start in supervised mode if disabled.
+1. Confirm `mcpGateway.enabled=true` in `%ProgramData%\MasterControlOrchestrationServer\config\master-control-orchestration-server.json`.
+2. Confirm `mcpGateway.listenHost`, `mcpGateway.listenPort`, and `mcpGateway.mcpPath` match the URL advertised to clients.
+3. For LAN access, confirm the Windows Firewall rule is scoped to Private/Domain networks and the host is not on the Public profile.
+4. For HTTPS, use `scripts\Configure-LocalServerCert.ps1`; do not edit HTTP.sys bindings by hand unless you are intentionally replacing the script-managed binding.
 
-If the binary is configured but the adapter still reports supervised-mock, check `service-events.jsonl` for `CreateProcessW` errors. The most common cause is a path with embedded environment variables that didn't expand at config-load time.
+Enable the gateway through the API when you want the dashboard and persisted configuration to stay in sync:
+
+```powershell
+$body = @{
+  mcpGateway = @{
+    enabled    = $true
+    listenHost = '0.0.0.0'
+    listenPort = 8080
+    mcpPath    = '/mcp'
+    mode       = 'lan-trusted'
+  }
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod -Method PATCH `
+  -Uri http://localhost:7300/api/config `
+  -Headers @{ 'X-Confirm-Unsafe' = 'true' } `
+  -ContentType 'application/json' `
+  -Body $body
+```
+
+If the gateway still fails to start, check `%PUBLIC%\Documents\Master Control Orchestration Server\logs\runtime\events.jsonl` for HTTP.sys reservation, binding, or port-conflict diagnostics.
 
 ---
 
@@ -525,4 +547,4 @@ If the binary is configured but the adapter still reports supervised-mock, check
 - [Telemetry and Activity](Telemetry-and-Activity) — the events ring + clients + gateway snapshot
 - [LAN Discovery](LAN-Discovery) — DNS-SD service types + beacon
 - [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) — manual firewall snippets
-- [Gateway](Gateway) — supervised-mock fallback details
+- [Gateway](Gateway) — native gateway enablement and verification

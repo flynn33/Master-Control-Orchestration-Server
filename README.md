@@ -3,300 +3,160 @@
 ![version](https://img.shields.io/badge/version-vA3.11.0-00f6ff?style=flat-square)
 ![channel](https://img.shields.io/badge/channel-Internal%20Alpha-ff8c00?style=flat-square)
 ![released](https://img.shields.io/badge/released-2026--07--03-031018?style=flat-square)
-![platform](https://img.shields.io/badge/platform-Windows%2011%20%E2%80%A2%20Server%202022-0a1018?style=flat-square)
-![toolchain](https://img.shields.io/badge/toolchain-C%2B%2B20%20%E2%80%A2%20WinUI%203%20%E2%80%A2%20CMake-00aacc?style=flat-square)
+![platform](https://img.shields.io/badge/platform-Windows%2011%20%2F%20Server%202022-0a1018?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
-![governance](https://img.shields.io/badge/governance-CLU%20%2B%20Forsetti-5a00e8?style=flat-square)
 ![license](https://img.shields.io/badge/license-Proprietary-031018?style=flat-square)
 
-> **vA3.11.0 — alpha-stage scheme migration of the PHASE-14-complete tree.** Versions now follow `<Stage><A>.<Feature>.<patch/hotfix>` while MCOS is in alpha: `A3.11.0` = third alpha, feature 11, patch 0 — the same tree previously identified as `0.11.0-alpha.3` (PHASE-14 Slices B–E, security hardening, 2026-06 bug campaign). No GitHub releases are cut during alpha; the Windows Build, Test, and Package CI gate remains the per-commit health check. The diagnostics module is end-to-end (SqliteDiagnosticsStore, six `mcos_diagnostics_*` MCP plugin tools, WinUI Shell DiagnosticsSectionControl, browser dashboard Diagnostics tab). LAN trust posture intact — `auth=none, trust=lan` per the operator's secure-LAN directive; app-layer auth lands in the retail build. See [`handoff/realignment/v0.11.0-alpha.3-release-report.md`](handoff/realignment/v0.11.0-alpha.3-release-report.md) for what this tree contains.
+Master Control Orchestration Server is a Windows-native LAN MCP Gateway host.
+It exposes one MCOS-advertised MCP endpoint for trusted-LAN clients, supervises
+MCP server and sub-agent worker pools, distributes onboarding profiles and
+CLU/Forsetti governance bundles, and provides browser plus WinUI maintainer
+surfaces for operations.
 
-> **A Windows-native LAN MCP Gateway host.** External AI coding clients (Claude Code, Codex, Grok, ChatGPT, generic MCP) connect to one MCOS-advertised endpoint, consume server-generated onboarding profiles and CLU/Forsetti governance bundles, and operate against supervised MCP server and sub-agent worker pools. MCOS owns discovery, governance, telemetry, worker supervision, autoscaling, dashboarding, and Windows packaging.
+> **vA3.11.0** - 2026-07-03
 
----
+Current release: `vA3.11.0`, released `2026-07-03`.
+`A3.11.0` is the alpha-stage re-expression of the tree previously documented as
+`0.11.0-alpha.3`. During alpha, versions use
+`A{alphaIteration}.{feature}.{patch}`. No GitHub Releases are cut during alpha;
+the Windows Build, Test, and Package workflow is the repository health gate.
+`VERSION.json` is the version authority.
 
-## The product in one diagram
+## Current Alpha State
 
-```mermaid
-flowchart LR
-    classDef accent fill:#031018,stroke:#00F6FF,color:#E6FCFF,stroke-width:2px;
-    classDef faint fill:#0a1018,stroke:#5A00E8,color:#8CB7C4;
-    classDef client fill:#031827,stroke:#5AE8FF,color:#A8DCFF;
-    classDef good fill:#031a14,stroke:#1cf2c1,color:#a8efe0;
+Implemented in the current tree:
 
-    Maintainer((👤 Maintainer))
+- Native in-process HTTP.sys MCP gateway behind `IMcpGateway`.
+- Trusted-LAN discovery through DNS-SD/mDNS, UDP beacon, `/api/discovery`, and
+  `/.well-known/mcos.json`.
+- Per-client onboarding profiles for Claude Code, Codex, Grok, ChatGPT
+  connector-edge, and generic MCP clients.
+- CLU/Forsetti governance bundle distribution and approval workflows.
+- Managed endpoint pools for MCP servers and sub-agents, with Job Object process
+  containment, lease routing, autoscaling policy, and sticky session behavior.
+- Diagnostics routes, persistent diagnostics store with JSONL fallback, browser
+  diagnostics tab, WinUI diagnostics section, and bridge diagnostics tools.
+- Optional gateway TLS through HTTP.sys certificate binding and optional admin
+  listener TLS through SChannel.
+- MSI packaging through WiX plus a zip artifact for CI/headless use.
 
-    subgraph LANClients[LAN AI clients]
-        ClaudeCode[/Claude Code/]:::client
-        Codex[/Codex/]:::client
-        Grok[/Grok/]:::client
-        ChatGPT[/ChatGPT connector-edge/]:::client
-        Generic[/Generic MCP/]:::client
-    end
+Current limitations:
 
-    subgraph MCOS[Master Control Orchestration Server]
-        Discovery[LAN Discovery<br/>DNS-SD + UDP beacon]:::accent
-        Gateway[MCP Gateway<br/>Native HTTP.sys]:::accent
-        Onboarding[Onboarding Profiles<br/>per client type]:::accent
-        Governance[Governance Bundles<br/>Windows / macOS / iOS]:::accent
-        Supervisor[Worker Supervisor<br/>+ Lease Router + stdio bridge]:::accent
-        Telemetry[Telemetry Aggregator]:::accent
-        Pools[(Managed Endpoint Pools<br/>MCP servers + sub-agents)]:::good
-    end
+- MCOS is internal alpha software. Product-level Windows host validation remains
+  required for HTTP.sys binding, TLS binding, MSI installation, service
+  behavior, DNS-SD visibility, and live LAN-client interoperability on each
+  target environment.
+- LAN client authentication is intentionally network-level during alpha:
+  `auth=none, trust=lan`. App-layer authentication is deferred to a later
+  hardening track.
+- The native gateway implements the POST subset of MCP Streamable HTTP. Clients
+  that require a server-initiated SSE MCP stream need a client-side bridge or a
+  later transport expansion.
+- Some validation paths depend on host toolchain availability. In particular,
+  the WinUI Shell project requires the configured Visual Studio toolset.
 
-    Maintainer -->|Browser dashboard + WinUI shell| Telemetry
-    LANClients -->|"DNS-SD discovery (auth=none, trust=lan)"| Discovery
-    Discovery --> Gateway
-    LANClients -->|MCP requests| Gateway
-    Gateway --> Supervisor
-    Supervisor --> Pools
-    Pools -.->|heartbeats| Telemetry
-    LANClients -.->|first connect| Onboarding
-    LANClients -.->|on demand| Governance
-```
+## Quick Links
 
-The architecture target is the **gateway-first MCP host** declared in [ADR-002](docs/wiki/ADR-002-gateway-first-mcp-realignment.md) and locked at the substrate level by [ADR-003](docs/wiki/ADR-003-mcp-gateway-substrate-decision.md). As of v0.9.0 the only shipping substrate is the in-process Windows-native HTTP.sys adapter — the legacy external gateway was retired per maintainer directive. `cfg.mcpGateway.type` is retained for back-compat JSON deserialization only; the runtime always uses the native HTTP.sys adapter on `0.0.0.0:cfg.mcpGateway.listenPort` (default `8080`) at `cfg.mcpGateway.mcpPath` (default `/mcp`). The original [ADR-001 LAN client identity model](docs/wiki/ADR-001-lan-client-control-plane.md) survives as the maintainer surface that coexists with the AI-client gateway surface.
+- Live wiki: [Master-Control-Orchestration-Server wiki](https://github.com/flynn33/Master-Control-Orchestration-Server/wiki)
+- Wiki source: [docs/wiki](docs/wiki)
+- Quick Start: [docs/wiki/Quick-Start.md](docs/wiki/Quick-Start.md)
+- Configuration: [docs/wiki/Configuration.md](docs/wiki/Configuration.md)
+- TLS and HTTPS: [docs/wiki/TLS-and-HTTPS.md](docs/wiki/TLS-and-HTTPS.md)
+- Gateway: [docs/wiki/Gateway.md](docs/wiki/Gateway.md)
+- Worker Pools: [docs/wiki/Worker-Pools.md](docs/wiki/Worker-Pools.md)
+- API Reference: [docs/wiki/API-Reference.md](docs/wiki/API-Reference.md)
+- Troubleshooting: [docs/wiki/Troubleshooting.md](docs/wiki/Troubleshooting.md)
+- Versions: [docs/wiki/Versions.md](docs/wiki/Versions.md)
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
+- Version authority: [VERSION.json](VERSION.json)
 
----
+## Build, Validate, Package
 
-## Quick links
-
-- **Wiki (maintainer-facing)** → [github.com/flynn33/Master-Control-Orchestration-Server/wiki](https://github.com/flynn33/Master-Control-Orchestration-Server/wiki)
-- **Quick Start** → [docs/wiki/Quick-Start.md](docs/wiki/Quick-Start.md)
-- **Architecture** → [docs/wiki/Architecture.md](docs/wiki/Architecture.md)
-- **Architecture Decisions** → [docs/wiki/Architecture-Decisions.md](docs/wiki/Architecture-Decisions.md)
-- **Gateway (substrate selection, install, health probe)** → [docs/wiki/Gateway.md](docs/wiki/Gateway.md)
-- **Worker Pools** → [docs/wiki/Worker-Pools.md](docs/wiki/Worker-Pools.md)
-- **Onboarding an AI client** → [docs/wiki/Onboarding.md](docs/wiki/Onboarding.md)
-- **Versions** → [docs/wiki/Versions.md](docs/wiki/Versions.md)
-- **CHANGELOG** → [`CHANGELOG.md`](CHANGELOG.md)
-- **VERSION.json** (canonical) → [`VERSION.json`](VERSION.json)
-
----
-
-## Why MCOS exists
-
-Multiple AI coding clients on the same trusted LAN need to share an MCP server and sub-agent fabric without each client operating in isolation, without each client being hand-configured against every backend, and without one bad client ruining the others' state. MCOS is the Windows-native orchestration plane:
-
-1. **One advertised endpoint.** AI clients on the LAN find MCOS via Bonjour-compatible DNS-SD and connect to a single MCP gateway URL. No per-backend wiring on the client side.
-2. **Supervised workers.** MCP servers and sub-agents run as managed pools with a 7-state lifecycle, supervised under Windows Job Objects so MCOS reaps the worker tree atomically on shutdown or crash.
-3. **Sticky-session lease routing with same-type scale-out.** The lease router preserves stateful sessions on their original instance, fans new stateless sessions across the least-loaded ready instances, and triggers same-type spawns under saturation.
-4. **Honest telemetry.** Every numeric metric uses a `-1.0` "unavailable" sentinel rather than fabricating values. The dashboard renders unreported metrics as `unavailable`, not `0%`.
-5. **CLU/Forsetti governance.** Per-platform governance bundles distributed via HTTP. Maintainer approval queue for high-impact actions.
-6. **Reversible by construction.** Every gateway-related decision sits behind the `IMcpGateway` adapter. That substrate-agnostic interface meant the v0.6-v0.8 gateway adapter binary could be retired cleanly at v0.9.0 in favour of the in-process `NativeHttpSysGatewayAdapter` without breaking any client contract.
-
----
-
-## Current release
-
-**`vA3.11.0` — 2026-07-03**
-
-Version-scheme migration and alpha-stage release-policy simplification. Adopts the alpha-stage scheme <Stage><A>.<Feature>.<patch/hotfix>: A3.11.0 (third alpha, feature 11, patch 0) re-expresses 0.11.0-alpha.3 without changing the tree it names. The tag-triggered GitHub release workflow (release.yml) is removed - nothing has been released during alpha and GitHub Releases are deferred until MCOS leaves alpha; windows-build-test-package.yml remains the same-SHA build/test/package CI gate on every push and PR and still must not be manually dispatchable. All historical release tags (v0.1.x-v0.4.x rc lines) are cleared because none correspond to a published release. A new .gitattributes makes LF the canonical text encoding so Windows checkouts with core.autocrlf=true no longer break the markdown-link gate or protected-path hash comparisons.
-
-- docs(version): adopt the alpha-stage scheme <Stage><A>.<Feature>.<patch/hotfix>; current version A3.11.0 re-expresses 0.11.0-alpha.3. CMakeLists.txt strips the stage prefix for project(VERSION) (numeric base 3.11.0); installer/Build-Msi.ps1 maps A<a>.<feature>.<patch> to MSI ProductVersion <a>.<feature>.<patch>.0 so alpha iterations, features, and patches all order correctly for Windows Installer upgrades.
-- ci(release): remove .github/workflows/release.yml. No GitHub releases are cut during alpha. The PHASE-10 no-workflow_dispatch rule now applies to windows-build-test-package.yml alone; realignment-discipline.yml, FORBIDDEN-CONTRACT 6.2, the mcos-contracts audit server, and Test-MCOSRepositoryMetadata.ps1 were updated in the same change.
-- chore(tags): clear all historical release tags (v0.1.x-v0.4.x rc lines) - none correspond to a published release. Local tags deleted; remote deletion requires operator credentials.
-- build(repo): add .gitattributes (* text=auto eol=lf; png/ico/bmp/rtf binary) making LF the canonical checkout encoding on every host.
-- docs(wiki): Release-Gate.md rewritten as the alpha-stage CI-gate page; Versions.md, Home.md, Quick-Start.md, README.md, CHANGELOG.md, and Architecture.md updated to A3.11.0.
----
-
-## The v0.9.x – v0.11.0 release line (historical)
-
-The release line that led to the current cut, spanning v0.9.4 through v0.11.0 on top of the v0.7.0 production-milestone baseline: LAN MCP Gateway, Supervisor Wizard, Direct AI plugin slots, PHASE-14 Diagnostics Slice A.
-
-**Native HTTP.sys is the only shipping gateway substrate.** the legacy external gateway was retired before v0.9.0 per maintainer directive. `cfg.mcpGateway.type` is kept in the JSON schema for backward-compatible deserialization, but the runtime always uses the native HTTP.sys adapter. No external binary to supervise.
-
-| Field | Value |
-|---|---|
-| Gateway listener | `0.0.0.0:cfg.mcpGateway.listenPort` (default `8080`) |
-| MCP path | `cfg.mcpGateway.mcpPath` (default `/mcp`) |
-| Admin / browser dashboard | `0.0.0.0:cfg.browserPort` (default `7300`) |
-| LAN discovery | `/.well-known/mcos.json` served on browser port |
-| Boot self-tests | 39 probes (from ~30 at v0.7.0) |
-| Live state on reference host | 26 MCP servers, 7 sub-agents, 97 advertised tools, 39/39 self-tests pass |
-
-What landed across v0.9.x and v0.10.x:
-
-- **Supervisor Agent Assignment Wizard.** Full backend + WinUI Shell + browser dashboard surface to assign exactly one supervisor model (`chatgpt` / `claude` / `grok`). Lifecycle: `off → config_generated → pending_connection → connected → disconnected | revoked`. 120-second heartbeat watchdog flips Connected → Disconnected. Generated config carries `server.mcpEndpoint = http://<lanIp>:<gatewayPort>/mcp` (v0.10.8 fix; pre-v0.10.8 the value was `http://127.0.0.1:<browserPort>/mcp` — wrong host AND wrong port).
-- **WinUI Shell footer-style tile grid.** `endpoint_stat_card_grid_detail::buildFooterStyleTile<StatT>` is the shared per-tile builder. Telemetry MCP / Sub-Agent panels (v0.10.6 → v0.10.7), Runtime MCP / Sub-Agent panels (v0.10.9), and the cross-tab SUB-AGENT GRID footer (v0.7.8 baseline) all render the same shape: 1px TRON-red border, 6px corner radius, 8x6 padding, uppercase semibold cyan name + reachability dot + specialization + util% + ProgressBar + active/cap ratio + 2-line client list. 7-column grid wraps to additional rows automatically.
-- **Persistent Diagnostics log.** Supervisor lifecycle, boot self-test failures, and per-boot summaries dual-emit to `<PUBLIC>\Documents\Master Control Orchestration Server\logs\<component>\events.jsonl`. Survives service restart.
-- **Telemetry log throttle** (v0.10.5). Dashboard-snapshot writes to `telemetry.jsonl` capped at one row per 60 seconds via static atomic compare-exchange. Cuts log growth from ~21 MB/day to ~350 KB/day.
-- **`scripts\Deploy-LocalLive.ps1` + `DEPLOY_LOCAL_LIVE` CMake target.** Hot-deploy helper. Stops `MasterControlProgram`, copies fresh binaries + `.xbf` / `.winmd` / `.pri` into the spaces-path install dir, restarts the service, probes `/api/version` + `/api/self-tests` + `/api/supervisor`, optionally relaunches the shell.
-
-## What landed across v0.6.x
-
-Each v0.6.x point release is hand-authored — the [`VERSION.json`](VERSION.json) `history[]` carries the full entries.
-
-| Version | Theme |
-|---|---|
-| `v0.6.10` | PHASE-12 follow-up complete: stdio bridge end-to-end, native gateway forwards `tools/call` to supervised children, bootstrapper URL ACL. |
-| `v0.6.9` | PHASE-12 MVP: `NativeHttpSysGatewayAdapter` ships alongside the native HTTP.sys adapter; HTTP.sys lifecycle + MCP `initialize` + `tools/list`. |
-| `v0.6.8` | Pool persistence (maintainer no longer loses pools on every restart), per-instance browser sparkline charts, telemetry events ring producer, PHASE-12 + PHASE-13 plan files. |
-| `v0.6.7` | Honest-503 listener on the gateway port so LAN clients see structured JSON instead of TCP RST in supervised-mock mode. |
-| `v0.6.5..v0.6.6` | Per-instance CPU/RAM telemetry sampling backend (`GetProcessTimes` + `GetProcessMemoryInfo` with first-sample baseline), MSI uninstall stale-shortcut fix, settings Apply gate fix, `preferredBindAddress` propagation. |
-| `v0.6.0..v0.6.4` | The realignment program in twelve named phases (PHASE-00..PHASE-11), Claude Code Control toggle on Overview, maintainer-set advertised IP. |
-
-## Realignment phase ledger
-
-| Phase | Theme | First release |
-|---|---|---|
-| PHASE-00 | Repo baseline + ADR-002 | v0.6.0 |
-| PHASE-01 | Provider-era residual cleanup | v0.6.0 |
-| PHASE-02 | `IMcpGateway` + `NativeHttpSysGatewayAdapter` + supervised-mock fallback | v0.6.0 |
-| PHASE-03 | DNS-SD + UDP beacon + discovery document | v0.6.0 |
-| PHASE-04 | Onboarding profiles per client type | v0.6.0 |
-| PHASE-05 | CLU/Forsetti governance bundles per platform | v0.6.0 |
-| PHASE-06 | Managed worker pools + Job Object containment | v0.6.0 |
-| PHASE-07 | Lease router + autoscaling | v0.6.0 |
-| PHASE-08 | Telemetry aggregator with `-1.0` honesty rule | v0.6.0 |
-| PHASE-09 | Tron dashboard realignment (11 destinations) | v0.6.0 |
-| PHASE-10 | Windows hardening + CI + MSI + release gate | v0.6.0 |
-| PHASE-11 | Native gateway evaluation → ADR-003 | v0.6.0 |
-| PHASE-12 (MVP) | `NativeHttpSysGatewayAdapter` + HTTP.sys lifecycle | v0.6.9 |
-| PHASE-12 (follow-up) | Stdio bridge, real `tools/list` aggregation, real `tools/call` forwarding, URL ACL | v0.6.10 |
-| PHASE-13 | Win2D / Direct2D shell rendering | scheduled v0.7.x (visual polish, not architecture) |
-
-Each architectural phase has a written completion report; historical phase completion reports and per-release reports are archived under [`docs/archive/realignment-release-reports/`](docs/archive/realignment-release-reports/), while the active phase plans and current-release reports stay in [`handoff/realignment/`](handoff/realignment/).
-
----
-
-## Quick start (15 minutes)
-
-Detailed walkthrough at [docs/wiki/Quick-Start.md](docs/wiki/Quick-Start.md). Short version:
+From a Windows developer shell with the repository checked out:
 
 ```powershell
-# 1. Build the MSI from source (or download a release artifact)
-$env:VCPKG_ROOT = 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\vcpkg'
+cmake --preset debug
+cmake --build --preset debug
+ctest --preset debug --output-on-failure
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-mastercontrol-forsetti.ps1
+```
+
+Release package flow:
+
+```powershell
 cmake --preset release
-cmake --build build/release --config Release
-ctest --test-dir build/release -C Release --output-on-failure --timeout 300
+cmake --build build\release --config Release
+ctest --test-dir build\release -C Release --output-on-failure --timeout 300
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release -SkipBuild
+```
 
-# 2. Install (interactive UI)
-msiexec /i "dist\packages\release\MasterControlOrchestrationServer-v0.11.0-alpha.3-win-x64\MasterControlOrchestrationServer-v0.11.0-alpha.3-win-x64.msi"
+The package script reads `VERSION.json`. For `A3.11.0`, the MSI ProductVersion
+mapping is `3.11.0.0` per `installer/Build-Msi.ps1`.
 
-# 3. Verify (after install)
+## Install And Smoke Test
+
+After packaging, install the MSI from the release package directory:
+
+```powershell
+msiexec /i "dist\packages\release\MasterControlOrchestrationServer-vA3.11.0-win-x64\MasterControlOrchestrationServer-vA3.11.0-win-x64.msi" /l*v "$env:TEMP\mcos-install.log"
+```
+
+Basic local checks:
+
+```powershell
 & "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output
-Invoke-RestMethod http://localhost:7300/api/health    | ConvertTo-Json
+Invoke-RestMethod http://localhost:7300/api/health | ConvertTo-Json
 Invoke-RestMethod http://localhost:7300/api/discovery | ConvertTo-Json -Depth 6
-
-# 4. Open the firewall for LAN clients (one-shot, self-elevating)
-#    See docs/wiki/Windows-Firewall-LAN-Mode.md for the full snippet that
-#    creates four Profile=Private,Domain rules in one UAC prompt.
-
-# 5. From another LAN host: confirm Bonjour discovery
-Resolve-DnsName -Name _mcos._tcp.local -Type PTR -LlmnrFallback
-
-# 6. (Optional) Assign a supervisor model via /api/supervisor.
-#    The native HTTP.sys adapter is the only shipping substrate as of v0.9.0;
-#    no maintainer action is needed to "select" it. To bind a supervisor model
-#    (chatgpt / claude / grok), generate the config bundle and hand it to the
-#    LAN client. The wizard's "Generate Config & Save" button on the Overview
-#    deck is the supported path; the curl equivalent below is for headless
-#    maintainers.
-$body = '{"providerId":"chatgpt"}'
-$resp = Invoke-RestMethod http://localhost:7300/api/supervisor/config/generate `
-  -Method Post -Body $body -ContentType 'application/json'
-$resp.config | ConvertTo-Json -Depth 6 | Set-Content `
-  -Encoding utf8 "mcos-supervisor-$($resp.config.supervisor.providerId).config.json"
-Invoke-RestMethod http://localhost:7300/api/gateway/start -Method Post
+Invoke-RestMethod http://localhost:7300/api/gateway/status | ConvertTo-Json -Depth 4
 ```
 
-The MSI installs the Windows service (`MasterControlProgram`), bundles the maintainer-side `mcos-control` Claude Code plugin under `share\claude-plugins\mcos-control`, registers the native gateway URL ACL via `netsh http add urlacl`, and creates Start Menu + Desktop shortcuts (both pre-checked, maintainer can opt out). LAN-side firewall rules are NOT created automatically — maintainers apply them after install. See [docs/wiki/Windows-Firewall-LAN-Mode.md](docs/wiki/Windows-Firewall-LAN-Mode.md) for the four `Profile=Private,Domain` rules (maintainer surface TCP 7300, MCP gateway TCP 8080, DNS-SD UDP 5353, discovery beacon UDP 7301) and a one-shot self-elevating PowerShell block that applies all four.
+The current configuration file is:
 
-### Connect Claude Code to MCOS (one click)
-
-After install, open `http://localhost:7300/` and click the **Claude Code Control** toggle on the **Overview** card. The runtime resolves the active interactive Windows user and drops `%USERPROFILE%\.claude\plugins\mcos-control` as a directory junction onto the install directory's bundled plugin source — no admin prompt, no execution-policy gymnastics. Restart Claude Code and `/mcos:status` works.
-
-The same toggle is on the WinUI desktop shell's **Overview** page. Either surface drives the same `/api/claude-plugin/{status,toggle}` routes.
-
-### Spawn the first MCP server / sub-agent pool
-
-`buildDefaultConfiguration()` ships with **no pools** — the maintainer chooses what to supervise. Bringing up a pool is two POSTs (upsert + scale). For copy-paste recipes that exercise both `kind=mcp-server` and `kind=sub-agent` against the official `@modelcontextprotocol/server-*` reference servers, see [docs/wiki/Worker-Pools.md §10 Verified working examples](docs/wiki/Worker-Pools.md#10-verified-working-examples-npx-based-mcp-servers).
-
----
-
-## Architecture at a glance
-
-| Surface | What it does | Where |
-|---|---|---|
-| **AI-client gateway** | One advertised MCP URL; auth=none, trust=lan | `IMcpGateway` + `NativeHttpSysGatewayAdapter` (in-process HTTP.sys, v0.9.0+; legacy external-gateway substrate retired in the same release) |
-| **Stdio bridge** | Forwards `tools/call` JSON-RPC from gateway to supervised pool children via stdin/stdout | `IWorkerSupervisor::sendStdioJsonRpc` (PHASE-12 follow-up, v0.6.10) |
-| **LAN discovery** | DNS-SD + UDP beacon + `/.well-known/mcos.json` | `DiscoveryService` + `BeaconService` |
-| **Onboarding profiles** | Per-client-type config + manual instructions | `OnboardingProfileService` + `/api/onboarding/{type}` |
-| **Governance bundles** | Forsetti + agentic coding instructions per platform | `GovernanceBundleService` + `/api/governance/bundles/{platform}` |
-| **Worker supervision** | 7-state lifecycle, Job Object containment, redirected stdin/stdout | `WorkerSupervisor` |
-| **Lease routing + autoscaling** | Sticky-session + same-type scale-out | `LeaseRouter` |
-| **Telemetry aggregator** | Events ring (1024 cap), client roster, gateway snapshot, per-instance CPU/RAM sampling | `TelemetryAggregator` + `WorkerSupervisor::sampleProcessLoadLocked` |
-| **Maintainer surface (ADR-001)** | Browser dashboard + WinUI shell | `resources/web/` + `src/MasterControlShell/` |
-
-Full layered diagram: [docs/wiki/Architecture.md](docs/wiki/Architecture.md).
-
----
-
-## Repository layout
-
-```
-master-control-dashboard-main/
-├── include/MasterControl/             # Public C++ contracts, models, defaults
-├── src/
-│   ├── MasterControlApp/              # Runtime core: gateway adapters, lease router,
-│   │                                  # supervisor, telemetry, discovery, onboarding,
-│   │                                  # governance, dashboard models
-│   ├── MasterControlBootstrapper/     # Installer / preflight / repair lifecycle
-│   ├── MasterControlServiceHost/      # Windows service entry point + --console mode
-│   ├── MasterControlShell/            # WinUI 3 desktop shell + Settings panel
-│   └── MasterControlModules/          # Forsetti module registrations
-├── resources/
-│   ├── web/                           # Browser dashboard (HTML + JS + CSS)
-│   ├── clu/                           # CLU governance profile JSON
-│   └── icons/                         # App icons + MSI bitmaps
-├── installer/                         # WiX v5 source for the MSI
-├── scripts/                           # Build, package, sync, compliance, deployment
-├── tests/                             # C++ test suite
-├── docs/
-│   ├── wiki/                          # Maintainer docs (mirror of GitHub wiki)
-│   └── implementation/                # Architecture, schemas, drift inventory,
-│                                      # FORBIDDEN-CONTRACT grep list
-├── handoff/realignment/               # Phase plans, manifest, current release reports
-├── docs/archive/                      # Historical remediation, release, and proof reports
-├── Forsetti-Framework-Windows-main/   # Vendored Forsetti — sealed by ADR-002 §11
-└── .github/workflows/                 # CI (windows-build-test-package, release,
-                                       # forsetti-compliance, ai-contributor-guard)
+```text
+%ProgramData%\MasterControlOrchestrationServer\config\master-control-orchestration-server.json
 ```
 
----
+The legacy fallback name is:
 
-## Build, validate, package
+```text
+%ProgramData%\MasterControlOrchestrationServer\config\master-control-program.json
+```
 
-| Step | Command |
-|---|---|
-| Configure debug | `cmake --preset debug` |
-| Build debug | `cmake --build --preset debug` |
-| Run tests | `ctest --preset debug --output-on-failure` |
-| Forsetti compliance | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-mastercontrol-forsetti.ps1` |
-| Configure release | `cmake --preset release` |
-| Build release | `cmake --build build/release --config Release` |
-| Test release | `ctest --test-dir build/release -C Release --output-on-failure --timeout 300` |
-| Package MSI | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release -SkipBuild` |
+See [Configuration](docs/wiki/Configuration.md) before editing the file
+directly. Prefer `PATCH /api/config` for partial changes and reserve
+`POST /api/config` for full-document replacement.
 
-CI runs the same pipeline. See [docs/wiki/Release-Gate.md](docs/wiki/Release-Gate.md) for the release flow + the no-`workflow_dispatch` rule.
+## Repository Layout
 
----
+```text
+include/MasterControl/             Public C++ contracts, models, defaults
+src/MasterControlApp/              Runtime core and gateway adapters
+src/MasterControlBootstrapper/     Installer and lifecycle helper
+src/MasterControlServiceHost/      Windows service and console host
+src/MasterControlShell/            WinUI 3 desktop shell
+src/MasterControlModules/          MCOS module registrations
+resources/web/                     Browser dashboard
+resources/clu/                     Governance profile JSON
+installer/                         WiX MSI source
+scripts/                           Existing build, package, cert, validation helpers
+tests/                             C++ test suite
+docs/wiki/                         Canonical source for the live GitHub wiki
+docs/implementation/               Architecture contracts and schemas
+docs/archive/                      Historical evidence only
+handoff/realignment/               Active realignment manifest and phase material
+Forsetti-Framework-Windows-main/   Vendored Forsetti framework
+```
+
+Archived documents are historical evidence only. Current operator guidance lives
+in `docs/wiki/`; current release metadata lives in `VERSION.json` and
+`CHANGELOG.md`.
 
 ## Contributing
 
-This is a proprietary repository. Maintainer-facing rules:
-
-1. **No AI contributor attribution.** The `AI Contributor Guard` workflow rejects commits whose author, committer, or trailer matches an AI vendor name (`chatgpt`, `codex`, `claude`, `copilot`, `gemini`, `grok`, `openai`, `anthropic`, `deepseek`, `perplexity`, `x.ai`). Runtime references to AI products as **client types** (e.g., `clientType: "claude-code"`) are legitimate and not affected.
-2. **Hand-authored documentation.** The wiki source lives in [`docs/wiki/`](docs/wiki/) — edit the markdown directly. The `docs/wiki/` tree is mirrored to the GitHub wiki.
-3. **Forsetti compliance.** Every change runs through `scripts/check-mastercontrol-forsetti.ps1` in CI.
-4. **FORBIDDEN-CONTRACT enforcement.** [`docs/implementation/FORBIDDEN-CONTRACT-GREP-LIST.md`](docs/implementation/FORBIDDEN-CONTRACT-GREP-LIST.md) is the machine-runnable contract — every `git grep` block must return zero matches outside documented exemptions. Eight contract groups covering provider-era removal, gateway integrity, trust model, telemetry honesty, vendoring, CI, phase scope, and dashboard honesty.
-5. **Windows product gate.** Releases require a successful `Windows Build, Test, and Package` run on the target commit. The release workflow gates publication on the same-SHA gate's success and refuses to bypass.
-6. **Hand-authored CHANGELOG entries.** No automated bumps. See `VERSION.json` and the maintainer runbook in [docs/wiki/Versions.md](docs/wiki/Versions.md).
-
----
+This is a proprietary repository. Keep changes inside the active scope, preserve
+Forsetti boundaries, and keep product claims tied to source, tests, scripts,
+installer definitions, `VERSION.json`, or retained historical release notes.
 
 ## License
 
-Proprietary. © 2026 James Daley. All Rights Reserved.
+Proprietary. Copyright (c) 2026 James Daley. All Rights Reserved.

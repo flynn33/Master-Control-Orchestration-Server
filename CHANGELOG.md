@@ -1,18 +1,26 @@
 # Changelog
 
-All notable changes to this repository are tracked here. Entries follow the [Keep a Changelog](https://keepachangelog.com/) shape: each release lists Added / Changed / Removed / Fixed / Notes. Versions follow the alpha-stage scheme `<Stage><A>.<Feature>.<patch/hotfix>` (e.g. `A3.11.0` = third alpha, feature 11, patch 0) while MCOS is in alpha; pre-migration history below keeps its original semver identifiers.
+All notable changes to this repository are tracked here. Entries follow the [Keep a Changelog](https://keepachangelog.com/) shape: each release lists Added / Changed / Removed / Fixed / Notes. Versions follow the alpha-stage scheme `A{alphaIteration}.{feature}.{patch}` (e.g. `A3.11.0` = third alpha, feature 11, patch 0) while MCOS is in alpha; pre-migration history below keeps its original semver identifiers.
 
 The release-management and doc-sync GitHub agents that previously generated parts of this file have been retired. CHANGELOG entries are now hand-authored alongside the change.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- Aligned README, docs/wiki source, and live-wiki publication source with the current `A3.11.0` internal-alpha state.
+- Rewrote current operator documentation to distinguish implemented source behavior, alpha validation boundaries, historical release records, and deferred hardening work.
+- Updated configuration and API documentation around the current ProgramData config path, `PATCH /api/config` partial deep-merge semantics, TLS fields, diagnostics routes, plugin toggles, supervisor routes, and dynamic route families.
+
+### Removed
+
+- Removed stale remediation, cleanup, machine-handoff, probe, bug-campaign, and feature-audit artifacts from active repository documentation surfaces.
 
 ## [A3.11.0] - 2026-07-03
 
 ### Summary
 
-**Version-scheme migration and alpha-stage release-policy simplification.** Adopts the alpha-stage scheme `<Stage><A>.<Feature>.<patch/hotfix>`: `A3.11.0` (third alpha, feature 11, patch 0) re-expresses `0.11.0-alpha.3` without changing the tree it names.
+**Version-scheme migration and alpha-stage release-policy simplification.** Adopts the alpha-stage scheme `A{alphaIteration}.{feature}.{patch}`: `A3.11.0` (third alpha, feature 11, patch 0) re-expresses `0.11.0-alpha.3` without changing the tree it names.
 
 ### Changed
 

@@ -1,277 +1,286 @@
 # Configuration
 
-The single source of truth for runtime behavior is `mcos.json`, written to `%ProgramData%\Master Control Orchestration Server\` on first run. Edit it from the WinUI Settings panel, the dashboard, or directly.
+This page documents the current MCOS configuration file, default fields, and
+admin API write semantics. Source authority is
+`src/MasterControlApp/MasterControlDefaults.cpp`,
+`include/MasterControl/MasterControlModels.h`, and
+`include/MasterControl/JsonMerge.h`.
 
-This page documents every field, when to change it, and how to apply the change.
+## File Locations
 
----
+Current runtime path:
 
-## Where the file lives
-
-| Path | Notes |
-|---|---|
-| `%ProgramData%\Master Control Orchestration Server\mcos.json` | Operator-edited config |
-| `%ProgramData%\Master Control Orchestration Server\runtime\` | Runtime state, logs |
-| `C:\Program Files\Master Control Orchestration Server\` | Installed binaries |
-
-`%ProgramData%` is typically `C:\ProgramData`. The directory is created by the MSI on install and is preserved across upgrades.
-
----
-
-## How to edit configuration
-
-Three ways, in order of preference:
-
-### 1. WinUI Settings panel (interactive)
-
-Start menu → Master Control Orchestration Server → **Settings**. Editable fields:
-
-- Instance name
-- Bind address
-- Browser port (operator surface)
-- Beacon port
-- Beacon enabled (toggle)
-- Resource allocation: CPU %, memory %, bandwidth %, storage %
-
-Click **Apply Host Settings** to persist. The shell calls `POST /api/config` against the local admin API — service stays up.
-
-### 2. Browser dashboard (PHASE-09 Settings link is a future item — for now use the WinUI shell or the API directly)
-
-You can hit the admin API yourself. **`POST /api/config` is a full-document replace** — fetch first, mutate, and re-send:
-
-```powershell
-# Read current config
-$cfg = Invoke-RestMethod http://localhost:7300/api/config
-
-# Mutate one or more fields
-$cfg.instanceName = 'mcos-eng-lab-1'
-$cfg.activeProfile.preferredBindAddress = '192.168.1.7'   # see "Advertised IP" below
-
-# Send the whole document back
-Invoke-RestMethod -Method POST -Uri http://localhost:7300/api/config `
-  -Body ($cfg | ConvertTo-Json -Depth 12 -Compress) `
-  -ContentType 'application/json'
+```text
+%ProgramData%\MasterControlOrchestrationServer\config\master-control-orchestration-server.json
 ```
 
-Sending a partial document (e.g., `@{ instanceName = '...' }`) drops every other field on the floor. Always fetch-mutate-send.
+Legacy fallback path:
 
-### 3. Direct file edit (for fields the UI does not expose)
+```text
+%ProgramData%\MasterControlOrchestrationServer\config\master-control-program.json
+```
+
+`resolveAppPaths()` also performs a one-shot ProgramData directory migration from
+the legacy `MasterControlProgram` directory to the current
+`MasterControlOrchestrationServer` directory when only the legacy directory
+exists. If that rename fails, the runtime falls back to the legacy directory so
+existing installs keep starting.
+
+The data directory can be overridden with `MASTERCONTROL_DATA_DIR`.
+
+Related state paths under the same data directory:
+
+| Path | Purpose |
+|---|---|
+| `state\install-history.json` | Package/import history |
+| `state\apple-operations.json` | Apple remote operation history |
+| `state\entitlements.json` | Entitlement state |
+| `work\` | Runtime work directory |
+
+## Editing Rules
+
+Prefer the admin API for live changes:
+
+| Route | Semantics |
+|---|---|
+| `GET /api/config` | Returns the current `AppConfiguration`. |
+| `POST /api/config` | Full-document replacement. Omitted top-level fields are rejected as partial documents. |
+| `PATCH /api/config` | Partial object-recursive deep merge into the current document. Arrays, scalars, and null replace the target value. |
+
+Use `PATCH /api/config` for partial operator changes:
 
 ```powershell
-notepad "$env:ProgramData\Master Control Orchestration Server\mcos.json"
-# After saving, restart the service so the new config is read:
+$patch = @{
+  instanceName = "mcos-lab-01"
+  mcpGateway = @{
+    enabled = $true
+    listenHost = "0.0.0.0"
+    mode = "trusted-lan"
+  }
+}
+
+Invoke-RestMethod http://localhost:7300/api/config `
+  -Method Patch `
+  -ContentType "application/json" `
+  -Headers @{ "X-Confirm-Unsafe" = "1" } `
+  -Body ($patch | ConvertTo-Json -Depth 8)
+```
+
+Use `POST /api/config` only when sending a complete configuration document:
+
+```powershell
+$cfg = Invoke-RestMethod http://localhost:7300/api/config
+$cfg.instanceName = "mcos-lab-01"
+
+Invoke-RestMethod http://localhost:7300/api/config `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body ($cfg | ConvertTo-Json -Depth 16)
+```
+
+Unsafe configuration changes require:
+
+```text
+X-Confirm-Unsafe: 1
+```
+
+The same confirmation header applies to both `POST /api/config` and
+`PATCH /api/config` when the runtime classifies the change as unsafe.
+
+Direct file edits are available for recovery, but require a service restart:
+
+```powershell
+notepad "$env:ProgramData\MasterControlOrchestrationServer\config\master-control-orchestration-server.json"
 Restart-Service MasterControlProgram
 ```
 
-The Settings UI exposes the fields most operators change. Everything else (gateway substrate config, security flags, advanced policy) is only via direct file edit or the API.
+## Fresh-Install Defaults
 
----
+`buildDefaultConfiguration()` currently initializes these operator-visible
+defaults:
 
-## Fields, in full
+| Field | Default |
+|---|---|
+| `instanceName` | `Master Control Orchestration Server` |
+| `instanceId` | Generated `mcos-...` identifier |
+| `bindAddress` | `127.0.0.1` |
+| `browserPort` | `7300` |
+| `beaconPort` | `7301` |
+| `beaconBroadcastIntervalSeconds` | `15` |
+| `beaconEnabled` | `false` |
+| `aiAutonomyEnabled` | `false` |
+| `advancedMode` | `false` |
+| `firstRunCompleted` | `false` |
+| `setupMode` | `guided` |
+| `setupCurrentStep` | `welcome` |
 
-The defaults come from `buildDefaultConfiguration()` in `src/MasterControlApp/MasterControlDefaults.cpp`. A blank `mcos.json` gets every field filled with the default.
+The default posture is local-only. Opening MCOS to a trusted LAN is an explicit
+operator action through configuration plus firewall rules.
 
-### Top level
+## `activeProfile`
+
+`activeProfile` describes the host identity MCOS advertises to clients.
+
+Important fields:
+
+| Field | Meaning |
+|---|---|
+| `environmentName` | Host name plus OS description detected at first run. |
+| `preferredBindAddress` | Operator-preferred LAN address for discovery documents and generated client URLs. |
+| `macAddress` | Detected primary network MAC address. |
+| `seededEndpoints` | Initial endpoint descriptors generated from the preferred address. |
+
+Do not confuse `preferredBindAddress` with listener bind fields. It controls
+advertised URLs; listener fields control socket binding.
+
+## `mcpGateway`
+
+`mcpGateway` controls the client-facing MCP gateway.
 
 ```json
 {
-  "instanceId": "mcos-<uuid>",
-  "instanceName": "Master Control Orchestration Server",
-  "bindAddress": "0.0.0.0",
-  "browserPort": 7300,
-  "beaconPort": 7301,
-  "beaconEnabled": true
-}
-```
-
-| Field | Default | When to change |
-|---|---|---|
-| `instanceId` | UUID-backed `mcos-<uuid>` | Override to a recognizable name like `mcos-eng-lab-1`. Stable across restarts. Used as the DNS-SD instance label so multiple hosts on the same LAN don't collide. |
-| `instanceName` | "Master Control Orchestration Server" | Human-friendly name shown in the dashboard header and the WinUI shell. |
-| `bindAddress` | `0.0.0.0` (all interfaces) | Set to a specific LAN-facing IP if the host is multi-homed and you want MCOS bound to a single NIC. |
-| `browserPort` | `7300` | Change if 7300 conflicts. Operator dashboard + admin API live here. |
-| `beaconPort` | `7301` | Change if 7301 conflicts. Legacy UDP discovery beacon. |
-| `beaconEnabled` | `true` | Disable if your LAN has many hosts and the beacon broadcast is noisy. DNS-SD is independent and stays on. |
-
-### `activeProfile` — Advertised IP / host identity
-
-`activeProfile` is the operator-controllable identity layer. It is auto-populated on first run from `detectLocalEnvironment()` (host name, OS string, default MAC, primary IPv4) and seeded with the default endpoints. Two of its fields are commonly tuned:
-
-```json
-"activeProfile": {
-  "environmentName": "PC-GAMING-R7-58 - Windows 10 Pro 25H2 (build 26200)",
-  "macAddress": "9C:6B:00:13:77:83",
-  "preferredBindAddress": "",
-  "seededEndpoints": [ ... ]
-}
-```
-
-| Field | When to change |
-|---|---|
-| `preferredBindAddress` | Set to a specific LAN IPv4 (e.g., `192.168.1.7`) when MCOS is on a dual-stack host and the runtime's auto-pick surfaces an IPv6 ULA in `/api/discovery`. The discovery doc, `/.well-known/mcos.json`, and the DNS-SD records (`_mcos._tcp.local`, `_mcos-mcp._tcp.local`, `_mcos-onboarding._tcp.local`) all advertise this IP **as the primary source** — only falling back to `snapshot.primaryIpAddress` (auto-detect) → `bindAddress` → `127.0.0.1` if it is empty. **(v0.6.4+ behaviour.)** |
-| `environmentName` | Human-readable host description shown in the dashboard environment narrative. |
-| `macAddress` | Auto-detected; safe to leave alone. |
-| `seededEndpoints[].host` | If you change `preferredBindAddress`, also rewrite each seeded endpoint's `host` field so the dashboard's seeded-endpoint surface reports the same IP. The runtime does not re-seed these on a config write. |
-
-**Recipe — set the advertised IP in one shot:**
-
-```powershell
-$cfg = Invoke-RestMethod http://localhost:7300/api/config
-$old = '<auto-detected IPv6 ULA from your machine>'
-$new = '192.168.1.7'
-
-$cfg.activeProfile.preferredBindAddress = $new
-foreach ($ep in $cfg.activeProfile.seededEndpoints) {
-  if ($ep.host -eq $old) { $ep.host = $new }
-}
-
-Invoke-RestMethod -Method POST -Uri http://localhost:7300/api/config `
-  -Body ($cfg | ConvertTo-Json -Depth 14 -Compress) `
-  -ContentType 'application/json'
-```
-
-After the POST, re-read `/api/discovery` and `/.well-known/mcos.json` — `serverIpAddress` and every URL inside should reflect the new IP immediately.
-
-### `mcpGateway`
-
-The MCP gateway substrate. Controls the AI-client-facing surface.
-
-```json
-"mcpGateway": {
   "type": "native",
   "enabled": false,
   "binaryPath": "",
-  "listenHost": "0.0.0.0",
+  "listenHost": "127.0.0.1",
   "listenPort": 8080,
   "mcpPath": "/mcp",
   "healthPath": "/health",
   "databasePath": "",
-  "mode": "lan-trusted"
+  "mode": "local-only",
+  "tlsEnabled": false,
+  "tlsListenPort": 8443,
+  "tlsCertThumbprint": ""
 }
 ```
 
-| Field | Default | When to change |
-|---|---|---|
-| `type` | `native` | Future option `fake` activates the in-tree test adapter. Historically the external substrate was kept for v0.6.x; v0.9.0 retired it.. |
-| `enabled` | `false` | Set to `true` once you have configured a `binaryPath` AND want MCOS to spawn it. With `enabled=true` and an empty `binaryPath`, MCOS runs in supervised-mock mode and reports `health=unknown` honestly. |
-| `binaryPath` | empty | Absolute path to the gateway binary on this host. Required for live gateway behavior. See [Packaging](Packaging-and-Gateway-Binary). |
-| `listenHost` | `0.0.0.0` | What host the native HTTP.sys adapter binds. Same multi-homed considerations as `bindAddress`. |
-| `listenPort` | `8080` | The MCP gateway port. AI clients connect here. Change if 8080 is taken. The MSI's firewall rule and the dashboard auto-template against this value. |
-| `mcpPath` | `/mcp` | Path under the listen host where MCP requests land. Almost never changes. |
-| `healthPath` | `/health` | Path the adapter probes via WinHTTP every N seconds. Almost never changes. |
-| `databasePath` | empty | Reserved for a future substrate that wants a local store, set its path here. Optional. |
-| `mode` | `lan-trusted` | Reserved for future use. Documents the trust posture. |
-
-### `security`
-
-```json
-"security": { "allowOpenLanAccess": false }
-```
-
-| Field | Default | When to change |
-|---|---|---|
-| `allowOpenLanAccess` | `false` | When `true`, the MSI's firewall integration adds an inbound rule for the operator surface (browser port). When `false`, no operator-surface inbound rule is added — useful if you only want the host reachable via loopback for testing. The AI-client gateway rule is independent. |
-
-### `resourcePolicy`
-
-Policy hint for any worker that asks the runtime "how much should I take?". Today the runtime does not enforce these — they document operator intent.
-
-```json
-"resourcePolicy": {
-  "cpuAllocationPercent": 50,
-  "memoryAllocationPercent": 50,
-  "bandwidthAllocationPercent": 100,
-  "storageAllocationPercent": 50,
-  "enforce": false
-}
-```
-
-| Field | Default | When to change |
-|---|---|---|
-| `cpuAllocationPercent` | `50` | Documented hint of what fraction of CPU the worker pools should use. |
-| `memoryAllocationPercent` | `50` | Documented hint. |
-| `bandwidthAllocationPercent` | `100` | Documented hint. |
-| `storageAllocationPercent` | `50` | Documented hint. |
-| `enforce` | `false` | Reserved. When `true`, future work would translate the percentages into Job Object resource limits. Keep `false` for now. |
-
-### `pools` (managed endpoint pools)
-
-Pools register via `POST /api/pools` rather than via direct edit. The runtime persists pools to `mcos.json` so they survive restarts.
-
-```json
-"pools": [
-  {
-    "poolId": "mcos-shell-tools",
-    "kind": "mcp-server",
-    "logicalMcpUrl": "http://localhost:18443/mcp/shell",
-    "template": {
-      "transport": "streamable_http",
-      "executablePath": "C:\\Program Files\\...\\my-mcp-shell.exe",
-      "arguments": [],
-      "environment": {},
-      "workingDirectory": ""
-    },
-    "scalePolicy": {
-      "minInstances": 0,
-      "maxInstances": 4,
-      "maxActiveLeasesPerInstance": 8
-    },
-    "drainPolicy": {
-      "gracefulSeconds": 30,
-      "forceTerminateOnTimeout": true
-    },
-    "healthProbe": {
-      "path": "/health",
-      "intervalSeconds": 10,
-      "timeoutMs": 1500
-    }
-  }
-]
-```
-
-See [Worker Pools](Worker-Pools) for the full model and the `POST /api/pools` flow.
-
-### Other top-level fields
-
-A few legacy fields from ADR-001 are still honored on the operator surface — `clients[]`, `clientConfigBundles[]`, etc. Most operators do not edit these by hand; the dashboard's LAN Identity surface manages them.
-
----
-
-## How to apply changes
-
-| Scope of change | What to do |
+| Field | Current behavior |
 |---|---|
-| Anything in `instance*`, `bind*`, `*Port`, `beacon*`, `security`, `resourcePolicy` | Apply via WinUI Settings or the dashboard. The runtime hot-reads after the API call. |
-| `mcpGateway.*` | Edit `mcos.json` directly. Restart the service so the gateway adapter rebuilds with the new config. |
-| Adding / removing a pool | Use `POST /api/pools` (via dashboard or curl). Live. |
-| Changing a pool's scale policy | `POST /api/pools` upserts the existing pool definition. |
-| Changing fundamental things (`instanceId`, anything ports-related across the gateway) | Restart the service and re-apply firewall rules with the new ports. |
+| `type` | Deserializes legacy values, but the runtime uses the native HTTP.sys adapter. |
+| `enabled` | Controls whether the gateway starts. Fresh installs default to disabled. |
+| `binaryPath` | Retained for backward-compatible JSON round-trips; no external gateway binary is required. |
+| `listenHost` | HTTP gateway bind host. Fresh installs use `127.0.0.1`; LAN mode commonly uses `0.0.0.0` or a specific LAN IP. |
+| `listenPort` | HTTP gateway port. Default `8080`. |
+| `mcpPath` | MCP endpoint path. Default `/mcp`. |
+| `healthPath` | Gateway health path. Default `/health`. |
+| `databasePath` | Retained for backward-compatible JSON round-trips. |
+| `mode` | Posture label such as `local-only`, `trusted-lan`, or `hardened-lan`. |
+| `tlsEnabled` | Enables the HTTPS HTTP.sys prefix when certificate binding is also configured. |
+| `tlsListenPort` | HTTPS gateway port. Default `8443`. |
+| `tlsCertThumbprint` | Operator-provided certificate thumbprint used as the signal that HTTPS may be advertised. |
+
+See [Gateway](Gateway) and [TLS and HTTPS](TLS-and-HTTPS).
+
+## `security`
+
+```json
+{
+  "enableTls": false,
+  "enableAuthentication": true,
+  "allowTroubleshootingBypass": false,
+  "allowOpenLanAccess": false,
+  "securityProtocolsEnabled": true,
+  "securityPosture": "local-only",
+  "trustedRemoteHosts": [],
+  "beaconSigningEnabled": true,
+  "beaconSigningKey": "<generated on fresh installs>",
+  "adminTlsEnabled": false,
+  "adminTlsCertThumbprint": ""
+}
+```
+
+| Field | Current behavior |
+|---|---|
+| `allowOpenLanAccess` | Operator-controlled LAN exposure flag used by setup and firewall guidance. |
+| `securityPosture` | Human-readable posture label. Fresh installs use `local-only`. |
+| `beaconSigningEnabled` | Enables HMAC-SHA256 signing when `beaconSigningKey` is present. |
+| `beaconSigningKey` | Generated on fresh installs; legacy configs may be empty and then broadcast unsigned. |
+| `adminTlsEnabled` | Enables SChannel TLS on the admin listener when a usable cert thumbprint is configured. |
+| `adminTlsCertThumbprint` | SHA-1 thumbprint for a certificate in `Cert:\LocalMachine\My`. |
+
+Admin TLS is separate from gateway TLS. `netsh http add sslcert` applies to the
+HTTP.sys gateway, not to the Winsock admin listener.
+
+## `resourceAllocation`
+
+```json
+{
+  "cpuPercent": 50,
+  "memoryPercent": 50,
+  "bandwidthPercent": 50,
+  "storagePercent": 50
+}
+```
+
+These fields are operator intent for resource allocation. Current worker-pool
+supervision and telemetry use the implemented pool model described in
+[Worker Pools](Worker-Pools).
+
+## `pools`
+
+Pool definitions are persisted under `pools` and managed through
+`GET /api/pools` and `POST /api/pools`. Do not use older field names such as
+`executablePath` or `arguments`; the current model uses:
+
+```json
+{
+  "poolId": "filesystem",
+  "kind": "mcp-server",
+  "logicalMcpUrl": "http://127.0.0.1:8080/mcp/filesystem",
+  "template": {
+    "executable": "npx.cmd",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:\\Work"],
+    "workingDirectory": "",
+    "environment": {},
+    "transport": "stdio",
+    "healthProbe": {
+      "transport": "stdio_handshake",
+      "path": "",
+      "intervalMs": 5000,
+      "timeoutMs": 1500,
+      "unhealthyThreshold": 3
+    }
+  },
+  "scalePolicy": {
+    "minInstances": 0,
+    "maxInstances": 1,
+    "maxActiveLeasesPerInstance": 1,
+    "scaleOutQueueWaitMs": 1500,
+    "scaleInIdleSeconds": 300
+  },
+  "drainPolicy": {
+    "drainTimeoutSeconds": 30,
+    "drainStickySessions": true,
+    "routeNewSessionsToReplacement": true
+  }
+}
+```
+
+Full pool lifecycle and executable resolution behavior live in
+[Worker Pools](Worker-Pools).
+
+## Back Up And Restore
+
+Minimal configuration backup:
 
 ```powershell
-# Restart command for changes that need the service to re-read mcos.json:
+$src = "$env:ProgramData\MasterControlOrchestrationServer\config\master-control-orchestration-server.json"
+$dst = "$env:USERPROFILE\Desktop\mcos-config-$(Get-Date -Format yyyyMMdd-HHmmss).json"
+Copy-Item $src $dst
+```
+
+Restore:
+
+```powershell
+Copy-Item $dst "$env:ProgramData\MasterControlOrchestrationServer\config\master-control-orchestration-server.json" -Force
 Restart-Service MasterControlProgram
 ```
 
----
+## Related Pages
 
-## Backup and restore
-
-Pre-realignment best practice carries forward: `mcos.json` is the single source of truth for runtime config. A complete backup is just:
-
-```powershell
-$backupPath = "$env:USERPROFILE\Desktop\mcos-backup-$(Get-Date -Format 'yyyyMMdd-HHmmss').json"
-Copy-Item "$env:ProgramData\Master Control Orchestration Server\mcos.json" $backupPath
-Write-Host "Saved to: $backupPath"
-```
-
-To restore, copy the backup back into place and restart the service. See [Maintenance](Maintenance) §Backup for a fuller backup that includes runtime state, logs, and operator-edited governance profile content.
-
----
-
-## Where to next
-
-- **Setting it up the first time** → [Quick Start](Quick-Start)
-- **Adding a worker pool** → [Worker Pools](Worker-Pools) §How to add
-- **Firewall rules for these ports** → [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode)
-- **Backups, upgrades, repair** → [Maintenance](Maintenance)
-- **Field-by-field schema source** → `src/MasterControlApp/MasterControlDefaults.cpp`
+[Quick Start](Quick-Start) |
+[TLS and HTTPS](TLS-and-HTTPS) |
+[Gateway](Gateway) |
+[Worker Pools](Worker-Pools) |
+[Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) |
+[Troubleshooting](Troubleshooting)

@@ -1,4 +1,4 @@
-## ADR-003 - MCP Gateway Substrate: Native HTTP.sys Only (v0.9.0+, status-updated)
+# ADR-003 - MCP Gateway Substrate: Native HTTP.sys Only (v0.9.0+, status-updated)
 
 - Status: Accepted (status updated 2026-05-11 — supersedes the v0.7.0 two-substrate state)
 - Original date: 2026-05-02

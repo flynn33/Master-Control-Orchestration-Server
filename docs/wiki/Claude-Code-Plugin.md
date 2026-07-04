@@ -90,7 +90,7 @@ Surfaces a one-screen MCOS health view — service, gateway, pools, presence, go
 /mcos:diagnose
 ```
 
-Hands off to the `mcos-troubleshooter` sub-agent. It walks the appropriate diagnostic chain (service / LAN discovery / supervised-mock gateway / failed pool / empty telemetry / blocked governance) via tool calls.
+Hands off to the `mcos-troubleshooter` sub-agent. It walks the appropriate diagnostic chain (service / LAN discovery / gateway listener / failed pool / empty telemetry / blocked governance) via tool calls.
 
 ### Add a worker pool
 
@@ -122,7 +122,7 @@ Pulls the onboarding profile, presents manual instructions + copyable snippets v
 /mcos:firewall-rules
 ```
 
-Reads live ports from `mcos.json`, surfaces four `New-NetFirewallRule` snippets templated with those ports for the operator to run from elevated PowerShell. MCOS does not run elevated; firewall is operator-driven.
+Reads live ports from the current configuration, surfaces four `New-NetFirewallRule` snippets templated with those ports for the operator to run from elevated PowerShell. MCOS does not run elevated; firewall is operator-driven.
 
 ### Review and approve governance
 
@@ -155,7 +155,7 @@ Filters telemetry events by severity and/or category. Surfaces newest-first with
 /mcos:backup
 ```
 
-Walks the operator through a timestamped backup of `%ProgramData%\Master Control Orchestration Server\`.
+Walks the operator through a timestamped backup of `%ProgramData%\MasterControlOrchestrationServer\`.
 
 ---
 

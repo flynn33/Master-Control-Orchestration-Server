@@ -110,19 +110,29 @@ Sub-agent ports stay loopback unless the maintainer explicitly binds them to a L
 ## 4. Persistence layout
 
 ```
-%ProgramData%\Master Control Orchestration Server\
-├── config\
-│   ├── app-configuration.json        # Runtime config (lanClients, mcpServers, subAgents, …)
-│   └── governance-profile.json       # CLU governance profile (Forsetti doctrine + rules)
-├── exports\
-│   ├── lan-client-<id>.json          # On-demand client config bundles
-│   └── gateway-<platform>.zip        # Generated platform gateway packs
-├── logs\
-│   ├── service-<date>.log            # Service host logs (rotated daily)
-│   └── activity-<date>.jsonl         # Activity ring snapshots (optional)
-└── share\
-    ├── ForsettiManifests\            # 16 module manifests
-    └── clu\                          # CLU defaults (read-only)
+%ProgramData%\MasterControlOrchestrationServer\
+|-- config\
+|   |-- master-control-orchestration-server.json
+|   `-- master-control-program.json        # legacy fallback when present
+|-- state\
+|   |-- install-history.json
+|   |-- apple-operations.json
+|   |-- entitlements.json
+|   |-- activation-state.json
+|   `-- supervisor-assignment.json
+|-- work\
+`-- activity.jsonl
+
+%PUBLIC%\Documents\Master Control Orchestration Server\logs\
+|-- installer\
+|-- runtime\
+|-- supervisor\
+`-- shell\
+
+C:\Program Files\Master Control Orchestration Server\share\MasterControlOrchestrationServer\
+|-- ForsettiManifests\
+|-- web\
+`-- clu\
 ```
 
 ```mermaid
@@ -131,21 +141,24 @@ flowchart TD
     classDef good fill:#031a14,stroke:#1cf2c1,color:#a8efe0;
     classDef warn fill:#1a0f00,stroke:#FFA500,color:#FFE6BF;
 
-    Root[%ProgramData%\Master Control Orchestration Server\]:::accent
-    Root --> Cfg[config\<br/>app-configuration.json<br/>governance-profile.json]:::good
-    Root --> Exp[exports\<br/>lan-client-*.json<br/>gateway-*.zip]:::accent
-    Root --> Logs[logs\<br/>service + activity]:::warn
-    Root --> Share[share\<br/>read-only defaults]:::accent
+    Root[%ProgramData%\MasterControlOrchestrationServer\]:::accent
+    Root --> Cfg[config\<br/>master-control-orchestration-server.json]:::good
+    Root --> State[state\<br/>install + entitlement + assignment state]:::accent
+    Root --> Work[work\<br/>runtime scratch space]:::warn
+    Logs[%PUBLIC%\Documents\<br/>Master Control Orchestration Server\logs\]:::accent
+    Share[C:\Program Files\...\share\MasterControlOrchestrationServer\]:::good
+    Share --> Assets[web + clu + ForsettiManifests]:::good
 ```
 
 ### What gets backed up
 
 | Path | Backup priority | Reason |
 | --- | --- | --- |
-| `config\` | Critical | LanClient roster, privileges, runtime catalog |
-| `exports\` | Medium | Regenerable from `config\` |
-| `logs\` | Low | Audit history; rotates anyway |
-| `share\` | None | Re-installable from MSI |
+| `%ProgramData%\MasterControlOrchestrationServer\config\` | Critical | Runtime configuration, clients, privileges, pools, gateway settings |
+| `%ProgramData%\MasterControlOrchestrationServer\state\` | High | Install history, entitlements, activation, supervisor assignment |
+| `%ProgramData%\MasterControlOrchestrationServer\activity.jsonl` | Medium | Persisted activity ring |
+| `%PUBLIC%\Documents\Master Control Orchestration Server\logs\` | Medium | Persistent diagnostics logs; rotates by component |
+| Install `share\` tree | None | Re-installable from MSI |
 
 ### Legacy path migration
 
@@ -194,7 +207,7 @@ Get-Service MasterControlProgram | Format-List *
 | `LogOnAs` | `LocalSystem` (default — maintainer can change to a service account) |
 | `Path` | `C:\Program Files\Master Control Orchestration Server\MasterControlServiceHost.exe` |
 
-The service runs as `LocalSystem` by default. For tighter posture, change to a dedicated service account with read access to `%ProgramData%\Master Control Orchestration Server\` and bind permissions on the configured ports.
+The service runs as `LocalSystem` by default. For tighter posture, change to a dedicated service account with read access to `%ProgramData%\MasterControlOrchestrationServer\`, write access to the diagnostics log root, and bind permissions on the configured ports.
 
 ---
 
@@ -267,11 +280,11 @@ For the LAN client control plane use case, a single host is the right answer. AI
 > **Q: Can MCOS run alongside other services on the same host?**
 > Yes. It's a well-behaved Windows service. Watch port collisions on `7300/tcp` (admin API + browser surface), `7301/udp` (LAN beacon), and `8080/tcp` (MCP gateway).
 
-> **Q: Why `0.0.0.0` as the default `bindAddress`?**
-> Trusted-LAN posture. Maintainers on tight networks should override to a specific LAN IP via `app-configuration.json` — the bundle resolver respects `preferredBindAddress` regardless.
+> **Q: Why `127.0.0.1` as the default `bindAddress`?**
+> Fresh installs start local-only. Maintainers intentionally opt into LAN reachability by changing `bindAddress`, gateway listener settings, and firewall rules through the Settings panel or `/api/config`.
 
 > **Q: Where does the activity ring live?**
-> In-memory only. 512 most recent events. Restart loses history. Stream the telemetry endpoint or scrape `/api/runtime/activity` periodically for long-term retention.
+> The runtime keeps a capped in-memory ring and persists activity to `%ProgramData%\MasterControlOrchestrationServer\activity.jsonl`. Persistent diagnostics events are written under `%PUBLIC%\Documents\Master Control Orchestration Server\logs\`.
 
 ---
 
