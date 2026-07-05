@@ -23,6 +23,10 @@ ctest --test-dir build\release -C Release --output-on-failure --timeout 300
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Package-MasterControlOrchestrationServer.ps1 -Preset release -SkipBuild
 ```
 
+This proves the source build, tests, package creation, and staged bootstrapper
+preflight for the local tree. It does not make the host deployment-qualified;
+that requires the Gate D/E evidence path in [Deployment Acceptance](Deployment-Acceptance).
+
 The package script reads `VERSION.json`. For the current alpha, the MSI path is:
 
 ```text
@@ -69,6 +73,16 @@ Get-Service MasterControlProgram
 Invoke-RestMethod http://localhost:7300/api/health | ConvertTo-Json
 Invoke-RestMethod http://localhost:7300/api/discovery | ConvertTo-Json -Depth 6
 Invoke-RestMethod http://localhost:7300/api/gateway/status | ConvertTo-Json -Depth 4
+```
+
+For operator evidence, run the non-destructive deployed-runtime probe:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  scripts\Test-MasterControlOrchestrationServerDeployedRuntime.ps1 `
+    -BaseUrl http://localhost:7300 `
+    -OutputDirectory artifacts\deployability-audit\gate-d `
+    -Strict
 ```
 
 Default current configuration path:

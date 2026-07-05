@@ -47,6 +47,21 @@ $base = "http://127.0.0.1:7300"
 
 If any of these fails or surprises you, jump to the matching section below.
 
+For release-readiness evidence, use the non-destructive acceptance probes:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  scripts\Test-MasterControlOrchestrationServerDeployedRuntime.ps1 `
+    -BaseUrl http://localhost:7300 `
+    -OutputDirectory artifacts\deployability-audit\deployed-runtime
+
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  scripts\Test-MasterControlLanDiscoveryFromPeer.ps1 `
+    -ServerHost <mcos-host> `
+    -OutputDirectory artifacts\deployability-audit\gate-e `
+    -Strict
+```
+
 ---
 
 ## 2. LAN client returns 403 unexpectedly

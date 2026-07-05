@@ -356,6 +356,9 @@ if ($preflightResult.exitCode -ne 0) {
 $preflightJson = $null
 if (-not [string]::IsNullOrWhiteSpace($preflightResult.stdout)) {
     $preflightJson = $preflightResult.stdout | ConvertFrom-Json
+    if ($preflightJson.ready -ne $true) {
+        throw "Packaged bootstrapper preflight returned ready=false."
+    }
     $preflightResult.stdout | Set-Content -Path $validationPath -Encoding UTF8
     Copy-Item -Path $validationPath -Destination $bundleValidationPath -Force
 }

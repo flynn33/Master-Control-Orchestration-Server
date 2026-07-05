@@ -8,6 +8,9 @@ The release-management and doc-sync GitHub agents that previously generated part
 
 ### Changed
 
+- Hardened alpha release-readiness metadata, product-gate preflight behavior,
+  bootstrapper JSON CLI compatibility, and operator-gated deployment acceptance
+  evidence paths without claiming Gate D/E certification.
 - Aligned README, docs/wiki source, and live-wiki publication source with the current `A3.11.0` internal-alpha state.
 - Rewrote current operator documentation to distinguish implemented source behavior, alpha validation boundaries, historical release records, and deferred hardening work.
 - Updated configuration and API documentation around the current ProgramData config path, `PATCH /api/config` partial deep-merge semantics, TLS fields, diagnostics routes, plugin toggles, supervisor routes, and dynamic route families.
@@ -28,7 +31,7 @@ The release-management and doc-sync GitHub agents that previously generated part
 
 ### Removed
 
-- **`.github/workflows/release.yml`.** No GitHub releases are cut during alpha. The PHASE-10 no-`workflow_dispatch` rule now applies to `windows-build-test-package.yml` alone; `realignment-discipline.yml`, FORBIDDEN-CONTRACT §6.2, the mcos-contracts audit server, and `Test-MCOSRepositoryMetadata.ps1` were updated in the same change.
+- **`.github/workflows/release.yml`.** Removed from the current alpha release path. Alpha versions are published as GitHub pre-releases with MSI artifacts after the same-SHA Windows Build, Test, and Package product gate passes; operator-host Gates D/E are still required before any deployment-qualified claim. The PHASE-10 no-`workflow_dispatch` rule now applies to `windows-build-test-package.yml` alone; `realignment-discipline.yml`, FORBIDDEN-CONTRACT §6.2, the mcos-contracts audit server, and `Test-MCOSRepositoryMetadata.ps1` were updated in the same change.
 - **All historical release tags** (v0.1.x–v0.4.x rc lines) — none correspond to a published release. Local tags deleted; remote deletion requires operator credentials.
 
 ### Added

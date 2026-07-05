@@ -35,8 +35,8 @@ jobs:
   debug-preset-validation:
     # MasterControlShell.vcxproj is pinned to Platform Toolset v145
     # (Visual Studio 18 / VS2026). `windows-latest` resolves to VS2022
-    # / v143 and fails MSB8020. Keep this runner in lockstep with
-    # windows-build-test-package.yml and release.yml.
+    # / v143 and fails MSB8020. Keep this runner aligned with
+    # windows-build-test-package.yml where toolchain assumptions matter.
     runs-on: windows-2025-vs2026
     steps:
       - name: Check out repository

@@ -4,10 +4,9 @@ name: Windows Build, Test, and Package
 # This workflow is the same-SHA product gate. It MUST stay triggered by
 # `push` and `pull_request` only. DO NOT add `workflow_dispatch` here —
 # manual dispatch would let a maintainer bypass a failing CI run by re-running
-# from a clean state. During alpha no releases are cut (the tag-triggered
-# release workflow was removed at A3.11.0); this gate is the per-commit
-# build/test/package health check. FORBIDDEN-CONTRACT §6.2 greps for the
-# bypass pattern.
+# from a clean state. During alpha, pre-release publication is operator-driven
+# and depends on this same-SHA build/test/package health gate. FORBIDDEN-CONTRACT
+# §6.2 greps for the bypass pattern.
 on:
   push:
     branches: [main]
@@ -259,19 +258,44 @@ jobs:
           # the .msi wraps it but we can't run it from inside the .msi
           # directly. Look in PACKAGE_ROOT first (in case a future change
           # moves it), then fall back to the staging tree.
-          $bootstrapper = Get-ChildItem -Path $env:PACKAGE_ROOT -Recurse -Filter "MasterControlBootstrapper.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $packageRoot = Resolve-Path $env:PACKAGE_ROOT
+          $bootstrapper = Get-ChildItem -Path $packageRoot -Recurse -Filter "MasterControlBootstrapper.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $bootstrapper) {
             $stagingRoot = Resolve-Path 'build/_payload' -ErrorAction SilentlyContinue
             if ($stagingRoot) {
               $bootstrapper = Get-ChildItem -Path $stagingRoot -Recurse -Filter "MasterControlBootstrapper.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
             }
           }
-          if ($bootstrapper) {
-            & $bootstrapper.FullName preflight --json-output 2>&1 | Out-Host
-            Write-Host "Bootstrapper preflight completed (exit: $LASTEXITCODE)"
-          } else {
-            Write-Warning "Bootstrapper binary not found in package output or staging tree - skipping preflight"
+          if (-not $bootstrapper) {
+            Write-Error "MasterControlBootstrapper.exe not found in package output or staging tree; staged preflight cannot run."
+            exit 1
           }
+
+          $payloadDir = $bootstrapper.DirectoryName
+          $preflightOutput = & $bootstrapper.FullName preflight $payloadDir --skip-service --skip-firewall --skip-uninstall-registration --json 2>&1
+          $preflightExit = $LASTEXITCODE
+          $preflightText = ($preflightOutput | Out-String).Trim()
+          $preflightText | Out-Host
+          if ($preflightExit -ne 0) {
+            Write-Error "Bootstrapper staged preflight failed with exit code $preflightExit."
+            exit $preflightExit
+          }
+
+          try {
+            $preflightJson = $preflightText | ConvertFrom-Json
+          } catch {
+            Write-Error "Bootstrapper staged preflight did not emit valid JSON: $($_.Exception.Message)"
+            exit 1
+          }
+
+          if ($preflightJson.ready -ne $true) {
+            Write-Error "Bootstrapper staged preflight returned ready=false."
+            exit 1
+          }
+
+          $preflightPath = Join-Path $packageRoot 'bootstrapper-staged-preflight.json'
+          $preflightJson | ConvertTo-Json -Depth 12 | Set-Content -Path $preflightPath -Encoding UTF8
+          Write-Host "Bootstrapper staged preflight passed and was written to $preflightPath"
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4

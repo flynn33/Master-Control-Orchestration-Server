@@ -143,7 +143,7 @@ Triggered only if a future phase decides to replace the in-process HTTP.sys adap
 
 - FORBIDDEN-CONTRACT §2.1 (no the in-process HTTP.sys adapter coupling outside the adapter pair) automatically extends to the native adapter — same scope rule, two implementations.
 - Forsetti compliance script unchanged (no Forsetti vendoring touched).
-- Release gate (`windows-build-test-package.yml` + `release.yml`) unchanged — same artifact shape, same MSI.
+- Release gate unchanged: `windows-build-test-package.yml` remains the same-SHA product gate and the removed `release.yml` is not part of the current alpha release path.
 - Bump `VERSION.json` per the manifest's `strategy: minor-on-architecture-change` rule (the substrate change qualifies).
 
 ---

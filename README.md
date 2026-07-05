@@ -23,6 +23,11 @@ pre-releases with the MSI installer; the Windows Build, Test, and Package
 workflow is the repository health gate.
 `VERSION.json` is the version authority.
 
+The product gate proves build, test, package creation, and staged bootstrapper
+preflight only. Without operator-authorized target-host Gate D and second-host
+Gate E evidence, the honest status is **Alpha candidate ready for operator
+deployment certification**.
+
 ## Current Alpha State
 
 Implemented in the current tree:
@@ -43,10 +48,11 @@ Implemented in the current tree:
 
 Current limitations:
 
-- MCOS is internal alpha software. Product-level Windows host validation remains
-  required for HTTP.sys binding, TLS binding, MSI installation, service
+- MCOS is internal alpha software. Operator-authorized Windows host validation
+  remains required for HTTP.sys binding, TLS binding, MSI installation, service
   behavior, DNS-SD visibility, and live LAN-client interoperability on each
-  target environment.
+  target environment before any deployment-qualified or certified working
+  internal alpha claim.
 - LAN client authentication is intentionally network-level during alpha:
   `auth=none, trust=lan`. App-layer authentication is deferred to a later
   hardening track.

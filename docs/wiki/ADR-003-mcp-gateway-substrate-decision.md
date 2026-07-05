@@ -79,7 +79,7 @@ If any trigger is observed, the next maintainer runs the migration plan in `docs
 - ADR-002 §2 remains the canonical statement of the gateway-first model. The `IMcpGateway` interface is locked; both substrates must satisfy it.
 - ADR-002 §11 remains in force. Forsetti is sealed; the external substrate is supervised, not vendored. Any future native gateway is first-party MCOS C++ that respects the same vendoring rule.
 - The PHASE-02 honest-fallback rule stays in force: the supervised-mock mode reports `state=configured`, `health=unhealthy`, `message="No gateway binary configured."` and the dashboard renders that honestly. No fake live infrastructure (ADR-002 §9).
-- PHASE-10's release gate stays in force. The CI pair (`windows-build-test-package.yml` + `release.yml`) does not change shape; whichever substrate is configured is exercised by the gate.
+- PHASE-10's release gate stays in force. `windows-build-test-package.yml` remains the same-SHA product gate; the removed `release.yml` is not part of the current alpha release path. Whichever substrate is configured is exercised by the product gate.
 
 ### What this ADR does explicitly change
 

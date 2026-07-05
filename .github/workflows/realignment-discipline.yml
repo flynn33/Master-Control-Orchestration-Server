@@ -143,7 +143,8 @@ jobs:
           # not be workflow_dispatch-able. Manual dispatch would let a
           # maintainer re-run the gate from a clean state to bypass a
           # failure. The tag-triggered release workflow was removed at
-          # A3.11.0 - no GitHub releases are cut while MCOS is in alpha.
+          # A3.11.0; alpha pre-release publication depends on this
+          # same-SHA product gate.
           fail=0
           for f in .github/workflows/windows-build-test-package.yml; do
             if [ ! -f "$f" ]; then

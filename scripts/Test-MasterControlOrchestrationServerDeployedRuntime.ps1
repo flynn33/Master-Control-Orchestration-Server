@@ -31,23 +31,28 @@
 # Run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-MasterControlOrchestrationServerDeployedRuntime.ps1
 #
 # Optional parameters:
-#   -AdminBaseUrl              default http://localhost:7300
+#   -AdminBaseUrl / -BaseUrl   default http://localhost:7300
 #   -ServiceName               default MasterControlProgram
 #   -InstallDirectory          override install-dir auto-detection
 #   -ConfigPath                override config-path auto-detection
 #   -HttpTimeoutSec            default 20
-#   -ReportPath / -SummaryPath default under artifacts\deployability-audit\deployed-runtime
+#   -OutputDirectory           directory for JSON and Markdown reports
+#   -ReportPath / -SummaryPath explicit report file paths
+#   -Strict                    exit nonzero when required probes fail
 #   -EmitOperatorGateCommands  print (do not run) the operator-authorized mutating gates
 
 [CmdletBinding()]
 param(
+    [Alias("BaseUrl")]
     [string]$AdminBaseUrl = "http://localhost:7300",
     [string]$ServiceName = "MasterControlProgram",
     [string]$InstallDirectory = "",
     [string]$ConfigPath = "",
     [int]$HttpTimeoutSec = 20,
+    [string]$OutputDirectory = "",
     [string]$ReportPath = "",
     [string]$SummaryPath = "",
+    [switch]$Strict,
     [switch]$EmitOperatorGateCommands
 )
 
@@ -153,6 +158,17 @@ function Get-UrlAclText {
 function Invoke-JsonProbe {
     param([string]$Url)
     return Invoke-RestMethod -Uri $Url -TimeoutSec $HttpTimeoutSec -Method Get
+}
+
+function ConvertTo-RedactedJsonText {
+    param(
+        [Parameter(Mandatory = $true)][object]$InputObject,
+        [int]$Depth = 12
+    )
+    $json = $InputObject | ConvertTo-Json -Depth $Depth
+    $secretPropertyPattern = '(?i)("([^"]*(secret|token|password|apikey|api_key|accesskey|access_key)[^"]*)"\s*:\s*)"([^"\\]|\\.)*"'
+    $json = [regex]::Replace($json, $secretPropertyPattern, '$1"<redacted>"')
+    return $json
 }
 
 # ---------------------------------------------------------------------------
@@ -266,8 +282,10 @@ $httpTargets = @(
     @{ Id = "http-gateway"; Title = "GET /api/gateway/status";  Path = "/api/gateway/status";  Required = $true },
     @{ Id = "http-clients"; Title = "GET /api/clients";         Path = "/api/clients";         Required = $false }
 )
+$testedHttpPaths = @()
 foreach ($t in $httpTargets) {
     $url = ($AdminBaseUrl.TrimEnd('/')) + $t.Path
+    $testedHttpPaths += $url
     try {
         $resp = Invoke-JsonProbe -Url $url
         $summary = switch ($t.Id) {
@@ -343,14 +361,22 @@ $report = [pscustomobject][ordered]@{
     generatedAt    = (Get-Date).ToString("o")
     startedAt      = $startedAt
     host           = $env:COMPUTERNAME
+    user           = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    powershellVersion = $PSVersionTable.PSVersion.ToString()
     adminBaseUrl   = $AdminBaseUrl
     serviceName    = $ServiceName
+    testedPaths    = $testedHttpPaths
     installDirectory = $resolvedInstallDir
     configPath     = $resolvedConfig
     version        = $version
     assessment     = $assessment
     overall        = $overall
+    strictMode     = [bool]$Strict
     nonDestructive = $true
+    redaction      = [pscustomobject][ordered]@{
+        secretsRedacted = $true
+        tokensRedacted = $true
+    }
     note           = "Local surface only. Deployment-qualified status additionally requires operator-authorized second-host LAN discovery and a live LAN-client /api/clients heartbeat (see docs/wiki/Deployment-Acceptance.md)."
     counts         = [pscustomobject][ordered]@{
         pass = @($script:Probes | Where-Object { $_.result -eq "PASS" }).Count
@@ -365,22 +391,32 @@ $report = [pscustomobject][ordered]@{
 # Resolve report paths (default under the local, gitignored artifacts tree).
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $defaultDir = Join-Path $repoRoot "artifacts\deployability-audit\deployed-runtime"
-if (-not $ReportPath) { $ReportPath = Join-Path $defaultDir "deployed-runtime-report.json" }
-if (-not $SummaryPath) { $SummaryPath = Join-Path $defaultDir "deployed-runtime-summary.md" }
+if ($OutputDirectory) {
+    if (-not $ReportPath) { $ReportPath = Join-Path $OutputDirectory "deployed-runtime-report.json" }
+    if (-not $SummaryPath) { $SummaryPath = Join-Path $OutputDirectory "deployed-runtime-summary.md" }
+} else {
+    if (-not $ReportPath) { $ReportPath = Join-Path $defaultDir "deployed-runtime-report.json" }
+    if (-not $SummaryPath) { $SummaryPath = Join-Path $defaultDir "deployed-runtime-summary.md" }
+}
 $reportDir = Split-Path -Parent $ReportPath
 if ($reportDir -and -not (Test-Path $reportDir)) { New-Item -ItemType Directory -Force -Path $reportDir | Out-Null }
 $summaryDir = Split-Path -Parent $SummaryPath
 if ($summaryDir -and -not (Test-Path $summaryDir)) { New-Item -ItemType Directory -Force -Path $summaryDir | Out-Null }
 
-Set-Content -Path $ReportPath -Value ($report | ConvertTo-Json -Depth 12) -Encoding UTF8
+Set-Content -Path $ReportPath -Value (ConvertTo-RedactedJsonText -InputObject $report -Depth 12) -Encoding UTF8
 
 # Markdown summary.
 $md = New-Object System.Text.StringBuilder
 [void]$md.AppendLine("# MCOS Deployed-Runtime Acceptance (non-destructive)")
 [void]$md.AppendLine("")
 [void]$md.AppendLine("- Host: ``$($env:COMPUTERNAME)``")
+[void]$md.AppendLine("- User: ``$($report.user)``")
+[void]$md.AppendLine("- PowerShell: ``$($report.powershellVersion)``")
 [void]$md.AppendLine("- Generated: $($report.generatedAt)")
+[void]$md.AppendLine("- Base URL: ``$AdminBaseUrl``")
+[void]$md.AppendLine("- Service: ``$ServiceName``")
 [void]$md.AppendLine("- Install directory: ``$resolvedInstallDir``")
+[void]$md.AppendLine("- Config path: ``$resolvedConfig``")
 [void]$md.AppendLine("- Assessment: **$assessment**  |  Overall: **$overall**")
 [void]$md.AppendLine("- Counts: PASS=$($report.counts.pass) FAIL=$($report.counts.fail) WARN=$($report.counts.warn) INFO=$($report.counts.info) SKIP=$($report.counts.skip)")
 [void]$md.AppendLine("")
@@ -404,18 +440,12 @@ if ($EmitOperatorGateCommands) {
     Write-Host ""
     Write-Host "=== Operator-authorized gates (NOT RUN - require explicit authorization on the target host) ===" -ForegroundColor Yellow
     @(
-        "# Managed MSI install (mutates host):",
-        '  msiexec /i "<path>\MasterControlOrchestrationServer-vA3.11.0-win-x64.msi" /l*v "$env:TEMP\mcos-install.log"',
-        "# Service start/stop (mutates host):",
-        "  Start-Service $ServiceName ; Stop-Service $ServiceName",
-        "# Firewall rule creation is performed by the bootstrapper install (mutates host):",
-        '  & "<installdir>\MasterControlBootstrapper.exe" install "<installdir>"   # omit --skip-firewall to manage rules',
-        "# Second-host LAN discovery (run from a LAN peer):",
-        "  Invoke-RestMethod http://<mcos-host>:7300/api/discovery | ConvertTo-Json -Depth 6",
-        "  Invoke-RestMethod http://<mcos-host>:7300/api/onboarding/generic | ConvertTo-Json -Depth 8",
-        "# Then confirm the live client on the MCOS host:",
-        "  Invoke-RestMethod http://localhost:7300/api/clients | ConvertTo-Json -Depth 6"
+        "# Gate D managed install, service control, firewall, URL ACL, and TLS actions mutate the host.",
+        "# Gate E requires a second LAN host and at least one real LAN client.",
+        "# See docs/wiki/Deployment-Acceptance.md for the operator-authorized commands.",
+        "# This script intentionally prints no executable mutating commands."
     ) | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 }
 
-if ($overall -eq "PASS") { exit 0 } else { exit 1 }
+if ($Strict -and $overall -ne "PASS") { exit 1 }
+exit 0

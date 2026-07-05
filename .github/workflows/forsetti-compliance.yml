@@ -15,8 +15,8 @@ jobs:
     # not compile native code itself, but `windows-2025-vs2026` is the
     # canonical runner across this repo so toolchain assumptions and
     # PowerShell host versions match the product gate exactly. Keep
-    # this in lockstep with windows-build-test-package.yml and
-    # release.yml.
+    # this aligned with windows-build-test-package.yml where runner
+    # and toolchain assumptions matter.
     runs-on: windows-2025-vs2026
 
     steps:

@@ -62,7 +62,8 @@ install, service, firewall, URL ACL, TLS, or uninstall changes.
 # Deployed-runtime probe: install dir, config, service, /api/health, /api/discovery,
 # /api/gateway/status, /api/clients, firewall-rule presence, URL ACL presence.
 powershell -NoProfile -ExecutionPolicy Bypass -File `
-  scripts\Test-MasterControlOrchestrationServerDeployedRuntime.ps1
+  scripts\Test-MasterControlOrchestrationServerDeployedRuntime.ps1 `
+    -OutputDirectory artifacts\deployability-audit\deployed-runtime
 
 # Discovery / DNS-SD / UDP-beacon self-test (local surface).
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-mcos-discovery.ps1
@@ -104,6 +105,12 @@ Invoke-RestMethod http://localhost:7300/api/health          | ConvertTo-Json
 Invoke-RestMethod http://localhost:7300/api/discovery       | ConvertTo-Json -Depth 6
 Invoke-RestMethod http://localhost:7300/api/gateway/status  | ConvertTo-Json -Depth 4
 
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  scripts\Test-MasterControlOrchestrationServerDeployedRuntime.ps1 `
+    -BaseUrl http://localhost:7300 `
+    -OutputDirectory artifacts\deployability-audit\gate-d `
+    -Strict
+
 # Firewall + URL ACL should match the install options (checkbox on = rules created):
 Get-NetFirewallRule -DisplayName 'Master Control Orchestration Server - *' |
   Format-Table DisplayName, Enabled, Direction, Action, Profile -AutoSize
@@ -123,11 +130,13 @@ and authorizes the test.
 
 ```powershell
 # From the LAN peer (replace <mcos-host>):
-Invoke-RestMethod http://<mcos-host>:7300/api/discovery         | ConvertTo-Json -Depth 6
-Invoke-RestMethod http://<mcos-host>:7300/api/gateway/status    | ConvertTo-Json -Depth 4
-Invoke-RestMethod http://<mcos-host>:7300/api/onboarding/generic | ConvertTo-Json -Depth 8
-# DNS-SD: dns-sd -B _mcos._tcp (macOS), avahi-browse _mcos._tcp (Linux),
-#         or Resolve-DnsName _mcos._tcp.local -Type PTR -LlmnrFallback (Windows).
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  scripts\Test-MasterControlLanDiscoveryFromPeer.ps1 `
+    -ServerHost <mcos-host> `
+    -AdminPort 7300 `
+    -GatewayPort 8080 `
+    -OutputDirectory artifacts\deployability-audit\gate-e `
+    -Strict
 ```
 
 Confirms LAN reachability and that DNS-SD/beacon advertising crosses the host
@@ -147,6 +156,20 @@ The client must appear with a fresh `lastSeenUtc` / presence timestamp. This is
 the only evidence that makes the host **deployment-qualified**. Do not fabricate
 or infer it — it requires a real client round trip.
 
+After the client connects, the peer evidence script can also enforce the client
+presence check:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  scripts\Test-MasterControlLanDiscoveryFromPeer.ps1 `
+    -ServerHost <mcos-host> `
+    -AdminPort 7300 `
+    -GatewayPort 8080 `
+    -OutputDirectory artifacts\deployability-audit\gate-e-client `
+    -Strict `
+    -RequireClient
+```
+
 ## 8. Evidence collection and report paths
 
 Store acceptance evidence under the local (gitignored) artifacts tree:
@@ -157,17 +180,22 @@ artifacts/deployability-audit/
   audit.json                                # machine-readable ledger
   deployed-runtime/deployed-runtime-report.json   # Gate A2 JSON
   deployed-runtime/deployed-runtime-summary.md     # Gate A2 Markdown
+  gate-d/deployed-runtime-report.json              # Gate D strict JSON
+  gate-d/deployed-runtime-summary.md               # Gate D strict Markdown
   preflight.json                            # Gate D bootstrapper preflight
   local-health.json / local-discovery.json / gateway-status.json
   firewall-rules.txt / urlacl.txt
-  lan-peer-discovery.json                   # Gate E (when authorized)
+  gate-e/lan-peer-discovery-report.json     # Gate E JSON (when authorized)
+  gate-e/lan-peer-discovery-summary.md      # Gate E Markdown (when authorized)
   lan-client-evidence.json                  # §7 (when authorized)
 ```
 
 `scripts\Test-MasterControlOrchestrationServerDeployedRuntime.ps1` writes the
-`deployed-runtime/*` reports by default; pass `-ReportPath` / `-SummaryPath` to
-redirect. Pass `-EmitOperatorGateCommands` to print (never run) the Gate D/E
-commands.
+`deployed-runtime/*` reports by default; pass `-OutputDirectory`, `-ReportPath`,
+or `-SummaryPath` to redirect. `scripts\Test-MasterControlLanDiscoveryFromPeer.ps1`
+writes peer JSON and Markdown evidence from the second host. Do not commit
+machine-specific deployment evidence unless the operator explicitly instructs
+that evidence be retained in project docs.
 
 ## 9. Pass/fail matrix
 
@@ -182,7 +210,8 @@ commands.
 
 **Deployment-qualified** requires A1, A2, B, C, D, and E all passing with captured
 evidence. If the operator does not authorize D or E, the honest status is
-**deployment-ready pending operator acceptance**, not deployment-qualified.
+**Alpha candidate ready for operator deployment certification**, not
+deployment-qualified or certified working internal alpha.
 
 ## 10. Known alpha limitations
 
