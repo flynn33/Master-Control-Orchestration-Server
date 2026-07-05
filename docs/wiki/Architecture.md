@@ -363,7 +363,7 @@ flowchart LR
     I --> J[MSI artifact + bootstrapper preflight]:::gate
 ```
 
-The same pipeline runs in CI via `.github/workflows/windows-build-test-package.yml` on every push and PR. No GitHub releases are cut while MCOS is in alpha — the CI gate is the per-commit health check; see [Release Gate](Release-Gate).
+The same pipeline runs in CI via `.github/workflows/windows-build-test-package.yml` on every push and PR, which is the per-commit health check. Alpha versions are published as GitHub pre-releases with the MSI installer; see [Release Gate](Release-Gate).
 
 ---
 

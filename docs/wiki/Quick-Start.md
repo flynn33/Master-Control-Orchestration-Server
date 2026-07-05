@@ -64,7 +64,7 @@ toggle or `scripts\Register-McosControlPlugin.ps1` after install.
 ```powershell
 Get-Service MasterControlProgram
 
-& "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output
+& "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json
 
 Invoke-RestMethod http://localhost:7300/api/health | ConvertTo-Json
 Invoke-RestMethod http://localhost:7300/api/discovery | ConvertTo-Json -Depth 6

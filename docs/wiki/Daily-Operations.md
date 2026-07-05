@@ -36,7 +36,7 @@ Invoke-RestMethod http://localhost:7300/api/gateway/status | ConvertTo-Json
 Invoke-RestMethod http://localhost:7300/api/gateway/health | ConvertTo-Json
 
 # Bootstrapper preflight (validates payload + service + firewall + registry)
-& "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output
+& "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json
 ```
 
 A green health check means: service `Running`, `/api/health` returns `status=ok`, gateway `state` is `running` or `configured`, preflight reports zero issues.

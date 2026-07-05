@@ -55,10 +55,10 @@ Invoke-RestMethod -Method POST -Uri http://localhost:7300/api/config -Body $body
 Stop-Service MasterControlProgram
 ```
 
-There is no current toggle to disable DNS-SD without stopping the service. If you need MCOS up but invisible on the LAN, drop the firewall rules:
+There is no current toggle to disable DNS-SD without stopping the service. If you need MCOS up but invisible on the LAN, disable the firewall rules. Cover both the installer-created rules and any manually-created fallback rules:
 
 ```powershell
-Get-NetFirewallRule -DisplayName 'MCOS *' | Disable-NetFirewallRule
+Get-NetFirewallRule -DisplayName 'Master Control Orchestration Server - *','MCOS *' -ErrorAction SilentlyContinue | Disable-NetFirewallRule
 ```
 
 Re-enable with `Enable-NetFirewallRule`.
@@ -280,7 +280,7 @@ This is ADR-002 §1 / §3 declared in the wire format. Clients that ship a Bonjo
 
 ## 8. Firewall scoping
 
-DNS-SD uses **UDP 5353**. The legacy beacon uses **UDP 24567** (configurable). Without inbound rules on the `Private,Domain` profiles, MCOS advertises but the broadcasts are dropped at the host firewall.
+DNS-SD uses **UDP 5353**. The legacy beacon uses **UDP 7301** (configurable via `beaconPort`). Without inbound rules on the `Private,Domain` profiles, MCOS advertises but the broadcasts are dropped at the host firewall.
 
 The MSI's "Configure Windows Firewall rules" checkbox creates four rules covering both DNS-SD UDP 5353 and the beacon UDP port (in addition to the gateway TCP and operator TCP ports). See [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) for the snippets and the manual fallback if the checkbox was unticked.
 
@@ -298,7 +298,7 @@ flowchart TB
     A1 -->|Running| B[Firewall rules?]:::step
     A1 -->|Stopped| Aerr[Start the service]:::bad
 
-    B --> B1{Get-NetFirewallRule<br/>-DisplayName 'MCOS *'}
+    B --> B1{Get-NetFirewallRule<br/>-DisplayName 'Master Control<br/>Orchestration Server - *'}
     B1 -->|All four present| C[Profile=Private/Domain?]:::step
     B1 -->|Missing| Berr[Apply manual snippets<br/>or reinstall MSI with checkbox on]:::bad
 

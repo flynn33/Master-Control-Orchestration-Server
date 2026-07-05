@@ -462,7 +462,7 @@ The official Model Context Protocol reference servers from `@modelcontextprotoco
 
 **Prerequisites:**
 - Node.js on PATH (the supervisor will spawn `C:\Program Files\nodejs\npx.cmd`).
-- The Windows Firewall rules from [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) (the four `MCOS *` rules).
+- The Windows Firewall rules from [Windows Firewall and LAN Mode](Windows-Firewall-LAN-Mode) (the four `Master Control Orchestration Server - *` rules a default MSI install creates, or the `MCOS *` rules if applied via the manual fallback snippets).
 
 **Recipe — register all four official MCP servers as `mcp-server` pools, then trigger spawn:**
 ```powershell

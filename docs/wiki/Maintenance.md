@@ -48,7 +48,7 @@ Start-Service MasterControlProgram
 Then verify:
 
 ```powershell
-& "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output
+& "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json
 Invoke-RestMethod http://localhost:7300/api/health | ConvertTo-Json
 ```
 
@@ -73,7 +73,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File `
 
 ```powershell
 msiexec /fa "<path-to-current-or-newer-msi>" /l*v "$env:TEMP\mcos-repair.log"
-& "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json-output
+& "C:\Program Files\Master Control Orchestration Server\MasterControlBootstrapper.exe" preflight --json
 ```
 
 Repair reinstalls MSI payload files and custom-action side effects. It does not
@@ -90,11 +90,15 @@ if ($product) {
 }
 ```
 
-Optional cleanup after uninstall:
+A default uninstall preserves ProgramData configuration/state and, when firewall
+management was not skipped, already removes the firewall rules (the
+`Master Control Orchestration Server - …` rules plus a `MCOS *` sweep). Use the
+optional cleanup below only to purge preserved data, or to remove firewall rules
+left behind by a `--skip-firewall` install or created manually:
 
 ```powershell
 Remove-Item -Recurse -Force "$env:ProgramData\MasterControlOrchestrationServer" -ErrorAction SilentlyContinue
-Get-NetFirewallRule -DisplayName "MCOS *" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+Get-NetFirewallRule -DisplayName 'Master Control Orchestration Server - *','MCOS *' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 ```
 
 ## Reset Configuration
