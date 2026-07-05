@@ -3091,7 +3091,7 @@ IntegrationOptions parseOptions(int argc, wchar_t* argv[], int startIndex) {
             options.purgeInstallDirectory = true;
         } else if (argument == L"--purge-data") {
             options.purgeData = true;
-        } else if (argument == L"--json") {
+        } else if (argument == L"--json" || argument == L"--json-output") {
             options.jsonOutput = true;
         }
     }

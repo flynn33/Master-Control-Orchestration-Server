@@ -50,6 +50,8 @@ ProductVersion. `A3.11.0` maps to `3.11.0.0`.
   documentation or maintenance changes.
 - Each alpha version is published as a GitHub pre-release with the MSI installer.
 - The Windows Build, Test, and Package workflow is the per-commit health gate.
+- The product gate proves build/package/staged preflight only; deployment
+  certification still requires operator-authorized Gate D/E evidence.
 - Historical semver-alpha entries remain historical and should not be presented
   as the current release.
 

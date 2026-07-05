@@ -1,20 +1,20 @@
 {
   "scheme": "alpha-stage: <Stage><A>.<Feature>.<patch/hotfix>",
-  "strategy": "A-on-alpha-iteration, Feature-on-feature, patch-on-hotfix; alpha versions are published as GitHub pre-releases with the MSI installer",
+  "strategy": "A-on-alpha-iteration, Feature-on-feature, patch-on-hotfix; alpha versions are published as GitHub pre-releases with the MSI installer after the same-SHA product gate passes",
   "current_version": "A3.11.0",
   "current_tag": "vA3.11.0",
   "released_at": "2026-07-03",
-  "last_release_commit": "71d8f7f774745bfcddd7c8ac710135a405e638de",
+  "last_release_commit": "a5c33325c0f2841ff7f3c5aa151534f19d51bbd9",
   "history": [
     {
       "version": "A3.11.0",
       "tag": "vA3.11.0",
       "released_at": "2026-07-03",
-      "commit": "pending",
-      "summary": "Version-scheme migration and alpha-stage release-policy simplification. Adopts the alpha-stage scheme <Stage><A>.<Feature>.<patch/hotfix>: A3.11.0 (third alpha, feature 11, patch 0) re-expresses 0.11.0-alpha.3 without changing the tree it names. The tag-triggered GitHub release workflow (release.yml) is removed - nothing has been released during alpha and GitHub Releases are deferred until MCOS leaves alpha; windows-build-test-package.yml remains the same-SHA build/test/package CI gate on every push and PR and still must not be manually dispatchable. All historical release tags (v0.1.x-v0.4.x rc lines) are cleared because none correspond to a published release. A new .gitattributes makes LF the canonical text encoding so Windows checkouts with core.autocrlf=true no longer break the markdown-link gate or protected-path hash comparisons.",
+      "commit": "a5c33325c0f2841ff7f3c5aa151534f19d51bbd9",
+      "summary": "Version-scheme migration and alpha-stage release-policy simplification. Adopts the alpha-stage scheme <Stage><A>.<Feature>.<patch/hotfix>: A3.11.0 (third alpha, feature 11, patch 0) re-expresses 0.11.0-alpha.3 without changing the tree it names. Alpha versions are published as GitHub pre-releases with the MSI installer after the same-SHA Windows Build, Test, and Package product gate passes. The removed tag-triggered release.yml workflow is not part of the current alpha release path; windows-build-test-package.yml remains the build/test/package CI gate on every push and PR and still must not be manually dispatchable. All historical release tags (v0.1.x-v0.4.x rc lines) are cleared because none correspond to a published release. A new .gitattributes makes LF the canonical text encoding so Windows checkouts with core.autocrlf=true no longer break the markdown-link gate or protected-path hash comparisons.",
       "entries": [
         "docs(version): adopt the alpha-stage scheme <Stage><A>.<Feature>.<patch/hotfix>; current version A3.11.0 re-expresses 0.11.0-alpha.3. CMakeLists.txt strips the stage prefix for project(VERSION) (numeric base 3.11.0); installer/Build-Msi.ps1 maps A<a>.<feature>.<patch> to MSI ProductVersion <a>.<feature>.<patch>.0 so alpha iterations, features, and patches all order correctly for Windows Installer upgrades.",
-        "ci(release): remove .github/workflows/release.yml. No GitHub releases are cut during alpha. The PHASE-10 no-workflow_dispatch rule now applies to windows-build-test-package.yml alone; realignment-discipline.yml, FORBIDDEN-CONTRACT 6.2, the mcos-contracts audit server, and Test-MCOSRepositoryMetadata.ps1 were updated in the same change.",
+        "ci(release): removed .github/workflows/release.yml from the current alpha release path. Alpha versions are published as GitHub pre-releases with MSI artifacts after the same-SHA product gate passes. The PHASE-10 no-workflow_dispatch rule now applies to windows-build-test-package.yml alone; realignment-discipline.yml, FORBIDDEN-CONTRACT 6.2, the mcos-contracts audit server, and Test-MCOSRepositoryMetadata.ps1 were updated in the same change.",
         "chore(tags): clear all historical release tags (v0.1.x-v0.4.x rc lines) - none correspond to a published release. Local tags deleted; remote deletion requires operator credentials.",
         "build(repo): add .gitattributes (* text=auto eol=lf; png/ico/bmp/rtf binary) making LF the canonical checkout encoding on every host.",
         "docs(wiki): Release-Gate.md rewritten as the alpha-stage CI-gate page; Versions.md, Home.md, Quick-Start.md, README.md, CHANGELOG.md, and Architecture.md updated to A3.11.0."

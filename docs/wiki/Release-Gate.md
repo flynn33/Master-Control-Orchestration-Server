@@ -38,6 +38,12 @@ The ProductVersion mapping is implemented in `installer/Build-Msi.ps1`.
 The product gate must not use `workflow_dispatch` as a bypass for same-SHA
 validation. Repository checks enforce that invariant.
 
+This gate proves build, test, packaging, and staged bootstrapper preflight for
+the commit. It does not prove target-host MSI install, Windows service health,
+firewall/URL ACL correctness, second-host LAN discovery, or real client
+registration. Those are operator-authorized Gates D/E in
+[Deployment Acceptance](Deployment-Acceptance).
+
 ## Local Equivalent
 
 ```powershell

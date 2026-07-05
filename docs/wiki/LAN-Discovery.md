@@ -33,6 +33,20 @@ Test-NetConnection -ComputerName <mcos-host-ip> -Port 8080
 Invoke-RestMethod http://<mcos-host>:7300/.well-known/mcos.json | ConvertTo-Json -Depth 6
 ```
 
+For Gate E evidence, prefer the peer probe because it captures HTTP, optional
+DNS-SD, optional UDP beacon, and Markdown/JSON reports in one non-destructive
+run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  scripts\Test-MasterControlLanDiscoveryFromPeer.ps1 `
+    -ServerHost <mcos-host> `
+    -AdminPort 7300 `
+    -GatewayPort 8080 `
+    -OutputDirectory artifacts\deployability-audit\gate-e `
+    -Strict
+```
+
 Expected:
 - `dns-sd` / `avahi-browse` shows `mcos-<instanceId>` advertised
 - `Test-NetConnection` returns `TcpTestSucceeded: True` for port 8080 (and 7300 for the operator surface)
