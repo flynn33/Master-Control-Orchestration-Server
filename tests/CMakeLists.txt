@@ -9,6 +9,7 @@ add_executable(MasterControlOrchestrationServerTests
 target_link_libraries(MasterControlOrchestrationServerTests PRIVATE
     MasterControlApp
     ws2_32
+    unofficial::sqlite3::sqlite3
 )
 
 target_include_directories(MasterControlOrchestrationServerTests PRIVATE
@@ -38,6 +39,11 @@ add_custom_command(TARGET MasterControlOrchestrationServerTests POST_BUILD
         $<TARGET_RUNTIME_DLLS:MasterControlOrchestrationServerTests>
         $<TARGET_FILE_DIR:MasterControlOrchestrationServerTests>
     COMMAND_EXPAND_LISTS)
+
+# testUnknownWorkerSpecializationFailsClosed spawns the built worker exe (it
+# locates the binary relative to its own module path under the build tree), so
+# the worker must be built before the tests run.
+add_dependencies(MasterControlOrchestrationServerTests MasterControlBaselineToolsWorker)
 
 add_test(
     NAME MasterControlOrchestrationServerTests

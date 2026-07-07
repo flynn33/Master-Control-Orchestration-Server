@@ -316,9 +316,18 @@ struct WorkingAlphaReadinessIssue final {
     std::string detail;    // one-sentence explanation
 };
 
+// Per-signal provenance: the value each readiness signal was evaluated to.
+// Lets a report distinguish an observed-good signal from an unpopulated one
+// (fail-closed defaults mean an unpopulated signal reads as its blocking value).
+struct WorkingAlphaReadinessSignal final {
+    std::string name;      // signal identifier (e.g. "gatewayRunning")
+    bool observed = false; // the value the assessment used
+};
+
 struct WorkingAlphaReadinessReport final {
     bool ready = false;
     std::vector<WorkingAlphaReadinessIssue> blockingIssues;
+    std::vector<WorkingAlphaReadinessSignal> signals;  // per-signal provenance
     std::string summary;
     std::string evaluatedAtUtc;
 };
@@ -1795,9 +1804,15 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     detail)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    WorkingAlphaReadinessSignal,
+    name,
+    observed)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     WorkingAlphaReadinessReport,
     ready,
     blockingIssues,
+    signals,
     summary,
     evaluatedAtUtc)
 

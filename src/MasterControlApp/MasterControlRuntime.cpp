@@ -19,6 +19,7 @@
 #include "MasterControl/MasterControlDiagnostics.h"
 #include "ForsettiPlatform/DefaultPlatformServices.h"
 #include "MasterControl/AuthenticatedRequestContext.h"
+#include "MasterControl/AlphaFeatureMatrix.h"
 #include "MasterControl/EndpointAdvertisement.h"
 #include "MasterControl/ILanClientAccessService.h"
 #include "MasterControl/MasterControlDefaults.h"
@@ -2374,19 +2375,15 @@ public:
         // change because the loader replays whatever is on disk. The
         // prune is idempotent and only rewrites the config file when
         // it actually removes something, so subsequent boots are no-ops.
-        static const std::vector<std::string> kDeprecatedEndpointIds = {
-            "playwright",
-            "docker-control"
-        };
+        // Removed-feature IDs come from the single source of truth in
+        // AlphaFeatureMatrix.h so runtime pruning, pool registration, and the
+        // test suite cannot drift.
         auto& seeded = state_->configuration.activeProfile.seededEndpoints;
         const auto sizeBefore = seeded.size();
         seeded.erase(
             std::remove_if(seeded.begin(), seeded.end(),
                 [](const RuntimeEndpoint& ep) {
-                    for (const auto& deprecated : kDeprecatedEndpointIds) {
-                        if (ep.id == deprecated) return true;
-                    }
-                    return false;
+                    return isRemovedAlphaFeatureId(ep.id);
                 }),
             seeded.end());
         if (seeded.size() != sizeBefore) {
@@ -15682,16 +15679,14 @@ bool MasterControlApplication::Impl::initialize() {
         registerSubAgentPool("nexus",      "Nexus — coordination + discovery + clients");
         registerSubAgentPool("watchtower", "Watchtower — health + activity monitoring");
 
-        // v0.9.68: external-dependency MCPs registered as default
-        // pools too. The multi-spec worker exposes a small status
-        // surface (docker-control: docker.status / docker.list_containers
-        // shelling out to docker.exe; local-database: db.status /
-        // db.set_connection_string persisting via persistent-context).
-        // These pools are installed_and_supervised because the worker
-        // itself is in-tree -- the underlying capability (Docker
-        // Desktop / a configured DSN) is the operator concern, but
-        // the MCP wire is live.
-        registerWorkerPool("docker-control", "Docker Control MCP",   2);
+        // local-database is a first-class in-tree specialization pool: the
+        // multi-spec worker exposes a real read-only SQLite surface
+        // (db.status / db.list_tables / db.describe_table / db.query_readonly)
+        // over an operator-configured database file. docker-control was
+        // removed -- the worker no longer implements that specialization, so
+        // registering a docker-control pool would serve the baseline-tools
+        // catalog under a mislabeled name (a fake-healthy surface). Only real
+        // specializations get supervised pools.
         registerWorkerPool("local-database", "Local Database MCP",   2);
 
         // v0.10.18: external MCP-package seeds for catalog ids that
@@ -18157,8 +18152,14 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 const auto advertisement = buildAdvertisedEndpointPlan(
                     waCfg, waGateway, hostSnapshot.primaryIpAddress);
                 WorkingAlphaReadinessInputs waIn;
-                waIn.installStateAvailable = true;    // the service is answering this request
-                waIn.adminListenerReachable = true;   // ditto
+                // Live evidence: install state is confirmable when the resolved
+                // data directory exists on disk; the admin listener is reachable
+                // because it is answering this request.
+                std::error_code waDataDirEc;
+                waIn.installStateAvailable =
+                    !paths_.dataDirectory.empty()
+                    && std::filesystem::exists(paths_.dataDirectory, waDataDirEc);
+                waIn.adminListenerReachable = true;
                 waIn.gatewayRunning = gatewayOk;
                 waIn.gatewayState = gw.value("state", std::string{});
                 waIn.lanModeEnabled = advertisement.lanModeEnabled;

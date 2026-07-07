@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "1.0",
+  "alphaContractName": "MCOS Working Alpha Software Contract",
+  "note": "Mirror of include/MasterControl/AlphaFeatureMatrix.h. A unit test asserts the two agree. required=works end-to-end; optional=present but honestly unavailable; deferred=not advertised as operational; removed=never registered/advertised.",
+  "required": [
+    "windows-service-lifecycle",
+    "admin-http-listener",
+    "native-http-sys-mcp-gateway",
+    "gateway-status-and-tools",
+    "managed-endpoint-pools",
+    "diagnostics-aggregator",
+    "json-strictness-diagnostics",
+    "lan-discovery",
+    "lan-client-registration",
+    "onboarding-profiles",
+    "governance-bundles",
+    "governance-decisions",
+    "confirm-guards",
+    "second-host-lan-acceptance",
+    "working-alpha-readiness",
+    "local-database"
+  ],
+  "optional": [
+    "external-npm-mcps"
+  ],
+  "deferred": [
+    "sse-transport"
+  ],
+  "removed": [
+    "docker-control",
+    "playwright"
+  ]
+}

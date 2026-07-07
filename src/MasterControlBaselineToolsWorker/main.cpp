@@ -62,6 +62,7 @@
 #include <nlohmann/json.hpp>
 
 #include "MasterControl/MasterControlVersion.h"
+#include "MasterControl/DatabaseQuery.h"
 
 #if defined(_WIN32)
 // We use Win32 host-info APIs (GetComputerNameExW, GetVersionExW via
@@ -1258,15 +1259,35 @@ nlohmann::json localDatabaseCatalog() {
     return nlohmann::json::array({
         nlohmann::json{
             { "name", "db.status" },
-            { "description", "Return the local-database MCP configuration state. v0.9.68 ships a stub: until the operator configures a connection string via persistent-context (key = 'local-database.connection-string'), this tool reports the unconfigured state honestly. After configuration, future iterations will dispatch SQL via ODBC." },
+            { "description", "Report the local-database provider state: provider (sqlite), whether a database file is configured, and whether it opens read-only. Alpha provider is read-only SQLite; other providers (ODBC/Postgres/MySQL) are deferred." },
             { "inputSchema", { { "type", "object" }, { "properties", nlohmann::json::object() } } }
         },
         nlohmann::json{
             { "name", "db.set_connection_string" },
-            { "description", "Persist a connection string under persistent-context key 'local-database.connection-string'. Future db.query / db.list_tables tools will read this on each call. The value is stored on the worker host's ProgramData; treat it as machine-local secrets storage." },
+            { "description", "Configure the local-database source. For the SQLite provider, pass the absolute path to a SQLite database file. Stored under persistent-context on the worker host's ProgramData (machine-local)." },
             { "inputSchema", { { "type", "object" }, { "properties", {
                 { "connectionString", { { "type", "string" } } }
             } }, { "required", nlohmann::json::array({ "connectionString" }) } } }
+        },
+        nlohmann::json{
+            { "name", "db.list_tables" },
+            { "description", "List user tables in the configured SQLite database (read-only)." },
+            { "inputSchema", { { "type", "object" }, { "properties", nlohmann::json::object() } } }
+        },
+        nlohmann::json{
+            { "name", "db.describe_table" },
+            { "description", "Return column metadata (name, type, nullability, default, primary-key) for a table in the configured SQLite database (read-only)." },
+            { "inputSchema", { { "type", "object" }, { "properties", {
+                { "table", { { "type", "string" } } }
+            } }, { "required", nlohmann::json::array({ "table" }) } } }
+        },
+        nlohmann::json{
+            { "name", "db.query_readonly" },
+            { "description", "Execute a single read-only SQL SELECT against the configured SQLite database. Mutating statements, multiple statements, and ATTACH/DETACH are rejected and the connection is opened read-only. Results are row-limited and time-bounded." },
+            { "inputSchema", { { "type", "object" }, { "properties", {
+                { "sql", { { "type", "string" } } },
+                { "rowLimit", { { "type", "integer" } } }
+            } }, { "required", nlohmann::json::array({ "sql" }) } } }
         }
     });
 }
@@ -1927,6 +1948,42 @@ nlohmann::json persistentCtxDelete(const std::string& key) {
     const bool deleted = store.erase(key) > 0;
     if (deleted) savePersistentContext(store);
     return { { "key", key }, { "deleted", deleted }, { "previousValue", previous } };
+}
+
+// local-database: read-only SQLite provider. The connection store reads the
+// operator-configured database file path from persistent-context; the executor
+// (MasterControl::SqliteReadonlyQueryExecutor) opens it read-only.
+class PersistentContextDatabaseConnectionStore final
+    : public MasterControl::IDatabaseConnectionStore {
+public:
+    std::optional<std::string> currentDatabasePath() const override {
+        std::lock_guard<std::mutex> lock(persistentContextMutex());
+        auto store = loadPersistentContext();
+        const std::string key = "local-database.connection-string";
+        if (store.contains(key) && store[key].is_string()) {
+            auto value = store[key].get<std::string>();
+            if (!value.empty()) {
+                return value;
+            }
+        }
+        return std::nullopt;
+    }
+};
+
+// Render a DatabaseQueryResult as MCP tool content (structured JSON). Both
+// success and query-level failure are returned as tool content so the client
+// sees the honest ok flag + errorKind; protocol errors (bad args) use makeError.
+nlohmann::json databaseResultPayload(const MasterControl::DatabaseQueryResult& result) {
+    nlohmann::json payload = result.data.is_null() ? nlohmann::json::object() : result.data;
+    payload["ok"] = result.ok;
+    if (result.truncated) {
+        payload["truncated"] = true;
+    }
+    if (!result.ok) {
+        payload["errorKind"] = result.errorKind;
+        payload["error"] = result.error;
+    }
+    return payload;
 }
 
 // v0.9.65: knowledge-graph. Same JSON-on-disk pattern as
@@ -2813,7 +2870,8 @@ nlohmann::json dispatchToolCall(const std::string& toolName,
                 { "scribe",       scribeCatalog() },
                 { "recon",        reconCatalog() },
                 { "nexus",        nexusCatalog() },
-                { "watchtower",   watchtowerCatalog() }
+                { "watchtower",   watchtowerCatalog() },
+                { "local-database", localDatabaseCatalog() }
             };
             for (const auto& [specId, tools] : registry) {
                 nlohmann::json toolNames = nlohmann::json::array();
@@ -2937,31 +2995,42 @@ nlohmann::json dispatchToolCall(const std::string& toolName,
     // automation can register a custom pool template that points at
     // `docker.exe` directly.
     if (gSpecialization == Specialization::LocalDatabase) {
+        auto connectionStore = std::make_shared<PersistentContextDatabaseConnectionStore>();
+        MasterControl::SqliteReadonlyQueryExecutor executor(connectionStore);
         if (toolName == "db.status") {
-            // Read the connection string from persistent-context and
-            // honestly report whether configuration has happened.
-            std::lock_guard<std::mutex> lock(persistentContextMutex());
-            auto store = loadPersistentContext();
-            const std::string key = "local-database.connection-string";
-            const bool configured = store.contains(key) && store[key].is_string()
-                                  && !store[key].get<std::string>().empty();
-            return makeResult(id, textContent(nlohmann::json{
-                { "configured", configured },
-                { "key",        key },
-                { "hint",       configured
-                                  ? std::string("Connection string is set. Future iterations dispatch SQL via ODBC.")
-                                  : std::string("Configure a connection string with db.set_connection_string before using SQL tools.") }
-            }.dump(2)));
+            return makeResult(id, textContent(databaseResultPayload(executor.status()).dump(2)));
         }
         if (toolName == "db.set_connection_string") {
             if (!arguments.is_object() || !arguments.contains("connectionString")
                 || !arguments["connectionString"].is_string()) {
                 return makeError(-32602,
-                    "db.set_connection_string: arguments.connectionString (string) is required.", id);
+                    "db.set_connection_string: arguments.connectionString (string, a SQLite database file path) is required.", id);
             }
             return makeResult(id, textContent(persistentCtxSet(
                 "local-database.connection-string",
                 arguments["connectionString"]).dump(2)));
+        }
+        if (toolName == "db.list_tables") {
+            return makeResult(id, textContent(databaseResultPayload(executor.listTables()).dump(2)));
+        }
+        if (toolName == "db.describe_table") {
+            if (!arguments.is_object() || !arguments.contains("table")
+                || !arguments["table"].is_string() || arguments["table"].get<std::string>().empty()) {
+                return makeError(-32602,
+                    "db.describe_table: arguments.table (non-empty string) is required.", id);
+            }
+            return makeResult(id, textContent(databaseResultPayload(
+                executor.describeTable(arguments["table"].get<std::string>())).dump(2)));
+        }
+        if (toolName == "db.query_readonly") {
+            if (!arguments.is_object() || !arguments.contains("sql")
+                || !arguments["sql"].is_string() || arguments["sql"].get<std::string>().empty()) {
+                return makeError(-32602,
+                    "db.query_readonly: arguments.sql (non-empty string) is required.", id);
+            }
+            const int rowLimit = arguments.value("rowLimit", 0);  // 0 -> executor default
+            return makeResult(id, textContent(databaseResultPayload(
+                executor.queryReadonly(arguments["sql"].get<std::string>(), rowLimit)).dump(2)));
         }
     }
     if (gSpecialization == Specialization::DesktopControl
@@ -3107,10 +3176,12 @@ nlohmann::json handleEnvelope(const nlohmann::json& request) {
 } // namespace
 
 int main(int argc, char** argv) {
-    // v0.9.61: parse --specialization=<id> if present. Default to
-    // baseline-tools (legacy v0.9.1 contract). Unknown values fall back
-    // to baseline-tools rather than failing so a misconfigured pool
-    // template still serves something rather than refusing to start.
+    // parse --specialization=<id> if present. No --specialization (or an
+    // explicit empty value) means the legacy baseline-tools contract. An
+    // unknown NON-EMPTY specialization fails closed: it writes a clear error
+    // to stderr and exits nonzero before accepting any JSON-RPC. Serving the
+    // baseline-tools catalog under a mislabeled pool would mask a
+    // misconfiguration and make the gateway appear healthier than it is.
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i] ? argv[i] : "";
         const std::string prefix = "--specialization=";
@@ -3191,9 +3262,20 @@ int main(int argc, char** argv) {
             } else if (id == "local-database") {
                 gSpecialization = Specialization::LocalDatabase;
                 gSpecializationName = "local-database";
-            } else {
+            } else if (id == "baseline-tools" || id.empty()) {
+                // The canonical baseline-tools id (explicit, or an empty value
+                // that behaves like no --specialization).
                 gSpecialization = Specialization::BaselineTools;
                 gSpecializationName = "baseline-tools";
+            } else {
+                // Fail closed on an unknown non-empty specialization: refuse to
+                // start before serving any JSON-RPC rather than silently
+                // falling back to baseline-tools.
+                std::fprintf(stderr,
+                    "mcos-baseline-tools-worker: unknown --specialization '%s'; refusing to start.\n",
+                    id.c_str());
+                std::fflush(stderr);
+                return 2;
             }
         }
     }
