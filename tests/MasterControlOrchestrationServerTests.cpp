@@ -20,6 +20,7 @@
 #include "MasterControl/AlphaFeatureMatrix.h"
 #include "MasterControl/DatabaseQuery.h"
 #include "MasterControl/EndpointAdvertisement.h"
+#include "MasterControl/GovernanceApprovalQueue.h"
 #include "MasterControl/HttpBindingInspection.h"
 #include "MasterControl/HttpHeaderParse.h"
 #include "MasterControl/JsonMerge.h"
@@ -1822,6 +1823,109 @@ bool testGovernanceActionKindRoundTrip() {
         ok &= expect(restored == value,
                      "GovernanceActionKind round-trips through fromString.");
     }
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Governance approval queue execute-on-approval loop. The queue was extracted
+// into include/MasterControl/GovernanceApprovalQueue.h so it can be constructed
+// directly here with a counting fake executor. These pin the "approve executes
+// the staged action exactly once" contract added for the working-alpha
+// supplement, plus reject / execution-failure / no-executor behavior.
+class CountingGovernanceExecutor final : public MasterControl::IGovernanceActionExecutor {
+public:
+    int calls = 0;
+    bool succeed = true;
+    MasterControl::GovernanceActionKind lastAction = MasterControl::GovernanceActionKind::Unknown;
+    MasterControl::OperationResult execute(const MasterControl::GovernanceDeferredAction& action) override {
+        ++calls;
+        lastAction = action.action;
+        if (succeed) {
+            return MasterControl::OperationResult{ true, false, "applied" };
+        }
+        return MasterControl::OperationResult{ false, false, "no executor registered for action" };
+    }
+};
+
+static MasterControl::GovernanceDeferredAction makeGovernancePolicyChangeInput() {
+    MasterControl::GovernanceDeferredAction input;
+    input.action = MasterControl::GovernanceActionKind::GovernancePolicyChange;
+    input.actor = "operator-1";
+    input.targetId = "governance-profile";
+    input.payload = R"({"doctrine":"Least privilege on the trusted LAN."})";
+    return input;
+}
+
+bool testGovernanceApprovalStagesPending() {
+    bool ok = true;
+    auto executor = std::make_shared<CountingGovernanceExecutor>();
+    MasterControl::GovernanceApprovalQueueService queue(executor);
+    const auto staged = queue.stage(makeGovernancePolicyChangeInput());
+    ok &= expect(staged.status == "pending", "Staged action starts pending.");
+    ok &= expect(!staged.id.empty(), "Staged action receives an id.");
+    ok &= expect(queue.listPending().size() == 1, "Pending list contains the staged action.");
+    ok &= expect(executor->calls == 0, "Staging never invokes the executor.");
+    return ok;
+}
+
+bool testGovernanceApprovalExecutesExactlyOnce() {
+    bool ok = true;
+    auto executor = std::make_shared<CountingGovernanceExecutor>();
+    MasterControl::GovernanceApprovalQueueService queue(executor);
+    const auto staged = queue.stage(makeGovernancePolicyChangeInput());
+    const auto first = queue.approve(staged.id, "operator-2");
+    ok &= expect(first.succeeded, "First approve succeeds.");
+    ok &= expect(executor->calls == 1, "Approve invokes the executor exactly once.");
+    ok &= expect(executor->lastAction == MasterControl::GovernanceActionKind::GovernancePolicyChange,
+                 "Executor receives the staged action kind.");
+    ok &= expect(queue.listAll().at(0).status == "executed", "Executed action is marked executed.");
+    ok &= expect(queue.listPending().empty(), "Executed action leaves the pending list.");
+    // Idempotency: a second approve finds the action no longer pending and must
+    // not re-run the mutation.
+    const auto second = queue.approve(staged.id, "operator-2");
+    ok &= expect(!second.succeeded, "Second approve is rejected (no longer pending).");
+    ok &= expect(executor->calls == 1, "Executor is not invoked a second time.");
+    return ok;
+}
+
+bool testGovernanceRejectNeverExecutes() {
+    bool ok = true;
+    auto executor = std::make_shared<CountingGovernanceExecutor>();
+    MasterControl::GovernanceApprovalQueueService queue(executor);
+    const auto staged = queue.stage(makeGovernancePolicyChangeInput());
+    const auto rejected = queue.reject(staged.id, "operator-3", "not now");
+    ok &= expect(rejected.succeeded, "Reject succeeds.");
+    ok &= expect(executor->calls == 0, "Reject never invokes the executor.");
+    ok &= expect(queue.listAll().at(0).status == "rejected", "Rejected action is marked rejected.");
+    // Approving an already-rejected action is a no-op and never executes.
+    const auto approve = queue.approve(staged.id, "operator-3");
+    ok &= expect(!approve.succeeded, "Approving a rejected action is rejected.");
+    ok &= expect(executor->calls == 0, "Executor still never runs after reject.");
+    return ok;
+}
+
+bool testGovernanceApprovalExecutionFailureReported() {
+    bool ok = true;
+    auto executor = std::make_shared<CountingGovernanceExecutor>();
+    executor->succeed = false;  // model an unknown / unhandled action kind.
+    MasterControl::GovernanceApprovalQueueService queue(executor);
+    const auto staged = queue.stage(makeGovernancePolicyChangeInput());
+    const auto result = queue.approve(staged.id, "operator-4");
+    ok &= expect(!result.succeeded, "Approve reports failure when execution fails.");
+    ok &= expect(executor->calls == 1, "Executor is attempted exactly once on failure.");
+    ok &= expect(queue.listAll().at(0).status == "execute-failed",
+                 "Failed execution marks the action execute-failed.");
+    return ok;
+}
+
+bool testGovernanceApprovalWithoutExecutorStillApproves() {
+    bool ok = true;
+    MasterControl::GovernanceApprovalQueueService queue;  // no executor injected.
+    const auto staged = queue.stage(makeGovernancePolicyChangeInput());
+    const auto result = queue.approve(staged.id, "operator-5");
+    ok &= expect(result.succeeded, "Approve succeeds with no executor wired.");
+    ok &= expect(queue.listAll().at(0).status == "approved",
+                 "Without an executor the action rests at approved (not executed).");
     return ok;
 }
 
@@ -4879,6 +4983,11 @@ int main() {
     ok &= testGovernanceActionKindRoundTrip();
     ok &= testGovernanceDecisionOutcomeRoundTrip();
     ok &= testGovernanceDeferredActionShape();
+    ok &= testGovernanceApprovalStagesPending();
+    ok &= testGovernanceApprovalExecutesExactlyOnce();
+    ok &= testGovernanceRejectNeverExecutes();
+    ok &= testGovernanceApprovalExecutionFailureReported();
+    ok &= testGovernanceApprovalWithoutExecutorStillApproves();
     // PHASE-02 MCP Gateway adapter tests
     ok &= testGatewayConfigurationDefaults();
     ok &= testFakeGatewayDisabledStartsDisabled();

@@ -265,5 +265,7 @@ install(
         "${CMAKE_SOURCE_DIR}/scripts/Register-MasterControlLanClient.ps1"
         "${CMAKE_SOURCE_DIR}/scripts/Test-MasterControlLanClientAcceptance.ps1"
         "${CMAKE_SOURCE_DIR}/scripts/Get-MasterControlOrchestrationServerDeploymentDiagnostics.ps1"
+        "${CMAKE_SOURCE_DIR}/scripts/Invoke-MasterControlWorkingAlphaAcceptance.ps1"
+        "${CMAKE_SOURCE_DIR}/scripts/New-MasterControlHumanAlphaTestKit.ps1"
     DESTINATION "scripts"
 )

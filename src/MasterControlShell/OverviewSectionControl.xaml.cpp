@@ -77,6 +77,7 @@ void OverviewSectionControl::ApplySnapshot(const ::MasterControlShell::ShellSnap
     // operator sees the affirmative pass/fail roster before
     // scrolling into the failure list.
     ApplySelfTestCard(snapshot);
+    ApplyWorkingAlphaCard(snapshot);
     // v0.9.76: Supervisor Agent card lives between Self-Tests and Error
     // Reporting. The card mirrors /api/supervisor/status into the
     // ShellSnapshot.supervisorStatus fields on every tick, and routes
@@ -633,6 +634,67 @@ void OverviewSectionControl::ApplyErrorReportingCard(const ::MasterControlShell:
 // list. Tone is good when failedCount==0 and the sweep has completed,
 // warn when pending, crit when failedCount>0. Each row shows a small
 // pass/fail mark, the probe name, the duration, and the message.
+void OverviewSectionControl::ApplyWorkingAlphaCard(const ::MasterControlShell::ShellSnapshot& snapshot) {
+    using namespace winrt::Microsoft::UI::Xaml;
+    using namespace winrt::Microsoft::UI::Xaml::Controls;
+    using namespace winrt::Microsoft::UI::Xaml::Media;
+    using winrt::Windows::UI::ColorHelper;
+
+    const wchar_t* tone = L"info";
+    std::wstring headline;
+    if (!snapshot.workingAlphaAvailable) {
+        tone = L"crit";
+        headline = L"Working-alpha readiness unavailable — /api/health/summary could not be read.";
+    } else if (snapshot.workingAlphaReady) {
+        tone = L"good";
+        headline = L"Ready — all working-alpha readiness checks passed.";
+    } else {
+        tone = L"warn";
+        const size_t n = snapshot.workingAlphaBlockingIssues.size();
+        headline = L"Not ready — " + std::to_wstring(n) + L" blocking issue"
+                 + (n == 1 ? L"" : L"s") + L".";
+    }
+    paintDot(WorkingAlphaStatusDot(), tone);
+    WorkingAlphaHeadline().Text(winrt::hstring(headline));
+
+    if (!snapshot.workingAlphaSummary.empty()) {
+        std::wstring sub = snapshot.workingAlphaSummary;
+        if (!snapshot.workingAlphaEvaluatedAtUtc.empty()) {
+            sub += L"  (evaluated " + snapshot.workingAlphaEvaluatedAtUtc + L")";
+        }
+        WorkingAlphaSubline().Text(winrt::hstring(sub));
+    }
+
+    auto stack = WorkingAlphaIssueList();
+    stack.Children().Clear();
+
+    if (!snapshot.workingAlphaAvailable) {
+        TextBlock txt;
+        txt.Text(winrt::hstring(L"Cannot reach /api/health/summary on the local admin port; readiness cannot be confirmed."));
+        txt.FontSize(11);
+        txt.Foreground(SolidColorBrush(ColorHelper::FromArgb(0xFF, 0xff, 0x8c, 0x4c)));
+        txt.TextWrapping(TextWrapping::Wrap);
+        stack.Children().Append(txt);
+        return;
+    }
+    if (snapshot.workingAlphaBlockingIssues.empty()) {
+        TextBlock txt;
+        txt.Text(winrt::hstring(L"No blocking issues."));
+        txt.FontSize(11);
+        txt.Foreground(SolidColorBrush(ColorHelper::FromArgb(0xFF, 0x8c, 0xb7, 0xc4)));
+        txt.TextWrapping(TextWrapping::Wrap);
+        stack.Children().Append(txt);
+        return;
+    }
+    for (const auto& issue : snapshot.workingAlphaBlockingIssues) {
+        TextBlock txt;
+        txt.Text(winrt::hstring(issue));
+        txt.FontSize(11);
+        txt.TextWrapping(TextWrapping::Wrap);
+        stack.Children().Append(txt);
+    }
+}
+
 void OverviewSectionControl::ApplySelfTestCard(const ::MasterControlShell::ShellSnapshot& snapshot) {
     using namespace winrt::Microsoft::UI::Xaml;
     using namespace winrt::Microsoft::UI::Xaml::Controls;

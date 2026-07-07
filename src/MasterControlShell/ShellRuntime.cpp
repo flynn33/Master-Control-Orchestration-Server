@@ -2333,6 +2333,41 @@ ShellSnapshot ShellRuntime::CaptureSnapshot() const {
         snapshot.selfTests = std::move(tests);
     }
 
+    // Working-alpha readiness. Fetch GET /api/health/summary and unpack the
+    // fail-closed workingAlpha block for the Overview readiness card. On any
+    // fetch/parse failure workingAlphaAvailable stays false so the card reports
+    // "unavailable" honestly rather than an accidental "ready".
+    {
+        std::wstring fetchError;
+        const auto resp = httpGet(dashboardHostFromBindAddress(bindAddress),
+                                   browserPort, L"/api/health/summary", fetchError);
+        if (resp.has_value() && resp->statusCode == 200) {
+            if (const auto j = parseJsonObject(resp->body); j.has_value() && j->HasKey(L"workingAlpha")) {
+                const auto wa = j->GetNamedObject(L"workingAlpha", nullptr);
+                if (wa) {
+                    snapshot.workingAlphaAvailable = true;
+                    snapshot.workingAlphaReady = jsonBoolOr(wa, L"ready", false);
+                    snapshot.workingAlphaSummary = wideFromUtf8(jsonStringOr(wa, L"summary", ""));
+                    snapshot.workingAlphaEvaluatedAtUtc = wideFromUtf8(jsonStringOr(wa, L"evaluatedAtUtc", ""));
+                    if (wa.HasKey(L"blockingIssues")) {
+                        for (const auto& v : wa.GetNamedArray(L"blockingIssues", JsonArray())) {
+                            if (v.ValueType() != JsonValueType::Object) continue;
+                            const auto issue = v.GetObject();
+                            const std::wstring category = wideFromUtf8(jsonStringOr(issue, L"category", ""));
+                            const std::wstring stateSlug = wideFromUtf8(jsonStringOr(issue, L"state", ""));
+                            const std::wstring detail = wideFromUtf8(jsonStringOr(issue, L"detail", ""));
+                            const std::wstring id = wideFromUtf8(jsonStringOr(issue, L"id", ""));
+                            std::wstring row = category.empty() ? id : category;
+                            if (!stateSlug.empty()) row += L" · " + stateSlug;
+                            if (!detail.empty()) row += L" — " + detail;
+                            snapshot.workingAlphaBlockingIssues.push_back(std::move(row));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // v0.9.76: Supervisor Agent Assignment status. Fetched on every
     // snapshot tick so the Overview surface's Supervisor card stays
     // live with the runtime-side service. activeProviderId is the

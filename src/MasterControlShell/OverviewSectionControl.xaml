@@ -74,6 +74,30 @@
                 </StackPanel>
             </Border>
 
+            <!-- Working-alpha readiness card. Fail-closed mirror of the
+                 dashboard's card: reads /api/health/summary -> workingAlpha and
+                 reports the ready verdict plus every blocking issue, or an
+                 honest "unavailable" when the admin API cannot be reached.
+                 Placed directly under the hero so "is this a working alpha?"
+                 is the first thing the operator sees. -->
+            <Border Style="{StaticResource ShellCardStyle}" BorderBrush="{StaticResource ShellAccentBrush}">
+                <StackPanel Spacing="10">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="WORKING-ALPHA READINESS" Style="{StaticResource ShellEyebrowTextStyle}" />
+                        <Border x:Name="WorkingAlphaStatusDot" Width="10" Height="10" CornerRadius="5,5,5,5" VerticalAlignment="Center" Background="#FF8CB7C4" />
+                    </StackPanel>
+                    <TextBlock x:Name="WorkingAlphaHeadline"
+                               Text="Working-alpha readiness pending..." Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock x:Name="WorkingAlphaSubline"
+                               Style="{StaticResource ShellLabelTextStyle}"
+                               Foreground="{StaticResource ShellTextMutedBrush}"
+                               Text="Fail-closed readiness report from /api/health/summary: install / listener / gateway / discovery / client / pool / diagnostics / binding signals." />
+                    <ScrollViewer MaxHeight="220" VerticalScrollMode="Enabled" VerticalScrollBarVisibility="Auto">
+                        <StackPanel x:Name="WorkingAlphaIssueList" Spacing="4" />
+                    </ScrollViewer>
+                </StackPanel>
+            </Border>
+
             <!-- v0.9.99: SELF-TESTS + ERROR REPORTING side-by-side row
                  immediately under the hero header. Operator directive:
                  self tests must be VISIBLE on startup and failures must
