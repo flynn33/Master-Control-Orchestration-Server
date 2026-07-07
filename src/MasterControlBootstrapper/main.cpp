@@ -3,6 +3,7 @@
 // Proprietary and Confidential.
 
 #include "MasterControl/MasterControlDefaults.h"
+#include "MasterControl/HttpBindingInspection.h"
 #include "InstallerLogSupport.h"
 
 #include <nlohmann/json.hpp>
@@ -1285,6 +1286,135 @@ FirewallRuleStatus queryFirewallRuleStatus() {
     return status;
 }
 
+// -------------------------------------------------------------------------
+// HTTP.sys binding observation for the working-alpha acceptance path. The
+// pure required-vs-optional decision lives in MasterControl::HttpBinding
+// Inspection.h (classifyHttpBinding); this concrete observes host state via
+// netsh. TLS certificate binding is owned by the runtime gateway + operator
+// cert script, not the bootstrapper, so it is reported here as "not observed"
+// and validated by the acceptance script against the runtime gateway status.
+// -------------------------------------------------------------------------
+class NetshHttpBindingInspector final : public MasterControl::IHttpBindingInspector {
+public:
+    MasterControl::BindingObservation Observe(
+        const MasterControl::BindingExpectation& expectation) const override {
+        switch (expectation.kind) {
+            case MasterControl::HttpBindingKind::Firewall: return observeFirewall(expectation);
+            case MasterControl::HttpBindingKind::UrlAcl:   return observeUrlAcl(expectation);
+            case MasterControl::HttpBindingKind::Tls:      return observeTls(expectation);
+        }
+        return {};
+    }
+
+private:
+    static const wchar_t* firewallRuleForSurface(const std::string& surface) {
+        if (surface == "admin")   { return kBrowserRuleName; }
+        if (surface == "gateway") { return kGatewayRuleName; }
+        if (surface == "beacon")  { return kBeaconRuleName; }
+        if (surface == "mdns")    { return kMDnsRuleName; }
+        return nullptr;
+    }
+
+    static MasterControl::BindingObservation observeFirewall(
+        const MasterControl::BindingExpectation& expectation) {
+        MasterControl::BindingObservation observation;
+        if (const wchar_t* rule = firewallRuleForSurface(expectation.surface)) {
+            observation.present = firewallRuleExists(rule);
+            observation.detail = "netsh advfirewall firewall show rule";
+        }
+        return observation;
+    }
+
+    static MasterControl::BindingObservation observeUrlAcl(
+        const MasterControl::BindingExpectation& expectation) {
+        MasterControl::BindingObservation observation;
+        if (expectation.port == 0) {
+            return observation;
+        }
+        const std::wstring url = L"http://+:" + std::to_wstring(expectation.port) + L"/";
+        const auto result = runProcessCapture(
+            L"netsh.exe http show urlacl url=" + url, {}, CREATE_NO_WINDOW);
+        if (result.launched && result.exitCode == 0) {
+            std::string output = result.output;
+            std::transform(output.begin(), output.end(), output.begin(),
+                [](const unsigned char character) { return static_cast<char>(std::tolower(character)); });
+            const std::string portNeedle = ":" + std::to_string(expectation.port) + "/";
+            observation.present = output.find("reserved url") != std::string::npos
+                && output.find(portNeedle) != std::string::npos;
+            observation.detail = "netsh http show urlacl";
+        }
+        return observation;
+    }
+
+    static MasterControl::BindingObservation observeTls(
+        const MasterControl::BindingExpectation& /*expectation*/) {
+        MasterControl::BindingObservation observation;
+        observation.detail =
+            "TLS certificate binding is validated by the runtime gateway status / acceptance script.";
+        return observation;
+    }
+};
+
+nlohmann::json bindingStatusToJson(const MasterControl::HttpBindingStatus& status) {
+    return nlohmann::json{
+        { "required", status.required },
+        { "present", status.present },
+        { "optionalMissing", status.optionalMissing },
+        { "verdict", MasterControl::bindingVerdictToString(status.verdict) },
+        { "detail", status.detail }
+    };
+}
+
+// Structured per-surface binding posture for the validate --json payload.
+// Firewall rules are owned and enforced by the bootstrapper (a required-missing
+// firewall rule is already fatal in validate via appendIssue); URL ACL is
+// optional for the LocalSystem service install (its absence is reported as
+// optionalMissing, never fatal), preserving the long-standing soft-URL-ACL
+// behavior. TLS is deferred to the runtime gateway status / acceptance script.
+nlohmann::json collectBindingsJson(const InstallationState& state) {
+    const NetshHttpBindingInspector inspector;
+    using MasterControl::BindingExpectation;
+    using MasterControl::HttpBindingKind;
+
+    const auto firewall = [&inspector](const std::string& surface, uint16_t port, bool required) {
+        BindingExpectation expectation;
+        expectation.kind = HttpBindingKind::Firewall;
+        expectation.surface = surface;
+        expectation.port = port;
+        expectation.required = required;
+        return bindingStatusToJson(inspector.Inspect(expectation));
+    };
+
+    nlohmann::json bindings;
+    bindings["admin"] = {
+        { "port", state.browserPort },
+        { "firewall", firewall("admin", state.browserPort, state.allowOpenLanAccess) }
+    };
+
+    BindingExpectation gatewayUrlAcl;
+    gatewayUrlAcl.kind = HttpBindingKind::UrlAcl;
+    gatewayUrlAcl.surface = "gateway";
+    gatewayUrlAcl.port = state.gatewayPort;
+    gatewayUrlAcl.required = false;  // LocalSystem service does not require a URL ACL.
+    gatewayUrlAcl.urlPrefix = "http://+:" + std::to_string(state.gatewayPort) + "/";
+    bindings["gateway"] = {
+        { "port", state.gatewayPort },
+        { "firewall", firewall("gateway", state.gatewayPort,
+                               state.gatewayAdvertised && state.gatewayPort > 0) },
+        { "urlAcl", bindingStatusToJson(inspector.Inspect(gatewayUrlAcl)) }
+    };
+
+    bindings["beacon"] = {
+        { "port", state.beaconPort },
+        { "firewall", firewall("beacon", state.beaconPort, state.beaconEnabled) }
+    };
+    bindings["mdns"] = {
+        { "port", kMDnsLocalPort },
+        { "firewall", firewall("mdns", kMDnsLocalPort, state.mDnsAdvertised) }
+    };
+    return bindings;
+}
+
 bool setRegistryStringValue(HKEY key, const wchar_t* name, const std::wstring& value) {
     const auto bytes = static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t));
     return RegSetValueExW(
@@ -2373,6 +2503,12 @@ bool validateInstalledApplication(const std::filesystem::path& installDirectory,
             payload["firewallManaged"] = state->firewallManaged;
             payload["shortcutsManaged"] = state->shortcutsManaged;
             payload["uninstallRegistrationManaged"] = state->uninstallRegistrationManaged;
+            // Structured per-surface binding posture (firewall/urlAcl) so the
+            // working-alpha acceptance script and diagnostics can read binding
+            // state programmatically. Required-missing firewall rules are
+            // already reflected in `issues`/`valid` above; URL ACL is reported
+            // as optionalMissing when absent (non-fatal for the service install).
+            payload["bindings"] = collectBindingsJson(*state);
         }
 
         if (emitOutput) {

@@ -301,6 +301,28 @@ struct ReadinessSnapshot final {
     std::string updatedAtUtc;
 };
 
+// Working-alpha readiness model. This is deliberately SEPARATE from
+// ReadinessSnapshot/ReadinessIssue above: those feed the first-run setup
+// wizard's completion gate (isSetupCompletionBlockingIssue -> POST
+// /api/setup/complete). The working-alpha report answers a different question
+// -- "is this install usable as a working alpha right now?" -- and is surfaced
+// read-only on /api/health/summary. It must never influence setup completion.
+// IDs are stable machine-readable slugs; states are honest ("unavailable" |
+// "disabled" | "notObserved" | "unroutable" | "error").
+struct WorkingAlphaReadinessIssue final {
+    std::string id;        // stable slug (e.g. "gateway.not-running")
+    std::string category;  // service|listener|gateway|discovery|client|pool|diagnostics|binding
+    std::string state;     // honest state slug
+    std::string detail;    // one-sentence explanation
+};
+
+struct WorkingAlphaReadinessReport final {
+    bool ready = false;
+    std::vector<WorkingAlphaReadinessIssue> blockingIssues;
+    std::string summary;
+    std::string evaluatedAtUtc;
+};
+
 struct SetupOverrideRecord final {
     std::string stepId;
     std::string issueId;
@@ -1233,10 +1255,22 @@ struct OnboardingConfigSnippet final {
     std::string description;        // human-readable purpose
 };
 
+// Working-alpha contract: structured MCP connection descriptor. The acceptance
+// contract requires /api/onboarding/{clientType} to expose an `mcp` object
+// (url + transport + protocol version). gatewayMcpUrl is retained for
+// back-compat; `mcp.url` mirrors it in structured form.
+struct OnboardingMcp final {
+    std::string url;                            // gateway MCP endpoint (mirrors gatewayMcpUrl)
+    std::string transport = "streamable_http";  // streamable_http | stdio_bridge | sse_compat
+    std::string protocolVersion = "2025-03-26"; // MCP protocol revision the gateway speaks
+    bool authRequired = false;                  // trusted-LAN gateway: no app-layer auth
+};
+
 struct OnboardingProfile final {
     std::string clientType;
     std::string displayName;
     std::string gatewayMcpUrl;
+    OnboardingMcp mcp;                          // structured MCP descriptor (working-alpha contract)
     std::string transport = "streamable_http"; // streamable_http | stdio_bridge | sse_compat
     bool authRequired = false;       // schema const: must be false
     std::string trust = "lan";
@@ -1319,6 +1353,22 @@ struct DiscoveryAdmin final {
     std::string healthSummaryUrl;  // /api/health/summary
 };
 
+// Working-alpha remediation: structured server-identity object. The
+// working-alpha acceptance contract requires /.well-known/mcos.json and
+// /api/discovery to expose a top-level `server` object alongside `gateway`
+// and `admin`. The pre-existing top-level product/role/version/instanceId
+// scalars are retained for back-compat; this object is the structured form
+// clients validate against. It carries only already-public identity fields
+// (no serverIpAddress / instanceName), so it is safe to keep in the stripped
+// /.well-known projection.
+struct DiscoveryServer final {
+    std::string product = "MCOS";
+    std::string role = "mcp-gateway-host";
+    std::string version;
+    std::string instanceId;
+    std::string networkMode = "local-only";  // "trusted-lan" | "local-only"
+};
+
 struct DiscoveryDocument final {
     std::string product = "MCOS";
     std::string role = "mcp-gateway-host";
@@ -1327,6 +1377,7 @@ struct DiscoveryDocument final {
     std::string trust = "local-only";
     std::string auth = "required";
     std::string securityPosture = "local-only";
+    DiscoveryServer server;      // structured server identity (working-alpha contract)
     DiscoveryGateway gateway;
     DiscoveryOnboarding onboarding;
     DiscoveryGovernance governance;
@@ -1735,6 +1786,20 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     blockingIssues,
     recommendedNextStep,
     updatedAtUtc)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    WorkingAlphaReadinessIssue,
+    id,
+    category,
+    state,
+    detail)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    WorkingAlphaReadinessReport,
+    ready,
+    blockingIssues,
+    summary,
+    evaluatedAtUtc)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     SetupOverrideRecord,
@@ -2437,6 +2502,14 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     healthSummaryUrl)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    DiscoveryServer,
+    product,
+    role,
+    version,
+    instanceId,
+    networkMode)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     DiscoveryDocument,
     product,
     role,
@@ -2445,6 +2518,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     trust,
     auth,
     securityPosture,
+    server,
     gateway,
     onboarding,
     governance,
@@ -2462,10 +2536,18 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     description)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    OnboardingMcp,
+    url,
+    transport,
+    protocolVersion,
+    authRequired)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     OnboardingProfile,
     clientType,
     displayName,
     gatewayMcpUrl,
+    mcp,
     transport,
     authRequired,
     trust,

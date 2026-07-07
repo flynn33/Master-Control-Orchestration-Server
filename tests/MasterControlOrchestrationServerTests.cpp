@@ -18,6 +18,7 @@
 #include "MasterControl/AdminRouteAuthorization.h"
 #include "MasterControl/AdminRouteRegistry.h"
 #include "MasterControl/EndpointAdvertisement.h"
+#include "MasterControl/HttpBindingInspection.h"
 #include "MasterControl/HttpHeaderParse.h"
 #include "MasterControl/JsonMerge.h"
 #include "MasterControl/JsonStrictness.h"
@@ -30,6 +31,7 @@
 #include "MasterControl/QueryParamParse.h"
 #include "MasterControl/SupervisorAssignment.h"
 #include "MasterControl/WorkflowReadiness.h"
+#include "MasterControl/WorkingAlphaReadiness.h"
 // v0.9.76: Supervisor Agent Assignment Wizard backend tests use the
 // service implementation directly. The header lives next to the .cpp
 // in src/MasterControlApp/; the relative include matches the
@@ -441,6 +443,16 @@ bool testLanClientConfigBundleShape() {
             { "framework", "Forsetti Framework for Agentic Coding" },
             { "profileEndpoint", "/api/client/governance/profile" },
             { "decisionEndpoint", "/api/client/governance/decisions" }
+        } },
+        // Working-alpha contract additions: absolute URLs a second LAN host
+        // can act on directly.
+        { "gatewayUrl", "http://192.168.1.10:8080/mcp" },
+        { "discoveryUrl", "http://192.168.1.10:7300/.well-known/mcos.json" },
+        { "heartbeatUrl", "http://192.168.1.10:7300/api/client/heartbeat" },
+        { "telemetryHeartbeatUrl", "http://192.168.1.10:7300/api/telemetry/heartbeat" },
+        { "onboarding", {
+            { "profileUrl", "http://192.168.1.10:7300/api/onboarding/claude_code" },
+            { "genericProfileUrl", "http://192.168.1.10:7300/api/onboarding/generic" }
         } }
     };
 
@@ -461,6 +473,15 @@ bool testLanClientConfigBundleShape() {
                  "Catalogs include subAgents path.");
     ok &= expect(bundle["governance"]["authority"].get<std::string>() == "CLU",
                  "Governance authority is CLU.");
+    // Working-alpha contract: absolute gateway + heartbeat URLs + onboarding ref.
+    ok &= expect(bundle["gatewayUrl"].get<std::string>().rfind("http://", 0) == 0,
+                 "Bundle carries an absolute gatewayUrl.");
+    ok &= expect(bundle["heartbeatUrl"].get<std::string>().find("/api/client/heartbeat") != std::string::npos,
+                 "Bundle carries an absolute client heartbeat URL.");
+    ok &= expect(bundle["telemetryHeartbeatUrl"].get<std::string>().find("/api/telemetry/heartbeat") != std::string::npos,
+                 "Bundle carries an absolute telemetry heartbeat URL.");
+    ok &= expect(bundle["onboarding"].contains("profileUrl"),
+                 "Bundle carries an onboarding profile reference.");
     return ok;
 }
 
@@ -1227,12 +1248,13 @@ bool testOnboardingProfileJsonRequiredFields() {
     profile.clientType = "claude-code";
     profile.displayName = "Claude Code";
     profile.gatewayMcpUrl = "http://192.168.1.10:8080/mcp";
+    profile.mcp.url = profile.gatewayMcpUrl;  // structured MCP descriptor (working-alpha contract)
     profile.governanceBundleUrl = "http://192.168.1.10:7300/api/governance/bundles/windows";
 
     nlohmann::json serialized = profile;
     bool ok = true;
     const std::vector<std::string> required = {
-        "clientType", "gatewayMcpUrl", "transport", "authRequired", "governanceBundleUrl"
+        "clientType", "mcp", "gatewayMcpUrl", "transport", "authRequired", "governanceBundleUrl"
     };
     for (const auto& key : required) {
         ok &= expect(serialized.contains(key),
@@ -1242,6 +1264,12 @@ bool testOnboardingProfileJsonRequiredFields() {
                  "authRequired serializes as false (schema const).");
     ok &= expect(serialized["transport"].get<std::string>() == "streamable_http",
                  "transport serializes as a schema-allowed enum value.");
+    // Working-alpha contract: /api/onboarding/{clientType} exposes an `mcp`
+    // object mirroring the gateway URL/transport with a pinned protocol rev.
+    ok &= expect(serialized["mcp"]["url"].get<std::string>() == "http://192.168.1.10:8080/mcp",
+                 "Onboarding profile mcp.url mirrors the gateway MCP URL.");
+    ok &= expect(serialized["mcp"]["protocolVersion"].get<std::string>() == "2025-03-26",
+                 "Onboarding profile mcp.protocolVersion pins the MCP revision.");
     return ok;
 }
 
@@ -1303,6 +1331,10 @@ bool testDiscoveryDocumentJsonRoundTrip() {
     original.version = "0.5.0";
     original.instanceId = "mcos-test-id-001";
     original.instanceName = "Test MCOS";
+    // Working-alpha contract: structured server-identity object.
+    original.server.version = "0.5.0";
+    original.server.instanceId = "mcos-test-id-001";
+    original.server.networkMode = "trusted-lan";
     original.gateway.type = "native";
     original.gateway.mcpUrl = "http://192.168.1.10:8080/mcp";
     original.gateway.healthUrl = "http://192.168.1.10:8080/health";
@@ -1340,6 +1372,10 @@ bool testDiscoveryDocumentJsonRoundTrip() {
                  "Discovery JSON pins auth=required.");
     ok &= expect(serialized["securityPosture"].get<std::string>() == "local-only",
                  "Discovery JSON pins securityPosture=local-only.");
+    ok &= expect(serialized["server"]["product"].get<std::string>() == "MCOS",
+                 "Discovery JSON exposes server.product=MCOS (working-alpha contract).");
+    ok &= expect(serialized["server"]["networkMode"].get<std::string>() == "trusted-lan",
+                 "Discovery JSON exposes server.networkMode.");
     ok &= expect(serialized["gateway"]["mcpUrl"].get<std::string>() == "http://192.168.1.10:8080/mcp",
                  "Discovery JSON exposes gateway.mcpUrl.");
     // v0.11.0-alpha.2: pin the TLS surface in the serialized form so
@@ -1379,6 +1415,10 @@ bool testDiscoveryDocumentJsonRoundTrip() {
                  "Discovery doc round-trips capabilities count.");
     ok &= expect(restored.instanceId == original.instanceId,
                  "Discovery doc round-trips instanceId.");
+    ok &= expect(restored.server.instanceId == original.server.instanceId,
+                 "Discovery doc round-trips server.instanceId.");
+    ok &= expect(restored.server.networkMode == original.server.networkMode,
+                 "Discovery doc round-trips server.networkMode.");
 
     // TLS-disabled default state serializes to empty/false on the
     // dual-bind fields. This guards
@@ -1459,6 +1499,12 @@ bool testWellKnownDocumentMatchesSchemaRequiredFields() {
     for (const auto& key : required) {
         ok &= expect(wellKnown.contains(key),
                      "/.well-known/mcos.json contains required key (per schema).");
+    }
+    // Working-alpha acceptance contract additionally requires the structured
+    // server/gateway/admin objects to survive the strip.
+    for (const char* key : { "server", "gateway", "admin" }) {
+        ok &= expect(wellKnown.contains(key),
+                     "/.well-known/mcos.json exposes working-alpha server/gateway/admin object.");
     }
     ok &= expect(!wellKnown.contains("generatedAtUtc"),
                  "/.well-known/mcos.json strips beacon-only generatedAtUtc.");
@@ -4168,6 +4214,276 @@ bool testWorkerSupervisorShutdownDoesNotRespawnDuringTeardown() {
 }
 #endif  // _WIN32
 
+// ---------------------------------------------------------------------------
+// Working-alpha HTTP.sys binding classification (HttpBindingInspection.h).
+// Required-vs-optional is the whole point of the binding-validation task: a
+// required binding that is absent must fail closed; an optional binding that
+// is absent must be reported, not failed.
+// ---------------------------------------------------------------------------
+bool testClassifyRequiredBindingMissingFails() {
+    bool ok = true;
+    MasterControl::BindingExpectation expectation;
+    expectation.kind = MasterControl::HttpBindingKind::UrlAcl;
+    expectation.surface = "gateway";
+    expectation.required = true;
+    expectation.port = 8080;
+    const MasterControl::BindingObservation observation;  // present = false
+    const auto status = MasterControl::classifyHttpBinding(expectation, observation);
+    ok &= expect(status.verdict == MasterControl::HttpBindingVerdict::Failed,
+                 "Required URL ACL that is absent classifies as Failed.");
+    ok &= expect(status.failed(), "Required-missing binding reports failed().");
+    ok &= expect(!status.optionalMissing,
+                 "Required-missing binding is not labelled optionalMissing.");
+    return ok;
+}
+
+bool testClassifyOptionalBindingMissingIsReportedNotFailed() {
+    bool ok = true;
+    MasterControl::BindingExpectation expectation;
+    expectation.kind = MasterControl::HttpBindingKind::UrlAcl;
+    expectation.surface = "gateway";
+    expectation.required = false;
+    const MasterControl::BindingObservation observation;  // present = false
+    const auto status = MasterControl::classifyHttpBinding(expectation, observation);
+    ok &= expect(status.verdict == MasterControl::HttpBindingVerdict::OptionalMissing,
+                 "Optional URL ACL that is absent classifies as OptionalMissing.");
+    ok &= expect(!status.failed(), "Optional-missing binding does not fail closed.");
+    ok &= expect(status.optionalMissing, "Optional-missing binding sets optionalMissing.");
+    return ok;
+}
+
+bool testClassifyRequiredBindingPresentPasses() {
+    bool ok = true;
+    MasterControl::BindingExpectation expectation;
+    expectation.kind = MasterControl::HttpBindingKind::Firewall;
+    expectation.surface = "admin";
+    expectation.required = true;
+    expectation.ruleName = "MCOS Admin";
+    MasterControl::BindingObservation observation;
+    observation.present = true;
+    const auto status = MasterControl::classifyHttpBinding(expectation, observation);
+    ok &= expect(status.verdict == MasterControl::HttpBindingVerdict::Passed,
+                 "Required firewall rule that is present classifies as Passed.");
+    ok &= expect(status.present && status.required && !status.optionalMissing,
+                 "Passed binding carries present/required flags without optionalMissing.");
+    return ok;
+}
+
+bool testClassifyTlsThumbprintMismatchFailsEvenWhenBound() {
+    bool ok = true;
+    MasterControl::BindingExpectation expectation;
+    expectation.kind = MasterControl::HttpBindingKind::Tls;
+    expectation.surface = "gateway";
+    expectation.required = true;
+    expectation.expectedThumbprint = "AA:BB:CC:DD";
+    MasterControl::BindingObservation observation;
+    observation.present = true;
+    observation.thumbprint = "aabbccee";  // bound, but the wrong certificate
+    const auto mismatch = MasterControl::classifyHttpBinding(expectation, observation);
+    ok &= expect(mismatch.verdict == MasterControl::HttpBindingVerdict::Failed,
+                 "Required TLS binding with a mismatched thumbprint fails.");
+    observation.thumbprint = "aa bb cc dd";  // same cert, spaced/lowercased
+    const auto match = MasterControl::classifyHttpBinding(expectation, observation);
+    ok &= expect(match.verdict == MasterControl::HttpBindingVerdict::Passed,
+                 "TLS thumbprint comparison ignores case and separators.");
+    expectation.required = false;
+    observation.thumbprint = "ffffffff";  // present but wrong, even if optional
+    const auto optionalMismatch = MasterControl::classifyHttpBinding(expectation, observation);
+    ok &= expect(optionalMismatch.verdict == MasterControl::HttpBindingVerdict::Failed,
+                 "An optional TLS binding bound to the wrong certificate still fails.");
+    return ok;
+}
+
+bool testFakeHttpBindingInspectorObserveAndInspect() {
+    bool ok = true;
+    MasterControl::FakeHttpBindingInspector inspector;
+    MasterControl::BindingObservation present;
+    present.present = true;
+    inspector.setObservation("admin", MasterControl::HttpBindingKind::Firewall, present);
+
+    MasterControl::BindingExpectation adminFirewall;
+    adminFirewall.kind = MasterControl::HttpBindingKind::Firewall;
+    adminFirewall.surface = "admin";
+    adminFirewall.required = true;
+    ok &= expect(inspector.Inspect(adminFirewall).verdict == MasterControl::HttpBindingVerdict::Passed,
+                 "Fake inspector reports a scripted-present required binding as Passed.");
+
+    // An unscripted surface defaults to absent -> a required binding fails.
+    MasterControl::BindingExpectation gatewayUrlAcl;
+    gatewayUrlAcl.kind = MasterControl::HttpBindingKind::UrlAcl;
+    gatewayUrlAcl.surface = "gateway";
+    gatewayUrlAcl.required = true;
+    ok &= expect(inspector.Inspect(gatewayUrlAcl).verdict == MasterControl::HttpBindingVerdict::Failed,
+                 "Fake inspector defaults unscripted bindings to absent.");
+
+    ok &= expect(std::string(MasterControl::bindingKindToString(MasterControl::HttpBindingKind::UrlAcl)) == "urlAcl",
+                 "bindingKindToString maps UrlAcl to 'urlAcl'.");
+    ok &= expect(std::string(MasterControl::bindingVerdictToString(MasterControl::HttpBindingVerdict::OptionalMissing)) == "optionalMissing",
+                 "bindingVerdictToString maps OptionalMissing to 'optionalMissing'.");
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Working-alpha readiness (WorkingAlphaReadiness.h). Stable machine-readable
+// blocking IDs, honest states, and structural separation from the setup-
+// completion readiness model.
+// ---------------------------------------------------------------------------
+bool testWorkingAlphaReadinessIdsStableUniqueAndSerializable() {
+    MasterControl::WorkingAlphaReadinessInputs in;
+    // Drive every negative signal so every issue fires.
+    in.installStateAvailable = false;
+    in.adminListenerReachable = false;
+    in.gatewayRunning = false;
+    in.gatewayState = "disabled";
+    in.lanModeEnabled = true;
+    in.discoveryRoutable = false;
+    in.registeredClientCount = 0;
+    in.anyClientHeartbeatObserved = false;
+    in.workerPoolConfigured = true;
+    in.workerPoolHasReadyInstance = false;
+    in.diagnosticsStoreAvailable = false;
+    in.requiredBindingProblem = true;
+    in.requiredBindingDetail = "Required gateway URL ACL is missing.";
+
+    const auto report = MasterControl::assessWorkingAlphaReadiness(in);
+    bool ok = true;
+    ok &= expect(!report.ready, "All-negative inputs make the report not ready.");
+
+    const std::vector<std::string> expectedIds = {
+        "service.install-state-unavailable",
+        "listener.admin-unavailable",
+        "gateway.not-running",
+        "discovery.url-unroutable",
+        "client.none-registered",
+        "client.no-heartbeat-observed",
+        "pool.no-ready-instance",
+        "diagnostics.store-unavailable",
+        "binding.required-missing",
+    };
+    ok &= expect(report.blockingIssues.size() == expectedIds.size(),
+                 "Every working-alpha blocking issue fires when all signals are negative.");
+    std::vector<std::string> seenIds;
+    for (const auto& issue : report.blockingIssues) {
+        const bool dup = std::find(seenIds.begin(), seenIds.end(), issue.id) != seenIds.end();
+        ok &= expect(!dup, "Working-alpha readiness issue IDs are unique (no duplicates).");
+        seenIds.push_back(issue.id);
+        ok &= expect(!issue.state.empty(),
+                     "Working-alpha readiness issue carries an honest state slug.");
+    }
+    for (const auto& id : expectedIds) {
+        const bool present = std::find(seenIds.begin(), seenIds.end(), id) != seenIds.end();
+        ok &= expect(present, "Working-alpha readiness emits the expected stable issue ID.");
+    }
+
+    nlohmann::json serialized = report;
+    ok &= expect(serialized["ready"].get<bool>() == false,
+                 "Working-alpha report serializes ready flag.");
+    ok &= expect(serialized["blockingIssues"].is_array()
+                 && serialized["blockingIssues"].size() == expectedIds.size(),
+                 "Working-alpha report serializes its blocking issues array.");
+    // Structural separation from the setup-completion readiness model: a
+    // working-alpha issue carries a `state` slug and NO `severity` field, so it
+    // can never be mistaken for a ReadinessIssue that gates /api/setup/complete
+    // (that gate keys on severity == "blocking").
+    ok &= expect(serialized["blockingIssues"][0].contains("state"),
+                 "Working-alpha issue exposes a state field.");
+    ok &= expect(!serialized["blockingIssues"][0].contains("severity"),
+                 "Working-alpha issue has no severity field (separate from setup readiness).");
+
+    auto restored = serialized.get<MasterControl::WorkingAlphaReadinessReport>();
+    ok &= expect(restored.blockingIssues.size() == report.blockingIssues.size(),
+                 "Working-alpha report round-trips its issue count.");
+    return ok;
+}
+
+bool testWorkingAlphaReadinessReadyWhenHealthy() {
+    MasterControl::WorkingAlphaReadinessInputs in;
+    in.installStateAvailable = true;
+    in.adminListenerReachable = true;
+    in.gatewayRunning = true;
+    in.lanModeEnabled = true;
+    in.discoveryRoutable = true;
+    in.registeredClientCount = 1;
+    in.anyClientHeartbeatObserved = true;
+    in.workerPoolConfigured = true;
+    in.workerPoolHasReadyInstance = true;
+    in.diagnosticsStoreAvailable = true;
+    in.requiredBindingProblem = false;
+
+    const auto report = MasterControl::assessWorkingAlphaReadiness(in);
+    bool ok = true;
+    ok &= expect(report.ready, "A fully-healthy install reports working-alpha ready.");
+    ok &= expect(report.blockingIssues.empty(),
+                 "A healthy install emits no working-alpha blocking issues.");
+    return ok;
+}
+
+bool testWorkingAlphaReadinessHonestStatesNoFabrication() {
+    // local-only posture does NOT flag discovery as unroutable (loopback is
+    // correct locally), but a stopped gateway still blocks.
+    MasterControl::WorkingAlphaReadinessInputs in;
+    in.gatewayRunning = false;
+    in.lanModeEnabled = false;       // local-only
+    in.discoveryRoutable = false;    // loopback -- correct for local-only
+    in.registeredClientCount = 1;
+    in.anyClientHeartbeatObserved = true;
+    in.diagnosticsStoreAvailable = true;
+    const auto report = MasterControl::assessWorkingAlphaReadiness(in);
+    bool ok = true;
+    bool sawDiscovery = false;
+    bool sawGateway = false;
+    for (const auto& issue : report.blockingIssues) {
+        if (issue.id == "discovery.url-unroutable") { sawDiscovery = true; }
+        if (issue.id == "gateway.not-running") { sawGateway = true; }
+    }
+    ok &= expect(!sawDiscovery,
+                 "Local-only posture does not flag loopback discovery as unroutable.");
+    ok &= expect(sawGateway,
+                 "A stopped gateway still blocks even in local-only posture.");
+    return ok;
+}
+
+// Guards that every route the working-alpha acceptance scripts depend on is
+// present in the typed admin route registry (which backs 405/Allow behavior).
+// Adding a route to handleHttpRequest without also registering it here would
+// silently break the acceptance harness; this test fails loudly instead.
+bool testAdminRouteRegistryCoversWorkingAlphaAcceptanceRoutes() {
+    bool ok = true;
+    const auto allows = [&ok](const char* path, const char* method) {
+        const auto methods = MasterControl::supportedMethodsForPath(path);
+        const bool present =
+            std::find(methods.begin(), methods.end(), std::string(method)) != methods.end();
+        if (!present) {
+            std::cerr << "Working-alpha acceptance route not in registry: "
+                      << method << ' ' << path << '\n';
+        }
+        ok &= expect(present,
+                     "Working-alpha acceptance route is present in the admin route registry.");
+    };
+    // Admin GET routes probed by the local working-alpha acceptance script.
+    allows("/api/health", "GET");
+    allows("/api/version", "GET");
+    allows("/api/health/summary", "GET");
+    allows("/.well-known/mcos.json", "GET");
+    allows("/api/discovery", "GET");
+    allows("/api/gateway/status", "GET");
+    allows("/api/gateway/health", "GET");
+    allows("/api/gateway/tools", "GET");
+    allows("/api/onboarding", "GET");
+    allows("/api/onboarding/codex", "GET");        // dynamic {clientType} route
+    allows("/api/onboarding/claude-code", "GET");
+    allows("/api/governance/profile", "GET");
+    allows("/api/telemetry/gateway", "GET");
+    allows("/api/telemetry/clients", "GET");
+    // Client + heartbeat routes used by the registration + second-host scripts.
+    allows("/api/telemetry/heartbeat", "POST");
+    allows("/api/client/heartbeat", "POST");
+    allows("/api/clients", "GET");
+    allows("/api/clients", "POST");
+    allows("/api/clients/codex-alpha-01/config", "GET"); // dynamic {id} route
+    return ok;
+}
+
 int main() {
 #if defined(_WIN32)
     // v0.11.0-alpha.3: fail fast on a hard fault instead of hanging.
@@ -4349,6 +4665,17 @@ int main() {
     ok &= testToolCatalogRefreshDoesNotHoldGatewayMutexDuringChildRpc();
     ok &= testNativeGatewayRegistrationRejectsEmptyName();
     ok &= testGatewayExceptionResponseEscapesJsonMessage();
+    // Working-alpha HTTP.sys binding classification (required vs optional vs missing).
+    ok &= testClassifyRequiredBindingMissingFails();
+    ok &= testClassifyOptionalBindingMissingIsReportedNotFailed();
+    ok &= testClassifyRequiredBindingPresentPasses();
+    ok &= testClassifyTlsThumbprintMismatchFailsEvenWhenBound();
+    ok &= testFakeHttpBindingInspectorObserveAndInspect();
+    // Working-alpha readiness assessment (stable IDs, honest states, separation).
+    ok &= testWorkingAlphaReadinessIdsStableUniqueAndSerializable();
+    ok &= testWorkingAlphaReadinessReadyWhenHealthy();
+    ok &= testWorkingAlphaReadinessHonestStatesNoFabrication();
+    ok &= testAdminRouteRegistryCoversWorkingAlphaAcceptanceRoutes();
 #if defined(_WIN32)
     ok &= testWorkerSupervisorResolvesPathExecutable();
     ok &= testWorkerSupervisorPrefersCmdOverExtensionlessShim();
