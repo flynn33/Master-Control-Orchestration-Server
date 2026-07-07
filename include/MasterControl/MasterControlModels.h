@@ -1065,6 +1065,12 @@ struct EndpointInstance final {
     std::string lastTransitionAtUtc;
     std::string statusMessage;
     WorkerTelemetry telemetry;
+    // Set true once the instance completes a real MCP `initialize` handshake
+    // over its stdio bridge (not merely process-spawned). Working-alpha
+    // readiness counts a required pool ready only when an instance has this
+    // set, so a spawned-but-mute worker cannot fake pool readiness.
+    bool healthProbePassed = false;
+    std::string healthProbeAtUtc;
 };
 
 struct ManagedEndpointPool final {
@@ -2647,7 +2653,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     startedAtUtc,
     lastTransitionAtUtc,
     statusMessage,
-    telemetry)
+    telemetry,
+    healthProbePassed,
+    healthProbeAtUtc)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     LeaseRequest,

@@ -8,6 +8,7 @@ param(
     [string]$BaseUrl = "",
     [string]$GatewayUrl = "",
     [string]$InstallDirectory = "",
+    [string]$BootstrapperPath = "",
     [switch]$Bundle
 )
 
@@ -225,11 +226,22 @@ if (Test-Path -LiteralPath $commonHelper) {
     if (-not $BaseUrl) { $BaseUrl = Resolve-McosAdminBaseUrlFromInstallState -InstallDirectory $InstallDirectory }
     if ($BaseUrl) {
         $BaseUrl = $BaseUrl.TrimEnd('/')
-        foreach ($probePath in @('/api/health', '/api/health/summary', '/api/gateway/status', '/api/gateway/health', '/api/telemetry/clients', '/api/discovery')) {
+        foreach ($probePath in @('/api/health', '/api/version', '/api/health/summary', '/api/gateway/status', '/api/gateway/health', '/api/gateway/tools', '/api/telemetry/clients', '/api/discovery', '/api/clients', '/api/pools', '/api/diagnostics/runtime-stats')) {
             $probe = Invoke-McosHttpProbe -Method GET -Url "$BaseUrl$probePath"
             $label = "probe_" + ($probePath -replace '[^\w]', '_')
             Write-DiagArtifact -Name "$label.json" -Content (($probe | ConvertTo-Json -Depth 8)) | Out-Null
             $hostDiag[$label] = [ordered]@{ status = if ($probe.ok) { "ok" } else { "unreachable" }; statusCode = $probe.statusCode }
+            # Explicit working-alpha readiness evidence from the summary block.
+            if ($probePath -eq '/api/health/summary' -and $probe.jsonValid) {
+                $wa = Get-McosJsonPath -Json $probe.json -Path 'workingAlpha'
+                if ($wa) {
+                    Write-DiagArtifact -Name "working-alpha-readiness.json" -Content (($wa | ConvertTo-Json -Depth 8)) | Out-Null
+                    $ids = @()
+                    $blk = Get-McosJsonPath -Json $wa -Path 'blockingIssues'
+                    if ($blk) { $ids = @($blk | ForEach-Object { $_.id }) }
+                    $hostDiag["workingAlphaReadiness"] = [ordered]@{ ready = [bool](Get-McosJsonPath -Json $wa -Path 'ready'); blockingIssues = $ids }
+                }
+            }
         }
         if (-not $GatewayUrl) {
             $discProbe = Invoke-McosHttpProbe -Method GET -Url "$BaseUrl/api/discovery"
@@ -240,9 +252,25 @@ if (Test-Path -LiteralPath $commonHelper) {
             if ((Test-McosHostWildcard -HostName $gwHost) -or [string]::IsNullOrEmpty($gwHost)) {
                 $GatewayUrl = $GatewayUrl -replace [regex]::Escape($gwHost), '127.0.0.1'
             }
-            $mcp = Invoke-McosMcpRpc -GatewayUrl $GatewayUrl -RpcMethod 'initialize' -RpcParams @{ protocolVersion = '2025-03-26'; capabilities = @{}; clientInfo = @{ name = 'mcos-diagnostics'; version = '1.0' } } -Id 1
-            Write-DiagArtifact -Name "probe_mcp_initialize.json" -Content (($mcp | ConvertTo-Json -Depth 8)) | Out-Null
-            $hostDiag["probe_mcp_initialize"] = [ordered]@{ status = if ($mcp.ok) { "ok" } else { "unreachable" }; statusCode = $mcp.statusCode }
+            foreach ($rpc in @(
+                    @{ m = 'initialize'; p = @{ protocolVersion = '2025-03-26'; capabilities = @{}; clientInfo = @{ name = 'mcos-diagnostics'; version = '1.0' } }; id = 1 },
+                    @{ m = 'ping'; p = $null; id = 2 },
+                    @{ m = 'tools/list'; p = $null; id = 3 })) {
+                $mcp = Invoke-McosMcpRpc -GatewayUrl $GatewayUrl -RpcMethod $rpc.m -RpcParams $rpc.p -Id $rpc.id
+                $lbl = "probe_mcp_" + ($rpc.m -replace '[^\w]', '_')
+                Write-DiagArtifact -Name "$lbl.json" -Content (($mcp | ConvertTo-Json -Depth 8)) | Out-Null
+                $hostDiag[$lbl] = [ordered]@{ status = if ($mcp.ok) { "ok" } else { "unreachable" }; statusCode = $mcp.statusCode }
+            }
+        }
+        # Structured bootstrapper binding verdicts (non-mutating validate).
+        if ($BootstrapperPath -and (Test-Path -LiteralPath $BootstrapperPath) -and $InstallDirectory) {
+            try {
+                $bindOut = & $BootstrapperPath validate $InstallDirectory --json 2>&1 | Out-String
+                Write-DiagArtifact -Name "bootstrapper-validate.json" -Content $bindOut | Out-Null
+                $hostDiag["bootstrapperValidate"] = [ordered]@{ status = "collected" }
+            } catch {
+                $hostDiag["bootstrapperValidate"] = [ordered]@{ status = "error"; note = $_.Exception.Message }
+            }
         }
     } else {
         $hostDiag["probes"] = [ordered]@{ status = "skipped"; note = "no admin base URL (pass -BaseUrl or install MCOS)" }

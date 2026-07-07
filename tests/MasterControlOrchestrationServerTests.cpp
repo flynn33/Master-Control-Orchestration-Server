@@ -4781,6 +4781,33 @@ bool testWorkingAlphaReadinessRequiredBindingFailureBlocks() {
     return ok;
 }
 
+// ---------------------------------------------------------------------------
+// Handshake-gated pool readiness (T03): EndpointInstance carries a
+// handshake-confirmed flag that defaults fail-closed.
+// ---------------------------------------------------------------------------
+bool testEndpointInstanceHealthProbeRoundTrip() {
+    bool ok = true;
+    MasterControl::EndpointInstance fresh;
+    ok &= expect(fresh.healthProbePassed == false,
+                 "A fresh EndpointInstance is not handshake-confirmed by default.");
+
+    MasterControl::EndpointInstance inst;
+    inst.instanceId = "inst-1";
+    inst.poolId = "baseline-tools";
+    inst.state = MasterControl::EndpointInstanceState::Ready;
+    inst.healthProbePassed = true;
+    inst.healthProbeAtUtc = "2026-07-07T00:00:00Z";
+    nlohmann::json j = inst;
+    ok &= expect(j["healthProbePassed"].get<bool>() == true,
+                 "EndpointInstance serializes healthProbePassed.");
+    auto restored = j.get<MasterControl::EndpointInstance>();
+    ok &= expect(restored.healthProbePassed == true,
+                 "EndpointInstance round-trips healthProbePassed.");
+    ok &= expect(restored.healthProbeAtUtc == inst.healthProbeAtUtc,
+                 "EndpointInstance round-trips healthProbeAtUtc.");
+    return ok;
+}
+
 int main() {
 #if defined(_WIN32)
     // v0.11.0-alpha.3: fail fast on a hard fault instead of hanging.
@@ -4983,6 +5010,7 @@ int main() {
     ok &= testWorkingAlphaReadinessAllObservedGoodPasses();
     ok &= testWorkingAlphaReadinessMissingClientFails();
     ok &= testWorkingAlphaReadinessRequiredBindingFailureBlocks();
+    ok &= testEndpointInstanceHealthProbeRoundTrip();
 #if defined(_WIN32)
     ok &= testWorkerSupervisorResolvesPathExecutable();
     ok &= testWorkerSupervisorPrefersCmdOverExtensionlessShim();

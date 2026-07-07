@@ -59,7 +59,9 @@ param(
     [string]$GatewayUrl,
     [string]$BootstrapperPath,
     [string]$InstallDirectory,
+    [Alias('OutDirectory')]
     [string]$OutputDirectory = (Join-Path (Get-Location).Path 'artifacts\working-alpha-local'),
+    [switch]$Certification,
     [switch]$Json,
     [switch]$Help
 )
@@ -103,6 +105,9 @@ $adminRoutes = @(
     @{ name = 'GET /api/governance/profile';               path = '/api/governance/profile';                   fields = @() }
     @{ name = 'GET /api/telemetry/gateway';                path = '/api/telemetry/gateway';                    fields = @() }
     @{ name = 'GET /api/telemetry/clients';                path = '/api/telemetry/clients';                    fields = @() }
+    @{ name = 'GET /api/clients';                          path = '/api/clients';                              fields = @() }
+    @{ name = 'GET /api/pools';                            path = '/api/pools';                                fields = @() }
+    @{ name = 'GET /api/diagnostics/runtime-stats';        path = '/api/diagnostics/runtime-stats';            fields = @('mcpServers', 'subAgents') }
 )
 
 $discoveryJson = $null
@@ -183,10 +188,13 @@ foreach ($m in $mcpProbes) {
     Add-McosCheck -Checks $checks -Name $m.name -Passed $passed -Detail $detail -Evidence $evidence | Out-Null
 }
 
-# --- Runtime working-alpha readiness (informational) ----------------------
-# /api/health/summary carries a `workingAlpha` block. It is reported here but
-# NOT treated as a required failure: an empty client roster / stopped gateway
-# is expected before the Gate E second-host run.
+# --- Runtime working-alpha readiness --------------------------------------
+# /api/health/summary carries a `workingAlpha` block. In -Certification mode it
+# is a REQUIRED check (readiness must be ready). Without -Certification it is
+# informational: an empty client roster / stopped gateway is expected before
+# the Gate E second-host run.
+$waRequired = [bool]$Certification
+$waName = if ($Certification) { 'Runtime workingAlpha readiness' } else { 'Runtime workingAlpha readiness (informational)' }
 if ($summaryJson) {
     $wa = Get-McosJsonPath -Json $summaryJson -Path 'workingAlpha'
     if ($wa) {
@@ -194,10 +202,16 @@ if ($summaryJson) {
         $issues = Get-McosJsonPath -Json $wa -Path 'blockingIssues'
         $ids = @()
         if ($issues) { $ids = @($issues | ForEach-Object { $_.id }) }
-        Add-McosCheck -Checks $checks -Name 'Runtime workingAlpha readiness (informational)' `
+        Add-McosCheck -Checks $checks -Name $waName `
             -Passed ([bool]$ready) -Detail ("ready=$ready blockingIssues=[$($ids -join ',')]") `
-            -Required $false | Out-Null
+            -Required $waRequired | Out-Null
+    } elseif ($Certification) {
+        Add-McosCheck -Checks $checks -Name $waName -Passed $false `
+            -Detail '/api/health/summary has no workingAlpha readiness block' -Required $true | Out-Null
     }
+} elseif ($Certification) {
+    Add-McosCheck -Checks $checks -Name $waName -Passed $false `
+        -Detail '/api/health/summary unavailable; readiness could not be evaluated' -Required $true | Out-Null
 }
 
 # --- Bootstrapper binding posture (optional) ------------------------------
@@ -223,7 +237,7 @@ if ($BootstrapperPath -and (Test-Path -LiteralPath $BootstrapperPath) -and $Inst
             -Passed (@($failed).Count -eq 0) -Detail ("failedBindings=[$($failed -join ',')]") | Out-Null
     } catch {
         Add-McosCheck -Checks $checks -Name 'Required HTTP.sys bindings present' -Passed $false `
-            -Detail "bootstrapper validate failed: $($_.Exception.Message)" -Required $false | Out-Null
+            -Detail "bootstrapper validate failed: $($_.Exception.Message)" -Required ([bool]$Certification) | Out-Null
     }
 }
 
@@ -231,12 +245,13 @@ if ($BootstrapperPath -and (Test-Path -LiteralPath $BootstrapperPath) -and $Inst
 $jsonPath = Join-Path $OutputDirectory 'working-alpha-acceptance.json'
 $mdPath = Join-Path $OutputDirectory 'working-alpha-acceptance.md'
 $context = @{
-    mode         = $Mode
-    baseUrl      = $BaseUrl
-    gatewayUrl   = $GatewayUrl
-    networkMode  = $networkMode
-    evidenceDir  = $evidenceDir
-    generatedUtc = (Get-Date).ToUniversalTime().ToString('o')
+    mode          = $Mode
+    certification = [bool]$Certification
+    baseUrl       = $BaseUrl
+    gatewayUrl    = $GatewayUrl
+    networkMode   = $networkMode
+    evidenceDir   = $evidenceDir
+    generatedUtc  = (Get-Date).ToUniversalTime().ToString('o')
 }
 Write-McosReport -Title 'MCOS Working-Alpha Local Runtime Acceptance' -Checks $checks `
     -JsonPath $jsonPath -MarkdownPath $mdPath -Context $context | Out-Null

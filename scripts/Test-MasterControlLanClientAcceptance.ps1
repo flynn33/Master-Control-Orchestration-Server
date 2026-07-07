@@ -60,14 +60,20 @@
 
 [CmdletBinding()]
 param(
+    [Alias('ClientBundlePath')]
     [string]$BundlePath,
     [string]$AdminBaseUrl,
     [string]$DiscoveryUrl,
     [string]$GatewayUrl,
     [string]$ClientId,
     [string]$ClientType = 'codex',
+    [Alias('OutDirectory')]
     [string]$OutputDirectory = (Join-Path (Get-Location).Path 'mcos-lan-acceptance'),
     [int]$FreshnessSeconds = 600,
+    # Second-host acceptance probes are required by construction; -Certification
+    # is accepted for command-set symmetry with the local acceptance script and
+    # is recorded in the report.
+    [switch]$Certification,
     [switch]$Json,
     [switch]$Help
 )
@@ -221,13 +227,14 @@ Add-McosCheck -Checks $checks -Name 'Client liveness observed with fresh timesta
 $jsonPath = Join-Path $OutputDirectory 'lan-client-acceptance.json'
 $mdPath = Join-Path $OutputDirectory 'lan-client-acceptance.md'
 $context = @{
-    clientId     = $ClientId
-    clientType   = $ClientType
-    adminBaseUrl = $AdminBaseUrl
-    gatewayUrl   = $GatewayUrl
-    discoveryUrl = $DiscoveryUrl
-    evidenceDir  = $evidenceDir
-    generatedUtc = (Get-Date).ToUniversalTime().ToString('o')
+    clientId      = $ClientId
+    clientType    = $ClientType
+    certification = [bool]$Certification
+    adminBaseUrl  = $AdminBaseUrl
+    gatewayUrl    = $GatewayUrl
+    discoveryUrl  = $DiscoveryUrl
+    evidenceDir   = $evidenceDir
+    generatedUtc  = (Get-Date).ToUniversalTime().ToString('o')
 }
 Write-McosReport -Title 'MCOS Second-Host LAN Client Acceptance' -Checks $checks `
     -JsonPath $jsonPath -MarkdownPath $mdPath -Context $context | Out-Null
