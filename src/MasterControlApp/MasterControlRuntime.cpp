@@ -28,6 +28,7 @@
 #include "MasterControl/QueryParamParse.h"  // v0.10.15: alias-aware ?param= extractor.
 #include "MasterControl/WorkflowReadiness.h"
 #include "MasterControl/WorkingAlphaReadiness.h"  // working-alpha readiness assessment (pure).
+#include "MasterControl/GovernanceApprovalQueue.h"  // Phase 7 approval queue + IGovernanceActionExecutor (extracted for testability).
 #include "MasterControl/JsonStrictness.h"   // v0.10.17: dropped-top-level-keys diagnostic.
 #include "MasterControl/JsonMerge.h"        // config-safety remediation: PATCH deep merge + partial-POST detection.
 #include "MasterControl/AdminRouteAuthorization.h"
@@ -3883,105 +3884,102 @@ private:
     std::filesystem::path configurationFile_;
 };
 
-// Phase 7: in-memory approval queue. Mutations whose CLU outcome is
-// RequiresOperatorApproval are staged here until an operator approves or
-// rejects. Approve/reject transitions are recorded to the activity stream for
-// audit. The queue does NOT auto-replay the original mutation: on approval the
-// operator applies the change through the normal governed mutation route, which
-// keeps a single auditable execution path and avoids a general HTTP-route
-// replay engine. Persistence across service restarts is deliberately deferred
-// - long-running deferrals are operationally suspect on a trusted LAN, so the
-// queue lives in process memory only.
-class GovernanceApprovalQueueService final : public IGovernanceApprovalQueueService {
+// Phase 7 approval queue: GovernanceApprovalQueueService now lives in
+// include/MasterControl/GovernanceApprovalQueue.h so the test suite can
+// construct it directly. It stages RequiresOperatorApproval mutations and, on
+// approval, applies them through an injected IGovernanceActionExecutor exactly
+// once. The concrete executor for the running host is below; the queue is wired
+// with the canonical clock + activity-stream audit sink at construction.
+
+// Applies operator-approved governance actions for the running host. The only
+// staged action kind today is GovernancePolicyChange: on approval it records
+// the operator-approved doctrine into the CLU governance profile file so
+// GET /api/governance/profile reflects the change. Any other kind fails closed
+// - an unmapped action must never report success.
+class RuntimeGovernanceActionExecutor final : public IGovernanceActionExecutor {
 public:
-    std::vector<GovernanceDeferredAction> listPending() const override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        std::vector<GovernanceDeferredAction> pending;
-        for (const auto& action : actions_) {
-            if (action.status == "pending") {
-                pending.push_back(action);
-            }
-        }
-        return pending;
-    }
+    explicit RuntimeGovernanceActionExecutor(std::filesystem::path cluProfileFile)
+        : cluProfileFile_(std::move(cluProfileFile)) {}
 
-    std::vector<GovernanceDeferredAction> listAll() const override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return actions_;
-    }
-
-    GovernanceDeferredAction stage(const GovernanceDeferredAction& input) override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        GovernanceDeferredAction action = input;
-        ++nextSequence_;
-        action.id = "deferred-" + std::to_string(nextSequence_);
-        action.status = "pending";
-        action.createdAtUtc = timestampNowUtc();
-        actions_.push_back(action);
-        appendLanClientActivity(
-            "governance-deferred",
-            action.id,
-            std::string("Staged ") + to_string(action.action) + " for operator approval (actor=" + action.actor + ")");
-        return action;
-    }
-
-    OperationResult approve(const std::string& deferredActionId,
-                            const std::string& operatorActor) override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto* action = findById(deferredActionId);
-        if (action == nullptr) {
-            return OperationResult{ false, false, "Deferred action not found." };
-        }
-        if (action->status != "pending") {
+    OperationResult execute(const GovernanceDeferredAction& action) override {
+        switch (action.action) {
+        case GovernanceActionKind::GovernancePolicyChange:
+            return applyPolicyChange(action);
+        default:
             return OperationResult{ false, false,
-                "Deferred action is no longer pending (current status: " + action->status + ")." };
+                "No executor is registered for governance action '" + to_string(action.action) + "'." };
         }
-        action->status = "approved";
-        action->decidedAtUtc = timestampNowUtc();
-        action->decidedBy = operatorActor.empty() ? std::string("operator") : operatorActor;
-        appendLanClientActivity(
-            "governance-approved",
-            action->id,
-            std::string("Operator approved deferred ") + to_string(action->action) + " for actor=" + action->actor);
-        return OperationResult{ true, false, "Deferred action approved." };
-    }
-
-    OperationResult reject(const std::string& deferredActionId,
-                           const std::string& operatorActor,
-                           const std::string& reason) override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto* action = findById(deferredActionId);
-        if (action == nullptr) {
-            return OperationResult{ false, false, "Deferred action not found." };
-        }
-        if (action->status != "pending") {
-            return OperationResult{ false, false,
-                "Deferred action is no longer pending (current status: " + action->status + ")." };
-        }
-        action->status = "rejected";
-        action->decidedAtUtc = timestampNowUtc();
-        action->decidedBy = operatorActor.empty() ? std::string("operator") : operatorActor;
-        action->reason = reason;
-        appendLanClientActivity(
-            "governance-rejected",
-            action->id,
-            std::string("Operator rejected deferred ") + to_string(action->action) + " (reason=" + reason + ")");
-        return OperationResult{ true, false, "Deferred action rejected." };
     }
 
 private:
-    GovernanceDeferredAction* findById(const std::string& id) {
-        for (auto& action : actions_) {
-            if (action.id == id) {
-                return &action;
-            }
+    OperationResult applyPolicyChange(const GovernanceDeferredAction& action) const {
+        // The staged payload is the original POST /api/governance/profile body.
+        const auto payload = nlohmann::json::parse(action.payload, nullptr, /*allow_exceptions=*/false);
+        if (payload.is_discarded() || !payload.is_object()) {
+            return OperationResult{ false, false, "Governance policy change payload is not a JSON object." };
         }
-        return nullptr;
+        const auto doctrineIt = payload.find("doctrine");
+        if (doctrineIt == payload.end() || !doctrineIt->is_string()) {
+            return OperationResult{ false, false, "Governance policy change requires a string 'doctrine' field." };
+        }
+        std::string doctrine = doctrineIt->get<std::string>();
+        // Bounded change: cap the doctrine length so an approved change cannot
+        // write an unbounded blob into the governance profile.
+        constexpr std::size_t kMaxDoctrineChars = 2000;
+        if (doctrine.size() > kMaxDoctrineChars) {
+            doctrine.resize(kMaxDoctrineChars);
+        }
+
+        nlohmann::json profile = loadProfile();
+        if (!profile.is_object()) {
+            profile = nlohmann::json::object();
+        }
+        profile["doctrine"] = doctrine;
+        profile["lastPolicyChange"] = {
+            { "actor", action.actor },
+            { "deferredActionId", action.id },
+            { "appliedAtUtc", timestampNowUtc() }
+        };
+        if (!writeProfile(profile)) {
+            return OperationResult{ false, false, "Failed to write the CLU governance profile file." };
+        }
+        return OperationResult{ true, false, "Applied operator-approved governance doctrine." };
     }
 
-    mutable std::mutex mutex_;
-    std::vector<GovernanceDeferredAction> actions_;
-    uint64_t nextSequence_ = 0;
+    nlohmann::json loadProfile() const {
+        try {
+            if (!std::filesystem::exists(cluProfileFile_)) {
+                return nlohmann::json::object();
+            }
+            std::ifstream stream(cluProfileFile_, std::ios::binary);
+            if (!stream) {
+                return nlohmann::json::object();
+            }
+            return nlohmann::json::parse(stream, nullptr, /*allow_exceptions=*/false);
+        } catch (...) {
+            return nlohmann::json::object();
+        }
+    }
+
+    bool writeProfile(const nlohmann::json& profile) const {
+        try {
+            std::error_code ec;
+            const auto parent = cluProfileFile_.parent_path();
+            if (!parent.empty()) {
+                std::filesystem::create_directories(parent, ec);
+            }
+            std::ofstream stream(cluProfileFile_, std::ios::binary | std::ios::trunc);
+            if (!stream) {
+                return false;
+            }
+            stream << profile.dump(2);
+            return static_cast<bool>(stream);
+        } catch (...) {
+            return false;
+        }
+    }
+
+    std::filesystem::path cluProfileFile_;
 };
 
 
@@ -15348,7 +15346,12 @@ bool MasterControlApplication::Impl::initialize() {
     subAgentCatalogService_ = std::make_shared<SubAgentCatalogService>(state_, paths_.configurationFile, inventoryService_);
     subAgentGroupService_ = std::make_shared<SubAgentGroupService>(state_, paths_.configurationFile, inventoryService_);
     lanClientAccessService_ = std::make_shared<LanClientAccessService>(state_, paths_.configurationFile);
-    governanceApprovalQueueService_ = std::make_shared<GovernanceApprovalQueueService>();
+    governanceApprovalQueueService_ = std::make_shared<GovernanceApprovalQueueService>(
+        std::make_shared<RuntimeGovernanceActionExecutor>(paths_.cluProfileFile),
+        []() { return timestampNowUtc(); },
+        [](const std::string& kind, const std::string& subjectId, const std::string& message) {
+            appendLanClientActivity(kind, subjectId, message);
+        });
     exportService_ = std::make_shared<ExportService>(inventoryService_, configurationService_, lanClientAccessService_);
     platformServiceCatalogService_ = std::make_shared<PlatformServiceCatalogService>(configurationService_, telemetryService_);
     platformGovernanceToolService_ = std::make_shared<PlatformGovernanceToolService>(
@@ -18873,6 +18876,37 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             return jsonResponse(governanceBundleService_
                 ? governanceBundleService_->profileSummary()
                 : GovernanceProfileSummary{});
+        }
+        if (request.method == "POST" && request.path == "/api/governance/profile") {
+            // Operator-authored governance policy (doctrine) change. Requires
+            // the governance-policy privilege, then routes through CLU
+            // enforcement. GovernancePolicyChange is classified
+            // RequiresOperatorApproval (CLU-C010), so the change is staged in
+            // the approval queue and applied to the CLU profile only after an
+            // operator approves it via POST /api/clu/approvals/{id}/approve;
+            // GET /api/governance/profile then reflects the new doctrine.
+            if (auto deny = requirePrivilege(context.privileges.canChangeGovernancePolicy,
+                                             "canChangeGovernancePolicy")) {
+                return *deny;
+            }
+            // Validate the requested change up front so the operator gets a
+            // clear 400 now instead of a staged action that fails on approval.
+            const auto requested = nlohmann::json::parse(request.body, nullptr, /*allow_exceptions=*/false);
+            if (requested.is_discarded() || !requested.is_object()
+                || !requested.contains("doctrine") || !requested["doctrine"].is_string()) {
+                return jsonResponse(OperationResult{ false, false,
+                    "POST /api/governance/profile requires a JSON object with a string 'doctrine' field." }, 400);
+            }
+            if (auto governance = enforceGovernance(GovernanceActionKind::GovernancePolicyChange,
+                                                    "governance-profile")) {
+                return *governance;
+            }
+            // Defensive: GovernancePolicyChange is always approval-gated, so
+            // enforceGovernance returns the staged 202 above. If CLU is ever
+            // reconfigured to allow it outright there is no execution path here,
+            // so report that nothing was applied rather than silently succeed.
+            return jsonResponse(OperationResult{ false, false,
+                "Governance policy change was not staged for approval; no change applied." }, 409);
         }
         if (request.method == "GET" && startsWith(request.path, "/api/governance/bundles/")) {
             const auto prefix = std::string("/api/governance/bundles/");

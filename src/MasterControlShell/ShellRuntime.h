@@ -551,6 +551,15 @@ struct ShellSnapshot final {
     // by ShellRuntime::CaptureSnapshot via GET /api/self-tests on
     // every tick so the per-probe pass/fail roster updates in real time.
     ShellSelfTestSnapshot selfTests;
+    // Working-alpha readiness (/api/health/summary -> workingAlpha). Fail-closed:
+    // workingAlphaAvailable stays false unless the summary was fetched AND
+    // parsed, so the Overview readiness card reports "unavailable" honestly
+    // rather than a false "ready". Populated by ShellRuntime::CaptureSnapshot.
+    bool workingAlphaAvailable = false;
+    bool workingAlphaReady = false;
+    std::wstring workingAlphaSummary;
+    std::wstring workingAlphaEvaluatedAtUtc;
+    std::vector<std::wstring> workingAlphaBlockingIssues;
     // v0.9.76: Supervisor Agent Assignment Wizard status snapshot.
     // Populated by ShellRuntime::CaptureSnapshot via GET /api/supervisor/status
     // on every tick so the Supervisor Agent card on the Overview surface

@@ -28,6 +28,11 @@ const state = {
   activity: { events: [], highWaterMarkId: '0' },
   selectedClientId: null,
   health: { status: 'unknown', time: '' },
+  // Working-alpha readiness (/api/health/summary -> workingAlpha). Fail-closed
+  // on the UI too: default to "unavailable" so the Overview card never implies
+  // readiness without a live fetch. Populated by refreshAll.
+  healthSummary: null,
+  healthSummaryUnavailable: true,
   errorBanner: '',
   setupState: null,
   setupBypassThisSession: false,
@@ -323,12 +328,15 @@ async function refreshAll() {
       // v0.9.77: Supervisor Agent Assignment Wizard status for the
       // dashboard parity card (shell shipped in v0.9.76; this is the
       // browser-side mirror).
-      loadJson('/api/supervisor/status').catch(() => null)
+      loadJson('/api/supervisor/status').catch(() => null),
+      // Working-alpha readiness report. Flag unreachability so the Overview
+      // card fails closed visibly instead of silently rendering an empty card.
+      loadJson('/api/health/summary').catch((err) => { console.warn('health/summary', err); return { __unreachable: true }; })
     ]);
     const [health, dashboard, clients, approvals, exportsList, activity, setupState, workflows, workflowTemplates,
            gwStatus, gwHealth, gwTools, pools, discovery,
            telEvents, telClients, telGateway, claudePlugin, selfTests,
-           supervisorStatus] = results;
+           supervisorStatus, healthSummary] = results;
     state.health = health || { status: 'unreachable', time: '' };
     state.dashboard = dashboard;
     state.clients = Array.isArray(clients) ? clients : [];
@@ -353,6 +361,8 @@ async function refreshAll() {
     state.claudePlugin = claudePlugin;
     state.selfTests = selfTests || null;
     state.supervisorStatus = supervisorStatus || null;
+    state.healthSummaryUnavailable = !healthSummary || healthSummary.__unreachable === true;
+    state.healthSummary = state.healthSummaryUnavailable ? null : healthSummary;
     const setupReadiness = state.setupState && state.setupState.readiness;
     const setupIncomplete = setupReadiness && setupReadiness.firstRunCompleted !== true;
     const criticalSetupBlockers = ((setupReadiness && setupReadiness.blockingIssues) || [])
@@ -995,6 +1005,7 @@ function renderOverview() {
         </ul>
         <p class="muted">Host metrics are PDH-direct; <code>0%</code> means idle.</p>
       </article>
+      ${renderWorkingAlphaReadinessCard()}
       ${renderClaudePluginCard()}
       ${renderSelfTestPanel()}
       ${renderSupervisorPanel()}
@@ -1004,6 +1015,48 @@ function renderOverview() {
         ${renderTelemetryEventRows(recentEvents, { compact: true })}
       </article>
     </div>
+  `;
+}
+
+// Working-alpha readiness card (Overview deck). Surfaces the fail-closed
+// /api/health/summary workingAlpha report: the ready verdict plus every
+// blocking issue. The UI is fail-closed too -- if the summary could not be
+// fetched it says "unavailable" plainly instead of rendering an empty or
+// falsely-"ready" card, and it never claims ready without a live report.
+function renderWorkingAlphaReadinessCard() {
+  if (state.healthSummaryUnavailable) {
+    return `
+      <article class="panel-block wide">
+        <h3>Working-Alpha Readiness</h3>
+        <p class="big-stat bad">unavailable</p>
+        <p class="muted">Could not read <code>/api/health/summary</code>. The admin API may be starting or unreachable; readiness cannot be confirmed.</p>
+      </article>
+    `;
+  }
+  const wa = (state.healthSummary && state.healthSummary.workingAlpha) || null;
+  if (!wa) {
+    return `
+      <article class="panel-block wide">
+        <h3>Working-Alpha Readiness</h3>
+        <p class="big-stat warn">no report</p>
+        <p class="muted">The health summary did not include a <code>workingAlpha</code> readiness block.</p>
+      </article>
+    `;
+  }
+  const ready = wa.ready === true;
+  const issues = Array.isArray(wa.blockingIssues) ? wa.blockingIssues : [];
+  const evaluated = wa.evaluatedAtUtc ? escapeHtml(wa.evaluatedAtUtc) : '—';
+  const issueRows = issues.length === 0
+    ? `<p class="muted">No blocking issues.</p>`
+    : `<ul>${issues.map((i) => `<li><strong>${escapeHtml((i && i.category) || 'issue')}</strong> · ${escapeHtml((i && i.state) || '')} — <span class="muted">${escapeHtml((i && i.detail) || (i && i.id) || '')}</span></li>`).join('')}</ul>`;
+  return `
+    <article class="panel-block wide">
+      <h3>Working-Alpha Readiness</h3>
+      <p class="big-stat ${ready ? 'good' : 'bad'}">${ready ? 'ready' : 'not ready'}</p>
+      <p class="muted">${escapeHtml(wa.summary || '')}</p>
+      ${issueRows}
+      <p class="muted">Evaluated ${evaluated} · source <code>/api/health/summary</code>.</p>
+    </article>
   `;
 }
 

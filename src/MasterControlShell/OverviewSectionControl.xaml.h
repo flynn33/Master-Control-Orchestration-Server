@@ -82,6 +82,9 @@ private:
     void ApplyErrorReportingCard(const ::MasterControlShell::ShellSnapshot& snapshot);
     // v0.9.75: render the per-probe pass / fail roster + headline + dot.
     void ApplySelfTestCard(const ::MasterControlShell::ShellSnapshot& snapshot);
+    // Working-alpha readiness card: ready verdict + blocking issues, or an
+    // honest "unavailable" when /api/health/summary could not be read.
+    void ApplyWorkingAlphaCard(const ::MasterControlShell::ShellSnapshot& snapshot);
     // v0.9.76: render the Supervisor Agent card and its toggle states.
     void ApplySupervisorCard(const ::MasterControlShell::ShellSnapshot& snapshot);
     winrt::Windows::Foundation::IAsyncAction GenerateSupervisorConfigAsync(std::wstring providerId);
