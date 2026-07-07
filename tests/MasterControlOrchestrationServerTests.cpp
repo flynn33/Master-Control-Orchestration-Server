@@ -17,6 +17,8 @@
 #include "MasterControl/DiagnosticsTypes.h"
 #include "MasterControl/AdminRouteAuthorization.h"
 #include "MasterControl/AdminRouteRegistry.h"
+#include "MasterControl/AlphaFeatureMatrix.h"
+#include "MasterControl/DatabaseQuery.h"
 #include "MasterControl/EndpointAdvertisement.h"
 #include "MasterControl/HttpBindingInspection.h"
 #include "MasterControl/HttpHeaderParse.h"
@@ -4484,6 +4486,328 @@ bool testAdminRouteRegistryCoversWorkingAlphaAcceptanceRoutes() {
     return ok;
 }
 
+// ---------------------------------------------------------------------------
+// Software-alpha-readiness remediation: feature matrix + worker fail-closed.
+// ---------------------------------------------------------------------------
+#if defined(_WIN32)
+// Locate the built baseline-tools worker exe relative to the test module, run
+// it with the given args (stdin = NUL so a worker that reaches its read loop
+// sees immediate EOF and exits 0), and return its exit code, or -1 if the
+// worker could not be launched.
+int runBaselineWorkerExit(const std::wstring& args) {
+    wchar_t modulePath[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, modulePath, MAX_PATH) == 0) { return -1; }
+    const std::filesystem::path testDir = std::filesystem::path(modulePath).parent_path();
+    const std::filesystem::path buildDir = testDir.parent_path().parent_path();
+    const wchar_t* kExe = L"mcos-baseline-tools-worker.exe";
+    const std::filesystem::path candidates[] = {
+        buildDir / L"src" / L"MasterControlBaselineToolsWorker" / L"Debug" / kExe,
+        buildDir / L"src" / L"MasterControlBaselineToolsWorker" / L"Release" / kExe,
+        buildDir / L"src" / L"MasterControlBaselineToolsWorker" / kExe,
+        testDir / kExe,
+    };
+    std::filesystem::path exe;
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        if (std::filesystem::exists(candidate, ec)) { exe = candidate; break; }
+    }
+    if (exe.empty()) { return -1; }
+
+    std::wstring cmd = L"\"" + exe.wstring() + L"\" " + args;
+    std::vector<wchar_t> mutableCmd(cmd.begin(), cmd.end());
+    mutableCmd.push_back(L'\0');
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    HANDLE nulIn = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               &sa, OPEN_EXISTING, 0, nullptr);
+    HANDLE nulOut = CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                &sa, OPEN_EXISTING, 0, nullptr);
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = nulIn;
+    si.hStdOutput = nulOut;
+    si.hStdError = nulOut;
+    PROCESS_INFORMATION pi{};
+    int result = -1;
+    if (CreateProcessW(nullptr, mutableCmd.data(), nullptr, nullptr, TRUE,
+                       CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        if (WaitForSingleObject(pi.hProcess, 15000) == WAIT_OBJECT_0) {
+            DWORD code = 0;
+            if (GetExitCodeProcess(pi.hProcess, &code)) { result = static_cast<int>(code); }
+        } else {
+            TerminateProcess(pi.hProcess, 1);
+        }
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }
+    if (nulIn != INVALID_HANDLE_VALUE) { CloseHandle(nulIn); }
+    if (nulOut != INVALID_HANDLE_VALUE) { CloseHandle(nulOut); }
+    return result;
+}
+#endif  // _WIN32
+
+bool testUnknownWorkerSpecializationFailsClosed() {
+    bool ok = true;
+#if defined(_WIN32)
+    const int unknownExit = runBaselineWorkerExit(L"--specialization=__mcos_unknown_spec__");
+    const int baselineExit = runBaselineWorkerExit(L"--specialization=baseline-tools");
+    ok &= expect(unknownExit != 0,
+                 "Unknown --specialization makes the worker exit nonzero (fail closed).");
+    ok &= expect(baselineExit == 0,
+                 "A recognized --specialization (baseline-tools) exits cleanly on EOF stdin.");
+#else
+    ok &= expect(true, "Worker fail-closed spawn test is Windows-only.");
+#endif
+    return ok;
+}
+
+bool testDefaultSeededEndpointsExcludeRemovedIds() {
+    const auto endpoints = MasterControl::buildDefaultSeededEndpoints();
+    bool ok = true;
+    for (const auto& ep : endpoints) {
+        ok &= expect(!MasterControl::isRemovedAlphaFeatureId(ep.id),
+                     "Default seeded endpoints contain no removed feature ID.");
+    }
+    ok &= expect(MasterControl::isRemovedAlphaFeatureId("docker-control"),
+                 "docker-control is classified as a removed feature.");
+    ok &= expect(!MasterControl::isRemovedAlphaFeatureId("local-database"),
+                 "local-database is not removed (it is an implemented alpha feature).");
+    return ok;
+}
+
+bool testAlphaFeatureMatrixHeaderMatchesResourceJson() {
+    bool ok = true;
+    const std::filesystem::path path =
+        std::filesystem::path(MCOS_REPO_ROOT) / "resources" / "alpha-feature-matrix.json";
+    std::ifstream in(path);
+    ok &= expect(in.good(), "resources/alpha-feature-matrix.json is readable.");
+    if (!in.good()) { return ok; }
+    nlohmann::json j;
+    in >> j;
+    const auto jsonListHas = [&j](const char* key, std::string_view id) {
+        if (!j.contains(key)) { return false; }
+        for (const auto& entry : j[key]) {
+            if (entry.get<std::string>() == std::string(id)) { return true; }
+        }
+        return false;
+    };
+    for (const auto& id : MasterControl::kRemovedAlphaFeatureIds) {
+        ok &= expect(jsonListHas("removed", id), "JSON 'removed' matches header removed IDs.");
+    }
+    ok &= expect(j["removed"].size() == MasterControl::kRemovedAlphaFeatureIds.size(),
+                 "JSON 'removed' count matches header removed count.");
+    for (const auto& id : MasterControl::kRequiredAlphaFeatureIds) {
+        ok &= expect(jsonListHas("required", id), "JSON 'required' matches header required IDs.");
+    }
+    ok &= expect(j["required"].size() == MasterControl::kRequiredAlphaFeatureIds.size(),
+                 "JSON 'required' count matches header required count.");
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
+// local-database read-only SQLite executor (T04).
+// ---------------------------------------------------------------------------
+class FakeDatabaseConnectionStore final : public MasterControl::IDatabaseConnectionStore {
+public:
+    explicit FakeDatabaseConnectionStore(std::optional<std::string> path)
+        : path_(std::move(path)) {}
+    std::optional<std::string> currentDatabasePath() const override { return path_; }
+private:
+    std::optional<std::string> path_;
+};
+
+bool testLocalDatabaseReadonlyQueryRejectsMutation() {
+    bool ok = true;
+    const std::filesystem::path dbPath =
+        std::filesystem::temp_directory_path() / "mcos_localdb_test.db";
+    std::error_code ec;
+    std::filesystem::remove(dbPath, ec);
+
+    sqlite3* db = nullptr;
+    if (sqlite3_open(dbPath.string().c_str(), &db) != SQLITE_OK) {
+        if (db) { sqlite3_close(db); }
+        return expect(false, "Could not create a temp SQLite database for the test.");
+    }
+    sqlite3_exec(db, "CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT NOT NULL);",
+                 nullptr, nullptr, nullptr);
+    sqlite3_exec(db, "INSERT INTO widgets (id, name) VALUES (1, 'alpha'), (2, 'beta');",
+                 nullptr, nullptr, nullptr);
+    sqlite3_close(db);
+
+    auto store = std::make_shared<FakeDatabaseConnectionStore>(dbPath.string());
+    MasterControl::SqliteReadonlyQueryExecutor executor(store);
+
+    const auto selectResult = executor.queryReadonly("SELECT id, name FROM widgets ORDER BY id", 100);
+    ok &= expect(selectResult.ok, "Read-only SELECT succeeds.");
+    ok &= expect(selectResult.data.contains("rows") && selectResult.data["rows"].size() == 2u,
+                 "SELECT returns the two seeded rows.");
+
+    for (const char* mutation : {
+             "INSERT INTO widgets (id, name) VALUES (3, 'gamma')",
+             "UPDATE widgets SET name = 'x' WHERE id = 1",
+             "DELETE FROM widgets WHERE id = 1",
+             "DROP TABLE widgets",
+             "CREATE TABLE t (a INTEGER)",
+             "ALTER TABLE widgets ADD COLUMN c INTEGER" }) {
+        const auto r = executor.queryReadonly(mutation, 100);
+        ok &= expect(!r.ok && r.errorKind == "rejected-mutation",
+                     "Mutating SQL is rejected (rejected-mutation).");
+    }
+
+    const auto multi = executor.queryReadonly("SELECT 1; SELECT 2", 100);
+    ok &= expect(!multi.ok && multi.errorKind == "multiple-statements",
+                 "Multiple statements are rejected.");
+
+    const auto attach = executor.queryReadonly("ATTACH DATABASE 'other.db' AS other", 100);
+    ok &= expect(!attach.ok && attach.errorKind == "rejected-mutation",
+                 "ATTACH is rejected.");
+
+    const auto bad = executor.queryReadonly("SELECT FROM WHERE", 100);
+    ok &= expect(!bad.ok && bad.errorKind == "prepare-failed",
+                 "Malformed SQL is reported as prepare-failed, not a crash.");
+
+    const auto tables = executor.listTables();
+    ok &= expect(tables.ok && tables.data["rows"].size() == 1u,
+                 "list_tables returns the single user table.");
+    const auto describe = executor.describeTable("widgets");
+    ok &= expect(describe.ok && describe.data["rows"].size() == 2u,
+                 "describe_table returns metadata for both columns.");
+
+    auto emptyStore = std::make_shared<FakeDatabaseConnectionStore>(std::nullopt);
+    MasterControl::SqliteReadonlyQueryExecutor unconfigured(emptyStore);
+    const auto unconf = unconfigured.queryReadonly("SELECT 1", 100);
+    ok &= expect(!unconf.ok && unconf.errorKind == "unconfigured",
+                 "An unconfigured database fails closed with 'unconfigured'.");
+
+    std::filesystem::remove(dbPath, ec);
+    return ok;
+}
+
+bool testLocalDatabaseAlphaContractIsHonest() {
+    bool ok = true;
+    auto emptyStore = std::make_shared<FakeDatabaseConnectionStore>(std::nullopt);
+    MasterControl::SqliteReadonlyQueryExecutor unconfigured(emptyStore);
+    const auto s1 = unconfigured.status();
+    ok &= expect(s1.ok, "db.status succeeds even when unconfigured.");
+    ok &= expect(s1.data.value("configured", true) == false,
+                 "db.status honestly reports configured=false when unset.");
+    ok &= expect(s1.data.value("provider", std::string{}) == "sqlite",
+                 "db.status reports the sqlite provider.");
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Working-alpha readiness fail-closed defaults + provenance (T06).
+// ---------------------------------------------------------------------------
+MasterControl::WorkingAlphaReadinessInputs allObservedGoodReadinessInputs() {
+    MasterControl::WorkingAlphaReadinessInputs in;
+    in.installStateAvailable = true;
+    in.adminListenerReachable = true;
+    in.gatewayRunning = true;
+    in.lanModeEnabled = true;
+    in.discoveryRoutable = true;
+    in.registeredClientCount = 1;
+    in.anyClientHeartbeatObserved = true;
+    in.workerPoolConfigured = true;
+    in.workerPoolHasReadyInstance = true;
+    in.diagnosticsStoreAvailable = true;
+    in.requiredBindingProblem = false;
+    return in;
+}
+
+bool testWorkingAlphaReadinessDefaultsFailClosed() {
+    const MasterControl::WorkingAlphaReadinessInputs defaults;  // fail-closed defaults
+    const auto report = MasterControl::assessWorkingAlphaReadiness(defaults);
+    bool ok = true;
+    ok &= expect(!report.ready, "Default-constructed readiness inputs are not ready (fail closed).");
+    ok &= expect(!report.blockingIssues.empty(), "Default inputs emit blocking issues.");
+    const auto hasIssue = [&report](const std::string& id) {
+        for (const auto& issue : report.blockingIssues) { if (issue.id == id) { return true; } }
+        return false;
+    };
+    ok &= expect(hasIssue("service.install-state-unavailable"), "Default fails install-state.");
+    ok &= expect(hasIssue("listener.admin-unavailable"), "Default fails admin-listener.");
+    ok &= expect(hasIssue("gateway.not-running"), "Default fails gateway.");
+    ok &= expect(hasIssue("diagnostics.store-unavailable"), "Default fails diagnostics store.");
+    ok &= expect(!report.signals.empty(), "Report records per-signal provenance.");
+    return ok;
+}
+
+bool testWorkingAlphaReadinessAllObservedGoodPasses() {
+    const auto report = MasterControl::assessWorkingAlphaReadiness(allObservedGoodReadinessInputs());
+    bool ok = true;
+    ok &= expect(report.ready, "All-observed-good inputs pass readiness.");
+    ok &= expect(report.blockingIssues.empty(), "No blocking issues when all signals are good.");
+    return ok;
+}
+
+bool testWorkingAlphaReadinessMissingClientFails() {
+    auto in = allObservedGoodReadinessInputs();
+    in.registeredClientCount = 0;
+    const auto report = MasterControl::assessWorkingAlphaReadiness(in);
+    bool ok = true;
+    ok &= expect(!report.ready, "Missing registered client fails readiness.");
+    bool sawClient = false;
+    for (const auto& issue : report.blockingIssues) {
+        if (issue.id == "client.none-registered") { sawClient = true; }
+    }
+    ok &= expect(sawClient, "client.none-registered issue is emitted.");
+    return ok;
+}
+
+bool testWorkingAlphaReadinessRequiredBindingFailureBlocks() {
+    auto in = allObservedGoodReadinessInputs();
+    in.requiredBindingProblem = true;
+    in.requiredBindingDetail = "Required gateway firewall rule missing.";
+    const auto report = MasterControl::assessWorkingAlphaReadiness(in);
+    bool ok = true;
+    ok &= expect(!report.ready, "A required binding problem blocks readiness.");
+    bool sawBinding = false;
+    for (const auto& issue : report.blockingIssues) {
+        if (issue.id == "binding.required-missing") { sawBinding = true; }
+    }
+    ok &= expect(sawBinding, "binding.required-missing issue is emitted.");
+    bool sawSignal = false;
+    for (const auto& s : report.signals) {
+        if (s.name == "requiredBindingOk") {
+            sawSignal = true;
+            ok &= expect(!s.observed, "requiredBindingOk provenance is observed=false.");
+        }
+    }
+    ok &= expect(sawSignal, "requiredBindingOk signal provenance is recorded.");
+    return ok;
+}
+
+// ---------------------------------------------------------------------------
+// Handshake-gated pool readiness (T03): EndpointInstance carries a
+// handshake-confirmed flag that defaults fail-closed.
+// ---------------------------------------------------------------------------
+bool testEndpointInstanceHealthProbeRoundTrip() {
+    bool ok = true;
+    MasterControl::EndpointInstance fresh;
+    ok &= expect(fresh.healthProbePassed == false,
+                 "A fresh EndpointInstance is not handshake-confirmed by default.");
+
+    MasterControl::EndpointInstance inst;
+    inst.instanceId = "inst-1";
+    inst.poolId = "baseline-tools";
+    inst.state = MasterControl::EndpointInstanceState::Ready;
+    inst.healthProbePassed = true;
+    inst.healthProbeAtUtc = "2026-07-07T00:00:00Z";
+    nlohmann::json j = inst;
+    ok &= expect(j["healthProbePassed"].get<bool>() == true,
+                 "EndpointInstance serializes healthProbePassed.");
+    auto restored = j.get<MasterControl::EndpointInstance>();
+    ok &= expect(restored.healthProbePassed == true,
+                 "EndpointInstance round-trips healthProbePassed.");
+    ok &= expect(restored.healthProbeAtUtc == inst.healthProbeAtUtc,
+                 "EndpointInstance round-trips healthProbeAtUtc.");
+    return ok;
+}
+
 int main() {
 #if defined(_WIN32)
     // v0.11.0-alpha.3: fail fast on a hard fault instead of hanging.
@@ -4676,6 +5000,17 @@ int main() {
     ok &= testWorkingAlphaReadinessReadyWhenHealthy();
     ok &= testWorkingAlphaReadinessHonestStatesNoFabrication();
     ok &= testAdminRouteRegistryCoversWorkingAlphaAcceptanceRoutes();
+    // Software-alpha-readiness remediation.
+    ok &= testAlphaFeatureMatrixHeaderMatchesResourceJson();
+    ok &= testDefaultSeededEndpointsExcludeRemovedIds();
+    ok &= testUnknownWorkerSpecializationFailsClosed();
+    ok &= testLocalDatabaseReadonlyQueryRejectsMutation();
+    ok &= testLocalDatabaseAlphaContractIsHonest();
+    ok &= testWorkingAlphaReadinessDefaultsFailClosed();
+    ok &= testWorkingAlphaReadinessAllObservedGoodPasses();
+    ok &= testWorkingAlphaReadinessMissingClientFails();
+    ok &= testWorkingAlphaReadinessRequiredBindingFailureBlocks();
+    ok &= testEndpointInstanceHealthProbeRoundTrip();
 #if defined(_WIN32)
     ok &= testWorkerSupervisorResolvesPathExecutable();
     ok &= testWorkerSupervisorPrefersCmdOverExtensionlessShim();

@@ -17,6 +17,13 @@ set_target_properties(MasterControlBaselineToolsWorker PROPERTIES
 
 target_link_libraries(MasterControlBaselineToolsWorker PRIVATE
     nlohmann_json::nlohmann_json
+    unofficial::sqlite3::sqlite3
+)
+
+# Source include/ for shared MasterControl headers (e.g. DatabaseQuery.h). The
+# generated MasterControlVersion.h comes from the global build-dir include path.
+target_include_directories(MasterControlBaselineToolsWorker PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
 )
 
 if(MSVC)

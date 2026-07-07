@@ -19,6 +19,7 @@
 #include "MasterControl/MasterControlDiagnostics.h"
 #include "ForsettiPlatform/DefaultPlatformServices.h"
 #include "MasterControl/AuthenticatedRequestContext.h"
+#include "MasterControl/AlphaFeatureMatrix.h"
 #include "MasterControl/EndpointAdvertisement.h"
 #include "MasterControl/ILanClientAccessService.h"
 #include "MasterControl/MasterControlDefaults.h"
@@ -2374,19 +2375,15 @@ public:
         // change because the loader replays whatever is on disk. The
         // prune is idempotent and only rewrites the config file when
         // it actually removes something, so subsequent boots are no-ops.
-        static const std::vector<std::string> kDeprecatedEndpointIds = {
-            "playwright",
-            "docker-control"
-        };
+        // Removed-feature IDs come from the single source of truth in
+        // AlphaFeatureMatrix.h so runtime pruning, pool registration, and the
+        // test suite cannot drift.
         auto& seeded = state_->configuration.activeProfile.seededEndpoints;
         const auto sizeBefore = seeded.size();
         seeded.erase(
             std::remove_if(seeded.begin(), seeded.end(),
                 [](const RuntimeEndpoint& ep) {
-                    for (const auto& deprecated : kDeprecatedEndpointIds) {
-                        if (ep.id == deprecated) return true;
-                    }
-                    return false;
+                    return isRemovedAlphaFeatureId(ep.id);
                 }),
             seeded.end());
         if (seeded.size() != sizeBefore) {
@@ -3887,11 +3884,14 @@ private:
 };
 
 // Phase 7: in-memory approval queue. Mutations whose CLU outcome is
-// RequiresOperatorApproval are staged here until an operator approves
-// (the original mutation is replayed) or rejects (the deferred record
-// is closed without effect). Persistence across service restarts is
-// deliberately deferred - long-running deferrals are operationally
-// suspect on a trusted LAN, so the queue lives in process memory only.
+// RequiresOperatorApproval are staged here until an operator approves or
+// rejects. Approve/reject transitions are recorded to the activity stream for
+// audit. The queue does NOT auto-replay the original mutation: on approval the
+// operator applies the change through the normal governed mutation route, which
+// keeps a single auditable execution path and avoids a general HTTP-route
+// replay engine. Persistence across service restarts is deliberately deferred
+// - long-running deferrals are operationally suspect on a trusted LAN, so the
+// queue lives in process memory only.
 class GovernanceApprovalQueueService final : public IGovernanceApprovalQueueService {
 public:
     std::vector<GovernanceDeferredAction> listPending() const override {
@@ -9225,6 +9225,12 @@ private:
 
         instance.processId = processInfo.dwProcessId;
         instance.supervised = true;
+        // Fresh spawn: not yet MCP-handshake-confirmed. The flag flips true
+        // only after a real initialize handshake completes (see
+        // sendStdioJsonRpc), so a respawned worker cannot inherit a stale
+        // confirmed state.
+        instance.healthProbePassed = false;
+        instance.healthProbeAtUtc.clear();
         children_.emplace(instance.instanceId, std::move(child));
         transitionInstanceLocked(instance, EndpointInstanceState::Ready,
                                  bridgeAvailable
@@ -10100,6 +10106,18 @@ StdioBridgeResult WorkerSupervisor::sendStdioJsonRpc(const std::string& instance
                 auto it = children_.find(instanceId);
                 if (it != children_.end()) {
                     it->second.mcpInitialized = true;
+                }
+                // A successful MCP initialize handshake is the instance's real
+                // health probe: mark the EndpointInstance confirmed so
+                // working-alpha readiness counts its pool ready (a spawned but
+                // mute worker never reaches this point).
+                for (auto& poolEntry : pools_) {
+                    for (auto& inst : poolEntry.second.instances) {
+                        if (inst.instanceId == instanceId) {
+                            inst.healthProbePassed = true;
+                            inst.healthProbeAtUtc = timestampNowUtc();
+                        }
+                    }
                 }
             }
         }
@@ -15682,16 +15700,14 @@ bool MasterControlApplication::Impl::initialize() {
         registerSubAgentPool("nexus",      "Nexus — coordination + discovery + clients");
         registerSubAgentPool("watchtower", "Watchtower — health + activity monitoring");
 
-        // v0.9.68: external-dependency MCPs registered as default
-        // pools too. The multi-spec worker exposes a small status
-        // surface (docker-control: docker.status / docker.list_containers
-        // shelling out to docker.exe; local-database: db.status /
-        // db.set_connection_string persisting via persistent-context).
-        // These pools are installed_and_supervised because the worker
-        // itself is in-tree -- the underlying capability (Docker
-        // Desktop / a configured DSN) is the operator concern, but
-        // the MCP wire is live.
-        registerWorkerPool("docker-control", "Docker Control MCP",   2);
+        // local-database is a first-class in-tree specialization pool: the
+        // multi-spec worker exposes a real read-only SQLite surface
+        // (db.status / db.list_tables / db.describe_table / db.query_readonly)
+        // over an operator-configured database file. docker-control was
+        // removed -- the worker no longer implements that specialization, so
+        // registering a docker-control pool would serve the baseline-tools
+        // catalog under a mislabeled name (a fake-healthy surface). Only real
+        // specializations get supervised pools.
         registerWorkerPool("local-database", "Local Database MCP",   2);
 
         // v0.10.18: external MCP-package seeds for catalog ids that
@@ -18058,20 +18074,32 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             int totalHealthyInstances = 0;
             int quarantinedPoolCount = 0;
             int poolsRequiringInstance = 0;
+            int poolsRequiringInstanceConfirmed = 0;
             if (workerSupervisor_) {
                 const auto pools = workerSupervisor_->listPools();
                 poolCount = static_cast<int>(pools.size());
                 for (const auto& pool : pools) {
-                    if (pool.scalePolicy.minInstances > 0) {
+                    const bool poolRequiresInstance = pool.scalePolicy.minInstances > 0;
+                    if (poolRequiresInstance) {
                         ++poolsRequiringInstance;
                     }
                     int healthy = 0;
+                    bool hasHandshakeConfirmed = false;
                     for (const auto& inst : pool.instances) {
                         if (inst.state == EndpointInstanceState::Ready
                             || inst.state == EndpointInstanceState::Starting
                             || inst.state == EndpointInstanceState::Busy) {
                             ++healthy;
                         }
+                        // Working-alpha readiness: a required pool is "ready"
+                        // only when an instance has passed its real MCP
+                        // handshake, not merely spawned.
+                        if (inst.state == EndpointInstanceState::Ready && inst.healthProbePassed) {
+                            hasHandshakeConfirmed = true;
+                        }
+                    }
+                    if (poolRequiresInstance && hasHandshakeConfirmed) {
+                        ++poolsRequiringInstanceConfirmed;
                     }
                     if (healthy > 0) {
                         ++healthyPoolCount;
@@ -18157,15 +18185,25 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                 const auto advertisement = buildAdvertisedEndpointPlan(
                     waCfg, waGateway, hostSnapshot.primaryIpAddress);
                 WorkingAlphaReadinessInputs waIn;
-                waIn.installStateAvailable = true;    // the service is answering this request
-                waIn.adminListenerReachable = true;   // ditto
+                // Live evidence: install state is confirmable when the resolved
+                // data directory exists on disk; the admin listener is reachable
+                // because it is answering this request.
+                std::error_code waDataDirEc;
+                waIn.installStateAvailable =
+                    !paths_.dataDirectory.empty()
+                    && std::filesystem::exists(paths_.dataDirectory, waDataDirEc);
+                waIn.adminListenerReachable = true;
                 waIn.gatewayRunning = gatewayOk;
                 waIn.gatewayState = gw.value("state", std::string{});
                 waIn.lanModeEnabled = advertisement.lanModeEnabled;
                 waIn.discoveryRoutable =
                     !advertisement.lanModeEnabled || advertisement.mcpLanAdvertised;
                 waIn.workerPoolConfigured = poolsRequiringInstance > 0;
-                waIn.workerPoolHasReadyInstance = quarantinedPoolCount == 0;
+                // A required pool counts ready only when it has a
+                // handshake-confirmed instance (real MCP evidence), not merely
+                // a spawned one.
+                waIn.workerPoolHasReadyInstance =
+                    poolsRequiringInstanceConfirmed == poolsRequiringInstance;
                 waIn.diagnosticsStoreAvailable = ringHealth.persistenceEnabled;
                 if (lanClientAccessService_) {
                     const auto clients = lanClientAccessService_->listClients();
@@ -19655,18 +19693,28 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             return jsonResponse(body);
         }
         if (request.method == "POST" && request.path == "/api/client/governance/decisions") {
-            // Phase 6 stub. Phase 7 expands GovernanceActionKind and wires
-            // this endpoint to commandLogicUnitService_->enforceAction so
-            // a client can pre-check whether a proposed mutation will be
-            // allowed, blocked, or queued for operator approval. For now,
-            // honestly report that the endpoint exists but defers to the
-            // privilege gates already in place on the mutation routes.
-            nlohmann::json body = {
-                { "outcome", "deferred" },
-                { "actor", context.actor },
-                { "message", "CLU pre-check is stubbed in Phase 6. Mutation routes apply privilege gates today; richer governance decisions land in Phase 7." }
-            };
-            return HttpResponse{ 202, "application/json", body.dump() };
+            // Real client-side CLU pre-check. Advisory + read-only: it never
+            // stages or mutates. The client learns whether a proposed action
+            // would be allowed, blocked, or require operator approval. The
+            // actor is forced to the authenticated client identity so a client
+            // cannot pre-check as someone else.
+            if (!commandLogicUnitService_) {
+                return jsonResponse(OperationResult{ false, false,
+                    "CLU service is not running." }, 503);
+            }
+            try {
+                auto enforcementRequest =
+                    nlohmann::json::parse(request.body)
+                        .get<GovernanceEnforcementRequest>();
+                enforcementRequest.actor = context.actor;
+                const auto decision =
+                    commandLogicUnitService_->enforceAction(enforcementRequest);
+                return jsonResponse(decision);
+            } catch (const std::exception& ex) {
+                return jsonResponse(OperationResult{ false, false,
+                    std::string("Invalid GovernanceEnforcementRequest JSON: ")
+                    + ex.what() }, 400);
+            }
         }
         if (request.method == "POST" && request.path == "/api/client/heartbeat") {
             // Marks the calling client as live. Local bootstrap requests are
