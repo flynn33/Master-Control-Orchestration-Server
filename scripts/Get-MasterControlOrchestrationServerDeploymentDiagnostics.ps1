@@ -5,6 +5,9 @@
 [CmdletBinding()]
 param(
     [string]$OutputRoot = "",
+    [string]$BaseUrl = "",
+    [string]$GatewayUrl = "",
+    [string]$InstallDirectory = "",
     [switch]$Bundle
 )
 
@@ -120,6 +123,137 @@ if (Test-Path $latestSessionPath) {
     }
 }
 
+# ---------------------------------------------------------------------------
+# Host runtime diagnostics (working-alpha). Captures service, event log, HTTP.sys
+# binding, firewall, port-listener, and live endpoint/gateway probe evidence so
+# an install/runtime/LAN failure is diagnosable without guessing. Every collector
+# is isolated: a single failure records status "error"/"unknown" and never aborts
+# the run. Collection is read-only; it never mutates host state. Runs identically
+# after a passing or a failing acceptance attempt.
+# ---------------------------------------------------------------------------
+$hostDir = Join-Path $artifactsDirectory "_host"
+New-Item -ItemType Directory -Force -Path $hostDir | Out-Null
+$hostDiag = [ordered]@{}
+
+function Write-DiagArtifact {
+    param([string]$Name, [string]$Content)
+    $path = Join-Path $hostDir $Name
+    Set-Content -LiteralPath $path -Value $Content -Encoding UTF8
+    return $path
+}
+
+function Invoke-DiagCollector {
+    param([string]$Label, [scriptblock]$Script)
+    $entry = [ordered]@{ status = "unknown"; artifact = $null; note = "" }
+    try {
+        $output = & $Script 2>&1 | Out-String
+        $entry.artifact = Write-DiagArtifact -Name "$Label.txt" -Content $output
+        $entry.status = "collected"
+    } catch {
+        $entry.status = "error"
+        $entry.note = $_.Exception.Message
+    }
+    $hostDiag[$Label] = $entry
+}
+
+# Host + service state.
+Invoke-DiagCollector -Label "host-context" -Script {
+    Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue |
+        Format-List Caption, Version, OSArchitecture, CSName
+    "IsAdministrator: " + ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+Invoke-DiagCollector -Label "service-status" -Script {
+    Get-Service -Name MasterControlProgram -ErrorAction SilentlyContinue | Format-List *
+    Get-CimInstance Win32_Service -Filter "Name='MasterControlProgram'" -ErrorAction SilentlyContinue |
+        Format-List Name, State, StartMode, StartName, ProcessId, PathName
+}
+Invoke-DiagCollector -Label "service-events" -Script {
+    Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager' } -MaxEvents 200 -ErrorAction SilentlyContinue |
+        Where-Object { $_.Message -match 'MasterControlProgram|Master Control' } |
+        Format-List TimeCreated, Id, LevelDisplayName, Message
+}
+
+# HTTP.sys bindings (read-only netsh queries).
+Invoke-DiagCollector -Label "http-urlacl" -Script { netsh.exe http show urlacl }
+Invoke-DiagCollector -Label "http-sslcert" -Script { netsh.exe http show sslcert }
+Invoke-DiagCollector -Label "firewall-rules" -Script {
+    Get-NetFirewallRule -DisplayName 'Master Control Orchestration Server*' -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            $ports = ($_ | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue)
+            [PSCustomObject]@{
+                DisplayName = $_.DisplayName
+                Enabled     = $_.Enabled
+                Direction   = $_.Direction
+                Action      = $_.Action
+                Profile     = $_.Profile
+                Protocol    = $ports.Protocol
+                LocalPort   = ($ports.LocalPort -join ',')
+            }
+        } | Format-List *
+}
+Invoke-DiagCollector -Label "port-listeners" -Script {
+    Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+        Sort-Object LocalPort | Format-Table -AutoSize LocalAddress, LocalPort, OwningProcess
+    "--- netstat -ano (listening) ---"
+    netstat.exe -ano | Select-String -Pattern 'LISTENING'
+}
+
+# Install-state JSON.
+$installStateCandidates = @()
+if ($InstallDirectory) { $installStateCandidates += (Join-Path $InstallDirectory 'installation-state.json') }
+$installStateCandidates += (Join-Path ${env:ProgramFiles} 'Master Control Orchestration Server\installation-state.json')
+$installStateEntry = [ordered]@{ status = "notFound"; artifact = $null; note = "" }
+foreach ($candidate in $installStateCandidates) {
+    if ($candidate -and (Test-Path -LiteralPath $candidate)) {
+        try {
+            $installStateEntry.artifact = Join-Path $hostDir 'installation-state.json'
+            Copy-Item -LiteralPath $candidate -Destination $installStateEntry.artifact -Force
+            $installStateEntry.status = "collected"
+            $installStateEntry.note = $candidate
+        } catch {
+            $installStateEntry.status = "error"; $installStateEntry.note = $_.Exception.Message
+        }
+        break
+    }
+}
+$hostDiag["install-state"] = $installStateEntry
+
+# Live endpoint + gateway probes (best-effort; absence is recorded, not fatal).
+$commonHelper = Join-Path $PSScriptRoot 'MasterControlAcceptanceCommon.ps1'
+if (Test-Path -LiteralPath $commonHelper) {
+    . $commonHelper
+    if (-not $BaseUrl) { $BaseUrl = Resolve-McosAdminBaseUrlFromInstallState -InstallDirectory $InstallDirectory }
+    if ($BaseUrl) {
+        $BaseUrl = $BaseUrl.TrimEnd('/')
+        foreach ($probePath in @('/api/health', '/api/health/summary', '/api/gateway/status', '/api/gateway/health', '/api/telemetry/clients', '/api/discovery')) {
+            $probe = Invoke-McosHttpProbe -Method GET -Url "$BaseUrl$probePath"
+            $label = "probe_" + ($probePath -replace '[^\w]', '_')
+            Write-DiagArtifact -Name "$label.json" -Content (($probe | ConvertTo-Json -Depth 8)) | Out-Null
+            $hostDiag[$label] = [ordered]@{ status = if ($probe.ok) { "ok" } else { "unreachable" }; statusCode = $probe.statusCode }
+        }
+        if (-not $GatewayUrl) {
+            $discProbe = Invoke-McosHttpProbe -Method GET -Url "$BaseUrl/api/discovery"
+            if ($discProbe.jsonValid) { $GatewayUrl = "$(Get-McosJsonPath -Json $discProbe.json -Path 'gateway.mcpUrl')" }
+        }
+        if ($GatewayUrl) {
+            $gwHost = Get-McosUrlHost -Url $GatewayUrl
+            if ((Test-McosHostWildcard -HostName $gwHost) -or [string]::IsNullOrEmpty($gwHost)) {
+                $GatewayUrl = $GatewayUrl -replace [regex]::Escape($gwHost), '127.0.0.1'
+            }
+            $mcp = Invoke-McosMcpRpc -GatewayUrl $GatewayUrl -RpcMethod 'initialize' -RpcParams @{ protocolVersion = '2025-03-26'; capabilities = @{}; clientInfo = @{ name = 'mcos-diagnostics'; version = '1.0' } } -Id 1
+            Write-DiagArtifact -Name "probe_mcp_initialize.json" -Content (($mcp | ConvertTo-Json -Depth 8)) | Out-Null
+            $hostDiag["probe_mcp_initialize"] = [ordered]@{ status = if ($mcp.ok) { "ok" } else { "unreachable" }; statusCode = $mcp.statusCode }
+        }
+    } else {
+        $hostDiag["probes"] = [ordered]@{ status = "skipped"; note = "no admin base URL (pass -BaseUrl or install MCOS)" }
+    }
+} else {
+    $hostDiag["probes"] = [ordered]@{ status = "skipped"; note = "MasterControlAcceptanceCommon.ps1 not found" }
+}
+
+$summary.hostDiagnosticsDir = $hostDir
+$summary.hostDiagnostics = $hostDiag
+
 $summaryJsonPath = Join-Path $destinationRoot "deployment-diagnostics-summary.json"
 $summaryMarkdownPath = Join-Path $destinationRoot "deployment-diagnostics-summary.md"
 
@@ -168,7 +302,16 @@ if ($summary.copiedArtifacts.Count -gt 0) {
     $lines.Add("")
 }
 
-Set-Content -Path $summaryJsonPath -Value ($summary | ConvertTo-Json -Depth 8) -Encoding UTF8
+$lines.Add("## Host Runtime Diagnostics")
+$lines.Add("")
+foreach ($key in $hostDiag.Keys) {
+    $entry = $hostDiag[$key]
+    $status = if (($entry -is [System.Collections.IDictionary]) -and $entry.Contains('status')) { $entry['status'] } else { 'collected' }
+    $lines.Add("* $key : $status")
+}
+$lines.Add("")
+
+Set-Content -Path $summaryJsonPath -Value ($summary | ConvertTo-Json -Depth 10) -Encoding UTF8
 Set-Content -Path $summaryMarkdownPath -Value ($lines -join [Environment]::NewLine) -Encoding UTF8
 
 $bundlePath = $null
@@ -186,4 +329,5 @@ if ($Bundle) {
     summaryMarkdownPath = $summaryMarkdownPath
     bundlePath = $bundlePath
     persistentLogRoot = $persistentLogRoot
+    hostDiagnosticsDir = $hostDir
 } | ConvertTo-Json -Depth 5

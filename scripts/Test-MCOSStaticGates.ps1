@@ -77,6 +77,22 @@ function Assert-NoLiteral {
     }
 }
 
+function Assert-ScriptParses {
+    param([string]$RelativePath)
+    if (-not (Assert-FileExists $RelativePath)) { return }
+    $path = Resolve-RepoFile $RelativePath
+    $tokens = $null
+    $parseErrors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors) | Out-Null
+    if ($parseErrors -and $parseErrors.Count -gt 0) {
+        $message = "PowerShell parse errors in $RelativePath :: $($parseErrors[0].Message)"
+        $failures.Add($message) | Out-Null
+        Write-Log $message 'FAIL'
+    } else {
+        Write-Log "Script parses cleanly: $RelativePath" 'PASS'
+    }
+}
+
 Assert-NoLiteral 'src/MasterControlApp/MasterControlDefaults.cpp' 'configuration.bindAddress = "0.0.0.0";' 'Fresh install admin bind must be local-only by default.'
 Assert-NoLiteral 'src/MasterControlApp/MasterControlDefaults.cpp' 'configuration.beaconEnabled = true;' 'Beacon must not be enabled by default.'
 Assert-NoLiteral 'src/MasterControlApp/MasterControlDefaults.cpp' 'configuration.security.allowOpenLanAccess = true;' 'Open LAN access must not be enabled by default.'
@@ -92,6 +108,13 @@ Assert-NoLiteral 'src/MasterControlApp/MasterControlRuntime.cpp' 'result.workflo
 Assert-NoLiteral 'src/MasterControlApp/MasterControlRuntime.cpp' 'result.workflowsMissingCount = 1;' 'Workflow readiness must not be hard-coded missing.'
 $bodyOptionalLiteral = '// Body is optional ' + [char]0x2014 + ' treat parse errors as empty body.'
 Assert-NoLiteral 'src/MasterControlApp/MasterControlRuntime.cpp' $bodyOptionalLiteral 'Setup completion must reject malformed JSON.'
+
+# Working-alpha acceptance scripts must parse cleanly (strict-mode AST parse).
+Assert-ScriptParses 'scripts/MasterControlAcceptanceCommon.ps1'
+Assert-ScriptParses 'scripts/Test-MasterControlOrchestrationServerWorkingAlpha.ps1'
+Assert-ScriptParses 'scripts/Register-MasterControlLanClient.ps1'
+Assert-ScriptParses 'scripts/Test-MasterControlLanClientAcceptance.ps1'
+Assert-ScriptParses 'scripts/Get-MasterControlOrchestrationServerDeploymentDiagnostics.ps1'
 
 if ($failures.Count -gt 0) {
     Write-Log "Static gate failures: $($failures.Count)" 'ERROR'

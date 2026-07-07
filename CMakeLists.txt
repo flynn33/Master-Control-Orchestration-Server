@@ -252,3 +252,18 @@ install(
         "${CMAKE_SOURCE_DIR}/scripts/Register-CertAutoRotation.ps1"
     DESTINATION "scripts"
 )
+
+# Working-alpha acceptance harness: local installed-runtime acceptance, LAN
+# client registration/export, second-host LAN acceptance, the shared helper
+# they dot-source, and the expanded deployment diagnostics collector. Shipped so
+# an operator can run the working-alpha gates from the installed location and
+# copy the second-host probe to another LAN machine.
+install(
+    FILES
+        "${CMAKE_SOURCE_DIR}/scripts/MasterControlAcceptanceCommon.ps1"
+        "${CMAKE_SOURCE_DIR}/scripts/Test-MasterControlOrchestrationServerWorkingAlpha.ps1"
+        "${CMAKE_SOURCE_DIR}/scripts/Register-MasterControlLanClient.ps1"
+        "${CMAKE_SOURCE_DIR}/scripts/Test-MasterControlLanClientAcceptance.ps1"
+        "${CMAKE_SOURCE_DIR}/scripts/Get-MasterControlOrchestrationServerDeploymentDiagnostics.ps1"
+    DESTINATION "scripts"
+)

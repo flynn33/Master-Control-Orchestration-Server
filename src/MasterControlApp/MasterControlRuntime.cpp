@@ -26,6 +26,7 @@
 #include "MasterControl/MasterControlVersion.h"
 #include "MasterControl/QueryParamParse.h"  // v0.10.15: alias-aware ?param= extractor.
 #include "MasterControl/WorkflowReadiness.h"
+#include "MasterControl/WorkingAlphaReadiness.h"  // working-alpha readiness assessment (pure).
 #include "MasterControl/JsonStrictness.h"   // v0.10.17: dropped-top-level-keys diagnostic.
 #include "MasterControl/JsonMerge.h"        // config-safety remediation: PATCH deep merge + partial-POST detection.
 #include "MasterControl/AdminRouteAuthorization.h"
@@ -3502,11 +3503,23 @@ void appendLanClientActivity(const std::string& kind,
 // The shape is fixed at schemaVersion 1.0. Future schema bumps add fields
 // without removing existing ones so older clients stay compatible.
 nlohmann::json composeLanClientConfigBundle(const LanClient& client,
-                                            const AppConfiguration& configuration) {
+                                            const AppConfiguration& configuration,
+                                            const std::string& advertisedGatewayUrl = {}) {
     const auto host = resolveMcosServerHost(configuration);
     // v0.9.3: bracket IPv6 host literals so the LAN client config bundle
     // ends up with an RFC 3986-parseable mcosServer URL.
     const auto mcosServer = "http://" + bracketIpv6Host(host) + ":" + std::to_string(configuration.browserPort);
+    // Working-alpha contract: the bundle must carry an absolute gateway URL and
+    // absolute heartbeat URLs so a second LAN host can act on it without
+    // re-deriving paths. When the caller has live advertisement state (the
+    // /api/clients/{id}/config route passes the routability-resolved discovery
+    // gateway URL) we use it; otherwise we fall back to the same host the admin
+    // URL resolved to plus the configured gateway listen port/path.
+    const auto gatewayMcpPath = ensureAdvertisementPath(configuration.mcpGateway.mcpPath, "/mcp");
+    const std::string gatewayUrl = advertisedGatewayUrl.empty()
+        ? ("http://" + bracketIpv6Host(host) + ":" +
+           std::to_string(configuration.mcpGateway.listenPort) + gatewayMcpPath)
+        : advertisedGatewayUrl;
 
     nlohmann::json bundle;
     bundle["schemaVersion"] = "1.0";
@@ -3546,6 +3559,16 @@ nlohmann::json composeLanClientConfigBundle(const LanClient& client,
         { "discovery", "Use the catalogs to discover the current shared fabric." },
         { "invocation", "MCP servers and sub-agents are addressed directly using the endpoint metadata in each catalog entry." },
         { "governance", "Before any privileged mutation, GET the governance profile and pre-check with the decisionEndpoint." }
+    };
+    // Absolute URLs a second LAN host can act on directly (working-alpha
+    // contract: gateway URL, heartbeat URL, and onboarding reference).
+    bundle["gatewayUrl"] = gatewayUrl;
+    bundle["discoveryUrl"] = mcosServer + "/.well-known/mcos.json";
+    bundle["heartbeatUrl"] = mcosServer + "/api/client/heartbeat";
+    bundle["telemetryHeartbeatUrl"] = mcosServer + "/api/telemetry/heartbeat";
+    bundle["onboarding"] = nlohmann::json{
+        { "profileUrl", mcosServer + "/api/onboarding/" + client.clientType },
+        { "genericProfileUrl", mcosServer + "/api/onboarding/generic" }
     };
     return bundle;
 }
@@ -8156,6 +8179,16 @@ public:
         document.auth = configuration.security.enableAuthentication ? "required" : "disabled";
         document.securityPosture = document.trust;
 
+        // Structured server-identity object. The working-alpha acceptance
+        // contract requires a top-level `server` object alongside `gateway`
+        // and `admin`. It mirrors the already-public identity scalars and
+        // carries no host/IP, so it survives the /.well-known strip below.
+        document.server.product = document.product;
+        document.server.role = document.role;
+        document.server.version = document.version;
+        document.server.instanceId = document.instanceId;
+        document.server.networkMode = advertisement.networkMode;
+
         const auto& gatewayConfig = configuration.mcpGateway;
         document.gateway.type = mcpGateway_ ? mcpGateway_->AdapterType() : to_string(gatewayConfig.type);
         document.gateway.mcpUrl = advertisement.mcpEndpoint;
@@ -11003,6 +11036,14 @@ public:
             : document.gateway.mcpUrl;
         profile.transport = "streamable_http";
         profile.authRequired = false;       // schema const; ADR-002 §1 invariant
+        // Structured MCP descriptor mirrors the resolved gateway URL/transport.
+        // The working-alpha acceptance contract requires an `mcp` object on
+        // /api/onboarding/{clientType}; gatewayMcpUrl is kept for back-compat.
+        // protocolVersion keeps its 2025-03-26 default (matches the gateway's
+        // initialize handshake).
+        profile.mcp.url = profile.gatewayMcpUrl;
+        profile.mcp.transport = profile.transport;
+        profile.mcp.authRequired = profile.authRequired;
         profile.trust = "lan";
         // v0.11.0-alpha.3: platform-aware governance bundle URL. The
         // requesting client passes ?platform=windows|macos|ios on
@@ -18016,10 +18057,14 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             int healthyPoolCount = 0;
             int totalHealthyInstances = 0;
             int quarantinedPoolCount = 0;
+            int poolsRequiringInstance = 0;
             if (workerSupervisor_) {
                 const auto pools = workerSupervisor_->listPools();
                 poolCount = static_cast<int>(pools.size());
                 for (const auto& pool : pools) {
+                    if (pool.scalePolicy.minInstances > 0) {
+                        ++poolsRequiringInstance;
+                    }
                     int healthy = 0;
                     for (const auto& inst : pool.instances) {
                         if (inst.state == EndpointInstanceState::Ready
@@ -18055,15 +18100,18 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             ringJson["totalAppendErrors"] = ringHealth.totalAppendErrors;
             out["activityRing"] = ringJson;
 
-            // Host-telemetry sampler liveness.
-            nlohmann::json teleJson;
-            teleJson["sampleAvailable"] = false;
+            // Host-telemetry sampler liveness. Hoisted so the working-alpha
+            // readiness block below can reuse the primary IP for routability.
+            HostTelemetrySnapshot hostSnapshot;
             if (telemetryService_) {
-                const auto snap = telemetryService_->captureSnapshot();
-                teleJson["sampleAvailable"] = !snap.capturedAtUtc.empty();
-                teleJson["capturedAtUtc"] = snap.capturedAtUtc;
-                teleJson["cpuPercent"] = snap.cpuPercent;
-                teleJson["memoryPercent"] = snap.memoryPercent;
+                hostSnapshot = telemetryService_->captureSnapshot();
+            }
+            nlohmann::json teleJson;
+            teleJson["sampleAvailable"] = telemetryService_ && !hostSnapshot.capturedAtUtc.empty();
+            if (telemetryService_) {
+                teleJson["capturedAtUtc"] = hostSnapshot.capturedAtUtc;
+                teleJson["cpuPercent"] = hostSnapshot.cpuPercent;
+                teleJson["memoryPercent"] = hostSnapshot.memoryPercent;
             }
             out["hostTelemetry"] = teleJson;
 
@@ -18097,6 +18145,42 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
                               && ringHealth.totalAppendErrors == 0;
             const bool teleOk = teleJson.value("sampleAvailable", false);
             out["ok"] = gatewayOk && poolsOk && ringOk && teleOk && supervisorOk;
+
+            // Working-alpha readiness. Deliberately SEPARATE from out["ok"]
+            // above (which monitoring/dashboards key off) and from the
+            // setup-completion readiness model: this reports what blocks using
+            // the install as a working alpha, with stable machine-readable
+            // issue IDs, and is surfaced read-only for the acceptance script.
+            {
+                const auto waCfg = configurationService_->current();
+                const auto waGateway = mcpGateway_ ? mcpGateway_->CurrentStatus() : GatewayStatus{};
+                const auto advertisement = buildAdvertisedEndpointPlan(
+                    waCfg, waGateway, hostSnapshot.primaryIpAddress);
+                WorkingAlphaReadinessInputs waIn;
+                waIn.installStateAvailable = true;    // the service is answering this request
+                waIn.adminListenerReachable = true;   // ditto
+                waIn.gatewayRunning = gatewayOk;
+                waIn.gatewayState = gw.value("state", std::string{});
+                waIn.lanModeEnabled = advertisement.lanModeEnabled;
+                waIn.discoveryRoutable =
+                    !advertisement.lanModeEnabled || advertisement.mcpLanAdvertised;
+                waIn.workerPoolConfigured = poolsRequiringInstance > 0;
+                waIn.workerPoolHasReadyInstance = quarantinedPoolCount == 0;
+                waIn.diagnosticsStoreAvailable = ringHealth.persistenceEnabled;
+                if (lanClientAccessService_) {
+                    const auto clients = lanClientAccessService_->listClients();
+                    waIn.registeredClientCount = static_cast<int>(clients.size());
+                    for (const auto& client : clients) {
+                        if (!client.lastSeenUtc.empty()) {
+                            waIn.anyClientHeartbeatObserved = true;
+                            break;
+                        }
+                    }
+                }
+                auto waReport = assessWorkingAlphaReadiness(waIn);
+                waReport.evaluatedAtUtc = timestampNowUtc();
+                out["workingAlpha"] = waReport;
+            }
 
             return jsonResponse(out);
         }
@@ -20670,7 +20754,14 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             if (!client.has_value()) {
                 return HttpResponse{ 404, "application/json", "{\"message\":\"LAN client not found.\"}" };
             }
-            const auto bundle = composeLanClientConfigBundle(*client, configurationService_->current());
+            // Pass the routability-resolved gateway URL from the live discovery
+            // document so the bundle advertises a LAN-reachable gateway (not a
+            // config-derived loopback fallback) when LAN mode is active.
+            const std::string advertisedGatewayUrl = discoveryService_
+                ? discoveryService_->currentDocument().gateway.mcpUrl
+                : std::string{};
+            const auto bundle = composeLanClientConfigBundle(
+                *client, configurationService_->current(), advertisedGatewayUrl);
             return jsonResponse(bundle);
         }
         if (request.method == "GET" && startsWith(request.path, "/api/clients/")) {
