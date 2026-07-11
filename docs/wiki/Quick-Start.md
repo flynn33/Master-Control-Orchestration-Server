@@ -4,6 +4,10 @@ This page gets MCOS built or installed on one Windows host, verifies the local
 admin surface, and checks LAN discovery. MCOS is internal alpha software; run
 the verification commands on every target host.
 
+> Current version: `vA3.12.0` — **Model Parity** (implementation milestone; not
+> yet released). The package-name examples below use the current version; no
+> MSI has been cut for `vA3.12.0` yet.
+
 ## Requirements
 
 | Requirement | Why |
@@ -30,7 +34,7 @@ that requires the Gate D/E evidence path in [Deployment Acceptance](Deployment-A
 The package script reads `VERSION.json`. For the current alpha, the MSI path is:
 
 ```text
-dist\packages\release\MasterControlOrchestrationServer-vA3.11.0-win-x64\MasterControlOrchestrationServer-vA3.11.0-win-x64.msi
+dist\packages\release\MasterControlOrchestrationServer-vA3.12.0-win-x64\MasterControlOrchestrationServer-vA3.12.0-win-x64.msi
 ```
 
 If WiX is unavailable, `-AllowZipOnly` can produce a zip bundle, but the MSI is
@@ -41,13 +45,13 @@ the normal operator-facing installer.
 Interactive install with logging:
 
 ```powershell
-msiexec /i "dist\packages\release\MasterControlOrchestrationServer-vA3.11.0-win-x64\MasterControlOrchestrationServer-vA3.11.0-win-x64.msi" /l*v "$env:TEMP\mcos-install.log"
+msiexec /i "dist\packages\release\MasterControlOrchestrationServer-vA3.12.0-win-x64\MasterControlOrchestrationServer-vA3.12.0-win-x64.msi" /l*v "$env:TEMP\mcos-install.log"
 ```
 
 Silent install:
 
 ```powershell
-msiexec /i "dist\packages\release\MasterControlOrchestrationServer-vA3.11.0-win-x64\MasterControlOrchestrationServer-vA3.11.0-win-x64.msi" /qn /l*v "$env:TEMP\mcos-install.log"
+msiexec /i "dist\packages\release\MasterControlOrchestrationServer-vA3.12.0-win-x64\MasterControlOrchestrationServer-vA3.12.0-win-x64.msi" /qn /l*v "$env:TEMP\mcos-install.log"
 ```
 
 MSI option properties from `installer/MasterControlOrchestrationServer.wxs`:

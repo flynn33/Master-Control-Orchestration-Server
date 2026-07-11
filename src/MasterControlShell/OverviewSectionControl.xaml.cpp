@@ -26,6 +26,7 @@
 #include <KnownFolders.h>
 #include <ShlObj.h>
 #include <ShObjIdl.h>
+#include <shellapi.h>
 #include <wrl/client.h>
 #include <sstream>
 
@@ -1216,6 +1217,140 @@ OverviewSectionControl::VerifySupervisorEndpointsAsync() {
         co_return;
     }
     SupervisorReachabilityText().Text(winrt::hstring(check.bodyText));
+}
+
+// ---------------------------------------------------------------------------
+// Model Parity (A3.12.0): Client Integrations card.
+// ---------------------------------------------------------------------------
+
+std::wstring OverviewSectionControl::SelectedClientIntegrationId() {
+    static const wchar_t* const kIds[] = {
+        L"claude-code", L"codex", L"codex-mcp-server", L"openai-responses",
+        L"chatgpt-apps", L"chatgpt-connector-edge", L"xai-responses",
+        L"grok-build", L"grok-build-acp", L"generic-mcp"
+    };
+    const int kCount = 10;
+    int index = ClientIntegrationSelector().SelectedIndex();
+    if (index < 0 || index >= kCount) {
+        index = 0;
+    }
+    return kIds[index];
+}
+
+void OverviewSectionControl::ClientIntegrationValidateButton_Click(
+        Windows::Foundation::IInspectable const&,
+        Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    auto ignored = ValidateClientIntegrationAsync();
+    (void)ignored;
+}
+
+void OverviewSectionControl::ClientIntegrationGenerateButton_Click(
+        Windows::Foundation::IInspectable const&,
+        Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    if (clientIntegrationBusy_) return;
+    auto ignored = GenerateClientIntegrationConfigAsync();
+    (void)ignored;
+}
+
+void OverviewSectionControl::ClientIntegrationOpenFolderButton_Click(
+        Windows::Foundation::IInspectable const&,
+        Microsoft::UI::Xaml::RoutedEventArgs const&) {
+    // Reveal %USERPROFILE%\Documents\MCOS (the same tree the save dialog
+    // defaults into). Best-effort: creates the folder if absent, then opens it.
+    PWSTR documentsPath = nullptr;
+    if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &documentsPath))
+        && documentsPath != nullptr) {
+        std::wstring folder = std::wstring(documentsPath) + L"\\MCOS";
+        ::CoTaskMemFree(documentsPath);
+        ::SHCreateDirectoryExW(nullptr, folder.c_str(), nullptr);
+        ::ShellExecuteW(nullptr, L"open", folder.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        ClientIntegrationStatusText().Text(winrt::hstring(std::wstring(L"Opened ") + folder));
+    }
+}
+
+winrt::Windows::Foundation::IAsyncAction
+OverviewSectionControl::ValidateClientIntegrationAsync() {
+    if (!runtime_) co_return;
+    auto runtime = runtime_;
+    const std::wstring integrationId = SelectedClientIntegrationId();
+    ClientIntegrationValidateButton().IsEnabled(false);
+    ClientIntegrationStatusText().Text(winrt::hstring(
+        std::wstring(L"Validating ") + integrationId + L" against the current gateway..."));
+
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+    const auto result = runtime->ValidateClientIntegration(integrationId);
+    co_await uiThread;
+
+    ClientIntegrationValidateButton().IsEnabled(true);
+    if (!result.ok) {
+        ClientIntegrationStatusText().Text(winrt::hstring(
+            std::wstring(L"Validation failed: ")
+            + (result.transportError.empty()
+                ? std::wstring(L"unknown transport error.")
+                : result.transportError)));
+        co_return;
+    }
+    ClientIntegrationStatusText().Text(winrt::hstring(result.bodyText));
+}
+
+winrt::Windows::Foundation::IAsyncAction
+OverviewSectionControl::GenerateClientIntegrationConfigAsync() {
+    if (!runtime_) co_return;
+    auto runtime = runtime_;
+    const std::wstring integrationId = SelectedClientIntegrationId();
+    clientIntegrationBusy_ = true;
+    ClientIntegrationGenerateButton().IsEnabled(false);
+    ClientIntegrationStatusText().Text(winrt::hstring(
+        std::wstring(L"Generating ") + integrationId + L" config artifact..."));
+
+    winrt::apartment_context uiThread;
+    co_await winrt::resume_background();
+    const auto fetch = runtime->FetchClientIntegrationArtifacts(integrationId);
+    co_await uiThread;
+
+    if (!fetch.succeeded || fetch.artifacts.empty()) {
+        ClientIntegrationStatusText().Text(winrt::hstring(
+            std::wstring(L"No artifact generated: ")
+            + (fetch.message.empty()
+                ? std::wstring(L"the integration produced no config artifact.")
+                : fetch.message)));
+        clientIntegrationBusy_ = false;
+        ClientIntegrationGenerateButton().IsEnabled(true);
+        co_return;
+    }
+
+    const auto& artifact = fetch.artifacts.front();
+    std::wstring suggested = artifact.fileName.empty()
+        ? (integrationId + L".txt")
+        : artifact.fileName;
+    // Sanitize path separators (e.g. ".grok/config.toml") into a flat name.
+    for (auto& ch : suggested) {
+        if (ch == L'/' || ch == L'\\') ch = L'-';
+    }
+
+    std::wstring chosenPath;
+    const bool picked = showSupervisorSaveDialog(suggested, chosenPath);
+    if (!picked) {
+        ClientIntegrationStatusText().Text(
+            L"Config generated; save cancelled. Choose Generate config & save to retry.");
+        clientIntegrationBusy_ = false;
+        ClientIntegrationGenerateButton().IsEnabled(true);
+        co_return;
+    }
+    if (!writeUtf8FileNoBom(chosenPath, artifact.content)) {
+        ClientIntegrationStatusText().Text(winrt::hstring(
+            std::wstring(L"Error writing config to: ") + chosenPath));
+        clientIntegrationBusy_ = false;
+        ClientIntegrationGenerateButton().IsEnabled(true);
+        co_return;
+    }
+    ClientIntegrationStatusText().Text(winrt::hstring(
+        std::wstring(L"Saved ") + artifact.fileName + L" to: " + chosenPath
+        + L"\nApply it to the target client per the integration's verification steps. "
+        + L"MCOS stores no secrets in generated artifacts."));
+    clientIntegrationBusy_ = false;
+    ClientIntegrationGenerateButton().IsEnabled(true);
 }
 
 winrt::Windows::Foundation::IAsyncAction

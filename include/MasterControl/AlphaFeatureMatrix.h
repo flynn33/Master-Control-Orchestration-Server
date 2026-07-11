@@ -32,7 +32,7 @@ inline constexpr std::array<std::string_view, 2> kRemovedAlphaFeatureIds = {
 };
 
 // Alpha-required feature IDs (kept in sync with resources/alpha-feature-matrix.json).
-inline constexpr std::array<std::string_view, 16> kRequiredAlphaFeatureIds = {
+inline constexpr std::array<std::string_view, 17> kRequiredAlphaFeatureIds = {
     "windows-service-lifecycle",
     "admin-http-listener",
     "native-http-sys-mcp-gateway",
@@ -49,6 +49,7 @@ inline constexpr std::array<std::string_view, 16> kRequiredAlphaFeatureIds = {
     "second-host-lan-acceptance",
     "working-alpha-readiness",
     "local-database",
+    "model-parity",
 };
 
 // Optional integrations: present-but-honestly-unavailable is acceptable.

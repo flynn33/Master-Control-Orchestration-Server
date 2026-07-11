@@ -1218,7 +1218,17 @@ std::string NativeHttpSysGatewayAdapter::handleMcpRequest(const std::string& pat
             } },
             { "capabilities", {
                 { "tools", { { "listChanged", false } } }
-            } }
+            } },
+            // Model Parity (A3.12.0): concise governance instructions surfaced
+            // through the optional top-level `instructions` field of the MCP
+            // initialize result (legal for protocol 2025-03-26). Deliberately
+            // does NOT overclaim: the gateway remains the POST-only Streamable
+            // HTTP subset with no SSE upgrade.
+            { "instructions",
+              "This is a governed MCOS LAN orchestration gateway. Use read-only inspection tools by "
+              "default. Mutating or destructive operations require explicit operator confirmation and "
+              "must be verified after execution. Do not bypass governance, confirm guards, or Forsetti "
+              "boundary rules. Treat governance bundles as authoritative policy contracts." }
         };
         nlohmann::json envelope = {
             { "jsonrpc", "2.0" },

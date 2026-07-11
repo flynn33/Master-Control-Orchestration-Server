@@ -1,6 +1,6 @@
 # Master Control Orchestration Server Operator Wiki
 
-![version](https://img.shields.io/badge/version-vA3.11.0-00f6ff?style=flat-square)
+![version](https://img.shields.io/badge/version-vA3.12.0-00f6ff?style=flat-square)
 
 This wiki is the operator manual for MCOS, a Windows-native LAN MCP Gateway
 host. Use it to install the service, configure the gateway, connect trusted-LAN
@@ -10,11 +10,11 @@ clients, operate worker pools, review diagnostics, and troubleshoot the host.
 
 | Field | Value |
 |---|---|
-| Version | `vA3.11.0` |
+| Version | `vA3.12.0` |
 | Version source | `VERSION.json` |
-| Released | `2026-07-03` |
+| Released | `pending` (implementation milestone; not yet released) |
 | Channel | Internal alpha |
-| Version meaning | `A3.11.0` is the alpha-stage expression of the tree previously documented as `0.11.0-alpha.3`. |
+| Version meaning | `A3.12.0` is the **Model Parity** implementation milestone. The last released package is `vA3.11.0` (the alpha-stage expression of `0.11.0-alpha.3`). |
 | Release policy | Alpha versions are published as GitHub pre-releases with the MSI installer; the Windows Build, Test, and Package workflow is the repository health gate. |
 | Gateway substrate | Native in-process HTTP.sys behind `IMcpGateway`; no external gateway binary is required. |
 | Trust posture | `auth=none, trust=lan`; app-layer authentication is deferred to a later hardening track. |

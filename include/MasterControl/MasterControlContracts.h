@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace MasterControl {
@@ -126,6 +127,50 @@ class IExportService {
 public:
     virtual std::vector<ExportArtifact> generateExports() const = 0;
     virtual ~IExportService() = default;
+};
+
+// ============================================================================
+// Model Parity (A3.12.0): provider-neutral Client Integration Catalog.
+// Each provider owns onboarding/export/validation for one external
+// client/model surface. MCOS remains a governed MCP gateway: providers emit
+// provider-native config artifacts, never embed provider SDK execution.
+// ============================================================================
+
+// One external client/model integration. Concrete providers are `final`, hold
+// no mutable state, and compose the compatibility analyzer for validate().
+class IClientIntegrationProvider {
+public:
+    virtual std::string id() const = 0;
+    virtual ClientIntegrationDescriptor descriptor() const = 0;
+    virtual OnboardingProfile createOnboardingProfile(
+        const ClientIntegrationContext& context) const = 0;
+    virtual std::vector<ClientExportArtifact> createExportArtifacts(
+        const ClientIntegrationContext& context) const = 0;
+    virtual ClientIntegrationValidationResult validate(
+        const ClientIntegrationContext& context) const = 0;
+    virtual ~IClientIntegrationProvider() = default;
+};
+
+// Deterministic registry of providers. findById resolves canonical ids AND
+// compatibility aliases (claude, openai, xai, grok, generic) without collapsing
+// product-specific behavior. No filesystem scanning, no hidden globals.
+class IClientIntegrationCatalog {
+public:
+    virtual std::vector<ClientIntegrationDescriptor> list() const = 0;
+    virtual std::shared_ptr<const IClientIntegrationProvider>
+        findById(std::string_view id) const = 0;
+    virtual ~IClientIntegrationCatalog() = default;
+};
+
+// Reasons over (integration, live gateway) to produce structured transport /
+// auth / reachability warnings. Warnings are product features, never buried in
+// prose: a LAN-only HTTP gateway must not silently emit a hosted-ChatGPT artifact.
+class IRemoteMcpCompatibilityAnalyzer {
+public:
+    virtual RemoteMcpCompatibilityResult analyze(
+        const ClientIntegrationDescriptor& integration,
+        const GatewayRuntimeDescriptor& gateway) const = 0;
+    virtual ~IRemoteMcpCompatibilityAnalyzer() = default;
 };
 
 class ICommandLogicUnitService {
@@ -365,6 +410,15 @@ std::shared_ptr<IWorkerSupervisor> createWorkerSupervisor(
 std::shared_ptr<ILeaseRouter> createLeaseRouter(
     std::shared_ptr<IWorkerSupervisor> workerSupervisor,
     int leaseIdleTimeoutSeconds = 900);
+
+// Model Parity (A3.12.0): factories for the client integration catalog and the
+// remote-MCP compatibility analyzer. Both return interfaces so runtime wiring
+// and tests never see the concrete providers. The catalog composes the
+// analyzer (constructor injection) so each provider's validate() reuses it.
+std::shared_ptr<IRemoteMcpCompatibilityAnalyzer>
+    createRemoteMcpCompatibilityAnalyzer();
+std::shared_ptr<IClientIntegrationCatalog> createClientIntegrationCatalog(
+    std::shared_ptr<const IRemoteMcpCompatibilityAnalyzer> analyzer = {});
 
 class IAdminApiService {
 public:

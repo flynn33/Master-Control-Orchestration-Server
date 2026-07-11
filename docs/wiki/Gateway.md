@@ -104,6 +104,35 @@ Non-POST requests to `/mcp` return `405 Method Not Allowed` with `Allow: POST`.
 Stateful routing honors the standard `Mcp-Session-Id` header, with the
 MCOS-specific `X-MCOS-Session-Id` retained as a compatibility fallback.
 
+As of the A3.12.0 Model Parity milestone, the MCP `initialize` result carries a
+concise governance `instructions` string (a legal optional top-level field for
+protocol `2025-03-26`). It tells clients this is a governed MCOS LAN gateway,
+read-only inspection tools are the default, and mutating or destructive
+operations require explicit operator confirmation. This does not change the
+transport: the gateway is still the POST-only Streamable HTTP subset with no SSE
+upgrade.
+
+## Client Integration Reachability
+
+Not every catalog integration can use the LAN HTTP gateway directly. The
+[Client Integrations](Client-Integrations) page carries the full compatibility
+matrix; the transport-relevant summary is:
+
+| Requirement | Integrations |
+|---|---|
+| Runs against LAN HTTP directly | `claude-code`, `codex`, `grok-build`, `generic-mcp` |
+| Requires a reachable **public HTTPS** endpoint | `openai-responses`, `chatgpt-apps`, `xai-responses` |
+| Requires a **LAN-to-public edge bridge** | `chatgpt-connector-edge` (and hosted `chatgpt-apps` in practice) |
+| Expects **Streaming HTTP / SSE** on the hosted side | `xai-responses` |
+| External **stdio JSON-RPC** process adapter (not an MCP HTTP endpoint) | `codex-mcp-server`, `grok-build-acp` |
+
+Hosted clients (`openai-responses`, `chatgpt-apps`, `xai-responses`) cannot reach
+a LAN-only gateway. The gateway still serves only the POST-only Streamable HTTP
+subset; any Streaming HTTP / SSE expectation belongs to the hosted client and
+must be satisfied by an approved public/edge deployment, not by the gateway
+itself. The `GET /api/client-integrations/{id}/validate` route reports these
+constraints against the live gateway descriptor.
+
 ## HTTP And HTTPS
 
 HTTP and HTTPS are separate binds:

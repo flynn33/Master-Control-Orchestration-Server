@@ -49,6 +49,11 @@ const state = {
   discovery: null,
   onboardingClientType: 'claude-code',
   onboardingProfile: null,
+  // Model Parity (A3.12.0): provider-neutral client integration catalog.
+  // clientIntegrations holds descriptor list from /api/client-integrations;
+  // integrationValidations caches per-id /validate results (lazy, on demand).
+  clientIntegrations: [],
+  integrationValidations: {},
   governanceBundlePlatform: 'windows',
   governanceBundle: null,
   telemetryEvents: { events: [], maxEvents: 0 },
@@ -126,6 +131,13 @@ const destinations = [
     eyebrow: 'SETUP',
     title: 'Client Onboarding',
     subtitle: 'Per-client profiles for claude-code, codex, grok, chatgpt, and generic MCP. Manual setup remains first-class.'
+  },
+  {
+    id: 'client-integrations',
+    label: 'Integrations',
+    eyebrow: 'MODEL PARITY',
+    title: 'Client Integrations',
+    subtitle: 'Provider-neutral parity across Claude Code, Codex, OpenAI Responses, ChatGPT Apps/Connector Edge, xAI Responses, Grok Build, and generic MCP.'
   },
   {
     id: 'discovery',
@@ -331,17 +343,21 @@ async function refreshAll() {
       loadJson('/api/supervisor/status').catch(() => null),
       // Working-alpha readiness report. Flag unreachability so the Overview
       // card fails closed visibly instead of silently rendering an empty card.
-      loadJson('/api/health/summary').catch((err) => { console.warn('health/summary', err); return { __unreachable: true }; })
+      loadJson('/api/health/summary').catch((err) => { console.warn('health/summary', err); return { __unreachable: true }; }),
+      // Model Parity (A3.12.0): provider-neutral client integration catalog.
+      loadJson('/api/client-integrations').catch(() => ({ integrations: [] }))
     ]);
     const [health, dashboard, clients, approvals, exportsList, activity, setupState, workflows, workflowTemplates,
            gwStatus, gwHealth, gwTools, pools, discovery,
            telEvents, telClients, telGateway, claudePlugin, selfTests,
-           supervisorStatus, healthSummary] = results;
+           supervisorStatus, healthSummary, clientIntegrations] = results;
     state.health = health || { status: 'unreachable', time: '' };
     state.dashboard = dashboard;
     state.clients = Array.isArray(clients) ? clients : [];
     state.approvals = Array.isArray(approvals) ? approvals : [];
     state.exports = Array.isArray(exportsList) ? exportsList : [];
+    state.clientIntegrations = (clientIntegrations && Array.isArray(clientIntegrations.integrations))
+      ? clientIntegrations.integrations : [];
     state.activity = activity && Array.isArray(activity.events)
       ? activity
       : { events: [], highWaterMarkId: '0' };
@@ -478,7 +494,7 @@ function renderNavigation() {
   const byId = {};
   destinations.forEach((dest) => { byId[dest.id] = dest; });
   const groups = [
-    { label: 'Start', ids: ['setup', 'overview', 'onboarding', 'workflows'] },
+    { label: 'Start', ids: ['setup', 'overview', 'onboarding', 'client-integrations', 'workflows'] },
     { label: 'Operate', ids: ['gateway', 'pools', 'telemetry-clients', 'governance'] },
     { label: 'Advanced', ids: ['runtime', 'discovery', 'clients', 'activity', 'diagnostics', 'exports'] }
   ];
@@ -571,6 +587,7 @@ function renderCurrent() {
     case 'pools':             host.innerHTML = banner + renderPoolsPanel();        bindPoolsHandlers();      break;
     case 'telemetry-clients': host.innerHTML = banner + renderTelemetryClients();                            break;
     case 'onboarding':        host.innerHTML = banner + renderOnboardingPanel();   bindOnboardingHandlers(); break;
+    case 'client-integrations': host.innerHTML = banner + renderClientIntegrationsPanel(); bindClientIntegrationsHandlers(); break;
     case 'discovery':         host.innerHTML = banner + renderDiscoveryPanel();    bindDiscoveryHandlers();  break;
     case 'clients':           host.innerHTML = banner + renderClients();           bindClientsHandlers();    break;
     case 'governance':        host.innerHTML = banner + renderGovernance();        bindGovernanceHandlers(); break;
@@ -3128,7 +3145,11 @@ function renderTelemetryClients() {
 // ---- Onboarding ----
 
 function renderOnboardingPanel() {
-  const types = ['claude-code', 'codex', 'grok', 'chatgpt', 'generic-mcp'];
+  // Model Parity (A3.12.0): canonical integration ids (aliases like grok/chatgpt
+  // still resolve server-side, but the tabs advertise the explicit families).
+  const types = ['claude-code', 'codex', 'codex-mcp-server', 'openai-responses',
+    'chatgpt-apps', 'chatgpt-connector-edge', 'xai-responses', 'grok-build',
+    'grok-build-acp', 'generic-mcp'];
   const profile = state.onboardingProfile || {};
   const snippets = profile.configSnippets || [];
   const manualInstructions = profile.manualInstructions || [];
@@ -3212,6 +3233,84 @@ function bindOnboardingHandlers() {
       } catch (_) {
         // Clipboard may be unavailable on some browsers; silently no-op.
       }
+    });
+  });
+}
+
+// ---- Client Integrations (Model Parity, A3.12.0) ----
+
+// Provider-neutral parity cards backed by /api/client-integrations. Each card
+// shows integration status, endpoint URL, transport compatibility, generated
+// artifact names, verification command, caveats/warnings, and the tool-approval
+// guard posture. "Validate against gateway" lazily calls /validate and renders
+// the structured compatibility warnings from the runtime analyzer.
+function renderClientIntegrationsPanel() {
+  const integrations = Array.isArray(state.clientIntegrations) ? state.clientIntegrations : [];
+  const gatewayUrlRaw = (state.discovery && state.discovery.gateway && state.discovery.gateway.mcpUrl) || '—';
+  const lanIp = ((state.dashboard && state.dashboard.telemetry) || {}).primaryIpAddress
+    || (state.discovery && state.discovery.serverIpAddress) || '';
+  const gatewayUrl = resolveDisplayUrl(gatewayUrlRaw, lanIp);
+  if (integrations.length === 0) {
+    return '<article class="panel-block"><p class="muted">No client integrations advertised. Confirm the runtime exposes <code>/api/client-integrations</code>.</p></article>';
+  }
+  const intro = `
+    <article class="panel-block wide">
+      <h3>Model Parity — Client Integrations</h3>
+      <p class="muted">MCOS onboards each external client/model surface through the governed MCP gateway and provider-native config artifacts. Advertised endpoint: <code>${escapeHtml(gatewayUrl)}</code>.</p>
+    </article>`;
+  const cards = integrations.map((it) => {
+    const validation = (state.integrationValidations || {})[it.id];
+    const artifacts = it.generatedArtifacts || [];
+    const verification = it.verificationSteps || [];
+    const caveats = it.caveats || [];
+    const transport = it.requiresPublicHttps
+      ? 'Requires public HTTPS (edge/bridge required for hosted use)'
+      : (it.supportsLanHttp ? 'LAN HTTP supported' : 'Transport: external adapter / see caveats');
+    const approval = it.supportsClientApprovalPolicy
+      ? 'Client-enforced tool approval'
+      : 'MCOS-enforced approval / confirm guard';
+    const status = validation
+      ? (validation.compatible ? 'compatible with current gateway' : 'needs edge/bridge — see warnings')
+      : 'not yet validated';
+    const warningsHtml = validation
+      ? (Array.isArray(validation.warnings) && validation.warnings.length
+          ? `<ul class="onboarding-caveats">${validation.warnings.map((w) => `<li><code>${escapeHtml(w.severity || '')}</code> ${escapeHtml(w.message || '')}</li>`).join('')}</ul>`
+          : '<p class="muted">No compatibility warnings.</p>')
+      : '';
+    return `
+      <article class="panel-block client-integration-card">
+        <h3>${escapeHtml(it.displayName || it.id)}</h3>
+        <p class="muted">ID <code>${escapeHtml(it.id)}</code> · Vendor ${escapeHtml(it.vendor || '—')} · Status: ${escapeHtml(status)}</p>
+        <p>Endpoint: <code>${escapeHtml(gatewayUrl)}</code></p>
+        <p>Transport compatibility: ${escapeHtml(transport)}</p>
+        <p>Tool safety: ${escapeHtml(approval)}</p>
+        ${artifacts.length ? `<p>Generated artifacts: ${artifacts.map((a) => `<code>${escapeHtml(a)}</code>`).join(', ')}</p>` : ''}
+        ${verification.length ? `<p>Verify: <code>${escapeHtml(verification[0])}</code></p>` : ''}
+        ${caveats.length ? `<details><summary>Caveats (${caveats.length})</summary><ul class="onboarding-caveats">${caveats.map((c) => `<li>${escapeHtml(c)}</li>`).join('')}</ul></details>` : ''}
+        <button type="button" class="route-button" data-action="validate-integration" data-id="${escapeHtml(it.id)}">Validate against gateway</button>
+        ${warningsHtml}
+      </article>`;
+  }).join('');
+  return intro + cards;
+}
+
+function bindClientIntegrationsHandlers() {
+  document.querySelectorAll('[data-action="validate-integration"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      if (!id) return;
+      state.integrationValidations = state.integrationValidations || {};
+      try {
+        state.integrationValidations[id] = await loadJson(
+          '/api/client-integrations/' + encodeURIComponent(id) + '/validate'
+        );
+      } catch (_) {
+        state.integrationValidations[id] = {
+          compatible: false,
+          warnings: [{ severity: 'blocking', message: 'Validation request failed.' }]
+        };
+      }
+      renderCurrent();
     });
   });
 }

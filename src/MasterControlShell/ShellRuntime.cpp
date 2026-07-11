@@ -3347,6 +3347,96 @@ ShellRuntime::ShellSupervisorIssueResult ShellRuntime::GenerateSupervisorConfig(
     return out;
 }
 
+// Model Parity (A3.12.0): validate the selected client integration against the
+// current gateway. GET /api/client-integrations/{id}/validate returns
+// { integrationId, compatible, warnings[] }; we format it into a printable
+// block for the Overview card.
+ShellRuntime::ShellClientIntegrationValidateResult
+ShellRuntime::ValidateClientIntegration(const std::wstring& integrationId) const {
+    ShellClientIntegrationValidateResult out;
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    std::wstring errorMessage;
+    const std::wstring path = L"/api/client-integrations/" + integrationId + L"/validate";
+    const auto response = httpGet(host, port, path, errorMessage);
+    if (!response.has_value()) {
+        out.ok = false;
+        out.transportError = errorMessage.empty()
+            ? std::wstring(L"Unable to reach the admin API.")
+            : errorMessage;
+        return out;
+    }
+    const auto parsed = parseJsonObject(response->body);
+    if (!parsed.has_value()) {
+        out.ok = false;
+        out.transportError = L"Admin API returned an unreadable response.";
+        return out;
+    }
+    out.ok = true;
+    out.compatible = jsonBoolOr(*parsed, L"compatible", false);
+
+    std::wostringstream summary;
+    summary << L"Integration: " << wideFromUtf8(jsonStringOr(*parsed, L"integrationId", "")) << L'\n';
+    summary << L"Compatible with current gateway: "
+            << (out.compatible ? L"yes" : L"no (edge / bridge or config change required)") << L"\n\n";
+    if (parsed->HasKey(L"warnings")) {
+        const auto warnings = parsed->GetNamedArray(L"warnings", JsonArray());
+        if (warnings.Size() == 0) {
+            summary << L"No compatibility warnings.\n";
+        } else {
+            summary << L"Warnings:\n";
+            for (const auto& v : warnings) {
+                if (v.ValueType() != JsonValueType::Object) continue;
+                const auto obj = v.GetObject();
+                summary << L"  [" << wideFromUtf8(jsonStringOr(obj, L"severity", ""))
+                        << L"] " << wideFromUtf8(jsonStringOr(obj, L"message", "")) << L'\n';
+            }
+        }
+    }
+    out.bodyText = summary.str();
+    return out;
+}
+
+// Model Parity (A3.12.0): fetch the provider-native config artifacts for one
+// integration. GET /api/client-integrations/{id}/artifacts returns a JSON array
+// of { fileName, mediaType, content, purpose, containsSecret }. Reuses
+// ShellExportFetchResult / ShellExportArtifact so the FileSavePicker path is
+// identical to the exports surface.
+ShellExportFetchResult
+ShellRuntime::FetchClientIntegrationArtifacts(const std::wstring& integrationId) const {
+    std::wstring errorMessage;
+    const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
+    const std::wstring path = L"/api/client-integrations/" + integrationId + L"/artifacts";
+    const auto response = httpGet(host, port, path, errorMessage);
+    if (!response.has_value()) {
+        return ShellExportFetchResult{
+            false,
+            errorMessage.empty() ? std::wstring(L"Unable to reach the admin API.") : errorMessage,
+            {}
+        };
+    }
+    if (response->statusCode != 200) {
+        return ShellExportFetchResult{ false, L"Admin API rejected the artifacts request.", {} };
+    }
+    const auto artifactArray = parseJsonArray(response->body);
+    if (!artifactArray.has_value()) {
+        return ShellExportFetchResult{ false, L"Admin API returned invalid artifacts JSON.", {} };
+    }
+    std::vector<ShellExportArtifact> artifacts;
+    for (const auto& value : *artifactArray) {
+        if (value.ValueType() != JsonValueType::Object) continue;
+        const auto obj = value.GetObject();
+        ShellExportArtifact artifact;
+        artifact.fileName = wideFromUtf8(jsonStringOr(obj, L"fileName", ""));
+        artifact.id = artifact.fileName;
+        artifact.mediaType = wideFromUtf8(jsonStringOr(obj, L"mediaType", ""));
+        artifact.content = wideFromUtf8(jsonStringOr(obj, L"content", ""));
+        artifacts.push_back(std::move(artifact));
+    }
+    std::wostringstream message;
+    message << L"Loaded " << artifacts.size() << L" artifact(s) for " << integrationId << L".";
+    return ShellExportFetchResult{ true, message.str(), std::move(artifacts) };
+}
+
 bool ShellRuntime::RevokeSupervisor(const std::wstring& reason,
                                      std::wstring& errorOut) const {
     const auto [host, port] = adminApiEndpoint(ResolveConfigurationFile());
