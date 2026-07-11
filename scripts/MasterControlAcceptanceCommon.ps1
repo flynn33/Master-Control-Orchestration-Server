@@ -55,10 +55,13 @@ function Invoke-McosHttpProbe {
             Method             = $Method
             Uri                = $Url
             TimeoutSec         = $TimeoutSec
-            SkipHttpErrorCheck = $true
             MaximumRedirection = 0
             ErrorAction        = 'Stop'
+            UseBasicParsing    = $true
         }
+        # -SkipHttpErrorCheck exists only on PowerShell 7.4+. On Windows PowerShell 5.1
+        # a non-2xx response throws; the catch block recovers the status/body instead.
+        if ($PSVersionTable.PSVersion -ge [version]'7.4') { $params['SkipHttpErrorCheck'] = $true }
         if ($Headers) { $params['Headers'] = $Headers }
         if (-not [string]::IsNullOrEmpty($Body)) {
             $params['Body'] = $Body
@@ -80,6 +83,26 @@ function Invoke-McosHttpProbe {
         }
     } catch {
         $result.error = $_.Exception.Message
+        # On editions without -SkipHttpErrorCheck (Windows PowerShell 5.1) a non-2xx
+        # response throws; recover the real status code and body from the response so
+        # evidence probes report the actual HTTP status instead of 0.
+        $resp = $null
+        if ($_.Exception.PSObject.Properties['Response']) { $resp = $_.Exception.Response }
+        if ($resp) {
+            try { $result.statusCode = [int]$resp.StatusCode } catch {}
+            try {
+                $stream = $resp.GetResponseStream()
+                if ($stream) {
+                    $reader = New-Object System.IO.StreamReader($stream)
+                    $result.body = $reader.ReadToEnd()
+                    $reader.Close()
+                }
+            } catch {}
+            $result.ok = ($result.statusCode -ge 200 -and $result.statusCode -lt 300)
+            if (-not [string]::IsNullOrWhiteSpace($result.body)) {
+                try { $result.json = $result.body | ConvertFrom-Json -ErrorAction Stop; $result.jsonValid = $true } catch { $result.jsonValid = $false }
+            }
+        }
     }
 
     return $result
@@ -90,7 +113,7 @@ function Invoke-McosHttpProbe {
 function Get-McosJsonPath {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)]$Json,
+        [Parameter(Mandatory)][AllowNull()]$Json,
         [Parameter(Mandatory)][string]$Path
     )
     $current = $Json
@@ -112,7 +135,7 @@ function Get-McosJsonPath {
 function Get-McosMissingFields {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)]$Json,
+        [Parameter(Mandatory)][AllowNull()]$Json,
         [string[]]$RequiredFields
     )
     $missing = @()

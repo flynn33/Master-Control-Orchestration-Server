@@ -130,7 +130,7 @@ FrameworkElement buildReadinessTile(
 // -----------------------------------------------------------------------
 
 FrameworkElement BuildSetupWizardEntryView(
-    const ShellSnapshot& snapshot,
+    [[maybe_unused]] const ShellSnapshot& snapshot,
     const SetupWizardCallbacks& callbacks) {
 
     StackPanel root;

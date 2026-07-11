@@ -3320,7 +3320,15 @@ function bindClientIntegrationsHandlers() {
 function renderDiscoveryPanel() {
   const doc = state.discovery || {};
   const gw = doc.gateway || {};
-  const onboardingPaths = (doc.onboarding && doc.onboarding.paths) || [];
+  // The discovery document advertises onboarding as a named-field object
+  // (generic / claudeCode / codex / grok / chatgpt -> URL), not a `.paths`
+  // array. Read whatever string-valued fields are present so the panel shows
+  // the advertised URLs instead of "No onboarding paths advertised".
+  const onboardingPaths = doc.onboarding
+    ? Object.entries(doc.onboarding)
+        .filter(([, v]) => typeof v === 'string' && v)
+        .map(([clientType, url]) => ({ clientType, url }))
+    : [];
   const governance = doc.governance || {};
   // v0.9.74: substitute wildcard listen address with the resolved LAN
   // IP for display only -- the discovery doc itself carries the
@@ -3355,8 +3363,8 @@ function renderDiscoveryPanel() {
       </ul>
       <h3>Governance</h3>
       <ul class="kv-list">
-        <li><span>Bundles URL</span><strong><code>${escapeHtml(governance.bundlesUrl || '—')}</code></strong></li>
-        <li><span>Profile URL</span><strong><code>${escapeHtml(governance.profileUrl || '—')}</code></strong></li>
+        <li><span>Bundles URL</span><strong><code>${escapeHtml(governance.bundleBaseUrl || governance.bundlesUrl || '—')}</code></strong></li>
+        <li><span>Profile URL</span><strong><code>${escapeHtml(governance.cluProfileUrl || governance.profileUrl || '—')}</code></strong></li>
       </ul>
       <h3>Onboarding</h3>
       ${onboardingPaths.length === 0

@@ -34,3 +34,10 @@ if(MSVC)
 endif()
 
 install(TARGETS MasterControlBaselineToolsWorker RUNTIME DESTINATION .)
+
+# Stage this worker's runtime DLL dependencies (notably the vcpkg sqlite3.dll
+# on the x64-windows triplet) into the payload root, mirroring the service host
+# and the test target. Redundant with the service host's staging since both
+# install to the same payload root, but kept explicit so this worker cannot
+# ship without its runtime DLLs if the service host's dependency set changes.
+install(FILES $<TARGET_RUNTIME_DLLS:MasterControlBaselineToolsWorker> DESTINATION .)
