@@ -508,7 +508,7 @@ void OverviewSectionControl::ApplySecurityStanceCard(const ::MasterControlShell:
     const wchar_t* tone = L"good";
     if (!snapshot.securityProtocolsEnabled) tone = L"crit";
     else if (snapshot.aiAutonomyEnabled || snapshot.openLanAccess) tone = L"warn";
-    if (snapshot.governanceFindingCount > 0 && tone == L"good") tone = L"warn";
+    else if (snapshot.governanceFindingCount > 0) tone = L"warn";
     paintDot(SecurityStanceStatusDot(), tone);
 
     std::wostringstream out;
@@ -541,13 +541,13 @@ void OverviewSectionControl::ApplyErrorReportingCard(const ::MasterControlShell:
                        : L"crit";
     paintDot(ErrorReportingStatusDot(), tone);
 
-    std::wostringstream head;
+    std::wostringstream headline;
     if (errorCount == 0) {
-        head << L"No errors recorded";
+        headline << L"No errors recorded";
     } else {
-        head << errorCount << L" error" << (errorCount == 1 ? L"" : L"s") << L" recorded";
+        headline << errorCount << L" error" << (errorCount == 1 ? L"" : L"s") << L" recorded";
     }
-    ErrorReportingHeadline().Text(winrt::hstring(head.str()));
+    ErrorReportingHeadline().Text(winrt::hstring(headline.str()));
 
     auto stack = ErrorReportingList();
     stack.Children().Clear();
