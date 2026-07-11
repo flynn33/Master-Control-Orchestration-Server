@@ -1,11 +1,30 @@
 {
   "scheme": "alpha-stage: <Stage><A>.<Feature>.<patch/hotfix>",
   "strategy": "A-on-alpha-iteration, Feature-on-feature, patch-on-hotfix; alpha versions are published as GitHub pre-releases with the MSI installer after the same-SHA product gate passes",
-  "current_version": "A3.11.0",
-  "current_tag": "vA3.11.0",
-  "released_at": "2026-07-03",
+  "current_version": "A3.12.0",
+  "current_tag": "vA3.12.0",
+  "released_at": "pending",
   "last_release_commit": "a5c33325c0f2841ff7f3c5aa151534f19d51bbd9",
   "history": [
+    {
+      "version": "A3.12.0",
+      "tag": "vA3.12.0",
+      "released_at": "pending",
+      "commit": "pending",
+      "summary": "Model Parity alpha milestone (implementation only; not yet released, no tag cut). Brings MCOS client/model onboarding, export, validation, dashboard, shell, docs, and tests to parity across supported provider/client families while keeping MCOS a governed MCP gateway/orchestration host. Claude previously had first-class support; this milestone adds equivalent project-level support for Codex, OpenAI Responses, ChatGPT Apps/connector-edge, xAI Responses, Grok Build, and Grok Build ACP behind a provider-neutral Client Integration Catalog, without turning MCOS into a direct provider executor.",
+      "entries": [
+        "feat(model-parity): add a provider-neutral Client Integration Catalog (IClientIntegrationProvider / IClientIntegrationCatalog, constructor-DI, final providers) covering ten canonical integrations: claude-code, codex, codex-mcp-server, openai-responses, chatgpt-apps, chatgpt-connector-edge, xai-responses, grok-build, grok-build-acp, generic-mcp. Compatibility aliases (claude, openai, chatgpt, xai, grok, generic) resolve to explicit descriptors without collapsing product behavior (no openai==chatgpt or xai==grok).",
+        "feat(model-parity): provider-native artifacts corrected per current provider docs -- Codex config.toml (not legacy codex.config.json/codex-mcp.json), OpenAI Responses type=mcp tool shape (server_label/server_url/allowed_tools/require_approval), xAI remote MCP without the OpenAI-only require_approval/connector_id fields, Grok Build .grok/config.toml with grok-build-0.1, Grok Build ACP over grok agent stdio (JSON-RPC stdio), and an honest POST-only Streamable HTTP report for generic MCP.",
+        "feat(model-parity): IRemoteMcpCompatibilityAnalyzer produces structured transport/auth/reachability warnings (e.g. endpoint_requires_public_https) surfaced at /api/client-integrations/{id}/validate rather than buried in prose.",
+        "feat(model-parity): add read-only routes /api/client-integrations, /{id}, /{id}/artifacts, /{id}/validate; onboarding (/api/onboarding/{clientType}) and export services now delegate to the catalog; the MCP initialize result carries concise governance instructions without overclaiming SSE.",
+        "feat(model-parity): browser dashboard gains a provider-neutral Client Integrations deck; the WinUI shell gains provider-neutral generate-config/validate actions; docs add Client-Integrations, Codex, OpenAI-Responses, ChatGPT-Apps, XAI-Grok, and Grok-Build pages and correct the stale Codex-JSON guidance."
+      ],
+      "knownIssuesDeferredToNextRelease": [
+        "End-to-end hosted ChatGPT connector / OpenAI Responses / xAI remote MCP calls against a public edge are operator-driven (require external accounts and a public HTTPS connector-edge bridge).",
+        "Actual Codex CLI/IDE and Grok Build CLI execution verification requires those tools installed on the host; the milestone ships deterministic local artifact tests and manual verification steps instead.",
+        "MSI cut / release tag for A3.12.0 remains an operator step; this milestone is a local implementation commit only."
+      ]
+    },
     {
       "version": "A3.11.0",
       "tag": "vA3.11.0",

@@ -18,7 +18,8 @@
     "confirm-guards",
     "second-host-lan-acceptance",
     "working-alpha-readiness",
-    "local-database"
+    "local-database",
+    "model-parity"
   ],
   "optional": [
     "external-npm-mcps"

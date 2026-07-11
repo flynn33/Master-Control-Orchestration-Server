@@ -1298,6 +1298,99 @@ struct OnboardingProfile final {
     std::vector<std::string> caveats;
 };
 
+// ============================================================================
+// Model Parity (A3.12.0): provider-neutral Client Integration Catalog models.
+// These describe how an external client/model surface (Claude Code, Codex,
+// OpenAI Responses, ChatGPT Apps/connector-edge, xAI Responses, Grok Build,
+// Grok Build ACP, generic MCP) onboards against the governed MCOS gateway.
+// MCOS never executes a provider SDK; it emits provider-native config
+// artifacts and reports transport/auth compatibility honestly.
+// ============================================================================
+
+// Immutable description of one client integration. Compatibility booleans are
+// product facts (e.g. hosted ChatGPT requires public HTTPS), not runtime state.
+struct ClientIntegrationDescriptor final {
+    std::string id;                               // canonical id, e.g. "openai-responses"
+    std::string displayName;
+    std::string vendor;                           // Anthropic | OpenAI | xAI | Generic
+    std::vector<std::string> products;
+    std::vector<std::string> aliases;             // compatibility aliases resolving to id
+    std::vector<std::string> supportedTransports; // streamable_http | sse | stdio | ...
+    std::vector<std::string> requiredEndpointProperties;
+    std::vector<std::string> authModels;          // none|local-trust|bearer|oauth|mtls|connector-edge
+    std::vector<std::string> generatedArtifacts;  // file names the provider emits
+    std::vector<std::string> verificationSteps;
+    std::vector<std::string> caveats;
+    bool requiresPublicHttps = false;
+    bool supportsLanHttp = false;
+    bool supportsMcpServerInstructions = false;
+    bool supportsToolAllowList = false;
+    bool supportsClientApprovalPolicy = false;    // client enforces tool approval itself
+};
+
+// Runtime context a provider composes an onboarding profile / artifacts from.
+// The onboarding + export services build this from the live discovery document
+// and configuration, so gateway URL / TLS changes propagate automatically.
+struct ClientIntegrationContext final {
+    std::string host;
+    std::string gatewayMcpUrl;
+    std::string adminBaseUrl;
+    std::string platform;                         // windows | macos | ios (governance bundle)
+    bool gatewayTlsEnabled = false;
+    bool adminTlsEnabled = false;
+    bool lanOnly = true;
+    bool sseAvailable = false;
+    bool streamableHttpPostOnly = true;
+    bool destructiveToolsAvailable = false;
+    // Base onboarding-profile fields carried so providers own the full profile.
+    std::string governanceBundleUrl;
+    std::string discoveryUrl;
+    std::string instanceId;
+    std::string protocolVersion = "2025-03-26";
+};
+
+// A provider-native config artifact (Codex config.toml, Responses JSON, ...).
+// containsSecret must be false for everything MCOS generates: secrets are
+// placeholders (${OPENAI_API_KEY}) only.
+struct ClientExportArtifact final {
+    std::string fileName;
+    std::string mediaType;                        // application/toml | application/json | text/markdown
+    std::string content;
+    std::string purpose;
+    bool containsSecret = false;
+};
+
+// Structured compatibility/safety warning. severity: info | advisory | blocking.
+struct ClientIntegrationWarning final {
+    std::string code;
+    std::string severity = "advisory";
+    std::string message;
+};
+
+struct ClientIntegrationValidationResult final {
+    std::string integrationId;
+    bool compatible = false;
+    std::vector<ClientIntegrationWarning> warnings;
+};
+
+// Live gateway facts the compatibility analyzer reasons over.
+struct GatewayRuntimeDescriptor final {
+    std::string mcpUrl;
+    bool tlsEnabled = false;
+    bool lanOnly = true;
+    bool sseAvailable = false;
+    bool streamableHttpPostOnly = true;
+    bool destructiveToolsAvailable = false;
+    std::string authModel = "local-trust";        // none|local-trust|bearer|oauth|mtls|connector-edge
+};
+
+struct RemoteMcpCompatibilityResult final {
+    std::string integrationId;
+    bool compatible = false;
+    bool requiresEdgeBridge = false;
+    std::vector<ClientIntegrationWarning> warnings;
+};
+
 // PHASE-03 (ADR-002 §4): MCOS Discovery Document. Served at
 // /.well-known/mcos.json and /api/discovery, broadcast via UDP beacon.
 // DNS-SD TXT advertisement carries a flattened subset of these fields.
@@ -2579,6 +2672,80 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     manualInstructions,
     verificationSteps,
     caveats)
+
+// Model Parity (A3.12.0): Client Integration Catalog serializers.
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ClientIntegrationDescriptor,
+    id,
+    displayName,
+    vendor,
+    products,
+    aliases,
+    supportedTransports,
+    requiredEndpointProperties,
+    authModels,
+    generatedArtifacts,
+    verificationSteps,
+    caveats,
+    requiresPublicHttps,
+    supportsLanHttp,
+    supportsMcpServerInstructions,
+    supportsToolAllowList,
+    supportsClientApprovalPolicy)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ClientIntegrationContext,
+    host,
+    gatewayMcpUrl,
+    adminBaseUrl,
+    platform,
+    gatewayTlsEnabled,
+    adminTlsEnabled,
+    lanOnly,
+    sseAvailable,
+    streamableHttpPostOnly,
+    destructiveToolsAvailable,
+    governanceBundleUrl,
+    discoveryUrl,
+    instanceId,
+    protocolVersion)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ClientExportArtifact,
+    fileName,
+    mediaType,
+    content,
+    purpose,
+    containsSecret)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ClientIntegrationWarning,
+    code,
+    severity,
+    message)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    ClientIntegrationValidationResult,
+    integrationId,
+    compatible,
+    warnings)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    GatewayRuntimeDescriptor,
+    mcpUrl,
+    tlsEnabled,
+    lanOnly,
+    sseAvailable,
+    streamableHttpPostOnly,
+    destructiveToolsAvailable,
+    authModel)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    RemoteMcpCompatibilityResult,
+    integrationId,
+    compatible,
+    requiresEdgeBridge,
+    warnings)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
     GovernanceBundle,

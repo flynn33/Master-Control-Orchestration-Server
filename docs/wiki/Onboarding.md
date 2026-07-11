@@ -6,6 +6,8 @@
 
 Connecting an AI client to MCOS is a one-time operation. MCOS hands the client a per-client-type **Onboarding Profile** that tells the client exactly what URL to use, what transport to speak, and what governance posture to expect. Manual setup is always first-class — every profile shows step-by-step instructions in plain language alongside the copyable config snippet.
 
+> As of the A3.12.0 Model Parity milestone, `GET /api/onboarding/{clientType}` delegates to the provider-neutral **Client Integration Catalog**. The dashboard tabs below are the most common onboarding paths; the catalog additionally exposes provider-native artifacts and a compatibility check for all ten canonical integrations. See [Client Integrations](Client-Integrations).
+
 ---
 
 ## How to onboard, in 90 seconds
@@ -64,10 +66,10 @@ Port 8080 is the default `mcpGateway.listenPort`; the snippet auto-templates fro
 
 ### Codex
 1. Pull the profile: dashboard **Onboarding → codex**, or `GET /api/onboarding/codex`.
-2. Copy the snippet.
-3. Paste into `~/.codex/config.json` (or wherever your Codex install reads from).
-4. Restart Codex.
-5. Verify with a Codex tools/list operation.
+2. Copy the TOML snippet.
+3. Paste the `[mcp_servers.mcos]` table into `~/.codex/config.toml` (user scope) or `.codex/config.toml` (project scope). Codex MCP config is **TOML** — legacy JSON (`codex.config.json` / `codex-mcp.json`) is not the current primary format.
+4. Restart Codex (CLI or IDE) so it re-reads `config.toml`.
+5. Verify with `codex mcp list` (or `codex mcp --help`). See [Codex](Codex).
 
 ### Grok
 1. Pull the profile: dashboard **Onboarding → grok**, or `GET /api/onboarding/grok`.
@@ -178,6 +180,23 @@ flowchart LR
 
 `OnboardingProfileService::knownClientTypes()` lists the slugs. An unknown clientType falls through to `generic-mcp` so any MCP-compliant client can still onboard.
 
+### The full catalog (ten canonical integrations)
+
+Onboarding profiles are backed by the Client Integration Catalog (A3.12.0 Model Parity). The ten canonical integration ids are:
+
+- `claude-code` — Claude Code / Desktop (Anthropic), `.mcp.json`.
+- `codex` — Codex CLI / IDE (OpenAI), `config.toml`.
+- `codex-mcp-server` — Codex as an external MCP server (stdio adapter).
+- `openai-responses` — OpenAI Responses API remote MCP (public HTTPS).
+- `chatgpt-apps` — ChatGPT Apps / Connectors (public HTTPS, OAuth 2.1 + PKCE).
+- `chatgpt-connector-edge` — LAN-to-public connector edge bridge.
+- `xai-responses` — xAI Responses / Grok API remote MCP.
+- `grok-build` — Grok Build CLI / headless (xAI), `.grok/config.toml`.
+- `grok-build-acp` — Grok Build ACP (JSON-RPC stdio adapter).
+- `generic-mcp` — any MCP-compliant client.
+
+Aliases resolve without collapsing product behavior: `claude`→`claude-code`, `openai`→`openai-responses`, `chatgpt`→`chatgpt-apps`, `xai`→`xai-responses`, `grok`→`grok-build`, `generic`→`generic-mcp`. Hosted surfaces (`openai-responses`, `chatgpt-apps`, `xai-responses`) cannot reach a LAN-only HTTP gateway directly — they need a public HTTPS or connector-edge endpoint. See [Client Integrations](Client-Integrations) for the compatibility matrix and per-provider pages.
+
 ---
 
 ## 2. The profile structure
@@ -248,15 +267,15 @@ sequenceDiagram
 
 ## 4. Connect a Codex client
 
-Codex consumes the same Streamable HTTP endpoint. The profile produces the right config block for Codex's `.codex` directory.
+Codex consumes the same Streamable HTTP endpoint. The profile produces a **TOML** config table for Codex's `config.toml` — user scope `~/.codex/config.toml` or project scope `.codex/config.toml`. Legacy JSON is not the current primary format. See [Codex](Codex) for the full walkthrough.
 
 ```mermaid
 flowchart LR
     classDef step fill:#031018,stroke:#00F6FF,color:#E6FCFF;
 
     A[Open<br/>dashboard Onboarding tab]:::step --> B[Pick 'codex']:::step
-    B --> C[Click Copy on the<br/>Streamable HTTP snippet]:::step
-    C --> D[Paste into<br/>~/.codex/config.json]:::step
+    B --> C[Click Copy on the<br/>config.toml snippet]:::step
+    C --> D[Paste into<br/>~/.codex/config.toml]:::step
     D --> E[Restart codex]:::step
 ```
 
@@ -264,13 +283,13 @@ flowchart LR
 
 ## 5. Connect Grok
 
-Grok's xAI MCP integration follows the same Streamable HTTP path. The profile carries an explicit caveat block for any Grok-specific quirks.
+The `grok` alias resolves to Grok Build (xAI), which reads `.grok/config.toml` (coding model `grok-build-0.1`) and follows the same Streamable HTTP path. The profile carries an explicit caveat block for any Grok-specific quirks. For Grok Build verification, headless runs, and ACP, see [Grok Build](Grok-Build); for the hosted xAI Responses remote MCP surface, see [xAI and Grok](XAI-Grok).
 
 ---
 
 ## 6. Connect ChatGPT (connector-edge)
 
-ChatGPT is special because the connector-edge runtime adds constraints the other clients do not. The `chatgpt` profile documents these constraints in the `caveats[]` array. The profile itself still ships a usable manual config plus verification steps; the operator may also need to apply a small ChatGPT-side companion utility once it ships (deferred work — see `mcos-memory.recall(tags=['deferred'])`).
+ChatGPT is special because the connector-edge runtime adds constraints the other clients do not. Hosted ChatGPT runs in OpenAI's environment and **cannot reach a LAN-only HTTP MCOS gateway directly**; it needs a public HTTPS `/mcp` endpoint (OAuth 2.1 + PKCE) reached through a LAN-to-public connector edge bridge. The `chatgpt` profile documents these constraints in the `caveats[]` array. The profile itself still ships a usable manual config plus verification steps; the operator may also need to apply a small ChatGPT-side companion utility once it ships (deferred work — see `mcos-memory.recall(tags=['deferred'])`). See [ChatGPT Apps](ChatGPT-Apps).
 
 ---
 
@@ -363,6 +382,7 @@ A capable client can chain: discover via DNS-SD → fetch the well-known discove
 
 ## 12. Cross-references
 
+- **The full provider catalog** → [Client Integrations](Client-Integrations)
 - **What's discoverable on the LAN** → [LAN Discovery](LAN-Discovery)
 - **What governance bundle to expect** → [CLU Governance](CLU-Governance)
 - **Dashboard onboarding panel** → [Dashboard](Dashboard) §Onboarding

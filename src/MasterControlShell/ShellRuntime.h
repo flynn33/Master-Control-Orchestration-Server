@@ -691,6 +691,23 @@ public:
     [[nodiscard]] ShellSupervisorIssueResult GenerateSupervisorConfig(const std::wstring& providerId) const;
     [[nodiscard]] bool RevokeSupervisor(const std::wstring& reason, std::wstring& errorOut) const;
 
+    // Model Parity (A3.12.0): Client Integration Catalog helpers backing the
+    // Overview "Client Integrations" card. ValidateClientIntegration hits
+    // GET /api/client-integrations/{id}/validate and formats the structured
+    // compatibility warnings; FetchClientIntegrationArtifacts hits
+    // /{id}/artifacts and returns the provider-native config artifacts (reusing
+    // ShellExportFetchResult) for the native FileSavePicker.
+    struct ShellClientIntegrationValidateResult {
+        bool ok = false;
+        bool compatible = false;
+        std::wstring bodyText;       // printable "compatible + warnings" block
+        std::wstring transportError; // network / parse error reaching the API
+    };
+    [[nodiscard]] ShellClientIntegrationValidateResult
+        ValidateClientIntegration(const std::wstring& integrationId) const;
+    [[nodiscard]] ShellExportFetchResult
+        FetchClientIntegrationArtifacts(const std::wstring& integrationId) const;
+
     // Live activity stream: poll the service's ActivityEventRing for events
     // strictly newer than `sinceId`. Pass an empty string on first call to
     // receive the most recent buffer window. Subsequent calls should use

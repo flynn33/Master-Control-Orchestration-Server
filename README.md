@@ -1,8 +1,8 @@
 # Master Control Orchestration Server
 
-![version](https://img.shields.io/badge/version-vA3.11.0-00f6ff?style=flat-square)
+![version](https://img.shields.io/badge/version-vA3.12.0-00f6ff?style=flat-square)
 ![channel](https://img.shields.io/badge/channel-Internal%20Alpha-ff8c00?style=flat-square)
-![released](https://img.shields.io/badge/released-2026--07--03-031018?style=flat-square)
+![status](https://img.shields.io/badge/status-implementation%20milestone-ff8c00?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%2F%20Server%202022-0a1018?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
 ![license](https://img.shields.io/badge/license-Proprietary-031018?style=flat-square)
@@ -13,9 +13,11 @@ MCP server and sub-agent worker pools, distributes onboarding profiles and
 CLU/Forsetti governance bundles, and provides browser plus WinUI maintainer
 surfaces for operations.
 
-> **vA3.11.0** - 2026-07-03
+> **vA3.12.0** — Model Parity (implementation milestone; not yet released)
 
-Current release: `vA3.11.0`, released `2026-07-03`.
+Current version: `vA3.12.0` — **Model Parity**, an implementation milestone that
+is not yet released (no tag cut, no MSI packaged). Last released package:
+`vA3.11.0`, released `2026-07-03`.
 `A3.11.0` is the alpha-stage re-expression of the tree previously documented as
 `0.11.0-alpha.3`. During alpha, versions use
 `A{alphaIteration}.{feature}.{patch}`. Alpha versions are published as GitHub
@@ -27,6 +29,32 @@ The product gate proves build, test, package creation, and staged bootstrapper
 preflight only. Without operator-authorized target-host Gate D and second-host
 Gate E evidence, the honest status is **Alpha candidate ready for operator
 deployment certification**.
+
+## Model Parity
+
+Model Parity (`A3.12.0`) is the current implementation milestone. It adds a
+provider-neutral **Client Integration Catalog**: MCOS supports a fixed set of
+external AI client and model surfaces through the governed MCP Gateway and
+provider-native onboarding artifacts. This is an implementation milestone landed
+in the current tree, not a released or deployed feature.
+
+The catalog registers ten canonical integrations:
+
+- `claude-code` — Claude Code / Desktop (Anthropic), `.mcp.json`.
+- `codex` — Codex CLI / IDE (OpenAI), `config.toml`.
+- `codex-mcp-server` — Codex as an external MCP server (stdio adapter).
+- `openai-responses` — OpenAI Responses API remote MCP (public HTTPS).
+- `chatgpt-apps` — ChatGPT Apps / Connectors (public HTTPS, OAuth 2.1).
+- `chatgpt-connector-edge` — LAN-to-public connector edge bridge.
+- `xai-responses` — xAI Responses / Grok API remote MCP.
+- `grok-build` — Grok Build CLI / headless (xAI), `.grok/config.toml`.
+- `grok-build-acp` — Grok Build ACP (JSON-RPC stdio adapter).
+- `generic-mcp` — any MCP-compliant client.
+
+The gateway remains the POST-only Streamable HTTP subset with no SSE; artifacts
+carry only placeholder secrets. See
+[Client Integrations](docs/wiki/Client-Integrations.md) for per-provider details,
+the compatibility matrix, and the `/api/client-integrations` routes.
 
 ## Current Alpha State
 

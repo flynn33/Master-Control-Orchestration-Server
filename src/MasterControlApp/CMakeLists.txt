@@ -3,6 +3,7 @@
 # Proprietary and Confidential.
 
 add_library(MasterControlApp STATIC
+    ClientIntegrationCatalog.cpp
     DiagnosticsService.cpp
     DiagnosticsStore.cpp
     MasterControlDefaults.cpp

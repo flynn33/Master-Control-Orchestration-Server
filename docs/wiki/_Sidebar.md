@@ -11,6 +11,12 @@
 
 **Connect Clients**
 - [Onboarding](Onboarding)
+- [Client Integrations](Client-Integrations)
+- [Codex](Codex)
+- [OpenAI Responses](OpenAI-Responses)
+- [ChatGPT Apps](ChatGPT-Apps)
+- [xAI and Grok](XAI-Grok)
+- [Grok Build](Grok-Build)
 - [Client Config Bundle](Client-Config-Bundle)
 - [LAN Discovery](LAN-Discovery)
 - [LAN Clients](LAN-Clients)

@@ -6,6 +6,33 @@ The release-management and doc-sync GitHub agents that previously generated part
 
 ## [Unreleased]
 
+### Added
+
+- **Model Parity alpha milestone (A3.12.0, implementation only — not yet released).**
+  Provider-neutral Client Integration Catalog (`IClientIntegrationProvider` /
+  `IClientIntegrationCatalog`, constructor-DI, `final` providers) plus
+  provider-native onboarding/export profiles for Claude Code, Codex,
+  Codex-as-MCP-server, OpenAI Responses, ChatGPT Apps, ChatGPT connector edge,
+  xAI Responses, Grok Build, Grok Build ACP, and generic MCP clients.
+  Compatibility aliases (`claude`, `openai`, `chatgpt`, `xai`, `grok`,
+  `generic`) resolve to explicit descriptors without collapsing product
+  behavior (no `openai==chatgpt`, no `xai==grok`).
+- Corrected provider-native artifacts: Codex `config.toml` (not legacy
+  `codex.config.json` / `codex-mcp.json`), OpenAI Responses `type=mcp` tool
+  shape, xAI remote MCP without the OpenAI-only `require_approval` /
+  `connector_id` fields, Grok Build `.grok/config.toml` with `grok-build-0.1`,
+  Grok Build ACP over `grok agent stdio`, and an honest POST-only Streamable
+  HTTP report for generic MCP.
+- `IRemoteMcpCompatibilityAnalyzer` emitting structured transport/auth/
+  reachability warnings, surfaced at `GET /api/client-integrations/{id}/validate`.
+- Read-only routes `GET /api/client-integrations`, `/{id}`, `/{id}/artifacts`,
+  `/{id}/validate`; onboarding and export services delegate to the catalog; the
+  MCP `initialize` result carries concise governance instructions (no SSE
+  overclaim). Browser dashboard gains a Client Integrations deck; the WinUI
+  shell gains provider-neutral generate-config / validate actions; new wiki
+  pages Client-Integrations, Codex, OpenAI-Responses, ChatGPT-Apps, XAI-Grok,
+  and Grok-Build.
+
 ### Changed
 
 - Hardened alpha release-readiness metadata, product-gate preflight behavior,

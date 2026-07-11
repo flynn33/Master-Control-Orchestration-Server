@@ -4380,10 +4380,12 @@ class ExportService final : public IExportService {
 public:
     ExportService(std::shared_ptr<IRuntimeInventoryService> inventoryService,
                   std::shared_ptr<IConfigurationService> configurationService,
-                  std::shared_ptr<ILanClientAccessService> lanClientAccessService)
+                  std::shared_ptr<ILanClientAccessService> lanClientAccessService,
+                  std::shared_ptr<IClientIntegrationCatalog> clientIntegrationCatalog)
         : inventoryService_(std::move(inventoryService))
         , configurationService_(std::move(configurationService))
-        , lanClientAccessService_(std::move(lanClientAccessService)) {}
+        , lanClientAccessService_(std::move(lanClientAccessService))
+        , clientIntegrationCatalog_(std::move(clientIntegrationCatalog)) {}
 
     std::vector<ExportArtifact> generateExports() const override {
         const auto endpoints = inventoryService_->listEndpoints();
@@ -4441,23 +4443,40 @@ public:
             } }
         };
 
-        nlohmann::json codexJson = {
-            { "name", "master-control-gateway" },
-            { "transport", "http" },
-            { "url", gatewayUrl }
+        // Model Parity (A3.12.0): provider-native client artifacts come from the
+        // Client Integration Catalog so Codex is TOML (config.toml, not legacy
+        // JSON), OpenAI Responses uses the type=mcp shape, and xAI omits the
+        // OpenAI-only require_approval/connector_id fields. Falls back to an
+        // empty-content artifact only if the catalog is unavailable.
+        ClientIntegrationContext integrationContext;
+        integrationContext.host = gatewayHost;
+        integrationContext.gatewayMcpUrl = gatewayUrl;
+        integrationContext.adminBaseUrl = browserUrl;
+        integrationContext.gatewayTlsEnabled = false;
+        integrationContext.lanOnly = true;
+        integrationContext.sseAvailable = false;
+        integrationContext.streamableHttpPostOnly = true;
+        integrationContext.protocolVersion = "2025-03-26";
+
+        const auto primaryArtifact = [this, &integrationContext](const char* integrationId,
+                                                                 ClientExportArtifact fallback) -> ClientExportArtifact {
+            if (clientIntegrationCatalog_) {
+                if (const auto provider = clientIntegrationCatalog_->findById(integrationId)) {
+                    const auto produced = provider->createExportArtifacts(integrationContext);
+                    if (!produced.empty()) {
+                        return produced.front();
+                    }
+                }
+            }
+            return fallback;
         };
 
-        nlohmann::json openAiJson = {
-            { "gateway", gatewayUrl },
-            { "clientType", "openai" },
-            { "recommendedModel", "gpt-5" }
-        };
-
-        nlohmann::json xAiJson = {
-            { "gateway", gatewayUrl },
-            { "clientType", "xai" },
-            { "recommendedModel", "grok-code" }
-        };
+        const ClientExportArtifact codexArtifact = primaryArtifact(
+            "codex", ClientExportArtifact{ "config.toml", "application/toml", "", "Codex MCP config.", false });
+        const ClientExportArtifact openAiArtifact = primaryArtifact(
+            "openai-responses", ClientExportArtifact{ "openai-responses.mcp.json", "application/json", "", "OpenAI Responses MCP tool.", false });
+        const ClientExportArtifact xAiArtifact = primaryArtifact(
+            "xai-responses", ClientExportArtifact{ "xai-responses.mcp.json", "application/json", "", "xAI remote MCP tool.", false });
 
         nlohmann::json gatewayProfile = {
             { "instanceName", configuration.instanceName },
@@ -4485,25 +4504,28 @@ public:
             << "$config | ConvertTo-Json -Depth 8 | Set-Content -Path $ConfigPath -Encoding UTF8\n"
             << "Write-Host \"Updated Claude Code MCP config at $ConfigPath\"\n";
 
+        // Codex installer writes config.toml (current Codex MCP format), not
+        // the retired codex-mcp.json. Content comes from the catalog's Codex
+        // provider so the installer and the exported artifact never diverge.
         std::ostringstream codexScript;
         codexScript
             << "param(\n"
-            << "  [string]$OutputPath = (Join-Path $PWD 'codex-mcp.json')\n"
+            << "  [string]$OutputPath = (Join-Path $PWD 'config.toml')\n"
             << ")\n\n"
             << "$payload = @'\n"
-            << codexJson.dump(2) << '\n'
+            << codexArtifact.content << '\n'
             << "'@\n"
             << "$payload | Set-Content -Path $OutputPath -Encoding UTF8\n"
-            << "Write-Host \"Wrote Codex MCP config to $OutputPath\"\n";
+            << "Write-Host \"Wrote Codex MCP config (config.toml) to $OutputPath\"\n";
 
         std::vector<ExportArtifact> artifacts = {
             ExportArtifact{ "gateway-profile", "master-control-gateway-profile.json", "application/json", gatewayProfile.dump(2) },
             ExportArtifact{ "claude", ".claude.json", "application/json", claudeJson.dump(2) },
             ExportArtifact{ "claude-installer", "Install-ClaudeGateway.ps1", "text/plain", claudeScript.str() },
-            ExportArtifact{ "codex", "codex-mcp.json", "application/json", codexJson.dump(2) },
+            ExportArtifact{ "codex", codexArtifact.fileName, codexArtifact.mediaType, codexArtifact.content },
             ExportArtifact{ "codex-installer", "Install-CodexGateway.ps1", "text/plain", codexScript.str() },
-            ExportArtifact{ "openai", "openai-gateway.json", "application/json", openAiJson.dump(2) },
-            ExportArtifact{ "xai", "xai-gateway.json", "application/json", xAiJson.dump(2) }
+            ExportArtifact{ "openai-responses", openAiArtifact.fileName, openAiArtifact.mediaType, openAiArtifact.content },
+            ExportArtifact{ "xai-responses", xAiArtifact.fileName, xAiArtifact.mediaType, xAiArtifact.content }
         };
 
         // Phase 5 of ADR-001: surface a per-LAN-client config bundle so
@@ -4533,6 +4555,7 @@ private:
     std::shared_ptr<IRuntimeInventoryService> inventoryService_;
     std::shared_ptr<IConfigurationService> configurationService_;
     std::shared_ptr<ILanClientAccessService> lanClientAccessService_;
+    std::shared_ptr<IClientIntegrationCatalog> clientIntegrationCatalog_;
 };
 
 class CommandLogicUnitService final : public ICommandLogicUnitService {
@@ -11012,17 +11035,27 @@ private:
 class OnboardingProfileService final : public IOnboardingProfileService {
 public:
     OnboardingProfileService(std::shared_ptr<IConfigurationService> configurationService,
-                             std::shared_ptr<IDiscoveryService> discoveryService)
+                             std::shared_ptr<IDiscoveryService> discoveryService,
+                             std::shared_ptr<IClientIntegrationCatalog> clientIntegrationCatalog)
         : configurationService_(std::move(configurationService))
-        , discoveryService_(std::move(discoveryService)) {}
+        , discoveryService_(std::move(discoveryService))
+        , clientIntegrationCatalog_(std::move(clientIntegrationCatalog)) {}
 
+    // Model Parity (A3.12.0): the catalog is the single source of truth for the
+    // known client types (canonical integration ids) so onboarding, exports,
+    // dashboard, and docs stay in lockstep.
     std::vector<std::string> knownClientTypes() const override {
-        return { "claude-code", "codex", "grok", "chatgpt", "generic" };
+        std::vector<std::string> ids;
+        if (clientIntegrationCatalog_) {
+            for (const auto& descriptor : clientIntegrationCatalog_->list()) {
+                ids.push_back(descriptor.id);
+            }
+        }
+        return ids;
     }
 
     OnboardingProfile profileFor(const std::string& clientType,
                                  const std::string& platform) const override {
-        const std::string normalized = normalizeClientType(clientType);
         const auto document = discoveryService_
             ? discoveryService_->currentDocument()
             : DiscoveryDocument{};
@@ -11032,56 +11065,63 @@ public:
             lanIp = "127.0.0.1";
         }
         // v0.9.3: bracket IPv6 host literals so onboarding profile URLs
-        // are RFC 3986-parseable. Pre-v0.9.3 governanceBundleUrl +
-        // discoveryUrl came out as "http://fde3:c02c:...:32c8:7300/..."
-        // which RFC 3986 parsers reject as "Invalid port specified."
+        // are RFC 3986-parseable.
         const std::string adminBase = "http://" + bracketIpv6Host(lanIp) + ":" + std::to_string(configuration.browserPort);
 
-        OnboardingProfile profile;
-        profile.clientType = normalized;
-        // v0.11.0-alpha.2: prefer the HTTPS gateway URL when TLS dual-bind
-        // is configured + advertised by the discovery doc. This is the URL
-        // strict clients (ChatGPT connector-edge, Claude.ai web,
-        // security-conscious browser extensions) will see embedded in their
-        // .mcp.json snippet -- they refuse plain HTTP and would otherwise
-        // hard-fail the connect. HTTP fallback stays available on the
-        // listenPort prefix for in-LAN curl / browser debugging tooling.
-        profile.gatewayMcpUrl = (document.gateway.tlsEnabled
+        // Model Parity (A3.12.0): compose the provider-neutral integration
+        // context from the live discovery document + configuration, then
+        // delegate the whole profile to the resolved catalog provider. Aliased
+        // client types resolve through the catalog (openai->openai-responses,
+        // xai->xai-responses, grok->grok-build, chatgpt->chatgpt-apps) without
+        // collapsing product behavior; anything truly unrecognized falls back
+        // to the generic MCP provider (the pre-parity fallthrough behavior).
+        ClientIntegrationContext context;
+        context.host = lanIp;
+        // v0.11.0-alpha.2: prefer the HTTPS gateway URL when TLS dual-bind is
+        // configured + advertised (strict clients refuse plain HTTP).
+        context.gatewayMcpUrl = (document.gateway.tlsEnabled
                                  && !document.gateway.mcpUrlTls.empty())
             ? document.gateway.mcpUrlTls
             : document.gateway.mcpUrl;
-        profile.transport = "streamable_http";
-        profile.authRequired = false;       // schema const; ADR-002 §1 invariant
-        // Structured MCP descriptor mirrors the resolved gateway URL/transport.
-        // The working-alpha acceptance contract requires an `mcp` object on
-        // /api/onboarding/{clientType}; gatewayMcpUrl is kept for back-compat.
-        // protocolVersion keeps its 2025-03-26 default (matches the gateway's
-        // initialize handshake).
-        profile.mcp.url = profile.gatewayMcpUrl;
-        profile.mcp.transport = profile.transport;
-        profile.mcp.authRequired = profile.authRequired;
-        profile.trust = "lan";
-        // v0.11.0-alpha.3: platform-aware governance bundle URL. The
-        // requesting client passes ?platform=windows|macos|ios on
-        // /api/onboarding/{clientType}; empty/unknown falls back to
-        // windows (the pre-alpha.3 hardcoded value), so existing
-        // clients see no change.
-        profile.governanceBundleUrl = adminBase + "/api/governance/bundles/"
-            + normalizeGovernancePlatform(platform);
-        profile.discoveryUrl = adminBase + "/.well-known/mcos.json";
-        profile.instanceId = document.instanceId;
+        context.adminBaseUrl = adminBase;
+        context.platform = normalizeGovernancePlatform(platform);
+        context.gatewayTlsEnabled = document.gateway.tlsEnabled;
+        context.adminTlsEnabled = false;
+        context.lanOnly = true;              // MCOS is a LAN-trust gateway.
+        context.sseAvailable = false;        // POST-only Streamable HTTP subset.
+        context.streamableHttpPostOnly = true;
+        context.destructiveToolsAvailable = false;
+        context.governanceBundleUrl = adminBase + "/api/governance/bundles/" + context.platform;
+        context.discoveryUrl = adminBase + "/.well-known/mcos.json";
+        context.instanceId = document.instanceId;
+        context.protocolVersion = "2025-03-26";
 
-        if (normalized == "claude-code") {
-            populateClaudeCode(profile);
-        } else if (normalized == "codex") {
-            populateCodex(profile);
-        } else if (normalized == "grok") {
-            populateGrok(profile);
-        } else if (normalized == "chatgpt") {
-            populateChatGpt(profile);
-        } else {
-            populateGeneric(profile);
+        std::shared_ptr<const IClientIntegrationProvider> provider;
+        if (clientIntegrationCatalog_) {
+            provider = clientIntegrationCatalog_->findById(clientType);
+            if (!provider) {
+                provider = clientIntegrationCatalog_->findById("generic-mcp");
+            }
         }
+        if (!provider) {
+            // Defensive fallback: catalog unavailable. Return a minimal profile
+            // that still carries the resolved gateway/governance URLs.
+            OnboardingProfile fallback;
+            fallback.clientType = "generic-mcp";
+            fallback.gatewayMcpUrl = context.gatewayMcpUrl;
+            fallback.mcp.url = context.gatewayMcpUrl;
+            fallback.governanceBundleUrl = context.governanceBundleUrl;
+            fallback.discoveryUrl = context.discoveryUrl;
+            fallback.instanceId = context.instanceId;
+            fallback.authRequired = false;
+            return fallback;
+        }
+        OnboardingProfile profile = provider->createOnboardingProfile(context);
+        // ADR-002 §1 LAN-trust invariant: onboarding profiles never carry an
+        // app-layer auth requirement. Re-asserted here in the composition layer
+        // so no catalog provider can regress the posture.
+        profile.authRequired = false;
+        profile.mcp.authRequired = false;
         return profile;
     }
 
@@ -11102,173 +11142,9 @@ private:
         return "windows";
     }
 
-    static std::string normalizeClientType(const std::string& clientType) {
-        std::string lowered;
-        lowered.reserve(clientType.size());
-        for (const auto ch : clientType) {
-            lowered.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-        }
-        if (lowered == "claude-code" || lowered == "claude_code" || lowered == "claudecode") {
-            return "claude-code";
-        }
-        if (lowered == "codex") return "codex";
-        if (lowered == "grok" || lowered == "xai" || lowered == "xai-grok") return "grok";
-        if (lowered == "chatgpt" || lowered == "openai") return "chatgpt";
-        return "generic";
-    }
-
-    static OnboardingConfigSnippet jsonSnippet(std::string format,
-                                               std::string description,
-                                               std::string filename,
-                                               nlohmann::json content) {
-        OnboardingConfigSnippet snippet;
-        snippet.format = std::move(format);
-        snippet.description = std::move(description);
-        snippet.filename = std::move(filename);
-        snippet.content = std::move(content);
-        return snippet;
-    }
-
-    void populateClaudeCode(OnboardingProfile& profile) const {
-        profile.displayName = "Claude Code (Anthropic)";
-        profile.configSnippets.push_back(jsonSnippet(
-            "json",
-            "Add MCOS as a Streamable HTTP MCP server in Claude Code's user settings. Drop this fragment into the mcpServers map of your config.",
-            ".mcp.json",
-            { { "mcpServers", { { "mcos", {
-                { "url", profile.gatewayMcpUrl },
-                { "transport", "streamable_http" }
-            } } } } }));
-        profile.manualInstructions = {
-            "Open Claude Code settings and add the MCOS MCP server using the JSON fragment above.",
-            "No bearer token or app-layer login is required on the trusted LAN gateway.",
-            "Load the CLU/Forsetti governance bundle from the URL above before granting Claude Code mutating access."
-        };
-        profile.verificationSteps = {
-            "Restart Claude Code so it picks up the new MCP server entry.",
-            "Run `mcp__mcos__list_tools` (or the equivalent slash command) to confirm tool aggregation.",
-            "Confirm GET /.well-known/mcos.json reports gateway.state=running.",
-        };
-        profile.caveats = {
-            "Claude Code consumes Streamable HTTP MCP servers natively; no companion utility is required.",
-            "Transport profile (alpha): the gateway serves the POST-only Streamable HTTP subset. "
-            "Responses are single JSON bodies; no SSE stream is offered (GET /mcp returns 405 with "
-            "Allow: POST, as the MCP specification permits). The Mcp-Session-Id header is honored "
-            "for sticky session routing."
-        };
-    }
-
-    void populateCodex(OnboardingProfile& profile) const {
-        profile.displayName = "Codex CLI (OpenAI)";
-        profile.configSnippets.push_back(jsonSnippet(
-            "json",
-            "Codex 0.4+ accepts MCP servers in its config. Add this fragment to the codex config under mcpServers.",
-            "codex.config.json",
-            { { "mcpServers", { { "mcos", {
-                { "url", profile.gatewayMcpUrl },
-                { "transport", "streamable_http" }
-            } } } } }));
-        profile.manualInstructions = {
-            "Add MCOS to Codex's MCP config and restart the CLI.",
-            "Authenticate Codex with OpenAI as you normally would; no MCOS-side credentials are needed.",
-            "MCOS does not collect or proxy your OpenAI credentials. The gateway carries tool calls only."
-        };
-        profile.verificationSteps = {
-            "Run a Codex session and ask it to list available MCP tools.",
-            "Confirm tool calls land at the MCOS gateway URL above.",
-            "Verify governance bundle retrieval before granting mutating tool access."
-        };
-        profile.caveats = {
-            "Codex builds older than 0.4 may require the companion utility to write the config file."
-        };
-    }
-
-    void populateGrok(OnboardingProfile& profile) const {
-        profile.displayName = "Grok (xAI)";
-        profile.configSnippets.push_back(jsonSnippet(
-            "json",
-            "Grok consumes MCP servers via its agent SDK. Provide the gateway URL as a Streamable HTTP MCP backend.",
-            "grok.mcp.json",
-            { { "mcpServers", { { "mcos", {
-                { "url", profile.gatewayMcpUrl },
-                { "transport", "streamable_http" }
-            } } } } }));
-        profile.manualInstructions = {
-            "Configure your Grok agent to point at the MCOS gateway URL.",
-            "MCOS does not collect or proxy your xAI API key.",
-            "Apply the LAN-trust mode: no bearer token is sent on the gateway connection."
-        };
-        profile.verificationSteps = {
-            "Confirm Grok's tool listing returns the MCOS-aggregated set.",
-            "Verify governance bundle retrieval.",
-            "Run a low-impact tool call to confirm round-trip."
-        };
-        profile.caveats = {
-            "Grok agent runtimes vary; if your runtime cannot consume Streamable HTTP, use the companion utility's stdio bridge."
-        };
-    }
-
-    void populateChatGpt(OnboardingProfile& profile) const {
-        profile.displayName = "ChatGPT (Connector-Edge)";
-        // ChatGPT does not consume LAN-only MCP servers directly; the
-        // recommended path is the connector-edge pattern where a
-        // user-side companion exposes the LAN gateway through the
-        // ChatGPT Connectors surface. The profile still documents the
-        // MCOS gateway URL for completeness.
-        profile.configSnippets.push_back(jsonSnippet(
-            "json",
-            "ChatGPT does not natively consume LAN MCP servers. The companion utility (PHASE-04 deferred) is the recommended bridge — see caveats below.",
-            "chatgpt-connector-edge-notes.json",
-            { { "mcosGatewayUrl", profile.gatewayMcpUrl },
-              { "discoveryUrl", profile.discoveryUrl },
-              { "connectorEdgeRecommended", true } }));
-        profile.manualInstructions = {
-            "ChatGPT runs in OpenAI's hosted environment and cannot reach a LAN-only MCP gateway directly.",
-            "Use the companion utility (or a connector-edge proxy) on a host that has both ChatGPT connectivity and LAN access to MCOS.",
-            "MCOS does not collect or proxy ChatGPT credentials. The gateway carries tool calls only when reached via a connector-edge proxy."
-        };
-        profile.verificationSteps = {
-            "Confirm the connector-edge proxy is running and reachable from ChatGPT.",
-            "Confirm the proxy can resolve MCOS via /.well-known/mcos.json.",
-            "Run a low-impact tool call from ChatGPT and verify it lands at the MCOS gateway."
-        };
-        profile.caveats = {
-            "ChatGPT's MCP support is connector-edge / optional. LAN-only deployments without a connector-edge proxy cannot reach MCOS from ChatGPT.",
-            "When the connector-edge proxy is configured, MCOS still treats the inbound traffic as LAN-trusted; do not expose the gateway port to the public internet."
-        };
-    }
-
-    void populateGeneric(OnboardingProfile& profile) const {
-        profile.clientType = "generic";
-        profile.displayName = "Generic MCP Client";
-        profile.configSnippets.push_back(jsonSnippet(
-            "json",
-            "Generic Streamable HTTP MCP server registration. Drop this into your client's MCP server config.",
-            ".mcp.json",
-            { { "mcpServers", { { "mcos", {
-                { "url", profile.gatewayMcpUrl }
-            } } } } }));
-        profile.manualInstructions = {
-            "Add the MCOS gateway MCP URL to your MCP client.",
-            "No bearer token or app-layer login is required on the trusted LAN surface.",
-            "Load the CLU/Forsetti governance bundle for your platform."
-        };
-        profile.verificationSteps = {
-            "Resolve MCOS discovery document.",
-            "Connect to gateway MCP URL.",
-            "List tools through the gateway.",
-            "Confirm governance bundle retrieval."
-        };
-        profile.caveats = {
-            "Transport profile (alpha): POST-only Streamable HTTP. Responses are single JSON bodies; "
-            "no SSE stream is offered (GET /mcp returns 405 with Allow: POST). Clients that require "
-            "an SSE stream should use the companion utility's stdio bridge.",
-            "Unknown client types fall through to this profile; replace it with a typed profile if your client has a documented MCP setup."
-        };
-    }
-
     std::shared_ptr<IConfigurationService> configurationService_;
     std::shared_ptr<IDiscoveryService> discoveryService_;
+    std::shared_ptr<IClientIntegrationCatalog> clientIntegrationCatalog_;
 };
 
 // v0.11.0-alpha.3: HMAC-SHA256 helper backing beacon payload signing.
@@ -15251,6 +15127,11 @@ private:
     std::shared_ptr<IMcpGateway> mcpGateway_;
     std::shared_ptr<IDiscoveryService> discoveryService_;
     std::shared_ptr<IOnboardingProfileService> onboardingProfileService_;
+    // Model Parity (A3.12.0): provider-neutral client integration catalog and
+    // the remote-MCP compatibility analyzer. Back /api/client-integrations and
+    // feed the onboarding + export services.
+    std::shared_ptr<IRemoteMcpCompatibilityAnalyzer> remoteMcpCompatibilityAnalyzer_;
+    std::shared_ptr<IClientIntegrationCatalog> clientIntegrationCatalog_;
     std::shared_ptr<IGovernanceBundleService> governanceBundleService_;
     std::shared_ptr<IWorkerSupervisor> workerSupervisor_;
     std::shared_ptr<ILeaseRouter> leaseRouter_;
@@ -15352,7 +15233,13 @@ bool MasterControlApplication::Impl::initialize() {
         [](const std::string& kind, const std::string& subjectId, const std::string& message) {
             appendLanClientActivity(kind, subjectId, message);
         });
-    exportService_ = std::make_shared<ExportService>(inventoryService_, configurationService_, lanClientAccessService_);
+    // Model Parity (A3.12.0): build the client integration catalog + compat
+    // analyzer before the export/onboarding services so both delegate
+    // provider-native artifact generation to the catalog (Codex TOML, OpenAI
+    // Responses type=mcp, xAI without OpenAI-only fields, Grok Build config).
+    remoteMcpCompatibilityAnalyzer_ = createRemoteMcpCompatibilityAnalyzer();
+    clientIntegrationCatalog_ = createClientIntegrationCatalog(remoteMcpCompatibilityAnalyzer_);
+    exportService_ = std::make_shared<ExportService>(inventoryService_, configurationService_, lanClientAccessService_, clientIntegrationCatalog_);
     platformServiceCatalogService_ = std::make_shared<PlatformServiceCatalogService>(configurationService_, telemetryService_);
     platformGovernanceToolService_ = std::make_shared<PlatformGovernanceToolService>(
         paths_,
@@ -15437,7 +15324,7 @@ bool MasterControlApplication::Impl::initialize() {
     // gateway URL change (PHASE-11 native gateway swap) automatically
     // propagates to client onboarding without separate plumbing.
     onboardingProfileService_ = std::make_shared<OnboardingProfileService>(
-        configurationService_, discoveryService);
+        configurationService_, discoveryService, clientIntegrationCatalog_);
 
     // PHASE-05 (ADR-002 §6): construct the per-platform governance bundle
     // service. Reads CLU profile and vendored Forsetti instructions on each
@@ -18864,6 +18751,78 @@ HttpResponse MasterControlApplication::Impl::handleHttpRequest(const HttpRequest
             return jsonResponse(onboardingProfileService_
                 ? onboardingProfileService_->profileFor(clientType, platform)
                 : OnboardingProfile{});
+        }
+        // -------------------------------------------------------------------
+        // Model Parity (A3.12.0): provider-neutral Client Integration Catalog.
+        // GET /api/client-integrations                -> descriptor list
+        // GET /api/client-integrations/{id}           -> single descriptor
+        // GET /api/client-integrations/{id}/artifacts -> provider-native artifacts
+        // GET /api/client-integrations/{id}/validate  -> compatibility result
+        // {id} accepts canonical ids AND compatibility aliases (claude, openai,
+        // chatgpt, xai, grok, generic) without collapsing product behavior.
+        if (request.method == "GET" && request.path == "/api/client-integrations") {
+            nlohmann::json response = nlohmann::json::object();
+            response["integrations"] = clientIntegrationCatalog_
+                ? clientIntegrationCatalog_->list()
+                : std::vector<ClientIntegrationDescriptor>{};
+            return jsonResponse(response);
+        }
+        if (request.method == "GET" && startsWith(request.path, "/api/client-integrations/")) {
+            const auto prefix = std::string("/api/client-integrations/");
+            std::string tail = request.path.substr(prefix.size());
+            std::string subresource;
+            if (const auto slash = tail.find('/'); slash != std::string::npos) {
+                subresource = tail.substr(slash + 1);
+                tail = tail.substr(0, slash);
+            }
+            const std::string integrationId = tail;
+            const auto provider = clientIntegrationCatalog_
+                ? clientIntegrationCatalog_->findById(integrationId)
+                : nullptr;
+            if (!provider) {
+                return jsonResponse(
+                    OperationResult{ false, false, "Unknown client integration: " + integrationId }, 404);
+            }
+            // Compose the integration context from the live discovery document
+            // and configuration, mirroring OnboardingProfileService.
+            const auto document = discoveryService_
+                ? discoveryService_->currentDocument()
+                : DiscoveryDocument{};
+            const auto configuration = configurationService_->current();
+            std::string lanIp = document.serverIpAddress;
+            if (lanIp.empty() || lanIp == "0.0.0.0") {
+                lanIp = "127.0.0.1";
+            }
+            const std::string adminBase =
+                "http://" + bracketIpv6Host(lanIp) + ":" + std::to_string(configuration.browserPort);
+            ClientIntegrationContext integrationContext;
+            integrationContext.host = lanIp;
+            integrationContext.gatewayMcpUrl = (document.gateway.tlsEnabled && !document.gateway.mcpUrlTls.empty())
+                ? document.gateway.mcpUrlTls
+                : document.gateway.mcpUrl;
+            integrationContext.adminBaseUrl = adminBase;
+            integrationContext.platform = "windows";
+            integrationContext.gatewayTlsEnabled = document.gateway.tlsEnabled;
+            integrationContext.lanOnly = true;
+            integrationContext.sseAvailable = false;
+            integrationContext.streamableHttpPostOnly = true;
+            integrationContext.destructiveToolsAvailable = false;
+            integrationContext.governanceBundleUrl = adminBase + "/api/governance/bundles/windows";
+            integrationContext.discoveryUrl = adminBase + "/.well-known/mcos.json";
+            integrationContext.instanceId = document.instanceId;
+            integrationContext.protocolVersion = "2025-03-26";
+
+            if (subresource.empty()) {
+                return jsonResponse(provider->descriptor());
+            }
+            if (subresource == "artifacts") {
+                return jsonResponse(provider->createExportArtifacts(integrationContext));
+            }
+            if (subresource == "validate") {
+                return jsonResponse(provider->validate(integrationContext));
+            }
+            return jsonResponse(
+                OperationResult{ false, false, "Unknown client-integration subresource: " + subresource }, 404);
         }
         // -------------------------------------------------------------------
         // PHASE-05 (ADR-002 §6): governance bundle distribution surface.

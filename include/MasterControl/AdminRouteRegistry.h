@@ -206,6 +206,8 @@ inline std::vector<std::string> supportedMethodsForPath(const std::string& path)
         // operator can prove MCOS itself is reachable on the LAN IP
         // even when a cloud supervisor reports connection_refused.
         {"/api/supervisor/reachability-check", {"GET"}},
+        // Model Parity (A3.12.0): client integration catalog list route.
+        {"/api/client-integrations", {"GET"}},
     };
 
     static const std::vector<std::pair<std::string, std::vector<std::string>>> kPatterns = {
@@ -224,6 +226,8 @@ inline std::vector<std::string> supportedMethodsForPath(const std::string& path)
         // Note: longer prefixes first so "/api/setup/dependencies/" wins
         // over "/api/setup/" if both ever overlap.
         {"/api/onboarding/", {"GET"}},
+        // Model Parity (A3.12.0): provider-neutral client integration catalog.
+        {"/api/client-integrations/", {"GET"}},
         {"/api/governance/bundles/", {"GET"}},
         {"/api/setup/dependencies/", {"POST"}},
         {"/api/platform-services/config/", {"GET"}},

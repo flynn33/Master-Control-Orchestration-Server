@@ -4,6 +4,10 @@ This page gets MCOS built or installed on one Windows host, verifies the local
 admin surface, and checks LAN discovery. MCOS is internal alpha software; run
 the verification commands on every target host.
 
+> Current version: `vA3.12.0` — **Model Parity** (implementation milestone; not
+> yet released). The MSI package examples below reference the last released
+> package, `vA3.11.0`.
+
 ## Requirements
 
 | Requirement | Why |

@@ -26,6 +26,7 @@
 #include "MasterControl/JsonMerge.h"
 #include "MasterControl/JsonStrictness.h"
 #include "MasterControl/LanClient.h"
+#include "MasterControl/MasterControlContracts.h"
 #include "MasterControl/MasterControlDefaults.h"
 #include "MasterControl/MasterControlModels.h"
 #include "MasterControl/MasterControlVersion.h"
@@ -4711,6 +4712,341 @@ bool testAlphaFeatureMatrixHeaderMatchesResourceJson() {
     return ok;
 }
 
+// ===========================================================================
+// Model Parity (A3.12.0): Client Integration Catalog tests. The catalog +
+// providers are reached through the createClientIntegrationCatalog() factory
+// (declared in MasterControlContracts.h) so these tests never see the concrete
+// provider types. Contexts are deterministic; no runtime/HTTP is required.
+// ===========================================================================
+
+bool mpContains(const std::string& haystack, const std::string& needle) {
+    return haystack.find(needle) != std::string::npos;
+}
+
+MasterControl::ClientIntegrationContext modelParityLanContext() {
+    MasterControl::ClientIntegrationContext context;
+    context.host = "192.168.1.10";
+    context.gatewayMcpUrl = "http://192.168.1.10:8080/mcp";
+    context.adminBaseUrl = "http://192.168.1.10:7300";
+    context.platform = "windows";
+    context.gatewayTlsEnabled = false;
+    context.lanOnly = true;              // LAN-only: hosted clients need an edge.
+    context.sseAvailable = false;
+    context.streamableHttpPostOnly = true;
+    context.destructiveToolsAvailable = false;
+    context.governanceBundleUrl = "http://192.168.1.10:7300/api/governance/bundles/windows";
+    context.discoveryUrl = "http://192.168.1.10:7300/.well-known/mcos.json";
+    context.instanceId = "test-instance";
+    return context;
+}
+
+std::string modelParityArtifactBlob(
+        const std::shared_ptr<MasterControl::IClientIntegrationCatalog>& catalog,
+        const char* integrationId) {
+    std::string blob;
+    if (const auto provider = catalog->findById(integrationId)) {
+        for (const auto& artifact : provider->createExportArtifacts(modelParityLanContext())) {
+            blob += artifact.fileName + "\n" + artifact.content + "\n";
+        }
+    }
+    return blob;
+}
+
+bool testClientIntegrationCatalogIncludesModelParityFamilies() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    const char* required[] = {
+        "claude-code", "codex", "codex-mcp-server", "openai-responses",
+        "chatgpt-apps", "chatgpt-connector-edge", "xai-responses",
+        "grok-build", "grok-build-acp", "generic-mcp"
+    };
+    ok &= expect(catalog->list().size() == 10, "Catalog exposes exactly ten canonical integrations.");
+    for (const char* id : required) {
+        const auto provider = catalog->findById(id);
+        ok &= expect(provider != nullptr, "Catalog resolves each canonical integration id.");
+        ok &= expect(provider && provider->id() == std::string(id),
+                     "findById returns the provider whose id matches the canonical id.");
+    }
+    return ok;
+}
+
+bool testClientIntegrationAliasesResolveWithoutProductCollapse() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    const auto resolve = [&](const char* alias) -> std::string {
+        const auto provider = catalog->findById(alias);
+        return provider ? provider->id() : std::string("<none>");
+    };
+    ok &= expect(resolve("claude") == "claude-code", "alias claude -> claude-code");
+    ok &= expect(resolve("openai") == "openai-responses", "alias openai -> openai-responses (not chatgpt)");
+    ok &= expect(resolve("chatgpt") == "chatgpt-apps", "alias chatgpt -> chatgpt-apps");
+    ok &= expect(resolve("xai") == "xai-responses", "alias xai -> xai-responses");
+    ok &= expect(resolve("grok") == "grok-build", "alias grok -> grok-build (coding-agent onboarding)");
+    ok &= expect(resolve("generic") == "generic-mcp", "alias generic -> generic-mcp");
+    ok &= expect(resolve("openai") != resolve("chatgpt"), "openai and chatgpt do not collapse to one product.");
+    ok &= expect(resolve("xai") != resolve("grok"), "xai and grok do not collapse to one product.");
+    return ok;
+}
+
+bool testCodexProfileUsesTomlMcpServersTable() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    const auto codex = catalog->findById("codex");
+    if (!expect(codex != nullptr, "codex provider present.")) return false;
+    const auto profile = codex->createOnboardingProfile(modelParityLanContext());
+    ok &= expect(!profile.configSnippets.empty(), "codex profile has a config snippet.");
+    if (!profile.configSnippets.empty()) {
+        const auto& snippet = profile.configSnippets.front();
+        ok &= expect(snippet.format == "toml", "codex primary snippet format is toml.");
+        const std::string content = snippet.content.is_string()
+            ? snippet.content.get<std::string>()
+            : snippet.content.dump();
+        ok &= expect(mpContains(content, "[mcp_servers.mcos]"),
+                     "codex snippet contains the [mcp_servers.mcos] TOML table.");
+    }
+    return ok;
+}
+
+bool testCodexExportDoesNotEmitLegacyJsonAsPrimaryConfig() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    const auto codex = catalog->findById("codex");
+    if (!expect(codex != nullptr, "codex provider present.")) return false;
+    const auto artifacts = codex->createExportArtifacts(modelParityLanContext());
+    ok &= expect(!artifacts.empty(), "codex emits at least one export artifact.");
+    if (!artifacts.empty()) {
+        ok &= expect(artifacts.front().fileName == "config.toml", "codex primary artifact is config.toml.");
+        ok &= expect(artifacts.front().mediaType == "application/toml",
+                     "codex primary artifact media type is application/toml.");
+    }
+    for (const auto& artifact : artifacts) {
+        ok &= expect(artifact.fileName != "codex.config.json" && artifact.fileName != "codex-mcp.json",
+                     "codex does not emit legacy JSON config files as artifacts.");
+    }
+    return ok;
+}
+
+bool testOpenAiResponsesProfileDeclaresMcpToolShape() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    const auto provider = catalog->findById("openai-responses");
+    if (!expect(provider != nullptr, "openai-responses provider present.")) return false;
+    const auto artifacts = provider->createExportArtifacts(modelParityLanContext());
+    ok &= expect(!artifacts.empty(), "openai-responses emits an artifact.");
+    if (!artifacts.empty()) {
+        const std::string& content = artifacts.front().content;
+        ok &= expect(mpContains(content, "\"type\""), "openai artifact declares a tool type field.");
+        ok &= expect(mpContains(content, "mcp"), "openai artifact uses the mcp tool type.");
+        ok &= expect(mpContains(content, "server_label"), "openai artifact carries server_label.");
+        ok &= expect(mpContains(content, "server_url"), "openai artifact carries server_url.");
+    }
+    return ok;
+}
+
+bool testOpenAiResponsesProfileWarnsWhenHostedEndpointIsLanOnly() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    const auto provider = catalog->findById("openai-responses");
+    if (!expect(provider != nullptr, "openai-responses provider present.")) return false;
+    const auto result = provider->validate(modelParityLanContext()); // lanOnly = true
+    ok &= expect(!result.compatible, "openai-responses is incompatible with a LAN-only gateway.");
+    bool hasBlockingWarning = false;
+    for (const auto& warning : result.warnings) {
+        if (warning.code == "endpoint_requires_public_https") hasBlockingWarning = true;
+    }
+    ok &= expect(hasBlockingWarning,
+                 "openai-responses emits endpoint_requires_public_https on a LAN-only gateway.");
+    return ok;
+}
+
+bool testChatGptAppsProfileRequiresPublicHttpsOAuthAndClientIdentity() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    const auto provider = catalog->findById("chatgpt-apps");
+    if (!expect(provider != nullptr, "chatgpt-apps provider present.")) return false;
+    const auto descriptor = provider->descriptor();
+    ok &= expect(descriptor.requiresPublicHttps, "chatgpt-apps requires public HTTPS.");
+    std::string blob = modelParityArtifactBlob(catalog, "chatgpt-apps");
+    for (const auto& caveat : descriptor.caveats) blob += caveat + "\n";
+    ok &= expect(mpContains(blob, "OAuth"), "chatgpt-apps requires OAuth.");
+    ok &= expect(mpContains(blob, "HTTPS"), "chatgpt-apps requires HTTPS.");
+    ok &= expect(mpContains(blob, "identit") || mpContains(blob, "mTLS"),
+                 "chatgpt-apps documents client identity / mTLS.");
+    return ok;
+}
+
+bool testChatGptConnectorEdgeProfileDoesNotExposeRawLanAdminSurface() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    const auto provider = catalog->findById("chatgpt-connector-edge");
+    if (!expect(provider != nullptr, "chatgpt-connector-edge provider present.")) return false;
+    std::string blob = modelParityArtifactBlob(catalog, "chatgpt-connector-edge");
+    for (const auto& caveat : provider->descriptor().caveats) blob += caveat + "\n";
+    ok &= expect(mpContains(blob, "raw LAN admin"),
+                 "connector-edge documents that it must not expose raw LAN admin surfaces.");
+    return ok;
+}
+
+bool testXaiResponsesProfileRequiresStreamingHttpOrSse() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    const auto provider = catalog->findById("xai-responses");
+    if (!expect(provider != nullptr, "xai-responses provider present.")) return false;
+    const auto descriptor = provider->descriptor();
+    bool requiresStreaming = false;
+    for (const auto& property : descriptor.requiredEndpointProperties) {
+        if (property == "streaming_http_or_sse") requiresStreaming = true;
+    }
+    std::string caveatBlob;
+    for (const auto& caveat : descriptor.caveats) caveatBlob += caveat + "\n";
+    ok &= expect(requiresStreaming || mpContains(caveatBlob, "Streaming HTTP"),
+                 "xai-responses requires Streaming HTTP / SSE.");
+    return ok;
+}
+
+bool testXaiResponsesProfileDoesNotEmitUnsupportedRequireApproval() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    const std::string blob = modelParityArtifactBlob(catalog, "xai-responses");
+    ok &= expect(!mpContains(blob, "require_approval"),
+                 "xai artifact does not include the OpenAI-only require_approval field.");
+    ok &= expect(!mpContains(blob, "connector_id"),
+                 "xai artifact does not include the OpenAI-only connector_id field.");
+    return ok;
+}
+
+bool testGrokBuildProfileUsesGrokBuildModelId() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    const std::string blob = modelParityArtifactBlob(catalog, "grok-build");
+    ok &= expect(mpContains(blob, "grok-build-0.1"), "grok-build artifact uses the grok-build-0.1 model id.");
+    ok &= expect(!mpContains(blob, "grok-code"), "grok-build artifact does not reference the stale grok-code model.");
+    return ok;
+}
+
+bool testGrokBuildProfileEmitsGrokConfigToml() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    const auto provider = catalog->findById("grok-build");
+    if (!expect(provider != nullptr, "grok-build provider present.")) return false;
+    bool hasToml = false;
+    for (const auto& artifact : provider->createExportArtifacts(modelParityLanContext())) {
+        if (mpContains(artifact.fileName, "config.toml") && mpContains(artifact.content, "[mcp_servers.mcos]")) {
+            hasToml = true;
+        }
+    }
+    ok &= expect(hasToml, "grok-build emits a .grok/config.toml with an [mcp_servers.mcos] table.");
+    return ok;
+}
+
+bool testGrokBuildAcpProfileDeclaresStdioJsonRpc() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    const auto provider = catalog->findById("grok-build-acp");
+    if (!expect(provider != nullptr, "grok-build-acp provider present.")) return false;
+    std::string blob = modelParityArtifactBlob(catalog, "grok-build-acp");
+    for (const auto& step : provider->descriptor().verificationSteps) blob += step + "\n";
+    ok &= expect(mpContains(blob, "grok agent stdio"), "grok-build-acp declares grok agent stdio.");
+    ok &= expect(mpContains(blob, "JSON-RPC"), "grok-build-acp declares JSON-RPC over stdio.");
+    return ok;
+}
+
+bool testGenericMcpProfileReportsPostOnlyTransportHonestly() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    const auto provider = catalog->findById("generic-mcp");
+    if (!expect(provider != nullptr, "generic-mcp provider present.")) return false;
+    std::string blob;
+    for (const auto& caveat : provider->descriptor().caveats) blob += caveat + "\n";
+    ok &= expect(mpContains(blob, "POST-only"), "generic-mcp honestly reports POST-only transport.");
+    ok &= expect(mpContains(blob, "405"), "generic-mcp notes GET /mcp returns 405.");
+    return ok;
+}
+
+bool testExportArtifactsGeneratedFromIntegrationProviders() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    for (const auto& descriptor : catalog->list()) {
+        const auto provider = catalog->findById(descriptor.id);
+        ok &= expect(provider != nullptr, "provider resolvable for each listed descriptor.");
+        if (!provider) continue;
+        const auto artifacts = provider->createExportArtifacts(modelParityLanContext());
+        ok &= expect(!artifacts.empty(), "each provider emits at least one export artifact.");
+        for (const auto& artifact : artifacts) {
+            ok &= expect(!artifact.content.empty(), "artifact content is non-empty.");
+            ok &= expect(!artifact.fileName.empty(), "artifact file name is non-empty.");
+        }
+    }
+    return ok;
+}
+
+bool testNoIntegrationArtifactContainsProviderSecrets() {
+    bool ok = true;
+    auto catalog = MasterControl::createClientIntegrationCatalog();
+    for (const auto& descriptor : catalog->list()) {
+        const auto provider = catalog->findById(descriptor.id);
+        if (!provider) continue;
+        for (const auto& artifact : provider->createExportArtifacts(modelParityLanContext())) {
+            ok &= expect(!artifact.containsSecret, "artifact is not flagged as containing a secret.");
+            ok &= expect(!mpContains(artifact.content, "-----BEGIN"), "artifact carries no PEM private key.");
+            ok &= expect(!mpContains(artifact.content, "sk-live"), "artifact carries no live secret key.");
+        }
+    }
+    return ok;
+}
+
+bool testDashboardRendersModelParityIntegrationCards() {
+    bool ok = true;
+    const std::filesystem::path path =
+        std::filesystem::path(MCOS_REPO_ROOT) / "resources" / "web" / "app.js";
+    std::ifstream in(path);
+    ok &= expect(in.good(), "resources/web/app.js is readable.");
+    if (!in.good()) return ok;
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    const std::string js = buffer.str();
+    ok &= expect(mpContains(js, "/api/client-integrations"), "dashboard fetches /api/client-integrations.");
+    ok &= expect(mpContains(js, "renderClientIntegrationsPanel"),
+                 "dashboard renders a client integrations panel.");
+    return ok;
+}
+
+bool testOnboardingDocsMatchProviderArtifacts() {
+    bool ok = true;
+    const std::filesystem::path path =
+        std::filesystem::path(MCOS_REPO_ROOT) / "docs" / "wiki" / "Client-Integrations.md";
+    std::ifstream in(path);
+    ok &= expect(in.good(), "docs/wiki/Client-Integrations.md exists.");
+    if (!in.good()) return ok;
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    const std::string doc = buffer.str();
+    ok &= expect(mpContains(doc, "config.toml"), "client integration docs document Codex config.toml.");
+    ok &= expect(mpContains(doc, "grok-build-0.1"), "client integration docs reference grok-build-0.1.");
+    ok &= expect(!mpContains(doc, "grok-code"),
+                 "client integration docs do not reference the stale grok-code model.");
+    return ok;
+}
+
+bool testMcpInitializeInstructionsDoNotOverclaimCapabilities() {
+    bool ok = true;
+    const std::filesystem::path path =
+        std::filesystem::path(MCOS_REPO_ROOT) / "src" / "MasterControlApp" / "McpGatewayAdapters.cpp";
+    std::ifstream in(path);
+    ok &= expect(in.good(), "McpGatewayAdapters.cpp is readable.");
+    if (!in.good()) return ok;
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    const std::string src = buffer.str();
+    ok &= expect(mpContains(src, "governed MCOS LAN orchestration gateway"),
+                 "MCP initialize surfaces concise governance instructions.");
+    ok &= expect(mpContains(src, "Treat governance bundles as authoritative policy contracts"),
+                 "MCP initialize instructions carry the governance contract statement.");
+    ok &= expect(mpContains(src, "\"listChanged\", false"),
+                 "MCP initialize does not fabricate a listChanged streaming capability.");
+    return ok;
+}
+
 // ---------------------------------------------------------------------------
 // local-database read-only SQLite executor (T04).
 // ---------------------------------------------------------------------------
@@ -5111,6 +5447,26 @@ int main() {
     ok &= testAdminRouteRegistryCoversWorkingAlphaAcceptanceRoutes();
     // Software-alpha-readiness remediation.
     ok &= testAlphaFeatureMatrixHeaderMatchesResourceJson();
+    // Model Parity (A3.12.0): Client Integration Catalog.
+    ok &= testClientIntegrationCatalogIncludesModelParityFamilies();
+    ok &= testClientIntegrationAliasesResolveWithoutProductCollapse();
+    ok &= testCodexProfileUsesTomlMcpServersTable();
+    ok &= testCodexExportDoesNotEmitLegacyJsonAsPrimaryConfig();
+    ok &= testOpenAiResponsesProfileDeclaresMcpToolShape();
+    ok &= testOpenAiResponsesProfileWarnsWhenHostedEndpointIsLanOnly();
+    ok &= testChatGptAppsProfileRequiresPublicHttpsOAuthAndClientIdentity();
+    ok &= testChatGptConnectorEdgeProfileDoesNotExposeRawLanAdminSurface();
+    ok &= testXaiResponsesProfileRequiresStreamingHttpOrSse();
+    ok &= testXaiResponsesProfileDoesNotEmitUnsupportedRequireApproval();
+    ok &= testGrokBuildProfileUsesGrokBuildModelId();
+    ok &= testGrokBuildProfileEmitsGrokConfigToml();
+    ok &= testGrokBuildAcpProfileDeclaresStdioJsonRpc();
+    ok &= testGenericMcpProfileReportsPostOnlyTransportHonestly();
+    ok &= testExportArtifactsGeneratedFromIntegrationProviders();
+    ok &= testNoIntegrationArtifactContainsProviderSecrets();
+    ok &= testDashboardRendersModelParityIntegrationCards();
+    ok &= testOnboardingDocsMatchProviderArtifacts();
+    ok &= testMcpInitializeInstructionsDoNotOverclaimCapabilities();
     ok &= testDefaultSeededEndpointsExcludeRemovedIds();
     ok &= testUnknownWorkerSpecializationFailsClosed();
     ok &= testLocalDatabaseReadonlyQueryRejectsMutation();

@@ -1,6 +1,6 @@
 # Versions
 
-![current](https://img.shields.io/badge/current-vA3.11.0-00f6ff?style=flat-square)
+![current](https://img.shields.io/badge/current-vA3.12.0-00f6ff?style=flat-square)
 
 This page explains the current alpha-stage version scheme, the active version,
 and where historical release records live. `VERSION.json` is the version
@@ -10,10 +10,11 @@ authority.
 
 | Field | Value |
 |---|---|
-| **Version** | `vA3.11.0` |
-| Current version | `A3.11.0` |
-| Current tag | `vA3.11.0` |
-| Released | `2026-07-03` |
+| **Version** | `vA3.12.0` |
+| Current version | `A3.12.0` |
+| Current tag | `vA3.12.0` |
+| Released | `pending` (Model Parity implementation milestone; not yet released) |
+| Last released package | `vA3.11.0`, released `2026-07-03` |
 | Channel | Internal alpha |
 | Previous expression for the same tree | `0.11.0-alpha.3` |
 | Release policy | Alpha versions published as GitHub pre-releases with the MSI. |
@@ -59,6 +60,7 @@ ProductVersion. `A3.11.0` maps to `3.11.0.0`.
 
 | Version | Date | Historical theme |
 |---|---|---|
+| `A3.12.0` | pending | Model Parity implementation milestone: provider-neutral Client Integration Catalog for Claude Code, Codex, OpenAI Responses, ChatGPT Apps/connector edge, xAI Responses, Grok Build, Grok Build ACP, and generic MCP. Not yet released. |
 | `A3.11.0` | 2026-07-03 | Alpha-stage scheme migration for the `0.11.0-alpha.3` tree. |
 | `0.11.0-alpha.3` | 2026-07-02 | PHASE-14 diagnostics slices B-E, security hardening, and 2026-06 bug-campaign fixes. |
 | `0.11.0-alpha.2` | 2026-05-15 | Optional gateway TLS dual-bind. |

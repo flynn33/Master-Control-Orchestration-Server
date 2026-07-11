@@ -58,6 +58,16 @@ struct OverviewSectionControl : OverviewSectionControlT<OverviewSectionControl> 
     // roster in SupervisorReachabilityText.
     void SupervisorVerifyEndpointsButton_Click(Windows::Foundation::IInspectable const&,
                                                Microsoft::UI::Xaml::RoutedEventArgs const&);
+    // Model Parity (A3.12.0): Client Integrations card handlers. Validate hits
+    // /api/client-integrations/{id}/validate; Generate fetches /{id}/artifacts
+    // and saves the provider-native config via the native FileSavePicker; Open
+    // Folder reveals the MCOS documents folder.
+    void ClientIntegrationValidateButton_Click(Windows::Foundation::IInspectable const&,
+                                               Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void ClientIntegrationGenerateButton_Click(Windows::Foundation::IInspectable const&,
+                                               Microsoft::UI::Xaml::RoutedEventArgs const&);
+    void ClientIntegrationOpenFolderButton_Click(Windows::Foundation::IInspectable const&,
+                                                 Microsoft::UI::Xaml::RoutedEventArgs const&);
 
 private:
     winrt::Windows::Foundation::IAsyncAction RefreshClaudePluginAsync();
@@ -96,6 +106,11 @@ private:
     // Single-selection radio behavior across the three supervisor toggles.
     void SetSupervisorSelection(const std::wstring& providerId);
     std::wstring CurrentSupervisorSelection();
+    // Model Parity (A3.12.0): async helpers for the Client Integrations card.
+    winrt::Windows::Foundation::IAsyncAction ValidateClientIntegrationAsync();
+    winrt::Windows::Foundation::IAsyncAction GenerateClientIntegrationConfigAsync();
+    // Resolve the ComboBox selection (SelectedIndex) to a canonical integration id.
+    std::wstring SelectedClientIntegrationId();
 
     ::MasterControlShell::ShellRuntime* runtime_ = nullptr;
     bool claudePluginBusy_ = false;
@@ -125,6 +140,9 @@ private:
     bool         supervisorBusy_ = false;
     bool         suspendSupervisorToggleHandler_ = false;
     std::wstring lastSupervisorSelection_;
+    // Model Parity (A3.12.0): guards double-clicks while a Client Integrations
+    // generate round-trip (fetch + FileSavePicker) is in flight.
+    bool         clientIntegrationBusy_ = false;
 };
 
 } // namespace winrt::MasterControlShell::implementation

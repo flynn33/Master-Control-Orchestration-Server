@@ -353,6 +353,50 @@
                 </Border>
             </Grid>
 
+            <!-- Model Parity (A3.12.0): Client Integrations card. Provider-
+                 neutral parity actions across Claude Code, Codex, OpenAI
+                 Responses, ChatGPT Apps/connector edge, xAI Responses, Grok
+                 Build, Grok Build ACP, and generic MCP. Validate checks the
+                 selected integration against the current gateway; Generate
+                 fetches the provider-native config artifact and saves it via
+                 the native file dialog; Open Folder reveals the MCOS documents
+                 folder. Existing Claude / ChatGPT / Grok controls are
+                 unchanged. -->
+            <Border Style="{StaticResource ShellCardStyle}" BorderBrush="{StaticResource ShellAccentBrush}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="CLIENT INTEGRATIONS" Style="{StaticResource ShellEyebrowTextStyle}" />
+                    <TextBlock Text="Model Parity" Style="{StaticResource ShellSectionTitleTextStyle}" />
+                    <TextBlock Style="{StaticResource ShellLabelTextStyle}"
+                               Foreground="{StaticResource ShellTextMutedBrush}"
+                               TextWrapping="Wrap"
+                               Text="Provider-neutral onboarding across supported client/model surfaces through the governed MCP gateway. Select an integration, then validate it against the current gateway or generate its provider-native config artifact. Generated artifacts never contain secrets." />
+                    <ComboBox x:Name="ClientIntegrationSelector" SelectedIndex="0" MinWidth="280">
+                        <ComboBoxItem Content="claude-code" />
+                        <ComboBoxItem Content="codex" />
+                        <ComboBoxItem Content="codex-mcp-server" />
+                        <ComboBoxItem Content="openai-responses" />
+                        <ComboBoxItem Content="chatgpt-apps" />
+                        <ComboBoxItem Content="chatgpt-connector-edge" />
+                        <ComboBoxItem Content="xai-responses" />
+                        <ComboBoxItem Content="grok-build" />
+                        <ComboBoxItem Content="grok-build-acp" />
+                        <ComboBoxItem Content="generic-mcp" />
+                    </ComboBox>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button x:Name="ClientIntegrationValidateButton" Content="Validate against gateway"
+                                Click="ClientIntegrationValidateButton_Click" />
+                        <Button x:Name="ClientIntegrationGenerateButton" Content="Generate config &amp; save"
+                                Click="ClientIntegrationGenerateButton_Click" />
+                        <Button x:Name="ClientIntegrationOpenFolderButton" Content="Open artifact folder"
+                                Click="ClientIntegrationOpenFolderButton_Click" />
+                    </StackPanel>
+                    <TextBlock x:Name="ClientIntegrationStatusText"
+                               Style="{StaticResource ShellDataTextStyle}"
+                               TextWrapping="Wrap"
+                               Text="Select an integration and choose Validate against gateway or Generate config &amp; save." />
+                </StackPanel>
+            </Border>
+
             <!-- v0.9.76: Supervisor Agent Assignment Wizard card.
                  Operator picks exactly one supervisor model (ChatGPT,
                  Claude, or Grok) and MCOS generates a model-specific
