@@ -6,6 +6,10 @@ The release-management and doc-sync GitHub agents that previously generated part
 
 ## [Unreleased]
 
+## [A3.12.0] - pending
+
+Implementation milestone only — not yet released (no tag cut, no MSI packaged).
+
 ### Added
 
 - **Model Parity alpha milestone (A3.12.0, implementation only — not yet released).**
