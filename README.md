@@ -188,7 +188,7 @@ in `docs/wiki/`; current release metadata lives in `VERSION.json` and
 
 ## Contributing
 
-This is a proprietary repository. Keep changes inside the active scope, preserve
+This is an open-source repository. Keep changes inside the active scope, preserve
 Forsetti boundaries, and keep product claims tied to source, tests, scripts,
 installer definitions, `VERSION.json`, or retained historical release notes.
 
