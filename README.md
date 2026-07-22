@@ -5,7 +5,7 @@
 ![status](https://img.shields.io/badge/status-implementation%20milestone-ff8c00?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%2F%20Server%202022-0a1018?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
-![license](https://img.shields.io/badge/license-Proprietary-031018?style=flat-square)
+![license](https://img.shields.io/badge/license-Apache%202.0-031018?style=flat-square)
 
 Master Control Orchestration Server is a Windows-native LAN MCP Gateway host.
 It exposes one MCOS-advertised MCP endpoint for trusted-LAN clients, supervises
@@ -194,4 +194,7 @@ installer definitions, `VERSION.json`, or retained historical release notes.
 
 ## License
 
-Proprietary. Copyright (c) 2026 James Daley. All Rights Reserved.
+Copyright 2026 James Daley
+
+This project is licensed under the Apache License, Version 2.0.
+See the [LICENSE](LICENSE) file for the full terms.
