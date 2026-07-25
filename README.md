@@ -188,9 +188,10 @@ in `docs/wiki/`; current release metadata lives in `VERSION.json` and
 
 ## Contributing
 
-This is an open-source repository. Keep changes inside the active scope, preserve
-Forsetti boundaries, and keep product claims tied to source, tests, scripts,
-installer definitions, `VERSION.json`, or retained historical release notes.
+This project is open source under Apache License, Version 2.0. You are welcome to use, modify, and redistribute the code under that license.
+
+Outside contributions to this repository are not accepted. Pull requests and collaboration requests will not be reviewed or merged. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 
 ## License
 
