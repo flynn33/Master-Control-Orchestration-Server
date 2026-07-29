@@ -1,0 +1,44 @@
+name: Forsetti Compliance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  forsetti-compliance:
+    # MasterControlShell.vcxproj is pinned to Platform Toolset v145
+    # (Visual Studio 18 / VS2026). The Forsetti compliance script does
+    # not compile native code itself, but `windows-2025-vs2026` is the
+    # canonical runner across this repo so toolchain assumptions and
+    # PowerShell host versions match the product gate exactly. Keep
+    # this aligned with windows-build-test-package.yml where runner
+    # and toolchain assumptions matter.
+    runs-on: windows-2025-vs2026
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate vendored Forsetti manifests
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .\Forsetti-Framework-Windows-main\Forsetti-Framework-Windows-main\Scripts\check-manifests.ps1
+
+      - name: Validate vendored Forsetti dependencies
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .\Forsetti-Framework-Windows-main\Forsetti-Framework-Windows-main\Scripts\check-dependencies.ps1
+
+      - name: Validate vendored Forsetti architecture
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .\Forsetti-Framework-Windows-main\Forsetti-Framework-Windows-main\Scripts\check-architecture.ps1
+
+      - name: Validate Master Control Forsetti compliance
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-mastercontrol-forsetti.ps1
