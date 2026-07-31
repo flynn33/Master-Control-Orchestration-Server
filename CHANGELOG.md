@@ -6,6 +6,12 @@ The release-management and doc-sync GitHub agents that previously generated part
 
 ## [Unreleased]
 
+### Notes
+
+- **Project parked (2026-07-31).** MCOS retained as a reference LAN MCP gateway
+  host and last alpha package (`vA3.12.0`). Active local orchestration path is
+  Forge-Conductor + Grok Build. See `docs/PARKED.md` and the README banner.
+
 ## [A3.12.0] - 2026-07-31
 
 Published as GitHub pre-release `vA3.12.0` with MSI and zip (product-gate package; tag target `d37ac45`).

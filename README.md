@@ -1,11 +1,29 @@
 # Master Control Orchestration Server
 
 ![version](https://img.shields.io/badge/version-vA3.12.0-00f6ff?style=flat-square)
-![channel](https://img.shields.io/badge/channel-Internal%20Alpha-ff8c00?style=flat-square)
-![status](https://img.shields.io/badge/status-internal%20alpha%20pre--release-ff8c00?style=flat-square)
+![channel](https://img.shields.io/badge/channel-Parked%20reference-6b7280?style=flat-square)
+![status](https://img.shields.io/badge/status-not%20under%20active%20development-6b7280?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%2F%20Server%202022-0a1018?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
 ![license](https://img.shields.io/badge/license-Apache%202.0-031018?style=flat-square)
+
+> **Parked (2026-07-31).** MCOS is retained as a **reference LAN MCP gateway host**
+> and as the last published internal-alpha package (`vA3.12.0`). It is **not** under
+> active feature development and is **not** the orchestration path for the primary
+> development rig.
+>
+> **Successor for local agent orchestration:** [Forge-Conductor](https://github.com/flynn33/forge-conductor)
+> (stdio MCP tools, memory, audit, sub-agent specs) plus Grok Build on the host.
+> Day-to-day “make software” work lives there — not in this service.
+>
+> **What MCOS is good for if revived:** multi-machine LAN MCP fabric, Windows service
+> packaging of a gateway host, discovery/onboarding surfaces. **What it is not:**
+> an application factory or the primary agent workbench.
+>
+> **Artifacts to keep:** GitHub pre-release
+> [vA3.12.0](https://github.com/flynn33/Master-Control-Orchestration-Server/releases/tag/vA3.12.0)
+> (MSI + zip). Source history remains useful for installer, pool-supervision, and
+> client-integration catalog patterns. See [docs/PARKED.md](docs/PARKED.md).
 
 Master Control Orchestration Server is a Windows-native LAN MCP Gateway host.
 It exposes one MCOS-advertised MCP endpoint for trusted-LAN clients, supervises
@@ -13,30 +31,26 @@ MCP server and sub-agent worker pools, distributes onboarding profiles and
 CLU/Forsetti governance bundles, and provides browser plus WinUI maintainer
 surfaces for operations.
 
-> **vA3.12.0** — Model Parity (internal alpha pre-release)
+> **vA3.12.0** — Model Parity (last internal alpha pre-release; project parked)
 
-Current version: `vA3.12.0` — **Model Parity**, released `2026-07-31` as a
-GitHub pre-release with MSI. Previous package: `vA3.11.0`, released `2026-07-03`.
-`A3.11.0` is the alpha-stage re-expression of the tree previously documented as
-`0.11.0-alpha.3`. During alpha, versions use
-`A{alphaIteration}.{feature}.{patch}`. Alpha versions are published as GitHub
-pre-releases with the MSI installer; the Windows Build, Test, and Package
-workflow is the repository health gate.
-`VERSION.json` is the version authority.
+Last package: `vA3.12.0`, released `2026-07-31` as a GitHub pre-release with MSI.
+Previous package: `vA3.11.0`, released `2026-07-03`. During alpha, versions used
+`A{alphaIteration}.{feature}.{patch}`. The Windows Build, Test, and Package
+workflow was the product health gate. `VERSION.json` remains the version authority
+for the tree as frozen at park.
 
-The product gate proves build, test, package creation, and staged bootstrapper
+The product gate proved build, test, package creation, and staged bootstrapper
 preflight only. Without operator-authorized target-host Gate D and second-host
-Gate E evidence, the honest status is **Alpha candidate ready for operator
-deployment certification**.
+Gate E evidence, the honest historical status at park remains **alpha candidate —
+not deployment-certified**.
 
 ## Model Parity
 
-Model Parity (`A3.12.0`) is the current released alpha milestone. It adds a
-provider-neutral **Client Integration Catalog**: MCOS supports a fixed set of
-external AI client and model surfaces through the governed MCP Gateway and
-provider-native onboarding artifacts. The milestone is packaged as the
-`vA3.12.0` pre-release MSI; deployment certification on each host remains
-operator-driven.
+Model Parity (`A3.12.0`) was the last released alpha milestone before park. It
+adds a provider-neutral **Client Integration Catalog**: MCOS supports a fixed
+set of external AI client and model surfaces through the governed MCP Gateway
+and provider-native onboarding artifacts. The milestone is packaged as the
+`vA3.12.0` pre-release MSI.
 
 The catalog registers ten canonical integrations:
 

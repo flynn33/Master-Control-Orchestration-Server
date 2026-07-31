@@ -1,23 +1,26 @@
 # Versions
 
 ![current](https://img.shields.io/badge/current-vA3.12.0-00f6ff?style=flat-square)
+![status](https://img.shields.io/badge/status-parked%20reference-6b7280?style=flat-square)
 
-This page explains the current alpha-stage version scheme, the active version,
-and where historical release records live. `VERSION.json` is the version
-authority.
+This page explains the alpha-stage version scheme used while MCOS was active,
+the last published version, and where historical release records live.
+`VERSION.json` is the version authority. Project status: **parked** — see
+[PARKED.md](../PARKED.md).
 
 ## Current Version
 
 | Field | Value |
 |---|---|
-| **Version** | `vA3.12.0` |
+| **Version** | `vA3.12.0` (last package; project parked) |
 | Current version | `A3.12.0` |
 | Current tag | `vA3.12.0` |
 | Released | `2026-07-31` (Model Parity internal alpha pre-release) |
+| Parked | `2026-07-31` — not under active feature development |
 | Last released package | `vA3.12.0`, released `2026-07-31` (previous: `vA3.11.0`, `2026-07-03`) |
-| Channel | Internal alpha |
+| Channel | Parked reference (was internal alpha) |
 | Previous expression for the same tree | `0.11.0-alpha.3` |
-| Release policy | Alpha versions published as GitHub pre-releases with the MSI. |
+| Release policy while active | Alpha versions published as GitHub pre-releases with the MSI. |
 
 `A3.11.0` re-expresses the same source tree that was previously described as
 `0.11.0-alpha.3`. The change is a versioning and release-policy alignment, not
