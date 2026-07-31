@@ -2,7 +2,7 @@
 
 ![version](https://img.shields.io/badge/version-vA3.12.0-00f6ff?style=flat-square)
 ![channel](https://img.shields.io/badge/channel-Internal%20Alpha-ff8c00?style=flat-square)
-![status](https://img.shields.io/badge/status-implementation%20milestone-ff8c00?style=flat-square)
+![status](https://img.shields.io/badge/status-internal%20alpha%20pre--release-ff8c00?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%2F%20Server%202022-0a1018?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
 ![license](https://img.shields.io/badge/license-Apache%202.0-031018?style=flat-square)
@@ -13,11 +13,10 @@ MCP server and sub-agent worker pools, distributes onboarding profiles and
 CLU/Forsetti governance bundles, and provides browser plus WinUI maintainer
 surfaces for operations.
 
-> **vA3.12.0** — Model Parity (implementation milestone; not yet released)
+> **vA3.12.0** — Model Parity (internal alpha pre-release)
 
-Current version: `vA3.12.0` — **Model Parity**, an implementation milestone that
-is not yet released (no tag cut, no MSI packaged). Last released package:
-`vA3.11.0`, released `2026-07-03`.
+Current version: `vA3.12.0` — **Model Parity**, released `2026-07-31` as a
+GitHub pre-release with MSI. Previous package: `vA3.11.0`, released `2026-07-03`.
 `A3.11.0` is the alpha-stage re-expression of the tree previously documented as
 `0.11.0-alpha.3`. During alpha, versions use
 `A{alphaIteration}.{feature}.{patch}`. Alpha versions are published as GitHub
@@ -32,11 +31,12 @@ deployment certification**.
 
 ## Model Parity
 
-Model Parity (`A3.12.0`) is the current implementation milestone. It adds a
+Model Parity (`A3.12.0`) is the current released alpha milestone. It adds a
 provider-neutral **Client Integration Catalog**: MCOS supports a fixed set of
 external AI client and model surfaces through the governed MCP Gateway and
-provider-native onboarding artifacts. This is an implementation milestone landed
-in the current tree, not a released or deployed feature.
+provider-native onboarding artifacts. The milestone is packaged as the
+`vA3.12.0` pre-release MSI; deployment certification on each host remains
+operator-driven.
 
 The catalog registers ten canonical integrations:
 

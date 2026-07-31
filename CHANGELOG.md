@@ -6,13 +6,13 @@ The release-management and doc-sync GitHub agents that previously generated part
 
 ## [Unreleased]
 
-## [A3.12.0] - pending
+## [A3.12.0] - 2026-07-31
 
-Implementation milestone only — not yet released (no tag cut, no MSI packaged).
+Published as GitHub pre-release `vA3.12.0` with MSI and zip (product-gate package; tag target `d37ac45`).
 
 ### Added
 
-- **Model Parity alpha milestone (A3.12.0, implementation only — not yet released).**
+- **Model Parity alpha milestone (A3.12.0).**
   Provider-neutral Client Integration Catalog (`IClientIntegrationProvider` /
   `IClientIntegrationCatalog`, constructor-DI, `final` providers) plus
   provider-native onboarding/export profiles for Claude Code, Codex,
@@ -37,12 +37,18 @@ Implementation milestone only — not yet released (no tag cut, no MSI packaged)
   pages Client-Integrations, Codex, OpenAI-Responses, ChatGPT-Apps, XAI-Grok,
   and Grok-Build.
 
+### Fixed
+
+- **Installer omitted `sqlite3.dll`.** Stage vcpkg runtime DLLs into the MSI
+  payload so `MasterControlServiceHost` loads after install (fixes MSI 1603 /
+  `0xC0000135` on clean hosts).
+
 ### Changed
 
 - Hardened alpha release-readiness metadata, product-gate preflight behavior,
   bootstrapper JSON CLI compatibility, and operator-gated deployment acceptance
   evidence paths without claiming Gate D/E certification.
-- Aligned README, docs/wiki source, and live-wiki publication source with the current `A3.11.0` internal-alpha state.
+- Aligned README, docs/wiki source, and live-wiki publication source with the current `A3.12.0` internal-alpha release.
 - Rewrote current operator documentation to distinguish implemented source behavior, alpha validation boundaries, historical release records, and deferred hardening work.
 - Updated configuration and API documentation around the current ProgramData config path, `PATCH /api/config` partial deep-merge semantics, TLS fields, diagnostics routes, plugin toggles, supervisor routes, and dynamic route families.
 
