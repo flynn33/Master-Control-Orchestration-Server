@@ -5,7 +5,7 @@
 ![status](https://img.shields.io/badge/status-not%20under%20active%20development-6b7280?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%2F%20Server%202022-0a1018?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
-![license](https://img.shields.io/badge/license-Apache%202.0-031018?style=flat-square)
+![license](https://img.shields.io/badge/license-Dual%20License-031018?style=flat-square)
 
 > **Parked (2026-07-31).** MCOS is retained as a **reference LAN MCP gateway host**
 > and as the last published internal-alpha package (`vA3.12.0`). It is **not** under
@@ -202,7 +202,7 @@ in `docs/wiki/`; current release metadata lives in `VERSION.json` and
 
 ## Contributing
 
-This project is open source under Apache License, Version 2.0. You are welcome to use, modify, and redistribute the code under that license.
+This project is dual-licensed. Non-commercial, academic, and personal use is free under [LICENSE](LICENSE). Commercial use requires a separate written license from the copyright holder.
 
 Outside contributions to this repository are not accepted. Pull requests and collaboration requests will not be reviewed or merged. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -211,5 +211,5 @@ Outside contributions to this repository are not accepted. Pull requests and col
 
 Copyright 2026 James Daley
 
-This project is licensed under the Apache License, Version 2.0.
+This project is dual-licensed. Non-commercial, academic, and personal use is free. Commercial use requires a separate written license.
 See the [LICENSE](LICENSE) file for the full terms.
