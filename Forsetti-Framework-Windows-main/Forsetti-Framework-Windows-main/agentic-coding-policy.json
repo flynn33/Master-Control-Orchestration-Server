@@ -46,8 +46,8 @@
     },
     {
       "id": "R008",
-      "name": "Proprietary Licensing",
-      "description": "All source files carry proprietary header comment. Copyright James Daley 2026. All Rights Reserved.",
+      "name": "MIT License",
+      "description": "All source files carry Copyright (c) 2026 James Daley, Raven Forge Software and SPDX-License-Identifier: MIT.",
       "severity": "error"
     },
     {

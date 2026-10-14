@@ -1,6 +1,6 @@
 # Contributing
 
-This repository is dual-licensed. See [LICENSE](LICENSE). Non-commercial, academic, and personal use is free. Commercial use requires a separate written license.
+This repository is licensed under the MIT License. See [LICENSE](LICENSE).
 
 You are welcome to use, study, modify, and distribute the code under the terms of that license.
 
@@ -10,7 +10,7 @@ This project is not open to collaboration. Outside contributions—including pul
 
 Repository access controls and rulesets restrict write access to the owner.
 
-If you want to build on this work, fork the repository under the dual license in [LICENSE](LICENSE) and maintain your changes in your own fork or product.
+If you want to build on this work, fork the repository under the MIT License in [LICENSE](LICENSE) and maintain your changes in your own fork or product.
 
 ## Issues and discussions
 

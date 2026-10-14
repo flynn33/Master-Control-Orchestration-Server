@@ -1,5 +1,6 @@
 # Forsetti Framework Tests — Microsoft CppUnitTest
-# Copyright (c) 2026 James Daley. All Rights Reserved.
+# Copyright (c) 2026 James Daley, Raven Forge Software.
+# SPDX-License-Identifier: MIT
 #
 # Tests use Microsoft CppUnitTest (native Visual Studio framework).
 # Tests are built as DLLs and discovered by Visual Studio Test Explorer and vstest.console.exe.

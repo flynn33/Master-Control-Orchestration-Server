@@ -1,5 +1,6 @@
 # Forsetti Framework — Windows Guardrails Verification Script
-# Copyright (c) 2026 James Daley. All Rights Reserved.
+# Copyright (c) 2026 James Daley, Raven Forge Software.
+# SPDX-License-Identifier: MIT
 #
 # Usage: .\Scripts\verify-forsetti-guardrails.ps1
 # Runs from the repository root directory.

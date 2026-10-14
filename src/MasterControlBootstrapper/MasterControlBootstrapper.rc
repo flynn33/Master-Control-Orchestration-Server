@@ -27,7 +27,7 @@ BEGIN
             VALUE "FileDescription",  "Master Control Orchestration Server -- Setup / Bootstrapper"
             VALUE "FileVersion",      MASTERCONTROL_VERSION_RC_STRING
             VALUE "InternalName",     "MasterControlBootstrapper"
-            VALUE "LegalCopyright",   "Copyright (c) 2026 James Daley. All Rights Reserved."
+            VALUE "LegalCopyright",   "Copyright (c) 2026 James Daley, Raven Forge Software."
             VALUE "OriginalFilename", "MasterControlBootstrapper.exe"
             VALUE "ProductName",      "Master Control Orchestration Server"
             VALUE "ProductVersion",   MASTERCONTROL_VERSION_RC_STRING

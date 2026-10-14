@@ -1,6 +1,6 @@
 # Master Control Orchestration Server
-# Copyright (c) 2026 James Daley. All Rights Reserved.
-# Proprietary and Confidential.
+# Copyright (c) 2026 James Daley, Raven Forge Software.
+# SPDX-License-Identifier: MIT
 
 <#
 .SYNOPSIS
@@ -183,7 +183,7 @@ Set-Content -LiteralPath (Join-Path $kitRoot 'SECOND-HOST-TEST-CARD.md') -Value 
 # ---------------------------------------------------------------------------
 $runLocal = @'
 # Master Control Orchestration Server - local acceptance wrapper (generated kit).
-# Copyright (c) 2026 James Daley. All Rights Reserved.
+# Copyright (c) 2026 James Daley, Raven Forge Software.
 [CmdletBinding()]
 param(
     [ValidateSet('Inspect', 'CertifyLocal', 'FullCertification')][string]$Mode = 'Inspect',
@@ -249,7 +249,7 @@ Set-Content -LiteralPath (Join-Path $kitRoot 'Run-LocalAcceptance.ps1') -Value $
 # ---------------------------------------------------------------------------
 $runPeer = @'
 # Master Control Orchestration Server - second-host LAN acceptance (generated kit).
-# Copyright (c) 2026 James Daley. All Rights Reserved.
+# Copyright (c) 2026 James Daley, Raven Forge Software.
 #
 # Fully self-contained: inlines HTTP/JSON-RPC/routability/evidence helpers so the
 # LAN peer needs only PowerShell 7+ and a network path to the MCOS host. It does

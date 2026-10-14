@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
-// Copyright (c) 2026 James Daley. All Rights Reserved.
-// Proprietary and Confidential.
+// Copyright (c) 2026 James Daley, Raven Forge Software.
+// SPDX-License-Identifier: MIT
 //
 // JsonStrictness.h - operator-visible feedback when a JSON POST body
 // carries top-level keys the destination model does not recognise.

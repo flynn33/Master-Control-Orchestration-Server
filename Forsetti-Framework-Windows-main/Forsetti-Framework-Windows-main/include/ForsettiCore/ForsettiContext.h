@@ -1,6 +1,6 @@
 // Forsetti Framework for Windows
-// Copyright (c) 2026 James Daley. All Rights Reserved.
-// Proprietary and Confidential. Patent Pending.
+// Copyright (c) 2026 James Daley, Raven Forge Software.
+// SPDX-License-Identifier: MIT Patent Pending.
 
 #pragma once
 #include "ForsettiCore/ForsettiEventBus.h"

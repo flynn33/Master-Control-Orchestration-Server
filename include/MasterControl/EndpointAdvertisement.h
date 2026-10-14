@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
-// Copyright (c) 2026 James Daley. All Rights Reserved.
-// Proprietary and Confidential.
+// Copyright (c) 2026 James Daley, Raven Forge Software.
+// SPDX-License-Identifier: MIT
 //
 // Source-neutral endpoint advertisement helpers. Discovery documents and
 // supervisor configuration generation must advertise only endpoints that the

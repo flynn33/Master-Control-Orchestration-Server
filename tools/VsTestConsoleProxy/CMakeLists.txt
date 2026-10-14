@@ -1,6 +1,6 @@
 # Master Control Orchestration Server
-# Copyright (c) 2026 James Daley. All Rights Reserved.
-# Proprietary and Confidential.
+# Copyright (c) 2026 James Daley, Raven Forge Software.
+# SPDX-License-Identifier: MIT
 
 set(MASTERCONTROL_VSTEST_PROXY_DEFAULT_PATH "${MASTERCONTROL_VSTEST_CONSOLE}")
 set(MASTERCONTROL_VSTEST_PROXY_OUTPUT_DIR "${CMAKE_BINARY_DIR}/vendor/forsetti/tests")

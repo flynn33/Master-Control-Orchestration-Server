@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
-// Copyright (c) 2026 James Daley. All Rights Reserved.
-// Proprietary and Confidential.
+// Copyright (c) 2026 James Daley, Raven Forge Software.
+// SPDX-License-Identifier: MIT
 //
 // PHASE-14 Slice E: SqliteDiagnosticsStore implementation. WAL-mode
 // SQLite keeps the single writer (DiagnosticsService::report under its

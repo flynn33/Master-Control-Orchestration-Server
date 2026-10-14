@@ -1,6 +1,6 @@
 # Master Control Orchestration Server
-# Copyright (c) 2026 James Daley. All Rights Reserved.
-# Proprietary and Confidential.
+# Copyright (c) 2026 James Daley, Raven Forge Software.
+# SPDX-License-Identifier: MIT
 
 # v0.9.1: minimal native MCP worker that ships in-tree so the gateway's
 # tools/list returns real tools from a fresh install. Wire protocol is

@@ -1,5 +1,6 @@
 # Forsetti Framework - Dependency Audit Script (R001, R006)
-# Copyright (c) 2026 James Daley. All Rights Reserved.
+# Copyright (c) 2026 James Daley, Raven Forge Software.
+# SPDX-License-Identifier: MIT
 #
 # R001: Native Technologies Only - no Boost, no non-Microsoft third-party.
 # R006: One-way dependencies - CMake link targets must follow the layer model.

@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
-// Copyright (c) 2026 James Daley. All Rights Reserved.
-// Proprietary and Confidential.
+// Copyright (c) 2026 James Daley, Raven Forge Software.
+// SPDX-License-Identifier: MIT
 //
 // SetupWizardBuilder: builds the first-run setup wizard UI entirely in C++.
 // No MIDL/IDL registration, no XAML compilation — just programmatic WinUI

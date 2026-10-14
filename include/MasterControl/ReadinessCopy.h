@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
-// Copyright (c) 2026 James Daley. All Rights Reserved.
-// Proprietary and Confidential.
+// Copyright (c) 2026 James Daley, Raven Forge Software.
+// SPDX-License-Identifier: MIT
 //
 // Shared user-facing copy for readiness and environment-hint UI. This is the
 // single source of truth consumed by the WinUI shell, the MasterControlApp

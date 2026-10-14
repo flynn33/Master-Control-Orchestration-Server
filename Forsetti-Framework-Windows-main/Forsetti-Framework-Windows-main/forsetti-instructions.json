@@ -3,7 +3,7 @@
   "projectName": "Forsetti Framework — Windows",
   "projectDescription": "A modular runtime framework for Windows 11, built with C++20 and WinUI 3. Port of the Forsetti Framework from Swift/SwiftUI.",
   "owner": "James Daley",
-  "license": "Proprietary",
+  "license": "MIT",
   "principles": [
     "Strict modularity: all features live inside first- or third-party modules",
     "Framework-mediated everything: modules never talk to each other directly",

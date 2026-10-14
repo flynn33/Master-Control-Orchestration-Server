@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Direct Claude-driven control of a running Master Control Orchestration Server. Read live state, configure settings, register pools, manage governance, import Forsetti modules — all via the MCOS admin API.",
   "author": "James Daley",
-  "license": "Proprietary",
+  "license": "MIT",
   "homepage": "https://github.com/flynn33/Master-Control-Orchestration-Server",
 
   "mcpServers": {

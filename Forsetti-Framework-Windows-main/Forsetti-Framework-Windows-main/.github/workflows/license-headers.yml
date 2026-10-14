@@ -1,5 +1,5 @@
 # Forsetti Framework — License Header Enforcement (R008)
-# Copyright (c) 2026 James Daley. All Rights Reserved.
+# Copyright (c) 2026 James Daley, Raven Forge Software.
 
 name: License Headers
 
@@ -24,7 +24,7 @@ jobs:
           $violations = @()
           $requiredLines = @(
             "Forsetti Framework for Windows",
-            "Copyright (c) 2026 James Daley. All Rights Reserved.",
+            "Copyright (c) 2026 James Daley, Raven Forge Software.",
             "Proprietary and Confidential. Patent Pending."
           )
 

@@ -1,5 +1,6 @@
 # ForsettiCore — Pure C++20, no platform dependencies
-# Copyright (c) 2026 James Daley. All Rights Reserved.
+# Copyright (c) 2026 James Daley, Raven Forge Software.
+# SPDX-License-Identifier: MIT
 
 add_library(ForsettiCore STATIC
     SemVer.cpp

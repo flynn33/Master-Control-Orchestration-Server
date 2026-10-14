@@ -1,5 +1,6 @@
 # Forsetti Framework - Module Manifest Validation Script
-# Copyright (c) 2026 James Daley. All Rights Reserved.
+# Copyright (c) 2026 James Daley, Raven Forge Software.
+# SPDX-License-Identifier: MIT
 #
 # Validates all ForsettiManifests JSON files for correct schema,
 # required fields, and naming conventions.

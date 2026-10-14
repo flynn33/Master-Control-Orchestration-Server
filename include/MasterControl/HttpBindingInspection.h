@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
-// Copyright (c) 2026 James Daley. All Rights Reserved.
-// Proprietary and Confidential.
+// Copyright (c) 2026 James Daley, Raven Forge Software.
+// SPDX-License-Identifier: MIT
 //
 // Platform-agnostic HTTP.sys binding inspection contracts. A "binding" is a
 // host-level integration that a listener depends on: a Windows Firewall rule,
