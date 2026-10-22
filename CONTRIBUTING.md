@@ -2,6 +2,8 @@
 
 This repository is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
 
+You must give credit to James Daley, Raven Forge Software, for the Master Control Orchestration Server. Keep that credit with every copy or product that uses this work. Keep the LICENSE and NOTICE files, keep the copyright lines in the source, and state the changes you make.
+
 You are welcome to use, study, modify, and distribute the code under the terms of that license.
 
 ## Outside contributions are not accepted

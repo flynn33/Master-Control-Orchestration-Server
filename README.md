@@ -5,7 +5,7 @@
 ![status](https://img.shields.io/badge/status-not%20under%20active%20development-6b7280?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%2011%20%2F%20Server%202022-0a1018?style=flat-square)
 ![architecture](https://img.shields.io/badge/architecture-LAN%20MCP%20Gateway%20Host-1cf2c1?style=flat-square)
-![license](https://img.shields.io/badge/license-Dual%20License-031018?style=flat-square)
+![license](https://img.shields.io/badge/license-Apache%202.0-031018?style=flat-square)
 
 > **Parked (2026-07-31).** MCOS is retained as a **reference LAN MCP gateway host**
 > and as the last published internal-alpha package (`vA3.12.0`). It is **not** under
@@ -209,7 +209,10 @@ Outside contributions to this repository are not accepted. Pull requests and col
 
 ## License
 
-Copyright 2026 James Daley
+Copyright (c) 2026 James Daley, Raven Forge Software
 
-This project is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
-See the [LICENSE](LICENSE) file for the full terms.
+The Master Control Orchestration Server is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+You may use, modify, and distribute this project, including for commercial purposes. The copyright stays with James Daley, Raven Forge Software.
+
+You must give credit to James Daley, Raven Forge Software, for the Master Control Orchestration Server. Keep that credit with every copy or product that uses this work. Keep the LICENSE and NOTICE files, keep the copyright lines in the source, and state the changes you make.
