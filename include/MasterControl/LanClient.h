@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
 // Copyright (c) 2026 James Daley, Raven Forge Software.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // LAN client identity model. Per ADR-001, AI clients run on their own LAN
 // machines and connect to MCOS as governed users of the shared MCP and

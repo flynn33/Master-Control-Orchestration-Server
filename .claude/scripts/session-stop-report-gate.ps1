@@ -1,6 +1,6 @@
 # Master Control Orchestration Server - session stop-report gate
 # Copyright (c) 2026 James Daley, Raven Forge Software.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 #
 # Stop hook. A session may not end with uncommitted repository changes
 # unless a stop report exists at .claude/state/stop-report.md containing

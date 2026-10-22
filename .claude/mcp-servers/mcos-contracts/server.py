@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Master Control Orchestration Server - mcos-contracts MCP server
 # Copyright (c) 2026 James Daley, Raven Forge Software.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 #
 # On-demand contract enforcement for the MCOS realignment work. Wraps:
 #   - FORBIDDEN-CONTRACT grep list (docs/implementation/FORBIDDEN-CONTRACT-GREP-LIST.md)

@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
 // Copyright (c) 2026 James Daley, Raven Forge Software.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 
 // Model Parity (A3.12.0): provider-neutral Client Integration Catalog.
 //

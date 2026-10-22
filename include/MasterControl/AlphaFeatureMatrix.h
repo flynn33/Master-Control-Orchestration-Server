@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
 // Copyright (c) 2026 James Daley, Raven Forge Software.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // Product alpha feature matrix -- the single in-tree source of truth for which
 // features are required / optional / deferred / removed for the working alpha.

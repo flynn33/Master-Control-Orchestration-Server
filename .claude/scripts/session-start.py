@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Master Control Orchestration Server - SessionStart hook
 # Copyright (c) 2026 James Daley, Raven Forge Software.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 #
 # Prints a one-screen project orientation when a Claude Code session starts.
 # Reads VERSION.json + the realignment manifest + mcos-memory state and

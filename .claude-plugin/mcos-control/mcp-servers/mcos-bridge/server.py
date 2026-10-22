@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Master Control Orchestration Server - mcos-bridge MCP server
 # Copyright (c) 2026 James Daley, Raven Forge Software.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 #
 # Bridges Claude Code to a running MCOS instance over its admin HTTP API.
 # Trust posture: ADR-001 LAN-trusted operator surface (no app-layer auth).

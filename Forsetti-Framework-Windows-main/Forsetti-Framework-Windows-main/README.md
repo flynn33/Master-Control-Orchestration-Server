@@ -4,7 +4,7 @@ A modular runtime framework for Windows 11, built with C++20 and WinUI 3.
 
 ## Overview
 
-Forsetti is a modular runtime framework, licensed under the MIT License, that provides:
+Forsetti is a modular runtime framework, licensed under the Apache License, Version 2.0, that provides:
 
 - **Module System** — Manifest-driven module discovery, compatibility checking, and lifecycle management
 - **Event Bus** — Pub/sub communication between modules and the framework
@@ -44,4 +44,4 @@ The architecture and design of Forsetti are the subject of a pending U.S. patent
 
 ## License
 
-Licensed under the MIT License. Copyright (c) 2026 James Daley, Raven Forge Software.
+Licensed under the Apache License, Version 2.0. Copyright (c) 2026 James Daley, Raven Forge Software.

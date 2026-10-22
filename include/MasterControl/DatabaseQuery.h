@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
 // Copyright (c) 2026 James Daley, Raven Forge Software.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // local-database MCP: read-only query + schema inspection over an
 // operator-configured SQLite database. Interface-first: IDatabaseConnectionStore

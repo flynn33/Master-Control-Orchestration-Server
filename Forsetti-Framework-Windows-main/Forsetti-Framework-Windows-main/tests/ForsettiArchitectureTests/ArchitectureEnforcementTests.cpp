@@ -1,6 +1,7 @@
 // Forsetti Framework for Windows
 // Copyright (c) 2026 James Daley, Raven Forge Software.
-// SPDX-License-Identifier: MIT Patent Pending.
+// SPDX-License-Identifier: Apache-2.0
+// Patent pending.
 //
 // Architecture enforcement tests — verify one-way dependency rules (R006).
 // Scans #include directives in source files to ensure:

@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
 // Copyright (c) 2026 James Daley, Raven Forge Software.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // PHASE-14 Slice E: centralized Diagnostics Service. Owns the
 // in-memory ring (most recent kRingCapacity records, always available

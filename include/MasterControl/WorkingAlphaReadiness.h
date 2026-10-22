@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
 // Copyright (c) 2026 James Daley, Raven Forge Software.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // Working-alpha readiness assessment. Answers "is this install usable as a
 // working alpha right now?" as a pure function over signals the caller has

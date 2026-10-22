@@ -1,6 +1,6 @@
 # Master Control Orchestration Server - session preflight gate
 # Copyright (c) 2026 James Daley, Raven Forge Software.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 #
 # Enforces the repository invariants a session depends on before any work
 # happens: the governing documents exist, the version authority and program

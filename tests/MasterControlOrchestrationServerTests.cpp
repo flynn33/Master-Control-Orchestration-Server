@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
 // Copyright (c) 2026 James Daley, Raven Forge Software.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // Post-ADR-001 test suite. The pre-remediation provider tests were dropped
 // in Phase 2 of the LAN client rebuild (plans/remediation/01-gut-and-rebuild.md).

@@ -1,6 +1,6 @@
 // Master Control Orchestration Server - browser surface
 // Copyright (c) 2026 James Daley, Raven Forge Software.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // Tron operations surface for the LAN MCP Gateway, supervised worker pools,
 // governance bundles, onboarding profiles, and honest telemetry.

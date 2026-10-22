@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
 // Copyright (c) 2026 James Daley, Raven Forge Software.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // MCP Gateway adapters. The gateway abstraction (`IMcpGateway`)
 // lives in `MasterControl/MasterControlContracts.h`. This header

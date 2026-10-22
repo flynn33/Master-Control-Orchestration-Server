@@ -1,5 +1,5 @@
 // Copyright (c) 2026 James Daley, Raven Forge Software.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // McpToolNameResolver.h - shared gateway tool-name resolution policy.
 

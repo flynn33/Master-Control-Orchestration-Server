@@ -1,6 +1,6 @@
 # Master Control Orchestration Server - pre-edit scope gate
 # Copyright (c) 2026 James Daley, Raven Forge Software.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 #
 # PreToolUse hook for Write/Edit/MultiEdit. Reads the hook payload from
 # stdin and enforces two rules:

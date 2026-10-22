@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
 // Copyright (c) 2026 James Daley, Raven Forge Software.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // Source-neutral endpoint advertisement helpers. Discovery documents and
 // supervisor configuration generation must advertise only endpoints that the

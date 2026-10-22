@@ -46,8 +46,8 @@
     },
     {
       "id": "R008",
-      "name": "MIT License",
-      "description": "All source files carry Copyright (c) 2026 James Daley, Raven Forge Software and SPDX-License-Identifier: MIT.",
+      "name": "Apache License, Version 2.0",
+      "description": "All source files carry Copyright (c) 2026 James Daley, Raven Forge Software and SPDX-License-Identifier: Apache-2.0.",
       "severity": "error"
     },
     {

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Master Control Orchestration Server - mcos-memory MCP server
 # Copyright (c) 2026 James Daley, Raven Forge Software.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 #
 # Persistent project memory for the MCOS realignment work. Stores facts
 # (notes, file annotations, phase state, deferred work, contracts, decisions)

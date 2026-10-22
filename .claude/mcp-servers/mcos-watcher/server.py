@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Master Control Orchestration Server - mcos-watcher MCP server
 # Copyright (c) 2026 James Daley, Raven Forge Software.
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 #
 # File-watcher MCP for the MCOS realignment work. Polls registered paths on
 # demand (lazy snapshot, no background thread) and reports add/modify/delete

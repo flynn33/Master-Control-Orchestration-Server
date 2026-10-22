@@ -1,6 +1,6 @@
 // Master Control Orchestration Server
 // Copyright (c) 2026 James Daley, Raven Forge Software.
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 
 // winsock2 MUST come before windows.h. The header (McpGatewayAdapters.h)
 // includes them in the right order; doing it here too defends against any
